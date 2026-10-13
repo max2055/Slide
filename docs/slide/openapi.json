@@ -6070,6 +6070,460 @@
           }
         ]
       },
+      "InvestigationProfilesResponse": {
+        "$id": "InvestigationProfilesResponse",
+        "additionalProperties": false,
+        "properties": {
+          "allowlistSemantics": {
+            "const": "authority_ceiling",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "configurationStatus": {
+                  "const": "preset",
+                  "type": "string"
+                },
+                "outputSchemaId": {
+                  "const": "InvestigationResult",
+                  "type": "string"
+                },
+                "profile": {
+                  "$id": "InvestigationProfile",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "budget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deadlineMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxBytes": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxProviderAttempts": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxRows": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxTokens": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxToolCalls": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxWindowMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "deadlineMs",
+                            "maxToolCalls",
+                            "maxProviderAttempts",
+                            "maxTokens",
+                            "maxRows",
+                            "maxBytes",
+                            "maxWindowMs"
+                          ],
+                          "type": "object"
+                        },
+                        "id": {
+                          "const": "system",
+                          "type": "string"
+                        },
+                        "modelScene": {
+                          "anyOf": [
+                            {
+                              "const": "chat",
+                              "type": "string"
+                            },
+                            {
+                              "const": "sql_analysis",
+                              "type": "string"
+                            },
+                            {
+                              "const": "fault_diagnosis",
+                              "type": "string"
+                            },
+                            {
+                              "const": "health_check",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "outputLanguage": {
+                          "maxLength": 32,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "outputSchemaVersion": {
+                          "const": 2,
+                          "type": "number"
+                        },
+                        "prompt": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "hash": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "version": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "hash"
+                          ],
+                          "type": "object"
+                        },
+                        "readonly": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "resourceBoundary": {
+                          "const": "all_required_scopes",
+                          "type": "string"
+                        },
+                        "responsibility": {
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "skills": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "hash": {
+                                "pattern": "^[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "id": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                              },
+                              "version": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version",
+                              "hash"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "supportedSubjectKinds": {
+                          "items": {
+                            "const": "platform",
+                            "type": "string"
+                          },
+                          "maxItems": 1,
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "toolAllowlist": {
+                          "items": {
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$",
+                            "type": "string"
+                          },
+                          "maxItems": 100,
+                          "type": "array",
+                          "uniqueItems": true
+                        },
+                        "version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "supportedSubjectKinds",
+                        "version",
+                        "responsibility",
+                        "modelScene",
+                        "prompt",
+                        "skills",
+                        "toolAllowlist",
+                        "outputSchemaVersion",
+                        "resourceBoundary",
+                        "readonly",
+                        "budget",
+                        "outputLanguage"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "budget": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "deadlineMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxBytes": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxProviderAttempts": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxRows": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxTokens": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxToolCalls": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "maxWindowMs": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "deadlineMs",
+                            "maxToolCalls",
+                            "maxProviderAttempts",
+                            "maxTokens",
+                            "maxRows",
+                            "maxBytes",
+                            "maxWindowMs"
+                          ],
+                          "type": "object"
+                        },
+                        "id": {
+                          "const": "ops",
+                          "type": "string"
+                        },
+                        "modelScene": {
+                          "anyOf": [
+                            {
+                              "const": "chat",
+                              "type": "string"
+                            },
+                            {
+                              "const": "sql_analysis",
+                              "type": "string"
+                            },
+                            {
+                              "const": "fault_diagnosis",
+                              "type": "string"
+                            },
+                            {
+                              "const": "health_check",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "outputLanguage": {
+                          "maxLength": 32,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "outputSchemaVersion": {
+                          "const": 2,
+                          "type": "number"
+                        },
+                        "prompt": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "hash": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "version": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "hash"
+                          ],
+                          "type": "object"
+                        },
+                        "readonly": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "resourceBoundary": {
+                          "const": "all_required_scopes",
+                          "type": "string"
+                        },
+                        "responsibility": {
+                          "maxLength": 2000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "skills": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "hash": {
+                                "pattern": "^[a-f0-9]{64}$",
+                                "type": "string"
+                              },
+                              "id": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                              },
+                              "version": {
+                                "maxLength": 128,
+                                "minLength": 1,
+                                "pattern": "\\S",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version",
+                              "hash"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "supportedSubjectKinds": {
+                          "items": {
+                            "const": "resource",
+                            "type": "string"
+                          },
+                          "maxItems": 1,
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "toolAllowlist": {
+                          "items": {
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$",
+                            "type": "string"
+                          },
+                          "maxItems": 100,
+                          "type": "array",
+                          "uniqueItems": true
+                        },
+                        "version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "supportedSubjectKinds",
+                        "version",
+                        "responsibility",
+                        "modelScene",
+                        "prompt",
+                        "skills",
+                        "toolAllowlist",
+                        "outputSchemaVersion",
+                        "resourceBoundary",
+                        "readonly",
+                        "budget",
+                        "outputLanguage"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "profileHash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "toolAvailability": {
+                  "const": "not_evaluated",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "profile",
+                "profileHash",
+                "configurationStatus",
+                "toolAvailability",
+                "outputSchemaId"
+              ],
+              "type": "object"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "source": {
+            "const": "repository",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "source",
+          "allowlistSemantics",
+          "items"
+        ],
+        "type": "object"
+      },
       "InvestigationRecoveryReason": {
         "$id": "InvestigationRecoveryReason",
         "anyOf": [
@@ -16171,6 +16625,38 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/investigation-profiles": {
+      "get": {
+        "description": "Repository-versioned System/Ops presets for AI settings. Requires live ai:view; private, no-store on success and rejection. Prompt version/hash only, no credentials or principal data. Allowlist is an authority ceiling, not tool availability or execution permission. No query parameters or editing. Output schema is InvestigationResult at the profile outputSchemaVersion.",
+        "operationId": "listInvestigationProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationProfilesResponse"
+                }
+              }
+            },
+            "description": "Current preset facts; tool availability not evaluated"
+          },
+          "400": {
+            "description": "Unsupported query parameters"
+          },
+          "401": {
+            "description": "Missing, invalid, disabled or revoked identity"
+          },
+          "403": {
+            "description": "Live AI settings read permission absent"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/investigations": {
