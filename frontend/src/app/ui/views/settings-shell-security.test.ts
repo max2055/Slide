@@ -59,6 +59,12 @@ describe('settings navigation and routing', () => {
     expect(text).not.toContain('Agent 审计');
   });
 
+  it('Profiles deep links require ai:view and leave legacy settings routes intact', async () => {
+    const element = await renderAt('/settings/ai/profiles', ['chat:view']);
+    expect(element.shadowRoot!.querySelector('investigation-profiles-page')).toBeNull();
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('无权访问');
+  });
+
   it('restores the selected merged-page view from browser history', async () => {
     const element = await renderAt('/settings/monitoring/analysis?view=automatic', ['ai:view', 'scoring:view']);
     const scoring = [...element.shadowRoot!.querySelectorAll<HTMLButtonElement>('.content-tab')]

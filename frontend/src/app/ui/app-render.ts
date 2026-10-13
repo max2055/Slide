@@ -60,9 +60,12 @@ import "./views/branding-settings.ts";
 import "./views/event-center.ts";
 import "./views/platform-status.ts";
 import "./views/platform-observations.ts";
+import "./views/investigations.ts";
+import "./components/chat-investigation-convert.ts";
 import { icons } from "../../icons.js";
 import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { agentLogoUrl } from "./views/agents-utils.ts";
+import { chatSessionHost } from "./chat-session-state.ts";
 import { renderChat } from "./views/chat.ts";
 import { renderCommandPalette } from "./views/command-palette.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
@@ -101,6 +104,7 @@ const lazyAgents = createLazy(() => import("./views/agents.ts"));
 const lazySessions = createLazy(() => import("./views/sessions.ts"));
 const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknown>>> = {
   dashboard: () => import("./views/dashboard.ts"),
+  attention: () => import("./views/dashboard.ts"),
   "server-detail": () => import("./views/server-detail.ts"),
   "network-device-detail": () => import("./views/network-device-detail.ts"),
   "instance-detail": () => import("./views/instance-detail.ts"),
@@ -224,6 +228,7 @@ export function renderApp(state: AppViewState) {
 
   const chatDisabledReason = state.connectionError ?? null;
   const isChat = state.tab === "chat";
+  const chatReceiver = isChat ? chatSessionHost(state) : state;
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const navDrawerOpen = state.navDrawerOpen && !chatFocus && !state.onboarding;
   const navCollapsed = state.settings.navCollapsed && !navDrawerOpen;
@@ -322,7 +327,7 @@ export function renderApp(state: AppViewState) {
       },
     })}
     <div
-      class="shell ${isChat ? "shell--chat" : ""} ${chatFocus
+      class="shell ${['attention', 'investigations'].includes(state.tab) ? 'shell--workspace' : ''} ${isChat ? "shell--chat" : ""} ${chatFocus
         ? "shell--chat-focus"
         : ""} ${navCollapsed ? "shell--nav-collapsed" : ""} ${navDrawerOpen
         ? "shell--nav-drawer-open"
@@ -517,6 +522,8 @@ export function renderApp(state: AppViewState) {
               </div>
               <div class="page-meta">
                 ${renderChatControls(state)}
+                <chat-investigation-convert .client=${state.client} .sessionId=${state.sessionKey}
+                  .active=${Boolean(state.chatRunId) || state.chatSending} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></chat-investigation-convert>
               </div>
             </section>`
           : state.tab === "config"
@@ -716,6 +723,8 @@ export function renderApp(state: AppViewState) {
         ${state.tab === "dashboard"
           ? html`<dashboard-page></dashboard-page>`
           : nothing}
+        ${state.tab === 'attention' ? html`<attention-page .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></attention-page>` : nothing}
+        ${state.tab === 'investigations' ? html`<investigations-page .client=${state.client} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></investigations-page>` : nothing}
         ${state.tab === "instances-db"
           ? html`<instances-page></instances-page>`
           : nothing}
@@ -866,8 +875,9 @@ export function renderApp(state: AppViewState) {
                   lastActiveSessionKey: next,
                 });
               },
+              readAttachments: () => chatReceiver.chatAttachments,
               onAttachmentsChange: (attachments) => {
-                state.chatAttachments = attachments;
+                chatReceiver.chatAttachments = attachments;
               },
               onDraftChange: (next) => {
                 state.chatMessage = next;

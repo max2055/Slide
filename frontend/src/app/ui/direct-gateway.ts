@@ -143,6 +143,7 @@ export class DirectGatewayClient {
   private partsStream = false;
   private streamSubscriptions = new Map<string, string>();
   private watchedSessions = new Set<string>();
+  private investigationObservers = new Map<string, Set<(event: Record<string, unknown>) => void>>();
   private streamStates = new Map<string, Omit<DisplayStreamState, 'projection'>>();
   private recoveringSessions = new Set<string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +215,7 @@ export class DirectGatewayClient {
 
     socket.onclose = (ev: CloseEvent) => {
       if (this.ws !== socket) return;
+      this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: ev.code === 4001 });
       this.ws = null;
       // A successful handshake alone does not prove recovery (open/close storms).
       if (this.authenticatedAt !== null && Date.now() - this.authenticatedAt >= STABLE_CONNECTION_MS) {
@@ -263,6 +265,8 @@ export class DirectGatewayClient {
   }
 
   disconnect(): void {
+    this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: true });
+    this.investigationObservers.clear();
     this.closed = true;
     this.authenticatedAt = null;
     this.authenticated = false;
@@ -492,6 +496,14 @@ export class DirectGatewayClient {
     const msg = data as Record<string, unknown>;
     const type = msg.type;
 
+    if (typeof type === 'string' && type.startsWith('investigation.')) {
+      const id = typeof msg.investigationId === 'string' ? msg.investigationId
+        : (msg.event as { investigationId?: string } | undefined)?.investigationId;
+      if (id) for (const listener of [...this.investigationObservers.get(id) ?? []]) listener(msg);
+      else if (type === 'investigation.error') this.notifyInvestigationObservers(msg);
+      return;
+    }
+
     // Handle auth_ok to flush pending messages (CR-04 race condition fix)
     if (type === 'auth_ok') {
       if (this.authenticated) return;
@@ -504,6 +516,7 @@ export class DirectGatewayClient {
         if (sessionKey && this.watchedSessions.has(sessionKey)) this.watchSession(sessionKey);
       }
       this.onStateChange('connected');
+      for (const id of this.investigationObservers.keys()) this.refreshInvestigation(id);
       this.resumePendingChatAcknowledgements();
       return;
     }
@@ -597,6 +610,29 @@ export class DirectGatewayClient {
         // Unknown type — drop silently
         break;
     }
+  }
+
+  /** Independent observation channel; never sends chat.send or owns a Run. */
+  observeInvestigation(id: string, listener: (event: Record<string, unknown>) => void): () => void {
+    let listeners = this.investigationObservers.get(id);
+    if (!listeners) {
+      if (this.investigationObservers.size >= 8) throw new Error('INVESTIGATION_WATCH_LIMIT');
+      listeners = new Set(); this.investigationObservers.set(id, listeners);
+    }
+    listeners.add(listener); this.refreshInvestigation(id);
+    return () => {
+      listeners!.delete(listener);
+      if (listeners!.size || this.investigationObservers.get(id) !== listeners) return;
+      this.investigationObservers.delete(id);
+      if (this.authenticated && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'investigation.unwatch', id }));
+    };
+  }
+  refreshInvestigation(id: string): void {
+    if (this.investigationObservers.has(id) && this.authenticated && this.ws?.readyState === WebSocket.OPEN)
+      this.ws.send(JSON.stringify({ type: 'investigation.watch', id }));
+  }
+  private notifyInvestigationObservers(event: Record<string, unknown>): void {
+    for (const listeners of [...this.investigationObservers.values()]) for (const listener of [...listeners]) listener(event);
   }
 
   private chatSendFrame(sessionKey: string | undefined, message: string, options?: { idempotencyKey?: string; attachments?: unknown[] }): Record<string, unknown> {

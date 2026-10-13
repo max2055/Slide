@@ -1,3 +1,4 @@
+import { clearChatViewCaches } from "./views/chat.ts";
 import { LitElement, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { i18n, I18nController, isSupportedLocale } from "../i18n/index.ts";
@@ -469,7 +470,7 @@ export class SlideApp extends LitElement {
 
     // Listen for navigation events
     window.addEventListener("slide-navigate", (e: any) => {
-      const { tab, id, session, serverId, networkDeviceId } = e.detail;
+      const { tab, id, session, serverId, networkDeviceId, investigationId } = e.detail;
       const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
       const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
       if (tab) {
@@ -507,6 +508,7 @@ export class SlideApp extends LitElement {
           session,
           serverId: effectiveServerId,
           networkDeviceId: effectiveNetworkDeviceId,
+          investigationId,
         });
         window.history.pushState({}, "", url);
       }
@@ -527,6 +529,7 @@ export class SlideApp extends LitElement {
 
     // Listen for permissions being loaded after login (AUTH-05)
     window.addEventListener('slide-permissions-loaded', ((e: CustomEvent) => {
+      clearChatViewCaches();
       this.userPermissions = new Set(e.detail.permissions);
       this.permissionsError = null;
       this.requestUpdate();
@@ -553,6 +556,7 @@ export class SlideApp extends LitElement {
   }
 
   logout() {
+    clearChatViewCaches();
     if (this.client) {
       this.client.disconnect();
       this.client = null;

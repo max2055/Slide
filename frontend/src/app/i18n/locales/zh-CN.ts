@@ -245,6 +245,8 @@ export const zh_CN: TranslationMap = {
     builtIn: "内置",
   },
   tabs: {
+    attention: "关注事项",
+    investigations: "AI 工作空间",
     // Slide 菜单组
     dashboard: "运维总览",
     docs: "文档",
@@ -264,7 +266,7 @@ export const zh_CN: TranslationMap = {
     "approval": "审批中心",
     "audit-center": "审计中心",
     // Chat 菜单组
-    chat: "AI 助手",
+    chat: "普通对话",
     // 导航菜单组
     sessions: "会话",
     agents: "智能体",
@@ -296,6 +298,8 @@ export const zh_CN: TranslationMap = {
     instances: "实例",
   },
   subtitles: {
+    attention: "已有事件与资源概览",
+    investigations: "只读调查、执行过程与证据成果",
     // Slide 菜单组
     dashboard: "AI 基础运维总览",
     "instances-db": "纳管数据库实例",

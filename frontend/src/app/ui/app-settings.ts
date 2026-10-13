@@ -454,6 +454,7 @@ export function syncUrlWithTab(host: SettingsHost, tab: Tab, replace: boolean) {
   const targetPath = normalizePath(pathForTab(tab, host.basePath));
   const currentPath = normalizePath(window.location.pathname);
   const url = new URL(window.location.href);
+  if (tab !== 'investigations') url.searchParams.delete('investigation');
 
   if (tab === "chat" && host.sessionKey) {
     url.searchParams.set("session", host.sessionKey);

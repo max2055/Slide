@@ -13,6 +13,7 @@ export type SettingsItem = {
   icon: IconName;
   requiredPermission?: string;
   views?: readonly SettingsView[];
+  requiredPermissions?: readonly string[];
 };
 
 export type SettingsGroup = {
@@ -29,6 +30,10 @@ export type SettingsPageId =
   | "metrics"
   | "analysis"
   | "models"
+  | "profiles"
+  | "policies"
+  | "budget"
+  | "usage"
   | "prompts"
   | "sessions"
   | "capabilities"
@@ -76,6 +81,10 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         ],
       },
       { id: "prompts", label: "提示词管理", path: "/settings/ai/prompts", icon: "book" },
+      { id: "profiles", label: "调查 Profiles", path: "/settings/ai/profiles", icon: "bot", requiredPermission: "ai:view" },
+      { id: "policies", label: "调查策略", path: "/settings/ai/policies", icon: "bookmark", requiredPermissions: ['ai:view'] },
+      { id: "budget", label: "有效预算", path: "/settings/ai/budget", icon: "gauge", requiredPermissions: ['ai:view', 'config:manage'] },
+      { id: "usage", label: "用量与成本", path: "/settings/ai/usage", icon: "chart", requiredPermissions: ['ai:view', 'config:manage'] },
       { id: "sessions", label: "Agent 会话", path: "/settings/ai/sessions", icon: "clipboard", requiredPermission: "ai:view" },
       {
         id: "capabilities",
@@ -172,7 +181,8 @@ export function visibleSettingsViews(item: SettingsItem, permissions: Set<string
 }
 
 export function canAccessSettingsItem(item: SettingsItem, permissions: Set<string> | null): boolean {
-  if (item.id === 'source' && permissions?.has('admin:*')) return true;
+  if (item.requiredPermissions) return permissions !== null && item.requiredPermissions.every(code => permissions.has('admin:*') || permissionMatches(permissions, code));
+  if ((item.id === 'source' || item.id === 'profiles') && permissions?.has('admin:*')) return true;
   if (!permissionMatches(permissions, item.requiredPermission)) return false;
   return !item.views || visibleSettingsViews(item, permissions).length > 0;
 }

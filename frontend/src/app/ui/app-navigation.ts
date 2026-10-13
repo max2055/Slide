@@ -5,11 +5,12 @@ type NavigationContext = {
   session?: unknown;
   serverId?: unknown;
   networkDeviceId?: unknown;
+  investigationId?: unknown;
 };
 
 /** Build the URL after a cross-view navigation event without dropping detail context. */
 export function buildNavigationUrl(currentUrl: URL | string, tab: Tab, context: NavigationContext = {}): URL {
-  const { id, session, serverId, networkDeviceId } = context;
+  const { id, session, serverId, networkDeviceId, investigationId } = context;
   const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
   const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
   const effectiveInstanceId = tab === "instance-detail" ? id : undefined;
@@ -23,6 +24,8 @@ export function buildNavigationUrl(currentUrl: URL | string, tab: Tab, context: 
   else url.searchParams.delete("networkDeviceId");
   if (session) url.searchParams.set("session", String(session));
   else url.searchParams.delete("session");
+  if (tab === 'investigations' && investigationId) url.searchParams.set('investigation', String(investigationId));
+  else url.searchParams.delete('investigation');
   if (tab !== "docs") url.hash = "";
   return url;
 }
