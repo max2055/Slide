@@ -85,7 +85,8 @@ describe.skipIf(!port)('T03-D Profile facts: real MySQL migration/JWT/TCP HTTP',
     const text = JSON.stringify(body);
     for (const prompt of Object.values(INVESTIGATION_PROMPTS)) expect(text).not.toContain(prompt);
     expect(text).not.toMatch(/password|apiKey|username|userId|sessionVersion|not-a-login-hash|t03d-reader/);
-    const contaminated = { ...body, items: [{ ...body.items[0], profile: { ...body.items[0].profile, rawPrompt: 'secret' } }] };
+    const contaminated = { ...body, items: body.items.map((item: any, index: number) => index === 0
+      ? { ...item, profile: { ...item.profile, rawPrompt: 'secret' } } : item) };
     expect(Value.Check(InvestigationProfilesResponseSchema, contaminated)).toBe(false);
     expect((await read()).headers.get('etag')).toBeNull();
   });
