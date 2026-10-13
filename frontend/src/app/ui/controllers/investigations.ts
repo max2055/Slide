@@ -144,7 +144,10 @@ export class InvestigationsController {
       this.client?.refreshInvestigation(this.id);
     } else if (event.type === 'investigation.snapshot') {
       if (event.investigationId !== this.id) return;
-      this.contentEpoch++; this.snapshot = event as unknown as InvestigationSnapshot; this.online = true; this.error = '';
+      // An authorized snapshot updates facts within the same content lifetime.
+      // Only disconnect/revocation invalidate pending pages; otherwise an initial
+      // or refreshed snapshot can discard a legitimate older HTTP page forever.
+      this.snapshot = event as unknown as InvestigationSnapshot; this.online = true; this.error = '';
       void this.refreshFacts(generation);
     } else if (event.type === 'investigation.event' && this.snapshot) {
       const fact = event.event as InvestigationStreamEvent;
@@ -174,7 +177,11 @@ export class InvestigationsController {
         Promise.all((this.snapshot?.evidenceIds ?? []).map(eid => investigationApi<InvestigationEvidence>(`/${id}/evidence/${eid}`))),
       ]);
       if (generation !== this.generation || epoch !== this.contentEpoch || ordinal !== this.refreshOrdinal || this.disposed) return;
-      this.detail = detail; this.results = results; this.evidence = evidence;
+      this.detail = detail; this.evidence = evidence;
+      this.results = this.results.items.length ? {
+        items: [...new Map([...results.items, ...this.results.items].map(r => [r.id, r])).values()],
+        nextBefore: this.results.nextBefore,
+      } : results;
       if (!this.history.length) this.historyBefore = facts.nextBefore;
       this.history = [...new Map([...this.history, ...factMessages(facts)].map(m => [m.id, m])).values()];
       if (!detail.activeRequestId) this.cancelRequested = false;

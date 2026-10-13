@@ -126,3 +126,60 @@ it('switching selection during a submission does not leave the new view permanen
   await c.select('two'); release({ id: 'one' }); await pending;
   expect(c.busy).toBe(false); expect(c.detail?.id).toBe('two');
 });
+
+function observationClient(receive: (callback: (event: any) => void) => void) {
+  return { observeInvestigation: (_id: string, callback: (event: any) => void) => { receive(callback); return () => {}; } } as any;
+}
+function pageDocument(id: string) { return { id, role: 'user', parts: [], legacy: { id, role: 'user', content: id } }; }
+
+it.each(['initial', 'reconnect'])('%s snapshot keeps a legitimate delayed history page', async phase => {
+  let receive!: (event: any) => void;
+  let release!: (page: any) => void;
+  api.mockImplementation(path => Promise.resolve(path.endsWith('/facts') ? { documents: [pageDocument('latest')], nextBefore: 'old-page' }
+    : path.endsWith('/results') ? { items: [], nextBefore: null } : { id: 'one' }) as any);
+  const c = new InvestigationsController(() => {}, observationClient(callback => receive = callback));
+  await c.select('one');
+  if (phase === 'reconnect') {
+    receive({ type: 'investigation.disconnected' });
+    receive({ ...snapshot(), type: 'investigation.snapshot' });
+    await vi.waitFor(() => expect(c.detail?.id).toBe('one'));
+  }
+  api.mockImplementation(path => path.includes('before=') ? new Promise(resolve => release = resolve)
+    : Promise.resolve(path.endsWith('/facts') ? { documents: [pageDocument('latest')], nextBefore: 'old-page' }
+      : path.endsWith('/results') ? { items: [], nextBefore: null } : { id: 'one' }) as any);
+  const oldPage = c.loadHistory();
+  receive({ ...snapshot(), type: 'investigation.snapshot' });
+  await vi.waitFor(() => expect(c.online).toBe(true));
+  release({ documents: [pageDocument('oldest')], nextBefore: null }); await oldPage;
+  expect(c.history.map(m => m.id)).toEqual(['oldest', 'latest']); expect(c.historyBefore).toBeNull();
+});
+
+it.each(['revocation', 'disconnect', 'selection', 'dispose'])('%s rejects a delayed old history/result page', async action => {
+  let receive!: (event: any) => void;
+  const releases: Array<(page: any) => void> = [];
+  api.mockImplementation(path => path.includes('before=') ? new Promise(resolve => releases.push(resolve))
+    : Promise.resolve(path.endsWith('/facts') ? { documents: [pageDocument('latest')], nextBefore: 'old-page' }
+      : path.endsWith('/results') ? { items: [{ id: 'latest-result' }], nextBefore: '20' } : { id: 'one' }) as any);
+  const c = new InvestigationsController(() => {}, observationClient(callback => receive = callback));
+  await c.select('one'); const history = c.loadHistory(), results = c.loadResults();
+  if (action === 'selection') await c.select('two');
+  else if (action === 'dispose') c.dispose();
+  else receive({ type: 'investigation.disconnected', revoked: action === 'revocation' });
+  releases[0]({ documents: [pageDocument('sensitive-old')], nextBefore: null });
+  releases[1]({ items: [{ id: 'sensitive-result' }], nextBefore: null });
+  await Promise.all([history, results]);
+  expect(c.history.map(m => m.id)).not.toContain('sensitive-old');
+  expect(c.results.items.map(r => r.id)).not.toContain('sensitive-result');
+});
+
+it('authorized snapshots preserve loaded result versions and their pagination cursor', async () => {
+  let receive!: (event: any) => void;
+  api.mockImplementation(path => Promise.resolve(path.endsWith('/facts') ? { documents: [], nextBefore: null }
+    : path.endsWith('/results') ? { items: [{ id: 'newest' }], nextBefore: '20' } : { id: 'one' }) as any);
+  const c = new InvestigationsController(() => {}, observationClient(callback => receive = callback));
+  await c.select('one'); c.results = { items: [{ id: 'newest' }, { id: 'oldest' }], nextBefore: null } as any;
+  receive({ ...snapshot(), type: 'investigation.snapshot' });
+  await (c as any).refreshing;
+  expect(c.results.items.map(r => r.id)).toEqual(['newest', 'oldest']);
+  expect(c.results.nextBefore).toBeNull();
+});

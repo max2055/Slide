@@ -23,8 +23,25 @@ export class InvestigationCreate extends LitElement {
   @state() private validation = '';
   private controller = new InvestigationsController(() => this.requestUpdate(), null);
   createRenderRoot() { return this; }
-  disconnectedCallback() { this.controller.dispose(); super.disconnectedCallback(); }
-  connectedCallback() { super.connectedCallback(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client); }
+  private clearDraft() {
+    this.investigationTitle = ''; this.goal = ''; this.ids = ''; this.from = ''; this.to = ''; this.validation = '';
+    this.profile = 'ops'; this.resource = 'instance';
+    this.controller.dispose(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client);
+  }
+  private authorityChanged = () => { this.clearDraft(); this.close(); };
+  disconnectedCallback() {
+    window.removeEventListener('slide-session-expired', this.authorityChanged);
+    window.removeEventListener('slide-permissions-loaded', this.authorityChanged);
+    this.clearDraft(); this.controller.dispose(); this.open = false; super.disconnectedCallback();
+  }
+  connectedCallback() {
+    super.connectedCallback(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client);
+    window.addEventListener('slide-session-expired', this.authorityChanged);
+    window.addEventListener('slide-permissions-loaded', this.authorityChanged);
+  }
+  protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('sessionId') && changed.get('sessionId') !== undefined) this.authorityChanged();
+  }
   private close() { this.open = false; this.dispatchEvent(new CustomEvent('investigation-create-close', { bubbles: true, composed: true })); }
   private async submit() {
     if (this.controller.acceptanceUnknown) {

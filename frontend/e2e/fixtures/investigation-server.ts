@@ -95,6 +95,20 @@ export async function startInvestigationServer() {
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, toolsForActor: () => tools, providerForPurpose: async () => provider(),
       budget: { domain: 't06-synthetic', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000, prices: { input: 100, cachedInput: 50, output: 200 } } });
     const stream = new InvestigationStreamStore(() => pool, authorization);
+    const snapshot = stream.snapshot.bind(stream);
+    let snapshotGate: { id: string; arrived: () => void; wait: Promise<void> } | undefined;
+    stream.snapshot = async (...args) => {
+      const gate = snapshotGate?.id === args[1] ? snapshotGate : undefined;
+      if (gate) snapshotGate = undefined;
+      try {
+        const value = await snapshot(...args);
+        if (gate) { gate.arrived(); await gate.wait; }
+        return value;
+      } catch (e: any) {
+        if (e.code !== 'INVESTIGATION_NOT_FOUND') observationErrors.push({ phase: 'snapshot', code: e.code, stack: e.stack });
+        throw e;
+      }
+    };
     const replay = stream.replay.bind(stream);
     stream.replay = async (...args) => { try { return await replay(...args); } catch (e: any) {
       if (e.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
@@ -109,7 +123,7 @@ export async function startInvestigationServer() {
         observationErrors.push(diagnostic);
         await writeFile(resolve('test-results/t06-observation-error.json'), JSON.stringify(diagnostic, null, 2));
         console.error('T06 replay failure', JSON.stringify(diagnostic));
-      }
+      } else if (e.code !== 'INVESTIGATION_NOT_FOUND') observationErrors.push({ phase: 'replay', code: e.code, stack: e.stack });
       throw e;
     } };
     const watch = new InvestigationWatchService(stream, 50);
@@ -134,12 +148,20 @@ export async function startInvestigationServer() {
     }, 50);
     vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'),
       define: { 'import.meta.env.VITE_AGENT_WS_URL': '""' }, server: { host: '127.0.0.1', port: 0, strictPort: false,
-        proxy: { '/api': { target: apiUrl, changeOrigin: true }, '/agent-ws': { target: `http://127.0.0.1:${wsServer.address().port}`, ws: true, changeOrigin: true } } } });
+        proxy: { '/api': { target: apiUrl, changeOrigin: true },
+          '/__slide': { target: `http://127.0.0.1:${wsServer.address().port}`, changeOrigin: true },
+          '/agent-ws': { target: `http://127.0.0.1:${wsServer.address().port}`, ws: true, changeOrigin: true } } } });
     await vite.listen();
     const address = vite.httpServer!.address() as { port: number };
     return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner, viewer, adapter, workerErrors, observationErrors, close,
       token: (actor = owner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },
+      delaySnapshot: (id: string) => {
+        let arrived!: () => void, release!: () => void;
+        const started = new Promise<void>(resolve => arrived = resolve);
+        snapshotGate = { id, arrived, wait: new Promise<void>(resolve => release = resolve) };
+        return { started, release };
+      },
       holdChat: (value: boolean) => holdChat = value,
       hold: (value: boolean) => holdTools = value,
       unknown: async () => {

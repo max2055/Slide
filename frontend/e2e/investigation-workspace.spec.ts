@@ -27,6 +27,13 @@ async function login(page: Page, viewer = false) {
     localStorage.setItem('slide.control.settings.v1', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
   }, { token: env.token(actor), actor });
 }
+async function observed(page: Page) {
+  // HTTP history can render before WS authentication/watch establishment.
+  await expect.poll(() => page.evaluate(() => {
+    const c = (document.querySelector('investigations-page') as any)?.controller;
+    return c?.online === true && c.refreshing === undefined;
+  })).toBe(true);
+}
 async function create(page: Page, title: string) {
   await page.getByRole('button', { name: '创建手动调查' }).click();
   await page.getByRole('textbox', { name: '调查标题', exact: true }).fill(title);
@@ -88,7 +95,7 @@ test('1600 / 1024 / 390 layout and evidence dialog keyboard focus', async ({ pag
       await trigger.click(); await expect(page.getByRole('dialog', { name: '证据与成果' })).toBeVisible();
       await page.keyboard.press('Escape'); await expect(trigger).toBeFocused();
     }
-    await page.screenshot({ path: `test-results/t06-workspace-${width}.png`, fullPage: true });
+    await page.screenshot({ path: test.info().outputPath(`workspace-${width}.png`), fullPage: true });
   }
 });
 
@@ -117,11 +124,22 @@ test('ordinary Chat sends directly; conversion preserves Session and message IDs
   const [after] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [session.session_id]);
   for (const row of messages) expect(after.filter((m: any) => m.message_id === row.message_id)).toHaveLength(1);
   await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('普通对话合成回答');
+  await observed(page);
+  const counts = env.counts();
+  env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(page.locator('.investigation-messages')).toContainText('普通对话合成回答', { timeout: 15000 });
+  const [refreshed] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [session.session_id]);
+  expect(refreshed).toEqual(after); expect(env.counts()).toEqual(counts);
+  for (const row of messages) {
+    const [bindings] = await env.pool.query('SELECT session_id FROM chat_messages WHERE message_id=?', [row.message_id]);
+    expect(bindings).toEqual([{ session_id: session.session_id }]);
+  }
 });
 
 test('real WS disconnect hides content, snapshot restores without creating a Run', async ({ page }) => {
   await login(page); await page.goto(`${env.url}/investigations?investigation=${investigationId}`);
   await expect(page.locator('.investigation-messages')).toContainText('再次读取合成指标');
+  await observed(page);
   const counts = env.counts();
   env.disconnectObservers();
   await expect(page.getByRole('alert')).toContainText('连接中断');
@@ -245,6 +263,7 @@ test('history over 200 canonical facts loads older pages and survives reload', a
     await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toHaveCount(0);
   };
   await loadAll();
+  await observed(page);
   env.disconnectObservers();
   await expect(page.getByRole('alert')).toContainText('连接中断');
   await expect(page.locator('.investigation-messages')).toContainText('分页事实 204', { timeout: 15000 });
@@ -256,3 +275,174 @@ test('history over 200 canonical facts loads older pages and survives reload', a
   const [rows] = await env.pool.query('SELECT COUNT(*) AS n,COUNT(DISTINCT message_id) AS distinct_n FROM chat_messages WHERE session_id=?', [session.session_id]);
   expect(Number(rows[0].n)).toBe(Number(rows[0].distinct_n));
 });
+
+async function pagedInvestigation() {
+  const service = (await import('../../apps/db-ops-api/src/chat-database-service.js')).chatDatabaseService;
+  const session = await service.createSession(env.owner, { title: '确定性分页' });
+  for (let i = 0; i < 205; i++) await service.addMessage(env.owner, session.session_id, {
+    messageId: crypto.randomUUID(), role: 'user', content: `延迟分页 ${String(i).padStart(3, '0')}` });
+  const created = await env.bridge.create(env.owner, { title: '确定性分页调查', goal: '验证快照分页', sessionId: session.session_id,
+    profileId: 'ops', profileVersion: 1, resources: [{ type: 'instance', id: 101, role: 'primary' }],
+    context: { subject: { kind: 'resource', resource: { type: 'instance', id: 101 } } }, idempotencyKey: crypto.randomUUID() });
+  return created.investigation.id;
+}
+
+for (const phase of ['initial', 'reconnect'] as const) {
+  test(`${phase} snapshot between old-page HTTP read and delivery keeps canonical history`, async ({ page }) => {
+    const id = await pagedInvestigation(); await login(page);
+    const initial = phase === 'initial' ? env.delaySnapshot(id) : undefined;
+    let releasePage!: () => void;
+    let pageRead!: () => void;
+    const fetched = new Promise<void>(resolve => pageRead = resolve);
+    const deliver = new Promise<void>(resolve => releasePage = resolve);
+    let snapshotCount = 0;
+    page.on('websocket', socket => socket.on('framereceived', frame => {
+      const value = JSON.parse(String(frame.payload));
+      if (value.type === 'investigation.snapshot' && value.investigationId === id) snapshotCount++;
+    }));
+    await page.route(`**/api/investigations/${id}/facts?before=*`, async route => {
+      const response = await route.fetch(); expect(response.status()).toBe(200);
+      expect((await response.json()).documents.length).toBeGreaterThan(0);
+      pageRead(); await deliver; await route.fulfill({ response });
+    });
+    try {
+      await page.goto(`${env.url}/investigations?investigation=${id}`);
+      await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204');
+      if (phase === 'reconnect') {
+        await observed(page);
+        env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+        await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204', { timeout: 15000 });
+      } else await initial!.started;
+      await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
+      const beforeSnapshot = snapshotCount;
+      if (initial) initial.release();
+      else await page.evaluate(id => (document.querySelector('investigations-page') as any).client.refreshInvestigation(id), id);
+      await expect.poll(() => snapshotCount).toBeGreaterThan(beforeSnapshot);
+      await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.online)).toBe(true);
+      releasePage();
+      await expect(page.locator('.investigation-messages')).toContainText('延迟分页 000');
+      await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toHaveCount(0);
+      const text = await page.locator('.investigation-messages').innerText();
+      expect(text.indexOf('延迟分页 000')).toBeLessThan(text.indexOf('延迟分页 204'));
+      await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204');
+      await page.getByRole('button', { name: '加载更早消息', exact: true }).click();
+      await expect(page.locator('.investigation-messages')).toContainText('延迟分页 000');
+    } finally { initial?.release(); releasePage(); }
+  });
+}
+
+test('expired evidence retains tombstone/hash, raw HTTP 410 and unverified result', async ({ page }) => {
+  const [rows] = await env.pool.query('SELECT id,content_hash FROM investigation_evidence WHERE investigation_id=?', [investigationId]);
+  expect(rows.length).toBeGreaterThan(0);
+  const evidence = rows[0];
+  await env.pool.query('UPDATE investigation_evidence SET expires_at=DATE_SUB(NOW(3), INTERVAL 1 SECOND) WHERE id=?', [evidence.id]);
+  await login(page); await page.goto(`${env.url}/investigations?investigation=${investigationId}`);
+  await page.setViewportSize({ width: 1600, height: 950 });
+  const context = page.locator('.workspace-context investigation-context');
+  await expect(context.locator(`[data-evidence="${evidence.id}"]`)).toContainText('原文已过期');
+  await expect(context).toContainText(evidence.content_hash);
+  await expect(context).toContainText('根因待验证');
+  const response = await page.request.get(`${env.url}/api/investigations/${investigationId}/evidence/${evidence.id}?raw=true`, {
+    headers: { Authorization: `Bearer ${env.token()}` },
+  });
+  expect(response.status()).toBe(410);
+  const tombstone = await response.json();
+  expect(tombstone.error).toBe('EVIDENCE_EXPIRED'); expect(tombstone.evidence.contentHash).toBe(evidence.content_hash);
+  expect(tombstone.evidence.raw).toBeUndefined(); expect(tombstone.evidence.status).toBe('expired');
+  const [stored] = await env.pool.query('SELECT raw_json,expired_at,content_hash FROM investigation_evidence WHERE id=?', [evidence.id]);
+  expect(stored[0].raw_json).toBeNull(); expect(stored[0].expired_at).not.toBeNull(); expect(stored[0].content_hash).toBe(evidence.content_hash);
+  await page.reload(); await expect(context).toContainText('原文已过期'); await expect(context).toContainText('根因待验证');
+});
+
+test('more than 20 durable result versions page, remain after snapshot, and reconnect', async ({ page }) => {
+  test.setTimeout(120_000);
+  const created = await env.bridge.create(env.owner, { title: '成果版本分页', goal: '只读多版本', profileId: 'ops', profileVersion: 1,
+    resources: [{ type: 'instance', id: 101, role: 'primary' }], context: { subject: { kind: 'resource', resource: { type: 'instance', id: 101 } } },
+    idempotencyKey: crypto.randomUUID() }, { message: '合成版本 1', idempotencyKey: crypto.randomUUID() });
+  const id = created.investigation.id;
+  for (let version = 1; version <= 22; version++) {
+    await expect.poll(async () => { const [rows] = await env.pool.query('SELECT COUNT(*) AS n FROM investigation_results WHERE investigation_id=?', [id]); return Number(rows[0].n); }).toBe(version);
+    if (version < 22) {
+      const [rows] = await env.pool.query('SELECT version FROM investigations WHERE id=?', [id]);
+      await env.bridge.admit(env.owner, { investigationId: id, expectedVersion: Number(rows[0].version), message: `合成版本 ${version + 1}`, idempotencyKey: crypto.randomUUID() });
+    }
+  }
+  await login(page); await page.setViewportSize({ width: 1600, height: 950 });
+  await page.goto(`${env.url}/investigations?investigation=${id}`);
+  const context = page.locator('.workspace-context investigation-context'), select = context.getByRole('combobox', { name: '结果版本' });
+  await expect(select.locator('option')).toHaveCount(20);
+  await context.getByRole('button', { name: '加载更早结果版本', exact: true }).click();
+  await expect(select.locator('option')).toHaveCount(22);
+  const labels = await select.locator('option').allTextContents(); expect(labels.map(s => Number(s.match(/^V(\d+)/)![1]))).toEqual(Array.from({ length: 22 }, (_, i) => 22 - i));
+  const [versions] = await env.pool.query('SELECT id,run_id FROM investigation_results WHERE investigation_id=? ORDER BY version DESC', [id]);
+  expect(await select.locator('option').evaluateAll(options => options.map(o => (o as HTMLOptionElement).value))).toEqual(versions.map((v: any) => v.id));
+  expect(new Set(versions.map((v: any) => v.run_id)).size).toBe(22);
+  await select.selectOption(versions.at(-1).id);
+  // Await actual snapshot refresh HTTP delivery before asserting retained pages.
+  const refreshed = page.waitForResponse(response => response.url() === `${env.url}/api/investigations/${id}/results` && response.status() === 200);
+  await page.evaluate(id => (document.querySelector('investigations-page') as any).client.refreshInvestigation(id), id);
+  await refreshed;
+  await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.refreshing === undefined)).toBe(true);
+  await expect(select.locator('option')).toHaveCount(22); await expect(select).toHaveValue(versions.at(-1).id);
+  await observed(page);
+  env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(select.locator('option')).toHaveCount(20, { timeout: 15000 });
+  await context.getByRole('button', { name: '加载更早结果版本', exact: true }).click(); await expect(select.locator('option')).toHaveCount(22);
+  await page.reload(); await expect(select.locator('option')).toHaveCount(20);
+  await context.getByRole('button', { name: '加载更早结果版本', exact: true }).click(); await expect(select.locator('option')).toHaveCount(22);
+});
+
+for (const action of ['revocation', 'selection'] as const) {
+  test(`${action} cannot restore a delayed real HTTP history page`, async ({ page }) => {
+    const id = await pagedInvestigation(), other = action === 'selection' ? await pagedInvestigation() : '';
+    await login(page); await page.goto(`${env.url}/investigations?investigation=${id}`);
+    await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.online)).toBe(true);
+    await observed(page);
+    let release!: () => void, arrived!: () => void, delivered!: () => void;
+    const held = new Promise<void>(resolve => release = resolve), fetched = new Promise<void>(resolve => arrived = resolve), settled = new Promise<void>(resolve => delivered = resolve);
+    await page.evaluate(() => {
+      const c = (document.querySelector('investigations-page') as any).controller;
+      const load = c.loadHistory.bind(c);
+      (window as any).t06Page = { controller: c, settled: false };
+      c.loadHistory = async () => { try { await load(); } finally { (window as any).t06Page.settled = true; } };
+    });
+    await page.route(`**/api/investigations/${id}/facts?before=*`, async route => {
+      const response = await route.fetch(); expect(response.status()).toBe(200); arrived(); await held;
+      try { await route.fulfill({ response }); } finally { delivered(); }
+    });
+    try {
+      await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
+      if (action === 'revocation') {
+        await page.getByRole('button', { name: '创建手动调查', exact: true }).click();
+        await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('需随撤权清空的创建草稿');
+        await page.evaluate(() => (window as any).t06Page.form = document.querySelector('investigation-create'));
+        await env.pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
+        await expect(page.locator('.investigation-messages')).toHaveCount(0);
+        // Either the HTTP live recheck or WS revocation may close authority first.
+        await expect(page.getByRole('alert')).toContainText(/访问权限|登录已失效/);
+      } else {
+        const button = page.locator('.investigation-list button').filter({ hasText: '确定性分页调查' });
+        // Both records are recent; use the list's newest row for the other ID.
+        await button.first().click();
+        await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.detail?.id)).toBe(other);
+      }
+      release(); await settled;
+      await expect.poll(() => page.evaluate(() => (window as any).t06Page.settled)).toBe(true);
+      await expect.poll(() => page.evaluate(() => {
+        const c = (window as any).t06Page.controller;
+        return c.history.some((m: any) => m.content === '延迟分页 000');
+      })).toBe(false);
+      if (action === 'revocation') {
+        await expect(page.locator('.investigation-messages')).toHaveCount(0);
+        expect(await page.evaluate(() => { const c = (window as any).t06Page.controller; return [c.history.length, c.results.items.length, c.evidence.length]; })).toEqual([0, 0, 0]);
+        expect(await page.evaluate(() => {
+          const form = (window as any).t06Page.form;
+          return { open: form.open, goal: form.goal, title: form.investigationTitle, ids: form.ids };
+        })).toEqual({ open: false, goal: '', title: '', ids: '' });
+      } else await expect(page).toHaveURL(new RegExp(`investigation=${other}`));
+    } finally {
+      release();
+      if (action === 'revocation') await env.pool.query("INSERT IGNORE INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only')");
+    }
+  });
+}

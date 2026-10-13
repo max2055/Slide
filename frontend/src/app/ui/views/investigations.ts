@@ -137,8 +137,8 @@ export class InvestigationsPage extends LitElement {
       <app-dialog .open=${this.evidenceOpen && !c.forbidden} title="证据与成果" size="lg" @app-dialog-close=${() => this.evidenceOpen = false}>
         <investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context>
       </app-dialog>
-      <investigation-create .open=${this.createOpen} .client=${this.client} @investigation-create-close=${() => this.createOpen = false}
-        @investigation-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id); void c.loadList(); }}></investigation-create>
+      ${c.forbidden ? nothing : html`<investigation-create .open=${this.createOpen} .client=${this.client} @investigation-create-close=${() => this.createOpen = false}
+        @investigation-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id); void c.loadList(); }}></investigation-create>`}
     `}`;
   }
 }
