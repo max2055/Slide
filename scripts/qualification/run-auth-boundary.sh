@@ -24,4 +24,4 @@ AUTH_TEST_MYSQL_PORT="$port" AUTH_TEST_MYSQL_PASSWORD=qualification-test-passwor
   pnpm --filter slide-api exec vitest run src/auth/instance-boundary.mysql.test.ts \
     src/auth/require-instance-access.test.ts src/auth/security-boundaries.test.ts src/auth/chat-routes.test.ts \
     src/investigations/authorization.test.ts src/investigations/session-bridge.test.ts src/investigations/routes.test.ts \
-    src/investigations/profile-routes.test.ts
+    src/investigations/profile-routes.test.ts src/investigations/governance.mysql.test.ts
