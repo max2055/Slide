@@ -1,0 +1,6 @@
+{"kind":"authorization","authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:30:31.414Z","limits":{"requests":3,"tokens":32000,"output":2048},"historicalRequests":5,"historicalStopped":true}
+{"kind":"send","sequence":1,"inputUpperBound":4305,"outputCeiling":2048,"authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:32:30.619Z"}
+{"kind":"receipt","sequence":1,"usage":{"inputTokens":755,"outputTokens":191,"cachedInputTokens":0},"authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:32:32.522Z"}
+{"kind":"send","sequence":2,"inputUpperBound":8254,"outputCeiling":2048,"authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:32:32.770Z"}
+{"kind":"receipt","sequence":2,"usage":{"inputTokens":1714,"outputTokens":421,"cachedInputTokens":640},"authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:32:35.181Z"}
+{"kind":"stop","reason":"T09_REAL_RUN_NOT_COMPLETED","authorization":"01a135cd-25dd-7ab7-aca4-f92d31398f37","at":"2026-10-13T15:32:38.860Z"}

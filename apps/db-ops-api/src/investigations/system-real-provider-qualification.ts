@@ -32,7 +32,7 @@ const journal = process.env.T09_REAL_JOURNAL!, evidence = process.env.T09_REAL_E
 if (process.env.T09_REAL_AUTHORIZATION !== SYSTEM_REAL_AUTHORIZATION || !journal || !evidence
   || !process.env.T09_PROVIDER_ENV || !process.env.T09_REAL_ARTIFACTS) throw Error('T09_EXPLICIT_AUTHORIZATION_REQUIRED');
 const initial = readSystemJournal(journal);
-if (initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
+if (initial.entries[0].authorization !== SYSTEM_REAL_AUTHORIZATION || initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
 config({ path: process.env.T09_PROVIDER_ENV, quiet: true });
 const artifacts = resolve(process.env.T09_REAL_ARTIFACTS);
 mkdirSync(artifacts, { recursive: true, mode: 0o700 });
@@ -69,7 +69,7 @@ async function configuredProvider() {
     assert.equal(provider.getDefaultModel(), 'deepseek-flash');
     record({ configuration: { provider: p.name, model: provider.getDefaultModel(), outputCeiling: p.max_tokens,
       sharedOutputCeiling: stored.max_tokens, scene: 'fault_diagnosis via existing default route', sharedWrites: 0, prices,
-      authorization: SYSTEM_REAL_AUTHORIZATION, historicalRequests: 5, historicalStopped: true } });
+      authorization: SYSTEM_REAL_AUTHORIZATION, baseline: initial.entries[0], historicalRequests: 7, historicalStopped: true } });
     const client = (provider as any).client as { fetch: typeof fetch; maxRetries: number };
     assert.equal(client.maxRetries, 0);
     const originalFetch = client.fetch;
@@ -85,7 +85,11 @@ async function configuredProvider() {
       const upper = Buffer.byteLength(bodyText) + 1024;
       const send = reserveSystemSend(journal, upper, body.max_tokens);
       record({ send, requestHash: createHash('sha256').update(bodyText).digest('hex'),
-        requestBytes: Buffer.byteLength(bodyText), state: readSystemJournal(journal),
+        requestBytes: Buffer.byteLength(bodyText),
+        toolResultsSent: body.messages.filter((m: any) => m.role === 'tool').map((m: any) => ({
+          toolCallId: m.tool_call_id, contentHash: createHash('sha256').update(String(m.content)).digest('hex'),
+          signedSourceIncluded: String(m.content).includes('export function qualifyFailure'),
+        })), state: readSystemJournal(journal),
         checkpoint: send.sequence! >= 3 ? '100% requests: no further sends' : send.sequence! >= 2 ? '50% requests' : null });
       try {
         const response = await originalFetch(input, { ...init, redirect: 'error' });
@@ -101,7 +105,7 @@ async function configuredProvider() {
         record({ sequence: send.sequence, providerStatus: response.status, usage: raw.usage,
           finishReason: raw.choices[0].finish_reason, toolCalls: raw.choices[0].message.tool_calls ?? [],
           content: raw.choices[0].message.content, state,
-          checkpoint: state.totalTokens >= 25600 ? '80% tokens: no expansion' : state.totalTokens >= 16000 ? '50% tokens' : null });
+          checkpoint: state.cumulativeTokens >= 25600 ? '80% tokens: no expansion' : state.cumulativeTokens >= 16000 ? '50% tokens' : null });
         return response;
       } catch (error) {
         stopSystemSends(journal, safeCode(error)); throw Error(safeCode(error));
@@ -249,7 +253,7 @@ async function main() {
     assert.equal(eventDetail.investigationId, accepted.investigationId);
     const usage = readSystemJournal(journal);
     assert.equal(ledger[0].state, 'settled'); assert.equal(Number(ledger[0].charged_tokens), usage.totalTokens);
-    record({ completed: true, requests: usage.requests, cumulativeRequests: usage.cumulativeRequests, usage: usage.usage,
+    record({ completed: true, requests: usage.requests, cumulativeRequests: usage.cumulativeRequests, cumulativeTokens: usage.cumulativeTokens, usage: usage.usage,
       consumedTools: names, syntheticTargetAndSource: true, realProvider: 'deepseek/deepseek-flash',
       actualProviderCharge: 'unavailable; ledger cost uses configured estimate', familyAgentTokenTelemetry: 'unavailable' });
   } finally {

@@ -144,3 +144,16 @@ T08 PR163 合并 `1091de79cbc4e4a655af28e072934ee4a38c8d12` 后，父已移交�
 ### 共享装配首个 CI 的启动夹具修复
 
 共享候选 `8b3cdb05d7be76fff89ec0d354af79231528beee` / CI `38405825949` 为4成功/1失败/3跳过。后端全量3354通过、1失败、615既有条件跳过；T09的13项真实SQL测试已执行通过。唯一失败是 `lifecycle/metric-quality-startup.test.ts` 抽取正式 `startWorkers` 后没有提供由 `initializeApi` 新增的 `systemComposition`，报ReferenceError。本次装配触达的夹具依赖遗漏，已在该测试提供默认关闭的composition；原“首次/重复启动不得修改指标历史”断言、SQL路径及全部CI门禁不变。该直接回归1项通过；另2项既有MySQL opt-in未在此focused执行。原失败head不重试，修复head再收集准确CI；不将此首个CI的qualification跳过宣称通过。
+
+
+## v1.2.23 一次性追加授权与真实复验失败
+
+Max 授权评论 `01a13794-14e8-7972-84d2-dceb59de6552` 允许原 T09 场景加复验累计最多32000 token、最多3次新HTTP、每次输出不超过2048，失败即停。复验仍使用共享DB只读配置、原Provider factory和现有deepseek-flash；业务写入只在独占正式MySQL与合成签名源码中完成。
+
+`system-real-provider-budget.ts` 初始化必须显式传入本追加授权及下载的旧journal。验证旧SHA256 `5469172ebc7d9135248ec93c357202e76d966c20fe1fe5fed9abab84e3c40377`、2次已收据请求、2469 input/612 output/640 cached与stop；新journal引用旧3081 token基线，不重开旧账本或partial Run。初始化先用独占文件及fsync领取一次性授权，再创建新场景；中断/未知usage/锁或账本损坏失败关闭，不自动初始化替代场景。后续每次HTTP前以跨进程锁/fsync计数，保守输入字节上界+输出预留+累计已用不超过32k；缓存已含在input，T04原5次与未知token历史保留。
+
+新真实复验发送2次HTTP200，input2496+output474=2970 token（cached1152含于input）；T09合计6051 token，历史5次加旧T09两次加复验两次合计9请求。模型自主选择全部五个工具，收到原错误/manifest，源码结果已产生并持久化，但第三次HTTP前以CONTEXT_UNRECOVERABLE结束，未生成最终回答。新场景stop保留，不使用剩余一次请求、不重试。实际供应商费用与家族token遥测不可用；本轮ledger3444 microUSD仅配置估算。
+
+零调用诊断发现：16k上下文、2048输出和1024安全余量提供12928输入预算；此前离线估计漏计了完整reasoning/消息ID/运行时钟，真实路径会越界。保留全字段和原源码，仅将成功System工具JSON结果改为紧凑序列化，减少格式空白；结构化SQL receipt保持完整，失败对象保留原错误语义，恢复已返回工具采用同一表示。未增加上下文/调用预算、未放宽准入、未删除事实、reasoning或版本关联；没有修改源码同步链路。
+
+新增正式MySQL回归覆盖两个工具批次、全部五项工具、真实签名源码、reasoning与最终模型输入，旧代码partial/CONTEXT_UNRECOVERABLE，修复后受控completed；completed SQL故障后新进程/新fence恢复与终态重投只生成同一Run/一版结果/五份证据，不重发Provider。该受控回归及离线诊断不能替代修复后的真实复验。本次真实Run仍partial；planned真实completed存储故障未触发。父审查、修复后真实复验、准确新head CI与普通merge/main仍是完整出口，T11/T10/T12未释放。

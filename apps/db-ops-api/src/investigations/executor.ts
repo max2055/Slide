@@ -529,7 +529,7 @@ export class InvestigationExecutor {
             role: 'tool',
             tool_call_id: call.id,
             name: call.function.name,
-            content: JSON.stringify(state.tools[call.id].result, null, 2),
+            content: profile.id === 'system' ? JSON.stringify(state.tools[call.id].result) : JSON.stringify(state.tools[call.id].result, null, 2),
           })),
         };
         await this.persistCheckpoint(actor, binding, checkpoint);
@@ -586,6 +586,13 @@ export class InvestigationExecutor {
         chatStream: (messages, tools, callbacks, options) =>
           dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools]),
       };
+      // Compact only successful System JSON in the live model context. Keep the
+      // complete structured receipt for SQL evidence/recovery and preserve
+      // object failure semantics in ToolExecutor. No field or source text is cut.
+      const contextToolResult = (result: unknown) => profile.id === 'system' && result !== null
+        && typeof result === 'object' && (result as { success?: boolean }).success === true
+        && (result as { status?: string }).status !== 'error'
+        ? JSON.stringify(result) : result;
       let currentToolId: string | undefined;
       const effective = await this.transaction(async (c) =>
         this.authorization.authorize(
@@ -644,7 +651,7 @@ export class InvestigationExecutor {
             if (existing) {
               if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
                 throw new Error('INVESTIGATION_TOOL_UNKNOWN');
-              return existing.result;
+              return contextToolResult(existing.result);
             }
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
@@ -664,7 +671,7 @@ export class InvestigationExecutor {
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });
-            return result;
+            return contextToolResult(result);
           },
         });
       }

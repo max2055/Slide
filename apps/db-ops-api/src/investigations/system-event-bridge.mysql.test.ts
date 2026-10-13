@@ -250,6 +250,79 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       expect(await count('investigation_evidence')).toBe(1);
     } finally { await composition.close(); }
   }, 60_000);
+  it('five live System tools preserve complete JSON evidence within 16k, including provider reasoning and fenced completion recovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 't09-context-source-'));
+    let composition: Awaited<ReturnType<typeof createSystemComposition>> | undefined;
+    try {
+      const commitSha = 'a'.repeat(40), signingKey = randomUUID().repeat(2);
+      const repository = { origin: 'https://github.com', provider: 'github' as const, ref: commitSha, allowedPaths: ['src/'] };
+      const source = 'export function qualifyFailure() {\n  // Synthetic intent only: a slow fixture operation maps to HTTP 500.\n  return { status: 500, code: "SYNTHETIC_TIMEOUT", timeoutMs: 1000 };\n}\n';
+      const manifest = await new SourceSnapshotService(root, signingKey).publish({ releaseId: 'signed-fixture', commitSha,
+        projectId: 'fixture/repo', repository }, [{ path: 'src/system-fixture.ts', content: source }]);
+      const key = 'source.snapshot.' + createHash('sha256').update(JSON.stringify({ ...repository, projectId: 'fixture/repo' })).digest('hex');
+      await pool.execute('REPLACE INTO system_config(config_key,config_value) VALUES (?,?),(?,?)', ['source.gitlab',
+        JSON.stringify({ baseUrl: repository.origin, provider: repository.provider, ref: commitSha, allowedPaths: ['src/'],
+          repositoryPath: 'fixture/repo', allowModelContent: true }), key,
+        JSON.stringify({ releaseId: manifest.releaseId, commitSha, treeDigest: manifest.treeDigest })]);
+      vi.stubEnv('SLIDE_SOURCE_ROOT', root); vi.stubEnv('SLIDE_SOURCE_SIGNING_KEY', signingKey);
+      vi.stubEnv('SLIDE_RELEASE_MANIFEST', ''); vi.stubEnv('SLIDE_RELEASE_ID', 'fixture-release');
+      vi.stubEnv('SLIDE_COMMIT_SHA', commitSha); vi.stubEnv('SLIDE_SOURCE_DIGEST', manifest.treeDigest);
+      composition = await createSystemComposition(() => pool, { contexts, source: new SourceManagementService(() => pool as never),
+        configuration: { enabled: true, automatic: true, serviceUserId: serviceId },
+        budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100 } });
+      const input = failure({ occurredAt: new Date(Date.now() - 2 * 3600000).toISOString(),
+        stableErrorCode: 'SYNTHETIC_TIMEOUT', callsite: 'src/system-fixture.ts:qualifyFailure' });
+      const saved = await composition.bridge.record(input), accepted = await composition.bridge.deliver(saved.jobId);
+      let calls = 0;
+      const provider: LLMProvider = { getDefaultModel: () => 'controlled-five-tool-context',
+        getModelCapabilities: () => ({ model: 'controlled-five-tool-context', contextWindowTokens: 16000,
+          maxOutputTokens: 2048, preferredOutputTokens: 2048, source: 'configuration', version: 'fixture/v1' }),
+        chat: async (messages, _tools, options) => {
+          calls++; expect(options?.maxTokens).toBe(2048);
+          const toolCalls = calls === 1 ? ['get_platform_observations', 'get_deployment_manifest'].map(name => ({ id: name, name, arguments: {} }))
+            : calls === 2 ? [{ id: 'symbol', name: 'get_symbol_definition', arguments: { name: 'qualifyFailure' } },
+              { id: 'search', name: 'search_source', arguments: { query: 'SYNTHETIC_TIMEOUT' } },
+              { id: 'source', name: 'read_source_region', arguments: { path: 'src/system-fixture.ts', startLine: 1, endLine: 200 } }] : [];
+          if (calls === 3) {
+            const received = messages.filter(m => m.role === 'tool').map(m => JSON.parse(String(m.content)));
+            expect(received).toHaveLength(5); expect(received.every(r => r.success)).toBe(true);
+            expect(JSON.stringify(received)).toContain(input.sourceEventId);
+            expect(received.find(r => r.data.content)?.data.content).toBe(source);
+            expect(JSON.stringify(received)).toContain('SYSTEM_EVENT_WINDOW_TRUNCATED');
+          }
+          return { content: calls === 3 ? 'SYNTHETIC_TIMEOUT：源码已读取，根因未验证。' : null,
+            finishReason: calls < 3 ? 'tool_calls' : 'stop', toolCalls, hasToolCalls: calls < 3, shouldExecuteTools: calls < 3,
+            _extra: { reasoning_content: 'diagnostic reasoning '.repeat(33) }, usage: { prompt_tokens: 20, completion_tokens: 10 } };
+        }, chatStream: async () => { throw Error('STREAM_NOT_EXPECTED'); } };
+      const workerId = 'five-tool-context', store = new MysqlWorkflowStore(() => pool as never);
+      const job = await store.claim(workerId, 120, { types: ['investigation.execute'], exclude: false }); expect(job).toBeTruthy();
+      const executor = new InvestigationExecutor({ pool: () => pool, authorization,
+        systemToolsForInvestigation: composition.toolsForInvestigation, toolsForActor: () => new ToolRegistry(),
+        providerForPurpose: async () => provider, budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100 } });
+      const command = { investigationId: accepted.investigationId!, requestId: accepted.requestId!, job: job!,
+        context: { workerId, fencingToken: job!.fencingToken, signal: new AbortController().signal } };
+      await pool.query(`CREATE TRIGGER t09_context_completion_failure BEFORE UPDATE ON agent_runs FOR EACH ROW
+        BEGIN IF NEW.state='completed' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='T09_CONTEXT_COMPLETION_FAILURE'; END IF; END`);
+      try { await expect(executor.execute(command)).rejects.toThrow('T09_CONTEXT_COMPLETION_FAILURE'); }
+      finally { await pool.query('DROP TRIGGER t09_context_completion_failure'); }
+      expect(calls).toBe(3);
+      const [pending] = await pool.query<RowDataPacket[]>('SELECT id,state,result_json FROM agent_runs');
+      expect(pending).toHaveLength(1); expect(pending[0].state).toBe('running');
+      expect(pending[0].result_json.completionPending).toBe(true);
+      await pool.execute('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [job!.id]);
+      const next = await store.claim('five-tool-recovery', 120, { types: ['investigation.execute'], exclude: false });
+      expect(next!.fencingToken).toBeGreaterThan(job!.fencingToken);
+      const recoveredCommand = { investigationId: accepted.investigationId, requestId: accepted.requestId, job: next,
+        context: { workerId: 'five-tool-recovery', fencingToken: next!.fencingToken } };
+      const recover = () => JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', 'src/investigations/system-event-recovery-child.ts'], {
+        cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, SYSTEM_RECOVERY_FIXTURE: JSON.stringify({ port, database, serviceId,
+          investigationId: accepted.investigationId, composed: true, quota, execute: recoveredCommand }) },
+      }));
+      const first = recover(); expect(first).toMatchObject({ runId: pending[0].id, state: 'completed', results: 1, evidence: 5, toolMessages: 5 });
+      expect(recover()).toEqual(first); expect(calls).toBe(3);
+      expect(await count('investigation_results')).toBe(1); expect(await count('agent_runs')).toBe(1);
+    } finally { await composition?.close(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
+  }, 60000);
   it('durable original precedes admission; 100 retries and immutable conflicts survive recreation', async () => {
     const input = failure();
     const writes = await Promise.all(Array.from({ length: 100 }, () => bridge.record(input)));
