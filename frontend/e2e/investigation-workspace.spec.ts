@@ -243,7 +243,15 @@ test('history over 200 canonical facts loads older pages and survives reload', a
     await expect(page.locator('.investigation-messages')).toContainText('分页事实 000');
     await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toHaveCount(0);
   };
-  await loadAll(); await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('分页事实 204'); await loadAll();
+  await loadAll();
+  env.disconnectObservers();
+  await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(page.locator('.investigation-messages')).toContainText('分页事实 204', { timeout: 15000 });
+  await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toBeVisible();
+  await loadAll();
+  const text = await page.locator('.investigation-messages').innerText();
+  expect(text.indexOf('分页事实 000')).toBeLessThan(text.indexOf('分页事实 204'));
+  await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('分页事实 204'); await loadAll();
   const [rows] = await env.pool.query('SELECT COUNT(*) AS n,COUNT(DISTINCT message_id) AS distinct_n FROM chat_messages WHERE session_id=?', [session.session_id]);
   expect(Number(rows[0].n)).toBe(Number(rows[0].distinct_n));
 });

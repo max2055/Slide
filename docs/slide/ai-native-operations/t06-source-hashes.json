@@ -1,6 +1,6 @@
 {
   "frontend/e2e/fixtures/investigation-server.ts": "1cae92e2c8ca3800121d408c63409fddc7bfd642c77fd6bfa81b61ced7bb1424",
-  "frontend/e2e/investigation-workspace.spec.ts": "4ccd3c98f9c269d6c98d9eb741a64669811f2c8e123d1cc92f881398d911ffe1",
+  "frontend/e2e/investigation-workspace.spec.ts": "6c74b9a14ddc557b0b002bcb7ed53aac38b472e097dde94983dafe36ed29bb0f",
   "frontend/src/app/i18n/locales/en.ts": "3759aeb95962a0628361654b1c156c76f715435cebd570bbbbe5ce842e1481e0",
   "frontend/src/app/i18n/locales/zh-CN.ts": "87710d9af5be658c03ad6da7777dbcd36b046d6687a94340df76f55b38884bc0",
   "frontend/src/app/ui/app-navigation.integration.test.ts": "0224f14e32ca6b93ec248e8919e3861272de3924dba93f91f73d081241431e22",
@@ -14,8 +14,8 @@
   "frontend/src/app/ui/components/investigation-context.ts": "ea08ef298b4f721d66eb18685d553d9297b4db3511f8c562ac94fb4be6292c92",
   "frontend/src/app/ui/components/investigation-create.ts": "c41d713fa069dfd9f7e1fb5dc5fe36d679867b9374feb44d350e8b9e4a8ba58a",
   "frontend/src/app/ui/controllers/investigation-api.ts": "75364d733294a4c2ffc27f7072f5d38282f824791d447dfe1009a1458ca36331",
-  "frontend/src/app/ui/controllers/investigations.test.ts": "023c6b850cd347b9f2b49c4b4eb4aff912809c571e9f81e8d943dc27342437d1",
-  "frontend/src/app/ui/controllers/investigations.ts": "46b8510f6cd82ef2ad83f2c5619ffed547a44bcf9a946f8842623b688f8679e2",
+  "frontend/src/app/ui/controllers/investigations.test.ts": "2196b75cef68a08a6814ab41dc1f20f8265c606cb38d4bcc12d41b3ec5a5047f",
+  "frontend/src/app/ui/controllers/investigations.ts": "4a823bb0c9ad55b2fb9e32e5c0f4b8f5aca209187b99be3e4e2ac7c2b4e3b0b7",
   "frontend/src/app/ui/direct-gateway.ts": "b5d0051a310bc19e8d864ac8a5ec35c2e62a6ee09d82e661fc079e1d083946a7",
   "frontend/src/app/ui/navigation.ts": "9c58fd2826db5ed61abe7f582918c7cbba906ba5db367346cbd42de2af14df85",
   "frontend/src/app/ui/views/__tests__/navigation-cleanup.test.ts": "3e698fa1caa99eb215fb424fc7ca7bdd6e42107fead66792894992147fcf8887",

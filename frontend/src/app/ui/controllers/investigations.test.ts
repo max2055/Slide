@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { createMessageProjection } from '../../../../../packages/agent-core/src/message-projection.ts';
-import { applyInvestigationEvent, InvestigationsController } from './investigations.ts';
+import { applyInvestigationEvent, investigationMessages, InvestigationsController } from './investigations.ts';
 import { InvestigationApiError, investigationApi, type InvestigationSnapshot } from './investigation-api.ts';
 vi.mock('./investigation-api.ts', async importOriginal => ({ ...await importOriginal<object>(), investigationApi: vi.fn() }));
 const api = vi.mocked(investigationApi);
@@ -94,9 +94,35 @@ it('coalesced refresh services the newly selected investigation after an old rea
   const old = (c as any).refreshFacts();
   (c as any).generation++; (c as any).id = 'two';
   const next = (c as any).refreshFacts();
-  releases[0]({ id: 'one' }); releases[1]({ items: [], nextBefore: null });
-  await vi.waitFor(() => expect(api.mock.calls.length).toBe(4));
-  expect(api.mock.calls[2][0]).toBe('/two');
-  releases[2]({ id: 'two' }); releases[3]({ items: [], nextBefore: null });
+  releases[0]({ id: 'one' }); releases[1]({ items: [], nextBefore: null }); releases[2]({ documents: [], nextBefore: null });
+  await vi.waitFor(() => expect(api.mock.calls.length).toBe(6));
+  expect(api.mock.calls[3][0]).toBe('/two');
+  releases[3]({ id: 'two' }); releases[4]({ items: [], nextBefore: null }); releases[5]({ documents: [], nextBefore: null });
   await Promise.all([old, next]); expect(c.detail?.id).toBe('two');
+});
+it('overlapping history and snapshots preserve canonical order and IDs', () => {
+  const value = snapshot();
+  value.documents = ['older', 'middle', 'latest'].map(id => ({ id, role: 'user', parts: [], legacy: { id, role: 'user', content: id } })) as any;
+  expect(investigationMessages(value, [{ id: 'middle' }, { id: 'latest' }]).map(m => m.id)).toEqual(['older', 'middle', 'latest']);
+  expect(investigationMessages(value, [{ id: 'before' }, { id: 'middle' }, { id: 'latest' }, { id: 'newer' }]).map(m => m.id)).toEqual(['before', 'older', 'middle', 'latest', 'newer']);
+});
+it('an older concurrent result page cannot duplicate versions or rewind a cursor', async () => {
+  const releases: Array<(v: any) => void> = [];
+  api.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+  const c = new InvestigationsController(() => {}, null);
+  c.results = { items: [{ id: 'latest' }], nextBefore: 'page1' } as any;
+  const first = c.loadResults(), duplicate = c.loadResults();
+  releases[0]({ items: [{ id: 'old' }], nextBefore: 'page2' }); await first;
+  const next = c.loadResults(); releases[2]({ items: [{ id: 'oldest' }], nextBefore: null }); await next;
+  releases[1]({ items: [{ id: 'old' }], nextBefore: 'page2' }); await duplicate;
+  expect(c.results.items.map(r => r.id)).toEqual(['latest', 'old', 'oldest']); expect(c.results.nextBefore).toBeNull();
+});
+it('switching selection during a submission does not leave the new view permanently busy', async () => {
+  let release!: (v: any) => void;
+  api.mockImplementation((_path, options) => options?.method === 'POST' ? new Promise(resolve => release = resolve) :
+    Promise.resolve(_path.endsWith('/facts') ? { documents: [], nextBefore: null } : _path.endsWith('/results') ? { items: [], nextBefore: null } : { id: 'two' }) as any);
+  const c = new InvestigationsController(() => {}, null);
+  const pending = c.create({ title: 'one' } as any, false);
+  await c.select('two'); release({ id: 'one' }); await pending;
+  expect(c.busy).toBe(false); expect(c.detail?.id).toBe('two');
 });

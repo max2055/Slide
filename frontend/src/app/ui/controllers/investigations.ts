@@ -55,7 +55,12 @@ export function investigationMessages(snapshot: InvestigationSnapshot | null, hi
       messages.set(factId, { ...saved, id: doc.id, role: doc.role, runId: doc.runId, messageParts: doc });
     }
   }
-  return [...messages.values()];
+  const documents = snapshot?.documents ?? [];
+  const ids = new Set(documents.map(d => d.id));
+  const firstShared = history.findIndex(m => ids.has(m.id));
+  const ordered = firstShared < 0 ? [...history.map(m => m.id), ...documents.map(d => d.id)]
+    : [...history.slice(0, firstShared).map(m => m.id), ...documents.map(d => d.id), ...history.slice(firstShared).map(m => m.id)];
+  return [...new Set([...ordered, ...messages.keys()])].map(id => messages.get(id)!);
 }
 
 export class InvestigationsController {
@@ -73,6 +78,7 @@ export class InvestigationsController {
   private refreshing?: Promise<void>;
   private refreshAgain = false;
   private unsubscribe?: () => void;
+  private submission?: object;
   private pending?: { signature: string; key: string; path: string; body: unknown };
   get acceptanceUnknown() { return !!this.pending && !this.busy; }
   private filters = '';
@@ -88,7 +94,7 @@ export class InvestigationsController {
     this.generation++; this.contentEpoch++; this.listGeneration++; this.detail = null; this.snapshot = null; this.history = [];
     this.results = { items: [], nextBefore: null }; this.evidence = [];
     this.list = { items: [], authorizedCounts: { total: 0 }, nextCursor: null };
-    this.forbidden = true; this.loading = false; this.detailLoading = false; this.online = false; this.busy = false; this.cancelRequested = false; this.pending = undefined;
+    this.forbidden = true; this.loading = false; this.detailLoading = false; this.online = false; this.busy = false; this.cancelRequested = false; this.pending = undefined; this.submission = undefined;
     this.historyBefore = null; this.unsubscribe?.(); this.unsubscribe = undefined;
   }
   dispose() { this.disposed = true; this.clearSensitive(); }
@@ -162,12 +168,15 @@ export class InvestigationsController {
     const id = this.id;
     const epoch = this.contentEpoch, ordinal = ++this.refreshOrdinal;
     try {
-      const [detail, results, evidence] = await Promise.all([
+      const [detail, results, facts, evidence] = await Promise.all([
         investigationApi<InvestigationRecord>(`/${id}`), investigationApi<InvestigationResultPage>(`/${id}/results`),
+        investigationApi<FactPage>(`/${id}/facts`),
         Promise.all((this.snapshot?.evidenceIds ?? []).map(eid => investigationApi<InvestigationEvidence>(`/${id}/evidence/${eid}`))),
       ]);
       if (generation !== this.generation || epoch !== this.contentEpoch || ordinal !== this.refreshOrdinal || this.disposed) return;
       this.detail = detail; this.results = results; this.evidence = evidence;
+      if (!this.history.length) this.historyBefore = facts.nextBefore;
+      this.history = [...new Map([...this.history, ...factMessages(facts)].map(m => [m.id, m])).values()];
       if (!detail.activeRequestId) this.cancelRequested = false;
       this.update();
     } catch (error) { if (generation === this.generation && epoch === this.contentEpoch) this.fail(error); }
@@ -175,21 +184,21 @@ export class InvestigationsController {
   async loadHistory() {
     if (!this.historyBefore || !this.detail) return;
     const generation = this.generation;
-    const epoch = this.contentEpoch;
+    const epoch = this.contentEpoch, cursor = this.historyBefore;
     try {
-      const facts = await investigationApi<FactPage>(`/${this.id}/facts?before=${encodeURIComponent(this.historyBefore)}`);
-      if (generation !== this.generation || epoch !== this.contentEpoch) return;
-      this.history = [...factMessages(facts), ...this.history]; this.historyBefore = facts.nextBefore; this.update();
+      const facts = await investigationApi<FactPage>(`/${this.id}/facts?before=${encodeURIComponent(cursor)}`);
+      if (generation !== this.generation || epoch !== this.contentEpoch || cursor !== this.historyBefore) return;
+      this.history = [...new Map([...factMessages(facts), ...this.history].map(m => [m.id, m])).values()]; this.historyBefore = facts.nextBefore; this.update();
     } catch (error) { if (generation === this.generation && epoch === this.contentEpoch) this.fail(error); }
   }
   async loadResults() {
     if (!this.results.nextBefore) return;
     const generation = this.generation;
-    const epoch = this.contentEpoch;
+    const epoch = this.contentEpoch, cursor = this.results.nextBefore;
     try {
-      const page = await investigationApi<InvestigationResultPage>(`/${this.id}/results?before=${this.results.nextBefore}`);
-      if (generation !== this.generation || epoch !== this.contentEpoch) return;
-      this.results = { ...page, items: [...this.results.items, ...page.items] }; this.update();
+      const page = await investigationApi<InvestigationResultPage>(`/${this.id}/results?before=${cursor}`);
+      if (generation !== this.generation || epoch !== this.contentEpoch || cursor !== this.results.nextBefore) return;
+      this.results = { ...page, items: [...new Map([...this.results.items, ...page.items].map(r => [r.id, r])).values()] }; this.update();
     } catch (error) { if (generation === this.generation && epoch === this.contentEpoch) this.fail(error); }
   }
   async retryPending() {
@@ -208,6 +217,7 @@ export class InvestigationsController {
     this.pending ??= { signature, key: crypto.randomUUID(), path, body: structuredClone(body) };
     const generation = this.generation;
     const pending = this.pending;
+    const submission = this.submission = {};
     this.busy = true; this.error = ''; this.update();
     try {
       const result = await investigationApi<T>(path, { method: 'POST', headers: { 'Idempotency-Key': this.pending.key }, body: JSON.stringify(body) });
@@ -215,12 +225,12 @@ export class InvestigationsController {
       if (generation !== this.generation || this.disposed) return;
       return result;
     } catch (error) {
-      if (error instanceof InvestigationApiError && error.status < 500) if (this.pending === pending) this.pending = undefined;
+      if (error instanceof InvestigationApiError && error.status < 500 && this.pending === pending) this.pending = undefined;
       if (generation === this.generation) {
         if (error instanceof InvestigationApiError && error.code === 'INVESTIGATION_OPERATION_FORBIDDEN') { this.operationForbidden = true; this.error = investigationErrorText(error); this.update(); }
         else this.fail(error);
       }
-    } finally { if (generation === this.generation) { this.busy = false; this.update(); } }
+    } finally { if (this.submission === submission) { this.submission = undefined; this.busy = false; this.update(); } }
   }
   async create(body: InvestigationCreateRequest, observe = true) {
     const result = await this.submit<InvestigationAccepted>('', body);
