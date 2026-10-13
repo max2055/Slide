@@ -16,7 +16,7 @@ import { AnalysisDispatchStore } from '../analysis/analysis-dispatch-store.js';
 
 /** Explicit fixture port or a new disposable container. Never fall back to
  * platform DB configuration. All suites apply the formal migrations. */
-export async function bridgeTestFixture() {
+export async function bridgeTestFixture(connectionLimit = 12) {
   let port = Number(process.env.T08_TEST_MYSQL_PORT), container: string | undefined;
   if (!port) {
     container=`slide-t08-${process.pid}-${randomUUID()}`;
@@ -32,7 +32,7 @@ export async function bridgeTestFixture() {
     await new Promise(resolve=>setTimeout(resolve,500));
   } }
   await admin.query(`CREATE DATABASE ${database}`);
-  const pool: Pool = mysql.createPool({ ...options, database, connectionLimit: 12 });
+  const pool: Pool = mysql.createPool({ ...options, database, connectionLimit });
   await new MigrationRunner(pool).run();
   await new MigrationRunner(pool).run();
   await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:view','AI read','ai','view'),('ai:manage','AI manage','ai','manage')");
@@ -60,13 +60,13 @@ export async function bridgeTestFixture() {
     () => ({ configured: true, serviceUserId: serviceId, instanceIds: [101,102], policyId: 'database-alert-pilot', policyVersion: 1 }));
   let oldCalls = 0;
   const alerts = new Map<number, DatabaseAlertSource>();
-  const old = async () => {
+  const oldFor = (alert: DatabaseAlertSource) => async () => {
     oldCalls++;
-    const alert=[...alerts.values()].at(-1)!;
     return new AnalysisDispatchStore(()=>pool).enqueue({analysisType:'alert_rca',cacheKey:`alert:${alert.id}:instance:${alert.instance_id}`,
       triggerType:'manual',relatedId:alert.id,request:{purpose:'alert_rca',subject:{type:'instance',id:alert.instance_id!},actor:owner,
         message:'Synthetic persisted legacy input',systemPrompt:'Read only',evidenceVersion:'fixture',configVersion:'fixture',authorizationVersion:'fixture'}});
   };
+  const old = () => oldFor([...alerts.values()].at(-1)!)();
   const source = (id: number, metric = 'cpu_usage', instance = 101): DatabaseAlertSource => {
     const value = { id, instance_id: instance, title: `CPU/慢SQL ${metric}`, message: '受控只读事实', level: 'critical',
       created_at: new Date('2026-10-13T10:00:00Z'), metric_name: metric };
@@ -87,7 +87,7 @@ export async function bridgeTestFixture() {
     return Number(insert.insertId);
   };
   return { pool, admin, app, contexts, authorization, bridge, legacy, alertBridge, owner, other, serviceId, flags,
-    source, headers, count, insertLegacy, old, oldCalls: () => oldCalls,
+    source, headers, count, insertLegacy, old, oldFor, oldCalls: () => oldCalls,
     close: async () => { try { await app.close(); await pool.end(); await admin.query(`DROP DATABASE ${database}`); await admin.end(); }
       finally { if(container)execFileSync('docker',['stop','--time','10',container],{stdio:'pipe'}); } } };
 }
