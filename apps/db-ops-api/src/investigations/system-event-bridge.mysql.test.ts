@@ -22,6 +22,9 @@ import { SourceSnapshotService } from '../platform/source-snapshot-service.js';
 import { SourceManagementService } from '../platform/source-management-service.js';
 import { createSystemComposition } from './system-composition.js';
 import { registerSystemEventRoutes, SystemEventReader } from './system-event-routes.js';
+import { InvestigationExecutor } from './executor.js';
+import { MysqlWorkflowStore } from '../workflows/worker-runtime.js';
+import { ToolRegistry, type LLMProvider } from '@slide/agent-core';
 
 // Always a run-owned mysql:8.4, formal migrations, TCP HTTP/JWT and independent
 // process recovery. No skip, external Provider request or production DB access.
@@ -90,10 +93,11 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
     await pool.execute("UPDATE users SET status = 'active', session_version = 1 WHERE id IN (?, 9901)", [serviceId]);
     await pool.execute(`INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions
       WHERE code IN ('chat:view', 'config:view')`, [roleId]);
-    for (const table of ['investigation_event_links', 'operational_events', 'investigation_trigger_keys', 'investigation_trigger_cooldowns',
+    for (const table of ['investigation_results', 'investigation_evidence', 'investigation_stream_events', 'investigation_stream_heads',
+      'investigation_observed_sources', 'agent_canonical_facts', 'investigation_event_links', 'operational_events', 'investigation_trigger_keys', 'investigation_trigger_cooldowns',
       'investigation_budget_resources', 'investigation_budget_ledger', 'investigation_budget_domains', 'investigation_create_keys',
       'investigation_admission_keys', 'investigation_requests', 'investigation_members', 'investigation_resources', 'investigations',
-      'chat_messages', 'chat_sessions', 'workflow_jobs', 'outbox_events']) await pool.execute(`DELETE FROM ${table}`);
+      'chat_messages', 'agent_runs', 'chat_sessions', 'workflow_jobs', 'outbox_events']) await pool.execute(`DELETE FROM ${table}`);
     actor = { ...await contexts.loadInvestigationActorFrom(pool as never, serviceId, 'service', 1),
       resourceBoundary: { instanceIds: [], serverIds: [], networkDeviceIds: [] } };
     bridge = build(); publisher = new SystemFailurePublisher(f => bridge.record(f)); uninstall = installSystemFailurePublisher(publisher);
@@ -103,6 +107,44 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
     } finally { if (container) execFileSync('docker', ['stop', '--time', '10', container], { stdio: 'pipe' }); }
   }, 30_000);
+
+  it.each([
+    { age: 2 * 3_600_000, gap: 'SYSTEM_EVENT_WINDOW_TRUNCATED' },
+    { age: 7 * 24 * 3_600_000, gap: 'SYSTEM_EVENT_WINDOW_TRUNCATED' },
+    { age: -2 * 3_600_000, gap: 'SYSTEM_EVENT_CLOCK_AHEAD' },
+  ])('event age $age keeps original evidence after restart with a bounded query and explicit $gap', async ({ age, gap }) => {
+    const input = failure({ occurredAt: new Date(Date.now() - age).toISOString() });
+    const saved = await bridge.record(input);
+    // New bridge instance consumes the persistent backlog, not process memory.
+    const accepted = await build().deliver(saved.jobId); target = accepted.investigationId!;
+    expect(accepted.disposition).toBe('accepted');
+    const [rows] = await pool.execute<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id = ?', [accepted.requestId]);
+    const snapshot = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    const originalContext = JSON.stringify(snapshot.context);
+    expect(snapshot.context.from).toBe(input.occurredAt);
+    const composition = await createSystemComposition(() => pool, { configuration: { enabled: false, automatic: false, serviceUserId: 0 }, contexts });
+    try {
+      const registry = composition.toolsForInvestigation(actor, snapshot);
+      expect(registry.getDefinitions()).toHaveLength(5);
+      const result = await registry.get('get_platform_observations')!.execute({}) as any;
+      expect(result.data).toMatchObject({ eventOccurredAt: input.occurredAt, receivedAt: snapshot.context.to,
+        observedFrom: input.occurredAt, gaps: expect.arrayContaining([gap]), quality: 'degraded' });
+      expect(Date.parse(result.data.observedTo) - Date.parse(result.data.observedFrom)).toBe(age > 0 ? 3_600_000 : 0);
+      expect(result.data.facts).toHaveLength(1);
+      expect(result.data.facts[0].event).toMatchObject({ sourceEventId: input.sourceEventId, occurredAt: input.occurredAt,
+        correlationId: input.correlationId, commitSha: input.commitSha });
+      expect(JSON.stringify(snapshot.context)).toBe(originalContext);
+      const child = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', 'src/investigations/system-event-recovery-child.ts'], {
+        cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, SYSTEM_RECOVERY_FIXTURE: JSON.stringify({ port, database, serviceId,
+          investigationId: target, composed: true }) },
+      }));
+      expect(child).toMatchObject({ count: 1, sourceEventId: input.sourceEventId, contentHash: result.data.facts[0].contentHash,
+        observedFrom: input.occurredAt, observedTo: result.data.observedTo, receivedAt: snapshot.context.to, gaps: expect.arrayContaining([gap]) });
+      // Live revocation still erases evidence from the already built registry.
+      await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code='config:view'", [roleId]);
+      await expect(registry.get('get_platform_observations')!.execute({})).rejects.toMatchObject({ code: 'INVESTIGATION_NOT_FOUND' });
+    } finally { await composition.close(); }
+  }, 60_000);
 
   it('durable original precedes admission; 100 retries and immutable conflicts survive recreation', async () => {
     const input = failure();

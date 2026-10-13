@@ -5,6 +5,7 @@ import { MysqlSystemEventBridge } from './system-event-bridge.js';
 import { MysqlOperationalEventIngest } from './event-ingest.js';
 import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import type { TriggerBinding } from './trigger-policy.js';
+import { createSystemComposition } from './system-composition.js';
 
 // Test-only independent process; fixture schema/identity passed by the owning
 // integration test. No production environment/provider/model configuration.
@@ -14,9 +15,22 @@ try {
   const contexts = new ActorContextService(() => pool as never), authorization = new InvestigationAuthorization(contexts);
   const actor = { ...await contexts.loadInvestigationActorFrom(pool as never, input.serviceId, 'service', 1),
     resourceBoundary: { instanceIds: [], serverIds: [], networkDeviceIds: [] } };
-  const binding: TriggerBinding = { ...input.binding, policy: { ...input.binding.policy, actor } };
-  const ledger = new MysqlInvestigationBudgetLedger(() => pool, input.quota);
-  const bridge = new MysqlSystemEventBridge(() => pool, [binding], b => new MysqlOperationalEventIngest(() => pool, b, ledger, authorization), authorization);
-  const facts = await bridge.readFacts(actor, input.investigationId, input.scope);
-  process.stdout.write(JSON.stringify({ count: facts.length, sourceEventId: facts[0]?.event.sourceEventId, contentHash: facts[0]?.contentHash }));
+  if (input.composed) {
+    const [rows] = await pool.query<any[]>('SELECT request_snapshot FROM investigation_requests WHERE investigation_id = ? ORDER BY created_at LIMIT 1', [input.investigationId]);
+    const snapshot = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    const composition = await createSystemComposition(() => pool, { contexts, configuration: { enabled: false, automatic: false, serviceUserId: 0 } });
+    try {
+      const result = await composition.toolsForInvestigation(actor, snapshot).get('get_platform_observations')!.execute({}) as any;
+      const facts = result.data.facts;
+      process.stdout.write(JSON.stringify({ count: facts.length, sourceEventId: facts[0]?.event.sourceEventId,
+        contentHash: facts[0]?.contentHash, observedFrom: result.data.observedFrom, observedTo: result.data.observedTo,
+        receivedAt: result.data.receivedAt, gaps: result.data.gaps }));
+    } finally { await composition.close(); }
+  } else {
+    const binding: TriggerBinding = { ...input.binding, policy: { ...input.binding.policy, actor } };
+    const ledger = new MysqlInvestigationBudgetLedger(() => pool, input.quota);
+    const bridge = new MysqlSystemEventBridge(() => pool, [binding], b => new MysqlOperationalEventIngest(() => pool, b, ledger, authorization), authorization);
+    const facts = await bridge.readFacts(actor, input.investigationId, input.scope);
+    process.stdout.write(JSON.stringify({ count: facts.length, sourceEventId: facts[0]?.event.sourceEventId, contentHash: facts[0]?.contentHash }));
+  }
 } finally { await pool.end(); }
