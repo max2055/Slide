@@ -101,7 +101,7 @@ export async function startInvestigationServer() {
         const [events] = await pool.query('SELECT source_key,event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence', [args[1]]);
         const diagnostic = { code: e.code, stack: e.stack, events: events.filter((row: any) => String(row.source_key).startsWith('parts:')).map((row: any) => {
           const event = typeof row.event_json === 'string' ? JSON.parse(row.event_json) : row.event_json;
-          const { schemaVersion, investigationId, sequence, ...input } = event;
+          const { schemaVersion: _schemaVersion, investigationId: _investigationId, sequence, ...input } = event;
           const source = String(row.source_key), expectedHash = source.split(':').at(-1);
           return { source, sequence, payloadSequence: input.payload.sequence,
             hashWithStoredPayloadSequence: evidenceHash(input), hashWithOriginalPayloadSequence: evidenceHash({ ...input, payload: { ...input.payload, sequence: 0 } }), expectedHash };

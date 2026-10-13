@@ -22,6 +22,7 @@
 | `pnpm lint` | 通过 |
 | `pnpm contracts:check` | 通过；未改变公开契约 |
 | `git diff --check` | 通过 |
+| `pnpm --filter slide-frontend test:browser` | 120 项通过；覆盖既有业务 UI、明暗导航可读性与旧 dashboard 深链 |
 | `T06_TEST_MYSQL_PORT=62480 pnpm --filter slide-frontend exec playwright test e2e/investigation-workspace.spec.ts --workers=1` | **10 通过、2 失败、0 skip/未运行**；未通过完整验收 |
 
 真实验收用本次隔离 MySQL 8.4 容器、每个 fixture 独立 schema、正式 migrations、实时 JWT/主体/资源权限、Fastify HTTP、DirectAdapter WS、MysqlWorkflowStore/WorkerRuntime、正式 InvestigationExecutor。只有 Provider 输出与只读目标工具为合成数据；没有外部模型请求。fixture 退出回收服务并 DROP 自建 schema。本次测试容器 `slide-max148-mysql` 结束后停止，未动其他服务。实际 token/费用遥测不可用，不把合成 usage 数字当真实消耗。
@@ -43,6 +44,8 @@
 - `stream.ts:249` 的 tick catch 将这类存储错误关闭为撤权 4001，错误语义也需要后端所有者复核。
 
 请父任务协调具备后端所有权的修复：幂等比较的规范化/检查点重捕获，及非授权存储失败的 WS 处理。随后以当前 PR 源码重跑完整 T06 浏览器验收。不得通过降低观察频率、吞错、跳过探针或把 4001 当网络重连掩盖。
+
+初始 head `ea037e9d` 的 CI browser 为 118 通过 / 2 失败，定位为本次菜单重组后旧 `/dashboard` 深链没有激活导航项，属于本次引入。已在必要导航 helper 让该深链激活关注事项，增加集成断言；本地同一 browser gate 120/120 通过。新的提交须重新取得当前 head CI，旧 CI 结果不复用。
 
 另有需后端复核的顺序风险：`stream.ts:99` 按秒精度 created_at 和随机 Run ID 排序，`routes.ts:118` 以 at(-1) 派生无 active request 时的执行状态；同秒多 Run 的顺序不等同接受版本顺序。前端直接消费 derivedRunState，没有拿旧成果的 runId 冒充最新取消 Run。
 

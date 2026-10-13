@@ -27,7 +27,8 @@ it('keeps heavy views deferred and filters visible navigation by permissions', a
   expect(container.querySelector('a[href="/audit"]')).not.toBeNull();
   expect(container.querySelector('a[href="/investigations"]')).toBeNull();
   host.tab = 'dashboard';
-  renderApp(host);
+  render(renderApp(host), container);
+  expect(container.querySelector('a[href="/attention"].nav-item--active')).not.toBeNull();
   await vi.waitFor(() => expect(loaded.dashboard).toHaveBeenCalledOnce());
   renderApp(host);
   expect(loaded.dashboard).toHaveBeenCalledOnce();

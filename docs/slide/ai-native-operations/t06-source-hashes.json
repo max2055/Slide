@@ -1,10 +1,11 @@
 {
-  "frontend/e2e/fixtures/investigation-server.ts": "192b032d1f05835bf6220ce50a99d9f933465fde68e07666850764e3d40b0447",
+  "frontend/e2e/fixtures/investigation-server.ts": "1cae92e2c8ca3800121d408c63409fddc7bfd642c77fd6bfa81b61ced7bb1424",
   "frontend/e2e/investigation-workspace.spec.ts": "4ccd3c98f9c269d6c98d9eb741a64669811f2c8e123d1cc92f881398d911ffe1",
   "frontend/src/app/i18n/locales/en.ts": "3759aeb95962a0628361654b1c156c76f715435cebd570bbbbe5ce842e1481e0",
   "frontend/src/app/i18n/locales/zh-CN.ts": "87710d9af5be658c03ad6da7777dbcd36b046d6687a94340df76f55b38884bc0",
-  "frontend/src/app/ui/app-navigation.integration.test.ts": "1e9b00fa0f23a29d54e3002812f976f1e6b2160521f0b4714f7b2c929880afd7",
+  "frontend/src/app/ui/app-navigation.integration.test.ts": "0224f14e32ca6b93ec248e8919e3861272de3924dba93f91f73d081241431e22",
   "frontend/src/app/ui/app-navigation.ts": "6ce16c2cfbd9c53e1abbae72830f134cf6b5a6b232b500e86fc77a368d5a121e",
+  "frontend/src/app/ui/app-render.helpers.ts": "8c9f52f13f1fa7034798dc5d89edd0cbb2d821c5bc2f85390b75ffd49a821efc",
   "frontend/src/app/ui/app-render.ts": "1ebbc7924f9894689cb3b40071012e891aadf8127d4e50e27dd5ae2217a1fb56",
   "frontend/src/app/ui/app-settings.ts": "efc53ae8736c12836f638ec214db57d57dd9614b8db513b6c55d77f611aac164",
   "frontend/src/app/ui/app.ts": "7c3b97329db827445b157e09818ec42809c5d39cc1e1d32a6e80fe90c850a3c9",
