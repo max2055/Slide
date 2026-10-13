@@ -14,6 +14,15 @@ function fixture() {
 }
 
 describe('outbox transaction failures', () => {
+  it('caller-reserved transactions retain connection ownership on commit and rollback', async () => {
+    const { connection, service } = fixture();
+    await expect(service.transactionOnConnection(connection, async (_connection, append) => append(event))).resolves.toBe('persisted-id');
+    const error = new Error('BORROWED_WORK_FAILED');
+    await expect(service.transactionOnConnection(connection, async () => { throw error; })).rejects.toBe(error);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.rollback).toHaveBeenCalledOnce();
+    expect(connection.release).not.toHaveBeenCalled();
+  });
   it('releases the connection when begin fails without running work or rollback', async () => {
     const { connection, service } = fixture();
     const error = new Error('BEGIN_FAILED');

@@ -1,4 +1,6 @@
 import type { Pool } from 'mysql2/promise';
+import { createHash } from 'node:crypto';
+import { projectContextBlocks, type Message, type SessionEntry } from '@slide/agent-core';
 import type { ActorContext } from '../auth/actor-context.js';
 import type { AnyAgentTool } from '../tools/types.js';
 import { OutboxService, type TransactionPool } from '../workflows/outbox-service.js';
@@ -30,6 +32,35 @@ const declarations = [
 const gap = (code: string) => ({ success: true, status: 'warning' as const,
   data: { schemaVersion: 1, quality: 'unknown', gaps: [code], interpretation: 'implementation-intent' } });
 const safeSourceCode = (error: unknown) => error instanceof Error && /^SOURCE_[A-Z_]+$/.test(error.message) ? error.message : 'SOURCE_UNAVAILABLE';
+
+/** Provider history only. Canonical messages/evidence remain complete. Old
+ * tool bodies are references, never reusable live authority or fresh evidence;
+ * each new Run reads current authorized tools again. No summarization model. */
+export function systemInvestigationHistory(entries: readonly SessionEntry[]): Message[] {
+  const projected: Message[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.role === 'tool') continue; // orphan results never gain authority
+    if (entry.role === 'assistant' && entry.tool_calls?.length) {
+      const ids = new Set(entry.tool_calls.map(call => call.id));
+      const references = [];
+      while (entries[i+1]?.role === 'tool') {
+        const tool = entries[++i];
+        if (!tool.tool_call_id || !ids.delete(tool.tool_call_id)) continue;
+        const content = typeof tool.content === 'string' ? tool.content : JSON.stringify(tool.content);
+        references.push({ originalMessageId: tool.id, tool: tool.name,
+          contentHash: createHash('sha256').update(content).digest('hex') });
+      }
+      projected.push(...projectContextBlocks([{kind:'history',authority:'reference',sourceIds:entry.id?[entry.id]:[],
+        lifetime:'session',priority:50,tokenPolicy:'bounded',value:{references,requiresCurrentRead:true,incomplete:ids.size>0}}]));
+    } else {
+      // Persistence/display receipts do not belong in provider context.
+      projected.push({ id: entry.id, role: entry.role, content: entry.content, source: entry.source,
+        ...(entry.attachments ? {attachments:entry.attachments} : {}) });
+    }
+  }
+  return projected;
+}
 
 /** Dedicated investigation tools; never registered globally or exposed to
  * ordinary Chat by this factory. Scope/actor come only from server composition.
@@ -115,7 +146,14 @@ export function createSystemTools(options: SystemToolOptions): AnyAgentTool[] {
                 if (!matches(source) || source.releaseId !== manifest.releaseId || after.releaseId !== deployment.releaseId
                   || after.commitSha !== deployment.commitSha || after.treeDigest !== deployment.treeDigest) result = gap('SOURCE_COMMIT_MISMATCH');
                 else if (Buffer.byteLength(JSON.stringify(value)) > 128_000) result = gap('SOURCE_RESULT_TOO_LARGE');
-                else result = { success: true, data: { ...value, quality: 'good', gaps: [], observedFrom: scope.from, observedTo: scope.to,
+                // The signed full manifest stays in SourceManagement. The model
+                // needs its verified binding/count, not thousands of descriptors
+                // or an opaque signature; search/read provide selected content.
+                else result = { success: true, data: { ...(d.mode === 'manifest' ? {
+                  schemaVersion: value.schemaVersion, releaseId: value.releaseId, commitSha: value.commitSha,
+                  treeDigest: value.treeDigest, completeness: value.completeness, verification: value.verification,
+                  fileCount: value.files?.length ?? null,
+                } : value), quality: 'good', gaps: [], observedFrom: scope.from, observedTo: scope.to,
                   interpretation: 'implementation-intent', rootCauseVerified: false } };
               }
             }

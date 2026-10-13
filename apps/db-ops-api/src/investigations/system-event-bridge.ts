@@ -61,7 +61,9 @@ export class MysqlSystemEventBridge {
     private readonly ingestFor: (binding: TriggerBinding) => MysqlOperationalEventIngest,
     private readonly authorization = new InvestigationAuthorization()) {
     const frozen = bindings.map(freezeTriggerBinding);
-    if (!frozen.length || new Set(frozen.map(b => b.source)).size !== frozen.length
+    // Empty bindings permit read-only tools while collection is disabled.
+    // record/deliver still reject every unbound source.
+    if (new Set(frozen.map(b => b.source)).size !== frozen.length
       || frozen.some(b => b.policy.profileId !== 'system' || b.source !== `slide.system.${b.policy.component}`
         || !components.includes(b.policy.component!))) throw new EventIngestError('EVENT_INPUT_INVALID');
     this.bindings = new Map(frozen.map(b => [b.source, b]));

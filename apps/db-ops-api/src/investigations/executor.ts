@@ -34,6 +34,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
+import { systemInvestigationHistory } from './system-tools.js';
 
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -63,6 +64,7 @@ export interface InvestigationRuntimeDependencies {
 export interface InvestigationExecutorOptions extends InvestigationRuntimeDependencies {
   pool: () => Pool | null;
   authorization?: InvestigationAuthorization;
+  systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
   budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices };
 }
 interface ExecutionState {
@@ -594,14 +596,17 @@ export class InvestigationExecutor {
           frozen,
         ),
       );
-      const source = runtime.toolsForActor(effective.actor),
+      const scopedRegistry = (actor: ActorContext) => profile.id === 'system'
+        ? this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry()
+        : runtime.toolsForActor(actor);
+      const source = scopedRegistry(effective.actor),
         tools = new ToolRegistry();
       for (const name of effective.tools) {
         const tool = source.get(name),
           security = getToolSecurityDefinition(name);
         if (
           !tool ||
-          !BACKGROUND_SAFE.has(name) ||
+          !(profile.id === 'system' ? !!this.options.systemToolsForInvestigation && profile.toolAllowlist.includes(name) : BACKGROUND_SAFE.has(name)) ||
           !tool.readOnly ||
           tool.requiresApproval ||
           tool.ownerOnly ||
@@ -645,7 +650,7 @@ export class InvestigationExecutor {
             });
             toolContext?.signal?.throwIfAborted();
             control.signal.throwIfAborted();
-            const liveTool = runtime.toolsForActor(live.actor).get(name);
+            const liveTool = scopedRegistry(live.actor).get(name);
             if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
               throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
             const result = boundedResult(
@@ -679,7 +684,7 @@ export class InvestigationExecutor {
           contextAuthority: 'policy',
           content: INVESTIGATION_PROMPTS[profile.id as 'ops' | 'system'],
         },
-        ...messages,
+        ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];
       const hook = new NoopHook();
       hook.beforeIteration = async (ctx) => {
@@ -711,6 +716,9 @@ export class InvestigationExecutor {
         idempotencyKey: `investigation:${requestId}`,
         resumeCheckpoint: checkpoint,
         recoveryLimits: { total: 0, empty: 0, continuation: 0, stream: 0, repetition: 0, context: 0 },
+        // System uses deterministic history references; do not attempt an
+        // unbudgeted summary at the soft watermark. The hard context cap stays.
+        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {

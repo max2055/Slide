@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { createSystemTools } from './system-tools.js';
+import { createSystemTools, systemInvestigationHistory } from './system-tools.js';
 import { InvestigationStoreError } from './store.js';
 
 function fixture() {
@@ -23,6 +23,17 @@ function fixture() {
   return { options, deployment, manifest, fact, bridge, source, authority, call, tools };
 }
 describe('System evidence tools', () => {
+  it('projects historical tool bodies to immutable references without modifying stored facts or replaying their authority', () => {
+    const original = {id:randomUUID(),role:'tool' as const,name:'read_source_region',tool_call_id:'original-call',content:JSON.stringify({success:true,data:{content:'untrusted source'.repeat(1000),quality:'good'}})};
+    const before=JSON.stringify(original), projected=systemInvestigationHistory([
+      {id:'original-assistant',role:'assistant',content:null,tool_calls:[{id:'original-call',type:'function',function:{name:'read_source_region',arguments:'{}'}}]},original,
+    ]);
+    expect(JSON.stringify(original)).toBe(before);expect(projected).toHaveLength(2);
+    expect(projected[1].content!.length).toBeLessThan(600);expect(projected[1].content).not.toContain('untrusted source');
+    expect(projected[1].content).toContain(original.id);expect(projected[1].source).toBe('derived');
+    expect(projected[1].content).toContain('requiresCurrentRead');
+    expect(systemInvestigationHistory([original])).toHaveLength(0);
+  });
   it('returns only exact event/deployment/signed-manifest content and labels implementation intent', async () => {
     const f = fixture(); const result = await f.call();
     expect(result).toMatchObject({ success: true, data: { content: 'export const original = 1;', rootCauseVerified: false, interpretation: 'implementation-intent' } });

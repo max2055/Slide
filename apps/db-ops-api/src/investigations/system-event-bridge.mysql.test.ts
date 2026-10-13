@@ -20,6 +20,8 @@ import { StructuredLogEvidenceAdapter } from '../platform/structured-log-evidenc
 import type { TriggerBinding } from './trigger-policy.js';
 import { SourceSnapshotService } from '../platform/source-snapshot-service.js';
 import { SourceManagementService } from '../platform/source-management-service.js';
+import { createSystemComposition } from './system-composition.js';
+import { registerSystemEventRoutes, SystemEventReader } from './system-event-routes.js';
 
 // Always a run-owned mysql:8.4, formal migrations, TCP HTTP/JWT and independent
 // process recovery. No skip, external Provider request or production DB access.
@@ -73,6 +75,7 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
     ledger = new MysqlInvestigationBudgetLedger(() => pool, quota);
     app = Fastify();
     await installPlatformObservation(app, createVerifyToken(secret, contexts), new StructuredLogEvidenceAdapter());
+    await registerSystemEventRoutes(app, createVerifyToken(secret, contexts), new SystemEventReader(() => pool, authorization));
     app.get('/fixture/failure', async (_r, reply) => reply.code(500).send({ error: 'fixture' }));
     app.get('/fixture/400', async (_r, reply) => reply.code(400).send({}));
     app.get('/fixture/403', async (_r, reply) => reply.code(403).send({}));
@@ -131,6 +134,54 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       id: jobs[0].id, type: SYSTEM_EVENT_JOB, payload: {}, attempts: 1, maxAttempts: 5, fencingToken: 1,
     }, { signal: new AbortController().signal, workerId: randomUUID(), fencingToken: 1 }) as any;
     expect(result.disposition).toBe('accepted'); expect(await count('agent_runs')).toBe(0);
+  });
+  it('production composition records with automatic disabled; System HTTP retains suppressed facts without granting investigation ACL', async () => {
+    await publisher.drain(); uninstall();
+    const composed = await createSystemComposition(() => pool, { contexts,
+      configuration: { enabled: true, automatic: false, serviceUserId: serviceId },
+      budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100 } });
+    composed.install();
+    try {
+      await fetch(address + '/fixture/failure'); await composed.publisher!.drain();
+      const [jobs] = await pool.query<RowDataPacket[]>('SELECT id FROM workflow_jobs');
+      const event = await composed.bridge.deliver(jobs[0].id);
+      expect(event).toMatchObject({ disposition: 'suppressed', suppressionReason: 'UNVERIFIED_SOURCE', investigationId: null });
+      const human = await contexts.loadActiveActor(9901), jwt = signAccessToken(human, secret);
+      await new SystemEventReader(() => pool, authorization).read(human);
+      const response = await fetch(address + '/api/platform/system-events', { headers: { authorization: `Bearer ${jwt}` } });
+      expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect((await response.json() as any).items).toHaveLength(1);
+      const read = () => fetch(address + '/api/platform/system-events/' + event.eventId, { headers: { authorization: `Bearer ${jwt}` } });
+      const detail = await read(); expect(detail.status).toBe(200);
+      expect(await detail.json()).toMatchObject({ investigationId: null, fact: { event: { httpStatus: 500 }, contentHash: expect.any(String) } });
+      await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code='config:view'", [roleId]);
+      expect((await read()).status).toBe(404);
+      expect(await count('investigations')).toBe(0); expect(await count('agent_runs')).toBe(0);
+    } finally { await composed.close(); }
+  });
+  it('System HTTP hides linked investigation IDs until the human has an explicit original ACL; engine fact remains visible', async () => {
+    const first = await bridge.record(failure()); const admitted = await bridge.deliver(first.jobId);
+    const human = await contexts.loadActiveActor(9901), jwt = signAccessToken(human, secret);
+    const read = async (id: string) => (await fetch(address + '/api/platform/system-events/' + id, { headers: { authorization: `Bearer ${jwt}` } })).json() as any;
+    expect(await read(admitted.eventId)).toMatchObject({ investigationId: null });
+    await pool.execute("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,9901,'viewer',?)", [admitted.investigationId, serviceId]);
+    expect(await read(admitted.eventId)).toMatchObject({ investigationId: admitted.investigationId });
+    const saved = await bridge.record(failure({ component: 'agent' })), engine = await bridge.deliver(saved.jobId);
+    expect(await read(engine.eventId)).toMatchObject({ disposition: 'suppressed', suppressionReason: 'ORIGIN_LOOP', investigationId: null });
+    expect(await count('investigations')).toBe(1); expect(await count('agent_runs')).toBe(0);
+  });
+  it('TCP response completes before a blocked SQL writer and closing uninstalls before drain', async () => {
+    await publisher.drain(); uninstall();
+    let release!: () => void; let started!: () => void;
+    const arrived = new Promise<void>(resolve => started = resolve), gate = new Promise<void>(resolve => release = resolve);
+    const blocked = new SystemFailurePublisher(async f => { started(); await gate; await bridge.record(f); });
+    const remove = installSystemFailurePublisher(blocked);
+    try {
+      const response = await fetch(address + '/fixture/failure'); expect(response.status).toBe(500);
+      await arrived; expect(blocked.observation().pending).toBe(1); expect(await count('workflow_jobs')).toBe(0);
+      remove(); release(); await blocked.drain();
+      await fetch(address + '/fixture/failure'); expect(await count('workflow_jobs')).toBe(1);
+    } finally { remove(); release?.(); await blocked.drain(); }
   });
   it.each([400, 403])('%s is retained if explicitly delivered but never admits an investigation', async httpStatus => {
     const saved = await bridge.record(failure({ httpStatus }));

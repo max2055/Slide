@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./app-dialog.js";
 import "../views/ai-analysis-result.js";
+import './legacy-analysis-link.ts';
 
 @customElement("instance-diagnosis-modal")
 export class InstanceDiagnosisModal extends LitElement {
@@ -149,6 +150,7 @@ export class InstanceDiagnosisModal extends LitElement {
           .errorMessage=${null}
           title="AI 诊断结果"
         ></ai-analysis-result>
+        <legacy-analysis-link .analysisId=${this.diagnosis?.id ?? this.diagnosisRecord?.id ?? 0} .status=${this.diagnosis?.status ?? 'completed'}></legacy-analysis-link>
         ${this.diagnosis?.status === 'unknown' ? html`<a class="btn" href=${`/resource-diagnosis?resourceType=instance&resourceId=${this.instanceId}&analysisId=${this.diagnosis.id}`}>查看任务并确认重试后果</a>` : nothing}
         ${hasResult ? html`
           <div class="continue-section">

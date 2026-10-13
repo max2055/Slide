@@ -1,4 +1,5 @@
 import type { ActorContext } from '../auth/actor-context.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { actorContextService } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
 import { canReadResource } from '../resources/resource-service.js';
@@ -12,8 +13,12 @@ export function analysisAuthorizationVersion(actor?: ActorContext): string {
 }
 
 /** Do not persist credentials, their ciphertext or an endpoint containing credentials. */
-export async function analysisConfigurationVersion(purpose: string, prompt: string): Promise<string> {
-  const { provider, model } = await resolveSceneModel(llmDatabaseService, purpose, { requiresFunctionCall: true });
+export async function analysisConfigurationVersion(purpose: string, prompt: string, connection?: PoolConnection): Promise<string> {
+  const store = connection ? {
+    getAllProviders: () => llmDatabaseService.getAllProviders(connection),
+    getSceneBindings: () => llmDatabaseService.getSceneBindings(connection),
+  } : llmDatabaseService;
+  const { provider, model } = await resolveSceneModel(store, purpose, { requiresFunctionCall: true });
   return analysisHash([provider.id, provider.updated_at, model, provider.enabled, provider.api_format,
     analysisHash(provider.api_base_url), provider.context_window, provider.max_tokens, provider.timeout_ms,
     provider.models_supported, prompt, process.env.AGENT_RUN_TIMEOUT_MS ?? null, process.env.AGENT_MAX_ITERATIONS ?? null]);

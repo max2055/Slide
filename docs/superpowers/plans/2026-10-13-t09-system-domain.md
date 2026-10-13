@@ -18,3 +18,14 @@
 6. 交付最小 PR、准确 head CI 和验收材料。完整生产 System 链路受 server / handler 注册 / executor BACKGROUND_SAFE 的共享所有权约束，提出具体移交 patch，不能把测试装配称作生产接入；父 Review 前不自行合并。
 
 停止条件：领域交付可审阅；仅未授权共享步骤暂停。零新增外部模型请求；无生产部署；无硬 token/费用预算，实际遥测不可用时如实说明。
+
+## v1.2.18 共享装配续接（2026-10-13）
+
+既有批准方案与最小 patch 继续适用。T08 PR163 merge `1091de79` 已合入托管分支；原领域 PR165 保留，不重做 T09-A。
+
+1. 诊断 CI38391559605 的普通 Chat 启动时延：下载原 trace/wire，分离持久化与浏览器调度边界；不重试旧 CI、不调整100ms门禁。相关既有缺陷仅有明确根因且属于授权范围时修复。
+2. `system-composition.ts` 固定服务主体、四个 component policy、共享预算 domain；提供显式 install/close/drain/uninstall，事件及自动调查分别默认关闭。server 复用正式 pool 与 worker 生命周期，注册摄入 handler。生产不打开自动调查。
+3. executor 按不可变调查 context 创建五个专属只读工具；每次 live tool 重新绑定实时 actor。System 无专属 registry 时关闭工具准入，不能退回普通 platform tools。canonical/fence/Run/ledger owner 不变。
+4. System 专属只读 events/facts HTTP 契约、注册及生成类型；实际用户实时授权，原事件持久查询包括 suppressed，关联调查仍要求原 ACL，不能用 service 身份开放内容。
+5. 在既有浏览器夹具复用正式 composition/worker/routes，新增持久错误→事件→调查→System tools→canonical→WS→workspace→两轮追问；真实MySQL重复迁移、撤权/400/403/自身故障、source版本缺口由相关SQL测试补齐。受控Provider仅证明受控链路。
+6. 受影响 focused/security/contracts、本地浏览器、准确新head CI一次前台收集；更新原PR、证据与一次终态交接。父独立Review、真实Provider缺口或CI未齐全时保留in_review，不合并、不释放下游。

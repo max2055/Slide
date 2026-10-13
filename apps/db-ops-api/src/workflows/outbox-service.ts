@@ -8,6 +8,14 @@ export class OutboxService {
   constructor(private readonly pool: TransactionPool) {}
   async transaction<T>(work: (connection: TransactionConnection, append: (event: OutboxInput) => Promise<string>) => Promise<T>): Promise<T> {
     const connection = await this.pool.getConnection();
+    try { return await this.transactionOnConnection(connection, work); }
+    finally { connection.release(); }
+  }
+
+  /** Start/finish a transaction on a caller-reserved, idle connection. Its
+   * lifetime (and any session advisory lock) remains owned by the caller. */
+  async transactionOnConnection<T>(connection: TransactionConnection,
+    work: (connection: TransactionConnection, append: (event: OutboxInput) => Promise<string>) => Promise<T>): Promise<T> {
     let begun = false;
     try {
       await connection.beginTransaction();
@@ -21,7 +29,7 @@ export class OutboxService {
         try { await connection.rollback(); } catch { /* release still runs below */ }
       }
       throw error;
-    } finally { connection.release(); }
+    }
   }
   async append(connection: Pick<TransactionConnection, 'execute'>, event: OutboxInput): Promise<string> {
     if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(event.eventType) || !event.idempotencyKey || JSON.stringify(event.payload).length > 64_000) throw new Error('OUTBOX_EVENT_INVALID');

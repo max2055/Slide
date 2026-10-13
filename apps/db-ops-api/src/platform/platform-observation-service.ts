@@ -17,7 +17,8 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
       const route = request.routeOptions.url ?? 'unmatched';
       publishSystemFailure({ component: 'api', sourceEventId: `${processId}:${request.id}`, occurredAt: new Date().toISOString(),
         correlationId: request.id, stableErrorCode: `HTTP_${reply.statusCode}`, callsite: `api:${request.method}:${route}`,
-        origin: route.startsWith('/api/investigations') ? 'investigation_engine' : 'user_operation',
+        origin: route.startsWith('/api/investigations') || route.startsWith('/api/platform/system-events')
+          ? 'investigation_engine' : 'user_operation',
         httpStatus: reply.statusCode,
         releaseId: process.env.SLIDE_RELEASE_ID,
         commitSha: /^[a-f0-9]{40}$/.test(process.env.SLIDE_COMMIT_SHA ?? '') ? process.env.SLIDE_COMMIT_SHA : undefined });

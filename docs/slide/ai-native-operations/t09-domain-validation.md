@@ -1,6 +1,6 @@
-# T09 System 领域交付（共享装配待移交）
+# T09 System 领域与共享装配验收
 
-日期：2026-10-13。授权：MAX-150 v1.2.16；父 MAX-140 同版本。保留 T09-A / PR157 历史，不重做准备阶段，不把本次领域交付称为完整 T09 出口。
+历史领域阶段：2026-10-13，授权 MAX-150 v1.2.16；父 MAX-140 同版本。保留 T09-A / PR157 历史，不重做准备阶段，不把本次领域交付称为完整 T09 出口。
 
 ## 行为及文件边界
 
@@ -67,3 +67,36 @@ API typecheck、contracts、secret scan、diff check 通过。没有新增外部
 未完成：上述生产入口、正式 System admission→executor→canonical evidence/result→HTTP/WS/浏览器继续追问链路、真实 Provider System 证据消费、父独立 Review、普通 merge/main 包含核验和 T12 总 gate。领域部分交付进入 in_review；不标 done、不释放下游依赖。主任务已有确切运行的一次性 terminal handoff wakeup，不重复创建/触发父或子 run。
 
 托管起始 `6fa44775` 和用户修改原样保留；功能 PR 从核验 main 生成仅任务文件的提交树，托管分支不 switch/reset/force，私有 .multica 与用户 AGENTS 不进入 PR。
+
+
+## v1.2.18 正式共享装配（当前候选）
+
+T08 PR163 合并 `1091de79cbc4e4a655af28e072934ee4a38c8d12` 后，父已移交共享入口。本节覆盖上文“没有应用”和“待移交”的当前状态；原领域结果与失败历史保留。
+
+- `server.ts` 正式构造 `system-composition.ts`，每个 API 进程安装持久事实 publisher，仅 leader 注册摄入 Worker/executor。启动失败清理及关闭显式 uninstall 后 drain。`INVESTIGATION_SYSTEM_EVENTS_ENABLED`、`INVESTIGATION_SYSTEM_AUTO_ENABLED` 分别控制记录和派生，均默认关闭；自动派生要求记录开启。显式 `INVESTIGATION_SYSTEM_SERVICE_USER_ID` 使用已预配的 service 身份，不创建账户/角色、不继承 admin；不可变权限 ceiling 仅 chat:view/config:view、空资源边界。
+- Workflow 正式注册 `system.event.ingest`；System executor 从 immutable request snapshot 固定 investigation/component/window，每次工具调用重新加载 live actor 并重建专属 registry。没有 callback 时空 registry，禁止回退普通 platform tools；现有授权、事务、admission、ledger、Run/canonical owner 不变。
+- 原始事实与 suppressed 事件经 `/api/platform/system-events` 和 `/:id` 只读返回，实时 System 权限、private/no-store、正文 hash 核验；仅拥有原调查 ACL 的用户收到 investigationId。事件中心“平台异常”复用共享组件，支持原始事实、刷新、合法调查链接；撤权清空，旧异步请求不得回写。
+- 模型 manifest 只提供经验证的版本绑定、完整性、验证状态和文件数量；完整签名清单仍由既有 SourceManagement 保存并验证。System 历史 assistant/tool 组投影为 reference authority 的 hash/消息ID引用并要求重新读取，完整 canonical 历史与证据仍持久保存。软压缩水位设为1以避免未计量的 summary 调用；16k硬上下文上限和32k预算未放宽。
+
+### 当前本地证据
+
+| 检查 | 结果与边界 |
+|---|---|
+| 最终 focused | 13文件143通过，0失败/0跳过；包含13项独占Docker MySQL、重复正式迁移、JWT真实TCP HTTP、独立进程事实恢复 |
+| 安全回归 | 17文件187通过；不重复计入focused |
+| 执行恢复真实MySQL | 102通过，1项原环境条件跳过；另以T04_BROWSER_TEST=1 focused执行该真实Chromium HTTP/WS断开测试，1通过（其余102按名称过滤）。两次合计覆盖103个不同用例，未伪称原运行0skip |
+| 正式调查浏览器回归 | 50通过；49项既有调查/数据库桥接+1项System正式装配链路 |
+| System新链路 | 持久HTTP_503→admission→executor→原错误/精确签名源码→canonical evidence/result→事件HTTP→WS Workspace→两次追问；3个不同completed Run、结果版本1/2/3，Provider每轮实际收到原事实与精确源码。Provider及源码内容为受控fixture，非外部真实模型 |
+| 权限与降级 | suppressed可读、调查链接遵循ACL；实时SQL撤权后相同JWT拒绝。400/403不触发、防递归、Commit/manifest/egress及缺口场景由真实SQL与直接测试覆盖 |
+| 响应隔离 | 真实TCP HTTP在持久store SQL人为阻塞时已返回503；不把受控故障注入称为生产负载性能验收 |
+| 静态门禁 | API/frontend typecheck、frontend build/CSP、contracts、security scan、qualification matrix 37/37、diff check通过；build已有chunk size提示 |
+
+`bash scripts/qualification/run-investigation-system.sh` 执行System浏览器验收；`--regression` 执行真实MySQL恢复（显式开启T04_BROWSER_TEST）及全部调查浏览器；`--streaming` 执行原100ms streaming门禁；`--recovery-browser` 可单独验证该条件Chromium用例。所有容器/fixture在前台收集完成后关闭，无生产操作。
+
+### 原 CI 失败诊断及出口限制
+
+旧PR165 head `ebfce6f3450d196da3f1e1973651186998aa5ed0` 的 CI `38391559605` 为6成功/1失败/1跳过，原 streaming accepted→actual 144.5ms超100ms。旧wire/trace没有失败时的browser receive与server分段时钟，无法证明SQL或浏览器环境根因；相关核心与旧main相同且fixture未安装System publisher。保留原产物与失败历史，不重跑旧CI、不放宽100ms、不skip。新增 gate前 startup-boundary产物（server frame/phase clock及browser clock），本地隔离MySQL同项33.2ms、server run.started→waiting_model 33.52ms通过；这不证明旧失败已根治。新head CI与准确提交绑定证据由PR和最终交接附件记录。
+
+源码同步/快照发布/部署绑定未改，仍复用PR157父核验；本轮签名fixture与实际SourceManagement读取不冒充POST sync端到端。零新增外部模型请求/子代理/Issue/生产操作；DeepSeek原5/6成功停发保留，可靠token/费用实测不可用。
+
+本次交付可进入in_review，完整出口仍缺真实Provider消费验收、父独立Review、准确head全部CI、正常merge/main核验及T12总gate；未齐备不标done、不释放T10/T12。父已登记本run唯一终态handoff，不重复启动父或创建wakeup。
