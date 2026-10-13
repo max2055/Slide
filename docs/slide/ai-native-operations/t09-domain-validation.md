@@ -100,3 +100,8 @@ T08 PR163 合并 `1091de79cbc4e4a655af28e072934ee4a38c8d12` 后，父已移交�
 源码同步/快照发布/部署绑定未改，仍复用PR157父核验；本轮签名fixture与实际SourceManagement读取不冒充POST sync端到端。零新增外部模型请求/子代理/Issue/生产操作；DeepSeek原5/6成功停发保留，可靠token/费用实测不可用。
 
 本次交付可进入in_review，完整出口仍缺真实Provider消费验收、父独立Review、准确head全部CI、正常merge/main核验及T12总gate；未齐备不标done、不释放T10/T12。父已登记本run唯一终态handoff，不重复启动父或创建wakeup。
+
+
+### 共享装配首个 CI 的启动夹具修复
+
+共享候选 `8b3cdb05d7be76fff89ec0d354af79231528beee` / CI `38405825949` 为4成功/1失败/3跳过。后端全量3354通过、1失败、615既有条件跳过；T09的13项真实SQL测试已执行通过。唯一失败是 `lifecycle/metric-quality-startup.test.ts` 抽取正式 `startWorkers` 后没有提供由 `initializeApi` 新增的 `systemComposition`，报ReferenceError。本次装配触达的夹具依赖遗漏，已在该测试提供默认关闭的composition；原“首次/重复启动不得修改指标历史”断言、SQL路径及全部CI门禁不变。该直接回归1项通过；另2项既有MySQL opt-in未在此focused执行。原失败head不重试，修复head再收集准确CI；不将此首个CI的qualification跳过宣称通过。
