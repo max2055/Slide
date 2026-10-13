@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { validateInvestigationResult, type InvestigationResult } from '../investigations/contracts.js';
 
 export const ANALYSIS_ENVELOPE_VERSION = 1;
 
@@ -54,6 +55,7 @@ export type AnalysisEnvelope = Static<typeof AnalysisEnvelopeSchema>;
 
 export type AnalysisView =
   | { kind: 'envelope'; displayMarkdown: string; envelope: AnalysisEnvelope }
+  | { kind: 'investigation'; displayMarkdown: string; envelope: null; result: InvestigationResult; readOnly: true }
   | { kind: 'legacy'; displayMarkdown: string; envelope: null };
 
 export function validateAnalysisEnvelope(value: unknown):
@@ -66,10 +68,12 @@ export function validateAnalysisEnvelope(value: unknown):
   return { ok: true, value: value as AnalysisEnvelope };
 }
 
-export function asAnalysisView(envelope: unknown, legacyMarkdown: unknown): AnalysisView {
+export function asAnalysisView(envelope: unknown, legacyMarkdown: unknown, bindings: ReadonlySet<string> = new Set()): AnalysisView {
   const parsed = validateAnalysisEnvelope(envelope);
   if (parsed.ok) {
     return { kind: 'envelope', displayMarkdown: parsed.value.displayMarkdown, envelope: parsed.value };
   }
+  const v2 = validateInvestigationResult(envelope, bindings);
+  if (v2.ok) return { kind: 'investigation', displayMarkdown: v2.value.summary, envelope: null, result: v2.value, readOnly: true };
   return { kind: 'legacy', displayMarkdown: typeof legacyMarkdown === 'string' ? legacyMarkdown : '', envelope: null };
 }

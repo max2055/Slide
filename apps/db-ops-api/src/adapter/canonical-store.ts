@@ -230,6 +230,21 @@ export class CanonicalStore {
     if (entries.some(entry => entry.runId !== binding.runId || entry.turnId !== access.messageId)) throw new Error('INVESTIGATION_FACT_BINDING_INVALID');
     this.assertInvestigationCheckpoint(checkpoint,binding.runId,access.messageId);
     await this.writeToolFacts(connection, access.sessionId, access.messageId, entries, iteration);
+    // Capture every committed Parts revision in the SAME transaction. A slow
+    // observer cannot miss intermediate tool acknowledgements between polls.
+    const { captureCanonicalDocument } = await import('../investigations/stream.js');
+    const { InvestigationEvidenceStore } = await import('../investigations/evidence-store.js');
+    const evidence = new InvestigationEvidenceStore(this.poolProvider as never, this.authorization);
+    const investigation = await this.authorization.load(connection, binding.investigationId);
+    for (const entry of entries) {
+      const [facts] = await connection.query<any[]>('SELECT entry_json FROM agent_canonical_facts WHERE session_id = ? AND message_id = ?', [access.sessionId, entry.id]);
+      if (facts[0]) {
+        const fact = decode(facts[0].entry_json);
+        await captureCanonicalDocument(connection as never, binding.investigationId, binding.requestId,
+          fact.messageParts, new Date(access.request.created_at).toISOString());
+        if (fact.role === 'tool') await evidence.captureToolResult(connection as never, caller, investigation, binding, fact);
+      }
+    }
     if (checkpoint !== undefined) await this.writeCheckpoint(connection, access.sessionId, checkpoint);
     await this.assertInvestigationLease(connection,binding);
   }
@@ -248,6 +263,16 @@ export class CanonicalStore {
     const page = await this.readPage(connection, access.sessionId, limit, before);
     await this.assertInvestigationLease(connection,binding);
     return page;
+  }
+
+  /** Observation shares the canonical history/turn algorithm but has no
+   * execution lease requirement. Real current investigation authority is
+   * checked on this same transaction; ordinary Chat shares are insufficient. */
+  async getObservationPage(connection: InvestigationConnection, caller: ActorContext,
+    investigationId: string, limit = 200, before?: string): Promise<{ messages: SessionEntry[]; nextBefore: string | null }> {
+    const investigation = await this.authorization.load(connection, investigationId);
+    await this.authorization.authorize(connection, caller, investigation, 'content');
+    return this.readPage(connection, investigation.sessionId, limit, before);
   }
 
   private assertInvestigationCheckpoint(checkpoint: Record<string, unknown> | null | undefined, runId: string, turnId: string): void {

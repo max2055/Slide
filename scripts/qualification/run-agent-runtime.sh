@@ -22,4 +22,13 @@ if [[ "$mode" == mysql ]]; then
   APPROVAL_TEST_MYSQL_HOST="${DB_HOST:-127.0.0.1}" APPROVAL_TEST_MYSQL_PORT="${DB_PORT:-3306}" \
   APPROVAL_TEST_MYSQL_USER="${DB_USER:-root}" APPROVAL_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
     pnpm --filter slide-api exec vitest run src/security/agent-tool-approval-execution.mysql.test.ts 2>&1 | tee -a "$log"
+  AGENT_RUN_TEST_MYSQL_PORT="${DB_PORT:-3306}" AGENT_RUN_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
+  AUTH_TEST_MYSQL_PORT="${DB_PORT:-3306}" AUTH_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
+  JWT_SECRET_KEY=t05-isolated-fixture-jwt-key-not-for-production-use T04_BROWSER_TEST=1 \
+    pnpm --filter slide-api exec vitest run \
+      src/investigations/observation.mysql.test.ts src/investigations/stream.test.ts \
+      src/investigations/evidence-store.test.ts src/investigations/result-schema.test.ts \
+      src/analysis/analysis-evidence-binding.test.ts src/investigations/routes.test.ts \
+      src/adapter/__tests__/investigation-canonical.mysql.test.ts \
+      src/investigations/execution-recovery.mysql.test.ts 2>&1 | tee -a "$log"
 fi

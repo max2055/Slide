@@ -139,7 +139,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   }, 60_000);
   beforeEach(async () => {
     await pool.query("UPDATE users SET status='active' WHERE id IN (101,102,104)");
-    for (const table of [
+    for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources',
       'investigation_event_links',
       'operational_events',
       'investigation_trigger_keys',

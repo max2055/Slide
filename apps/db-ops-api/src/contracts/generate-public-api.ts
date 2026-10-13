@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { TSchema } from '@sinclair/typebox';
+import { Kind, type TSchema } from '@sinclair/typebox';
 import { PublicApiSchemas } from './public-api.js';
 import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
+import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -55,7 +56,7 @@ export function buildOpenApiDocument() {
       },
       '/api/investigations/{id}': {
         get: { operationId: 'getInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
-          description: 'Persisted metadata/version/context. derivedRunState/latestResult are null until T04/T05 fact owners are integrated; admission is not a Run or a result.',
+          description: 'Live all-scope metadata/context, persisted Run-derived state (queued/unknown distinct), latest V2 result and durable observation watermark. Admission is not a completed Run.',
           responses: { '200': { description: 'Authorized metadata' }, '404': { description: 'Absent or inaccessible' }, '401': { description: 'JWT required' }, '503': { description: 'Store unavailable' } } },
         patch: { operationId: 'patchInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
           description: 'Operator, live all-scope authority and expectedVersion required. Active request prevents goal/lifecycle change. Immutable scopes/Profile/context; human recovery/verification fields belong to the feedback module.',
@@ -67,6 +68,22 @@ export function buildOpenApiDocument() {
         responses: { '202': { description: 'Durable request; no fabricated Run', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationAccepted) } } }, '403': { description: 'Viewer cannot append' }, '404': { description: 'Absent or inaccessible' }, '409': { description: 'Version, payload or active request conflict' }, '503': { description: 'Rolled back; no message/job/outbox orphan' } } } },
       '/api/investigations/{id}/messages': { get: { operationId: 'getInvestigationMessages', security: [{ bearerAuth: [] }], parameters: [investigationId(), { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 } }],
         responses: { '200': { description: 'Authorized chronological messages from the existing Session' }, '404': { description: 'Absent or any required scope missing' } } } },
+      '/api/investigations/{id}/events': { get: { operationId: 'replayInvestigationEvents', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+        { name: 'after', in: 'query', schema: { type: 'integer', minimum: 0 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 } }],
+        description: 'Durable per-investigation sequence, no-store and current all-scope authorization. Expired/future cursor returns replay_required; reconnect with investigation.watch receives a snapshot watermark plus its live suffix. Disconnect never cancels Run.',
+        responses: { '200': { description: 'Authorized replay or replay_required', content: { 'application/json': { schema: refSchema(InvestigationObservationSchemas.InvestigationReplay) } } }, '400': { description: 'Invalid cursor/limit' }, '404': { description: 'Absent or inaccessible' } } } },
+      '/api/investigations/{id}/facts': { get: { operationId: 'getInvestigationCanonicalFacts', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+        { name: 'before', in: 'query', schema: { type: 'string', pattern: '^\\d+:\\d+:\\d+$' } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 } }],
+        description: 'Authorized canonical Parts page in original turn/ordinal order, including tool facts. documents/nextBefore reuse the existing CanonicalStore cursor. Display data excludes reasoning and exact legacy rollback payloads; text/tool previews are bounded. Watch snapshots may be truncated and refer to this paginated history for older details; evidence raw data uses its own authorized endpoint.',
+        responses: { '200': { description: 'Authorized canonical Parts page' }, '400': { description: 'Invalid cursor/limit' }, '404': { description: 'Absent or inaccessible' } } } },
+      '/api/investigations/{id}/evidence/{eid}': { get: { operationId: 'getInvestigationEvidence', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+        { name: 'eid', in: 'path', required: true, schema: { type: 'string' } }, { name: 'raw', in: 'query', schema: { const: 'true' } }],
+        description: 'Investigation/original request/Run bound redacted evidence. Missing observation windows are null. Default response retains metadata/hash/tombstone; raw=true reauthorizes all resource scopes and returns redacted raw data only before seven-day retention. Expired raw returns 410 after authorization; invisible evidence always 404.',
+        responses: { '200': { description: 'Evidence or tombstone', content: { 'application/json': { schema: refSchema(InvestigationObservationSchemas.InvestigationEvidence) } } }, '404': { description: 'Absent or inaccessible' }, '410': { description: 'Authorized raw snapshot expired' } } } },
+      '/api/investigations/{id}/results': { get: { operationId: 'listInvestigationResults', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+        { name: 'before', in: 'query', schema: { type: 'integer', minimum: 1 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } }],
+        description: 'Immutable V2 result versions. Every supporting/contradicting reference is bound to the original investigation/request/Run and reauthorized. Expired references retain tombstones and never become new proof. Machine results cannot assert human/experimental verification or resolved. Execution summaries do not expose unbounded reasoning or confidence as accuracy.',
+        responses: { '200': { description: 'Authorized version page', content: { 'application/json': { schema: refSchema(InvestigationObservationSchemas.InvestigationResultPage) } } }, '404': { description: 'Absent or evidence/derived conclusion inaccessible' } } } },
       '/api/investigations/{id}/requests/{requestId}/cancel': { post: { operationId: 'cancelInvestigationRequest', security: [{ bearerAuth: [] }], parameters: [investigationId(), { name: 'requestId', in: 'path', required: true, schema: { type: 'string' } }],
         description: 'Real-time operator/all-scope authorization. Atomically records cancellation intent. Unclaimed queued/retry job becomes cancelled and releases active admission. Running owner retains active admission; T04 consumes intent and owns Run termination.',
         responses: { '202': { description: 'Intent persisted, repeat safe' }, '403': { description: 'Viewer cannot cancel' }, '404': { description: 'Request or investigation inaccessible' }, '503': { description: 'Rolled back' } } } },
@@ -450,6 +467,7 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 // string copies. Fail closed if the baseline starts using an unsupported kind.
 function schemaType(schema: TSchema): string {
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
+  if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
   if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(schemaType).join(' | ')})`;
   if (schema.type === 'string') return 'string';
@@ -472,7 +490,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {
