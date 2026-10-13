@@ -62,6 +62,8 @@ export async function startInvestigationServer() {
   };
   try {
     await new MigrationRunner(pool).run();
+    // The historical migration catalog does not seed the existing ai:view code.
+    await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:view','AI settings read','ai','view')");
     await pool.query("INSERT INTO users (id, username, password_hash) VALUES (101,'t06-owner','no-login'),(102,'t06-viewer','no-login')");
     await pool.query("INSERT INTO roles (id,name) VALUES (101,'t06-readonly')");
     await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('chat:view','chat:send','instance:view','metric:view','alert:view','config:view')");

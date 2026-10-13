@@ -29,6 +29,7 @@ export type SettingsPageId =
   | "metrics"
   | "analysis"
   | "models"
+  | "profiles"
   | "prompts"
   | "sessions"
   | "capabilities"
@@ -76,6 +77,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         ],
       },
       { id: "prompts", label: "提示词管理", path: "/settings/ai/prompts", icon: "book" },
+      { id: "profiles", label: "调查 Profiles", path: "/settings/ai/profiles", icon: "bot", requiredPermission: "ai:view" },
       { id: "sessions", label: "Agent 会话", path: "/settings/ai/sessions", icon: "clipboard", requiredPermission: "ai:view" },
       {
         id: "capabilities",
@@ -172,7 +174,7 @@ export function visibleSettingsViews(item: SettingsItem, permissions: Set<string
 }
 
 export function canAccessSettingsItem(item: SettingsItem, permissions: Set<string> | null): boolean {
-  if (item.id === 'source' && permissions?.has('admin:*')) return true;
+  if ((item.id === 'source' || item.id === 'profiles') && permissions?.has('admin:*')) return true;
   if (!permissionMatches(permissions, item.requiredPermission)) return false;
   return !item.views || visibleSettingsViews(item, permissions).length > 0;
 }

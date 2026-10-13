@@ -21,12 +21,20 @@ export class InvestigationCreate extends LitElement {
   @state() private from = '';
   @state() private to = '';
   @state() private validation = '';
-  private controller = new InvestigationsController(() => this.requestUpdate(), null);
+  private controller = new InvestigationsController(() => this.controllerChanged(), null);
+  private controllerChanged() {
+    if (this.controller.forbidden) {
+      const message = this.controller.error;
+      this.authorityChanged();
+      if (message) showToast(message, 'error');
+    }
+    this.requestUpdate();
+  }
   createRenderRoot() { return this; }
   private clearDraft() {
     this.investigationTitle = ''; this.goal = ''; this.ids = ''; this.from = ''; this.to = ''; this.validation = '';
     this.profile = 'ops'; this.resource = 'instance';
-    this.controller.dispose(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client);
+    this.controller.dispose(); this.controller = new InvestigationsController(() => this.controllerChanged(), this.client);
   }
   private authorityChanged = () => { this.clearDraft(); this.close(); };
   disconnectedCallback() {
@@ -35,7 +43,7 @@ export class InvestigationCreate extends LitElement {
     this.clearDraft(); this.controller.dispose(); this.open = false; super.disconnectedCallback();
   }
   connectedCallback() {
-    super.connectedCallback(); this.controller = new InvestigationsController(() => this.requestUpdate(), this.client);
+    super.connectedCallback(); this.controller = new InvestigationsController(() => this.controllerChanged(), this.client);
     window.addEventListener('slide-session-expired', this.authorityChanged);
     window.addEventListener('slide-permissions-loaded', this.authorityChanged);
   }

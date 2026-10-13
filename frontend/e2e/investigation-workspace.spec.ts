@@ -291,6 +291,65 @@ test('Profiles settings consumes readonly facts, responds to live SQL rejection 
   } finally { await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'"); }
 });
 
+test('a late authorized Profiles HTTP response cannot restore facts after live SQL denial', async ({ page }) => {
+  await env.pool.query("INSERT IGNORE INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code='ai:view'");
+  const actor = await env.contexts.loadActiveActor(101);
+  await login(page);
+  await page.addInitScript(permissions => localStorage.setItem('permissions', JSON.stringify(permissions)), actor.permissions);
+  let release!: () => void, arrived!: () => void, delivered!: () => void;
+  const held = new Promise<void>(resolve => release = resolve), fetched = new Promise<void>(resolve => arrived = resolve), settled = new Promise<void>(resolve => delivered = resolve);
+  let first = true;
+  await page.goto(`${env.url}/settings/ai/profiles`);
+  const profiles = page.locator('investigation-profiles-page');
+  await expect(profiles.locator('[data-profile]')).toHaveCount(2);
+  await page.route('**/api/investigation-profiles', async route => {
+    if (!first) { await route.continue(); return; }
+    first = false;
+    const response = await route.fetch(); expect(response.status()).toBe(200); arrived(); await held;
+    try { await route.fulfill({ response }); } finally { delivered(); }
+  });
+  try {
+    await profiles.evaluate((element: any) => { (window as any).pendingProfileRead = element.load(); }); await fetched;
+    await expect(profiles.getByRole('status')).toContainText('正在加载');
+    await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'");
+    const rejected = page.waitForResponse(r => r.url().endsWith('/api/investigation-profiles') && r.status() === 403);
+    await profiles.evaluate((element: any) => { void element.load(); }); await rejected;
+    await expect(profiles).toContainText('无权访问');
+    release(); await settled;
+    await page.evaluate(() => (window as any).pendingProfileRead);
+    expect(await profiles.evaluate((element: any) => element.facts)).toBeNull();
+    await expect(profiles.locator('[data-profile]')).toHaveCount(0);
+  } finally {
+    release();
+    await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'");
+  }
+});
+
+test('Profiles deep link without ai:view sends no fact reads', async ({ page }) => {
+  await login(page); const reads: string[] = [];
+  page.on('request', r => { if (r.url().endsWith('/api/investigation-profiles')) reads.push(r.url()); });
+  await page.goto(`${env.url}/settings/ai/profiles`);
+  await expect(page.getByText('当前账号无权访问此设置页面。', { exact: true })).toBeVisible();
+  await expect(page.locator('investigation-profiles-page')).toHaveCount(0); expect(reads).toEqual([]);
+});
+
+test('Profiles loading, unavailable and unconfigured states do not retain facts', async ({ page }) => {
+  await env.pool.query("INSERT IGNORE INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code='ai:view'");
+  const actor = await env.contexts.loadActiveActor(101);
+  await login(page); await page.addInitScript(permissions => localStorage.setItem('permissions', JSON.stringify(permissions)), actor.permissions);
+  try {
+    await page.route('**/api/investigation-profiles', r => r.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+    await page.goto(`${env.url}/settings/ai/profiles`);
+    const profiles = page.locator('investigation-profiles-page');
+    await expect(profiles).toContainText('加载失败'); await expect(profiles.locator('[data-profile]')).toHaveCount(0);
+    await page.unroute('**/api/investigation-profiles');
+    await page.route('**/api/investigation-profiles', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, source: 'repository', allowlistSemantics: 'authority_ceiling', items: [] }) }));
+    await profiles.getByRole('button', { name: '刷新 Profiles', exact: true }).click();
+    await expect(profiles).toContainText('尚未配置 Profiles');
+    expect(await profiles.evaluate((element: any) => element.facts.items)).toEqual([]);
+  } finally { await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='ai:view'"); }
+});
+
 test('no chat:view deep link performs no investigation reads', async ({ page }) => {
   await login(page);
   await page.route('**/api/auth/permissions', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
