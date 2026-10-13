@@ -213,6 +213,43 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
     } finally { await composition.close(); }
   }, 60_000);
 
+  it('configured output cap admits real System facts and governs provider dispatch within the unchanged context ceiling', async () => {
+    const composition = await createSystemComposition(() => pool, { contexts,
+      configuration: { enabled: true, automatic: true, serviceUserId: serviceId },
+      budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100,
+        prices: { input: 100, cachedInput: 50, output: 200 } } });
+    let calls = 0;
+    const provider: LLMProvider = {
+      getDefaultModel: () => 'controlled-small-output',
+      getModelCapabilities: () => ({ model: 'controlled-small-output', contextWindowTokens: 8192,
+        maxOutputTokens: 1024, preferredOutputTokens: 512, source: 'configuration', version: 'fixture/v1' }),
+      chat: async (messages, _tools, options) => {
+        calls++;
+        expect(options?.maxTokens).toBe(512);
+        const final = { content: '原始持久错误已读取；根因待验证。', finishReason: 'stop', toolCalls: [],
+          hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 20, completion_tokens: 10 } };
+        if (calls === 1) return { ...final, content: null, finishReason: 'tool_calls',
+          toolCalls: [{ id: 'configured-output-facts', name: 'get_platform_observations', arguments: {} }],
+          hasToolCalls: true, shouldExecuteTools: true };
+        expect(JSON.stringify(messages.filter(m => m.role === 'tool'))).toContain('HTTP_500');
+        return final;
+      },
+      chatStream: async () => { throw new Error('STREAM_NOT_EXPECTED'); },
+    };
+    try {
+      const saved = await composition.bridge.record(failure()), accepted = await composition.bridge.deliver(saved.jobId);
+      const workerId = 'configured-output-worker';
+      const job = await new MysqlWorkflowStore(() => pool as never).claim(workerId, 120, { types: ['investigation.execute'], exclude: false });
+      const executor = new InvestigationExecutor({ pool: () => pool, authorization,
+        systemToolsForInvestigation: composition.toolsForInvestigation, toolsForActor: () => new ToolRegistry(),
+        providerForPurpose: async () => provider, budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100 } });
+      const run = await executor.execute({ investigationId: accepted.investigationId!, requestId: accepted.requestId!, job: job!,
+        context: { workerId, fencingToken: job!.fencingToken, signal: new AbortController().signal } });
+      expect(run.state).toBe('completed'); expect(calls).toBe(2);
+      expect(await count('agent_runs')).toBe(1); expect(await count('investigation_results')).toBe(1);
+      expect(await count('investigation_evidence')).toBe(1);
+    } finally { await composition.close(); }
+  }, 60_000);
   it('durable original precedes admission; 100 retries and immutable conflicts survive recreation', async () => {
     const input = failure();
     const writes = await Promise.all(Array.from({ length: 100 }, () => bridge.record(input)));

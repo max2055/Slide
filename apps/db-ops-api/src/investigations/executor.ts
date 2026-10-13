@@ -536,6 +536,7 @@ export class InvestigationExecutor {
       }
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
+      const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
@@ -695,9 +696,13 @@ export class InvestigationExecutor {
         initialMessages,
         tools,
         model: provider.getDefaultModel(),
-        contextWindowTokens: Math.min(actual.getModelCapabilities?.()?.contextWindowTokens ?? 16_000, 16_000),
+        contextWindowTokens: Math.min(modelCapabilities?.contextWindowTokens ?? 16_000, 16_000),
         maxIterations: profile.budget.maxProviderAttempts,
-        maxTokens: Math.min(4096, state.reservedTokens),
+        // Context admission must reserve the same configured output ceiling
+        // as dispatch, including qualification-only reductions. Keep the
+        // existing hard context and execution-token ceilings unchanged.
+        maxTokens: Math.min(4096, state.reservedTokens,
+          modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
         maxToolResultChars: profile.budget.maxBytes,
         budgetLimits: {
           maxToolCalls: profile.budget.maxToolCalls,

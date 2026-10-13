@@ -1,5 +1,30 @@
 # T09 System 领域与共享装配验收
 
+## v1.2.21：真实 Provider 有界验收与输出预留修复候选
+
+Max 授权评论 `01a135cd-25dd-7ab7-aca4-f92d31398f37` 覆盖本场景的旧零请求限制。共享 MySQL 仅通过应用环境认证执行 Provider/场景 SELECT，沿现有 `createConfiguredAgentProvider` 默认场景路由使用 deepseek/deepseek-flash；密钥仅在内存解密，未改共享配置。本场景独立持久账本记录发送前计数、输入字节保守上界、输出额度及真实 usage；锁竞争、未完成请求、缺失 usage、HTTP/协议错误均停发，不自动重试或 fallback。上限为 3 次 HTTP、32,000 input+output、每次输出 2,048；缓存属于 input 子集，不重复相加。原 5/6 成功停发历史保留，未挪用剩余额度。
+
+唯一一次真实场景使用独占 MySQL 8.4、两次正式迁移、限制 service 身份及两小时前合成错误。正式 composition→持久事实→admission→Workflow/DirectAdapter/executor，真实模型自主第一轮选择 observations/manifest，第二轮选择 symbol/search/read；实际工具读取原事件、一小时窗口及 gaps、精确合成 Commit、经验证的签名 manifest、允许出站的 178 字节夹具源码。没有人工伪造真实模型的工具选择。源码/目标为 fixture，不称真实生产源码/故障根因验收。
+
+**真实验收未通过**：两个成功 HTTP 共 input 2,469、output 612、总吞吐 3,081，缓存 640（已含 input）。旧阶段 5 加本阶段 2，累计 7 次；旧阶段 token 实测不可用，不能声称累计只有 3,081。执行器在第二批工具后返回 `partial / CONTEXT_UNRECOVERABLE`，未发第三次、未生成最终模型回答。5 条工具结果均存入 canonical/evidence；SQL ledger settled、charged_tokens=3,081、配置估算费用 3,693 microUSD，供应商实际费用及家族 Agent token/费用不可用。新进程持正式新 fence 恢复及终态重投均保持同一 partial Run、一版降级结果、5 份证据、零模型重放，JWT/TCP HTTP 仍能关联事件与调查。预计的 completed SQL 故障修复没有触发，不能将 partial 重投等同于该 completed 场景通过。容器和业务 schema 已清理。
+
+离线复用已记录的助手/工具事实，未发模型请求，`ContextManager` 保守估计 11,936，大于 16,000−4,096−1,024=10,880 的输入额度。本场景实际输出 ceiling 为 2,048，但 executor 固定以 4,096 预留。候选现在同时遵守 Provider 配置的 preferred/max output、原 4,096 ceiling 和执行剩余预算；没有扩大 16k 上下文、32k ledger 或启用摘要模型。以 2,048 预留的离线相同事实估计在 12,928 输入额度内。这只定位并验证预留修复，不证明真实最终回答可通过。
+
+新增真实 SQL 回归以 8,192 上下文、1,024 最大输出及512配置输出验证原事实→completed/canonical，旧固定4,096失败、修复后通过；预算并发/崩溃/缺 usage/失败停发直接测试保留。当前请求账本已永久 stop，修复后没有重发或重新初始化。
+
+显式运行方式（从仓库根；路径变量必须为绝对路径）：
+
+```bash
+# 一次性独占初始化，已有文件会拒绝；不得用新路径绕过本场景 stop。
+T09_TEST_JOURNAL_PATH="$T09_REAL_JOURNAL" pnpm --filter slide-api exec tsx -e \
+  'import {initializeSystemJournal} from "./src/investigations/system-real-provider-budget.ts"; initializeSystemJournal(process.env.T09_TEST_JOURNAL_PATH!)'
+# 环境需显式提供本授权、已有应用 .env 的路径、账本及脱敏产物路径。
+T09_REAL_AUTHORIZATION=01a135cd-25dd-7ab7-aca4-f92d31398f37 \
+  pnpm --filter slide-api exec tsx src/investigations/system-real-provider-qualification.ts
+```
+
+必需环境：`T09_REAL_JOURNAL`、`T09_REAL_EVIDENCE`、`T09_PROVIDER_ENV`、`T09_REAL_ARTIFACTS`。`T09_REAL_PREPARE_ONLY=true` 只做零模型预检，不能作为真实模型消费证据。默认测试/生产启动不会执行 qualification。完整 T09 仍需父核验本次失败与修复、另行明确复验授权、所需真实验收、新 head CI、独立 Review、普通 merge/main 核验。共享 owner 仍 T09，不释放 T11/T10/T12；原 144.5ms 性能失败根因仍未确认，100ms 门禁不变。
+
 ## v1.2.19：T09-WINDOW-01 积压窗口修复
 
 父在 PR165 `08b8ccaa` 真实 MySQL 复现两小时积压：准入成功，但发生时间到摄入时间的间隔被直接当作工具查询窗口，超过一小时后抛 `SYSTEM_TOOL_SCOPE_INVALID`；事件时钟领先数据库也会产生反向窗口。历史准入/CI/失败证据保留。
