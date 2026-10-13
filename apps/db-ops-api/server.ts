@@ -73,6 +73,7 @@ import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
 import { registerInvestigationRoutes } from './src/investigations/routes.js';
 import { registerInvestigationProfileRoutes } from './src/investigations/profile-routes.js';
+import { registerInvestigationGovernanceRoutes } from './src/investigations/governance-routes.js';
 import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
@@ -403,6 +404,7 @@ async function start() {
   await registerFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
+  await registerInvestigationGovernanceRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);

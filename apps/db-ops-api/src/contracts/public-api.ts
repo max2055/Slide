@@ -2,6 +2,7 @@ import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
 import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
+import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
 import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
 
 export const InfrastructureReadinessSchema = Type.Object({ ready: Type.Boolean() }, { $id: 'InfrastructureReadiness', additionalProperties: false });
@@ -660,6 +661,7 @@ export const OkResponseSchema = Type.Object({
 
 export const PublicApiSchemas = {
   ...InvestigationProfileSchemas,
+  ...InvestigationGovernanceSchemas,
   ...InvestigationSchemas, ...InvestigationObservationSchemas,
   ...InvestigationHttpSchemas,
   QueueObservation: QueueObservationSchema,
