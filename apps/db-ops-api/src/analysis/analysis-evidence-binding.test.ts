@@ -20,6 +20,7 @@ describe('task-bound analysis completion', () => {
 
 import { bindEnvelope, evidenceHash, resolveEvidenceRef } from './analysis-evidence.js';
 import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
+import { asAnalysisView } from './analysis-envelope.js';
 import { dbConnection } from '../db-connection.js';
 import { afterEach, vi } from 'vitest';
 const hash = 'c'.repeat(64);
@@ -125,4 +126,14 @@ describe('uncertain evidence quality', () => {
 
 it('distinguishes route revision timestamps when hashing actual provider configuration', () => {
   expect(evidenceHash([new Date('2026-10-03T00:00:00Z')])).not.toBe(evidenceHash([new Date('2026-10-03T01:00:00Z')]));
+});
+
+it('reads a V2 result only with current explicit evidence bindings; bound v1 stays v1', () => {
+  const value = { schemaVersion: 2, subject: { kind: 'resource', resource: envelope.subject }, summary: 'summary', facts: [], hypotheses: [],
+    claims: [{ statement: 'inference', kind: 'inference', supportingEvidenceIds: [], contradictingEvidenceIds: ['e'] }],
+    rootCauseVerification: { status: 'unverified' }, unresolvedQuestions: [], recommendations: [], problemStatus: 'unconfirmed',
+    provenance: { modelVersion: 'fixture', promptVersion: 'fixture', toolVersions: {}, usageStatus: 'unavailable' }, createdAt: envelope.createdAt };
+  expect(asAnalysisView(value, '', new Set(['e']))).toMatchObject({ kind: 'investigation', displayMarkdown: 'summary', readOnly: true, result: { rootCauseVerification: { status: 'unverified' } } });
+  expect(asAnalysisView(value, 'legacy')).toEqual({ kind: 'legacy', displayMarkdown: 'legacy', envelope: null });
+  expect(asAnalysisView({ ...envelope, verification: 'bound' }, '')).toMatchObject({ kind: 'envelope', envelope: { verification: 'bound' } });
 });

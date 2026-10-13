@@ -139,7 +139,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   }, 60_000);
   beforeEach(async () => {
     await pool.query("UPDATE users SET status='active' WHERE id IN (101,102,104)");
-    for (const table of [
+    for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources',
       'investigation_event_links',
       'operational_events',
       'investigation_trigger_keys',
@@ -1609,6 +1609,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       'final-candidate',
       'response-ready',
       'staging-after',
+      'completion-before',
+      'completion-after',
     ].flatMap(
       (point) =>
         [
@@ -1669,8 +1671,14 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect(await rows('SELECT id FROM investigation_budget_ledger')).toHaveLength(1);
       if (admitted) expect(ledger.id).toBe(admitted.id);
       if (expected === 'partial') expect(Number(ledger.charged_tokens)).toBe(32000);
+      const resultsBeforeObserver = await rows('SELECT * FROM investigation_results WHERE run_id=?', [binding.runId]);
+      expect(resultsBeforeObserver).toHaveLength(1);
+      const events = await rows('SELECT event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence', [binding.investigationId]);
+      const terminalEvent = events.find(e=>e.event_json.type==='run.terminal');
+      expect(events.find(e=>e.event_json.type==='result.persisted')!.event_json.sequence).toBeLessThan(terminalEvent!.event_json.sequence);
       const replay = await child();
       expect(replay.messages.some((m) => m.providerCall || m.toolCall)).toBe(false);
+      expect(await rows('SELECT * FROM investigation_results WHERE run_id=?', [binding.runId])).toEqual(resultsBeforeObserver);
     },
     30000,
   );

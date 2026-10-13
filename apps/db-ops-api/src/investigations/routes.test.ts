@@ -12,6 +12,7 @@ import { ChatDatabaseService } from '../chat-database-service.js';
 import { InvestigationAuthorization, provisionInvestigationServiceIdentity, type AuthorityExecutor } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import type { InvestigationRecord, InvestigationResource } from './store.js';
+import { AgentRunService } from '../adapter/agent-run-service.js';
 
 const port = Number(process.env.AUTH_TEST_MYSQL_PORT ?? process.env.REPORT_TEST_MYSQL_PORT);
 describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
@@ -80,7 +81,7 @@ describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
 
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_bridge_failure');
-    for (const table of ['investigation_admission_keys', 'investigation_requests', 'investigation_members', 'investigation_resources', 'investigations',
+    for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources','investigation_admission_keys', 'investigation_requests', 'investigation_members', 'investigation_resources', 'investigations',
       'chat_session_shares', 'chat_messages', 'chat_sessions', 'workflow_jobs', 'outbox_events', 'agent_runs', 'refresh_tokens']) await pool.query(`DELETE FROM ${table}`);
     await pool.execute("UPDATE users SET status = 'active', session_version = 1 WHERE id IN (101, 102, ?)", [serviceId]);
     await pool.execute("UPDATE users SET username = 'slide-investigation-ops-test', password_hash = ? WHERE id = ?", [INVESTIGATION_SERVICE_PASSWORD, serviceId]);
@@ -116,12 +117,26 @@ describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
     const patch=await fetch(`${address}/api/investigations/${accepted.id}`,{method:'PATCH',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({expectedVersion:2,title:'TCP updated'})});
     expect(patch.status).toBe(200);
     const detail=await fetch(`${address}/api/investigations/${accepted.id}`,{headers}); expect(detail.headers.get('cache-control')).toContain('no-store');
-    const record=await detail.json() as InvestigationRecord; expect(record).toMatchObject({ title:'TCP updated',version:3,context:{subject:command.subject,from:command.from,to:command.to},derivedRunState:null,latestResult:null });
+    const record=await detail.json() as InvestigationRecord; expect(record).toMatchObject({ title:'TCP updated',version:3,context:{subject:command.subject,from:command.from,to:command.to},derivedRunState:'queued',latestResult:null });
     expect((await all('investigation_requests'))[0].request_snapshot.context).toEqual(record.context);
     const replay=await post('tcp-key',command as never); expect(replay.statusCode).toBe(202); expect(replay.json()).toEqual(accepted);
     const query=await fetch(`${address}/api/investigations?query=TCP`,{headers}); expect((await query.json() as { authorizedCounts: { total: number } }).authorizedCounts.total).toBe(1);
     const connection=await pool.getConnection(); try { const [rows]=await connection.execute<RowDataPacket[]>('SELECT title FROM investigations WHERE id=?',[accepted.id]); expect(rows[0].title).toBe('TCP updated'); } finally { connection.release(); }
   }, 30_000);
+
+  it('a queued follow-up does not inherit the previous Run terminal state', async () => {
+    const accepted = (await post()).json();
+    const request = (await all('investigation_requests'))[0];
+    const { run } = await new AgentRunService(() => pool as never).claim(owner.userId, accepted.sessionId,
+      request.message_id, `investigation:${request.id}`);
+    await pool.query("UPDATE agent_runs SET state = 'completed', finished_at = NOW(3) WHERE id = ?", [run.id]);
+    await idle(accepted.id);
+    const followUp = await runs(accepted.id, 'next-run');
+    expect(followUp.statusCode).toBe(202);
+    const detail = await app.inject({ url: `/api/investigations/${accepted.id}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ derivedRunState: 'queued', activeRequestId: followUp.json().requestId });
+  });
 
   it('create retry and original request retry share the actor/key-first lock order', async () => {
     const accepted=(await post()).json();

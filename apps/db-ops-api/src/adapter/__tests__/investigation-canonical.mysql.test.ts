@@ -161,7 +161,7 @@ describe.skipIf(!port)('investigation canonical transaction ports / real MySQL',
     bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts));
   }, 60_000);
   beforeEach(async () => {
-    for (const table of [
+    for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources',
       'investigation_admission_keys',
       'investigation_create_keys',
       'investigation_requests',

@@ -3,6 +3,9 @@ import { projectionDocuments, reduceMessageProjection, type ProjectionOperation 
 import { PARTS_STREAM_CAPABILITY, type DisplayCursor } from '@slide/agent-core/display-stream';
 import { DisplayStreamAuthority, type DisplayStreamLimits } from './display-stream.js';
 import { AdapterMessageProjection } from './message-projection.js';
+import { InvestigationWatchService } from '../investigations/stream.js';
+import { InvestigationWatchSchema, InvestigationUnwatchSchema } from '../investigations/observation-contracts.js';
+import { Value } from '@sinclair/typebox/value';
 import { persistedMessageParts } from './message-parts.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { BoundedSocketWriter } from './bounded-socket-writer.js';
@@ -213,6 +216,7 @@ export interface DirectAdapterOptions {
   memoryStore?: MemoryStore;       // optional, created from workspace if not provided
   actorContextService?: Pick<ActorContextService, 'authenticateAccessToken' | 'revalidateActor'>;
   heartbeatIntervalMs?: number;
+  investigationWatchService?: InvestigationWatchService;
   streamingLimits?: import('@slide/agent-core').StreamingLimits;
   displayStreamLimits?: Partial<DisplayStreamLimits>;
   socketWriteLimits?: import('./bounded-socket-writer.js').SocketWriteLimits;
@@ -259,6 +263,7 @@ export class DirectAdapter implements IAgentEngine {
   private readonly runLimiter = new ActorConcurrencyLimiter(this.runtimeLimits.maxConcurrentRunsPerActor);
   private wsServer: WebSocketServer | null = null;
   private readonly displayStreams: DisplayStreamAuthority<WebSocket>;
+  private readonly investigationWatches: InvestigationWatchService;
   private readonly partsPeers = new WeakSet<WebSocket>();
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
   private sessionOperations = new Map<string, Set<Promise<void>>>();
@@ -281,6 +286,7 @@ export class DirectAdapter implements IAgentEngine {
   constructor(opts: DirectAdapterOptions) {
     this.runner = new AgentRunner(opts.llmProvider);
     this.displayStreams = new DisplayStreamAuthority(opts.displayStreamLimits);
+    this.investigationWatches = opts.investigationWatchService ?? new InvestigationWatchService();
     this.streamingLimits = opts.streamingLimits;
     this.socketWriter = new BoundedSocketWriter(opts.socketWriteLimits, code => {
       platformLogs.record({ component: 'ws', eventType: 'stream.delivery_failed', status: 'failed', errorCode: code });
@@ -385,6 +391,9 @@ export class DirectAdapter implements IAgentEngine {
       let authState: ConnectionAuthState = 'unauthenticated';
       let authGeneration = 0;
       let connectionActor: ActorContext | undefined;
+      let connectionCeiling: ActorContext | undefined;
+      let investigationIntent = 0;
+      const investigationIntents = new Map<string, number>();
       let authenticatedUserId: number | null = null;
       let revalidationInFlight = false;
       const frameLimiter = new FixedWindowRateLimiter(
@@ -398,6 +407,12 @@ export class DirectAdapter implements IAgentEngine {
       }, this.runtimeLimits.authTimeoutMs);
       (ws as any)._authState = authState;
       (ws as any)._actorContext = undefined;
+
+      const investigationPeer = {
+        send: (event: Record<string, unknown>) => authState === 'authenticated' && ws.readyState === WebSocket.OPEN
+          && this.sendSocketEvent(ws, event),
+        close: () => { this.investigationWatches.unwatch(investigationPeer); ws.close(4001, 'Investigation authority revoked'); },
+      };
 
       const subscribeToSession = (sessionKey: string, subscriptionId?: string) => {
         if (!this.sessionSubscribers.has(sessionKey)) {
@@ -422,6 +437,7 @@ export class DirectAdapter implements IAgentEngine {
       };
 
       const clearAuthentication = () => {
+        this.investigationWatches.unwatch(investigationPeer);
         authGeneration += 1;
         authState = 'closed';
         connectionActor = undefined;
@@ -561,6 +577,7 @@ export class DirectAdapter implements IAgentEngine {
               && authState === 'authenticating'
               && authGeneration === authenticationGeneration) {
               connectionActor = authenticatedActor;
+              connectionCeiling = authenticatedActor;
               authenticatedUserId = authenticatedActor.userId;
               authState = 'authenticated';
               (ws as any)._actorContext = authenticatedActor;
@@ -596,6 +613,24 @@ export class DirectAdapter implements IAgentEngine {
         // Revalidate before every command so revocation takes effect without
         // waiting for the heartbeat interval.
         const commandGeneration = authGeneration;
+        const watchId = typeof msg.id === 'string' ? msg.id : '';
+        let currentInvestigationIntent: number | undefined;
+        if (msg.type === 'investigation.watch' || msg.type === 'investigation.unwatch') {
+          if (!Value.Check(msg.type === 'investigation.watch' ? InvestigationWatchSchema : InvestigationUnwatchSchema, msg)) {
+            this.sendSocketEvent(ws, { type: 'investigation.error', code: 'INVESTIGATION_INPUT_INVALID' }); return;
+          }
+          currentInvestigationIntent = ++investigationIntent;
+          if (watchId) {
+            investigationIntents.set(watchId, currentInvestigationIntent);
+            this.investigationWatches.unwatch(investigationPeer, watchId);
+            while (investigationIntents.size > 8) {
+              const oldest = investigationIntents.keys().next().value!;
+              investigationIntents.delete(oldest); this.investigationWatches.unwatch(investigationPeer, oldest);
+            }
+          } else {
+            investigationIntents.clear(); this.investigationWatches.unwatch(investigationPeer);
+          }
+        }
         try {
           const revalidatedActor = await this.actorContexts.revalidateActor(
             connectionActor,
@@ -613,6 +648,23 @@ export class DirectAdapter implements IAgentEngine {
         }
 
         switch (msg.type) {
+          case 'investigation.watch': {
+            try {
+              // Original connection ceiling is retained by the watch; a later
+              // admin promotion cannot expand an existing subscription.
+              if (!watchId || investigationIntents.get(watchId) !== currentInvestigationIntent) break;
+              await this.investigationWatches.watch(investigationPeer, connectionCeiling!, watchId, msg.afterSequence as number | undefined);
+            } catch {
+              if (authGeneration === commandGeneration && ws.readyState === WebSocket.OPEN)
+                this.sendSocketEvent(ws, { type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' });
+            }
+            break;
+          }
+          case 'investigation.unwatch': {
+            // Unwatch already took effect at frame receipt. Repeating it here
+            // could let a slow revalidation erase a newer successful watch.
+            break;
+          }
           case 'chat.send': {
             if ((msg as any).protocolVersion === 2) {
               const parsed = validateChatSendV2(msg);
@@ -1516,6 +1568,7 @@ ${result.finalContent || ''}`
    */
   async dispose(): Promise<void> {
     this.displayStreams.dispose();
+    this.investigationWatches.dispose();
     await this.businessMemory.close();
     if (this.wsServer) {
       for (const ws of this.wsServer.clients) {

@@ -32,6 +32,7 @@ const acquire = pool.getConnection.bind(pool);
   const query = c.query.bind(c);
   (c as any).query = async (sql: string, values?: unknown[]) => {
     const result = await query(sql, values);
+    if (sql.startsWith("UPDATE agent_runs SET state = 'completed'")) mark('completion-after');
     if (sql.startsWith('UPDATE agent_runs SET result_json =') && typeof values?.[0] === 'string') {
       const data = JSON.parse(values[0]);
       if (data.completionPending === true) mark('staging-after');
@@ -48,6 +49,13 @@ const acquire = pool.getConnection.bind(pool);
       const data = JSON.parse(values[0]);
       if (data?.phase === 'final_response') mark(data.terminal_resolution ? 'response-ready' : 'final-candidate');
     }
+    return result;
+  };
+  const execute = c.execute.bind(c);
+  (c as any).execute = async (sql: string, values?: unknown[]) => {
+    const result = await execute(sql, values);
+    if (sql.startsWith('INSERT INTO investigation_stream_events') && typeof values?.[3] === 'string'
+      && JSON.parse(values[3]).type === 'run.terminal') await pause('completion-before');
     return result;
   };
   const commit = c.commit.bind(c);

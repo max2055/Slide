@@ -50,7 +50,18 @@ function listInput(request: FastifyRequest): { options: InvestigationList; finge
 /** Authenticated HTTP only; no caller-selected actor/Profile authority, models,
  * executor registration, Run state owner, or secondary enqueue path. */
 export async function registerInvestigationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
-  bridge = new InvestigationSessionBridge(() => dbConnection.getPool())): Promise<void> {
+  bridge = new InvestigationSessionBridge(() => dbConnection.getPool()),
+  observation = bridge.observationServices()): Promise<void> {
+  // Read expiry is immediate; unattended SQL purge is bounded and independently
+  // removes raw bodies while preserving all historical metadata/hash bindings.
+  let purge: Promise<unknown> | undefined;
+  const retention = setInterval(() => {
+    if (purge) return;
+    purge = observation.evidence.purgeExpired().catch(() => app.log.error({ code: 'EVIDENCE_RETENTION_UNAVAILABLE' }, 'Evidence retention failed'))
+      .finally(() => { purge = undefined; });
+  }, 60_000);
+  retention.unref();
+  app.addHook('onClose', async () => { clearInterval(retention); await purge; });
   function route(method: 'GET' | 'POST' | 'PATCH', url: string,
     handler: (request: FastifyRequest, reply: FastifyReply, actor: ActorContext) => Promise<unknown>) {
     app.route({ method, url, preHandler: verifyToken,
@@ -100,8 +111,33 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
   route('GET', '/api/investigations/:id', async (request, _reply, actor) => {
     const id = uuid((request.params as { id: string }).id);
     const record = await bridge.storeFor(actor).detail(principal(actor), id);
-    // T04/T05 own Run/result facts. Absence must remain absence.
-    return { ...record, derivedRunState: null, latestResult: null };
+    const snapshot = await observation.stream.snapshot(actor, id);
+    const results = await observation.results.list(actor, id, undefined, 1);
+    const run = record.activeRequestId
+      ? snapshot.runs.find(run => run.requestId === record.activeRequestId)
+      : snapshot.runs.at(-1);
+    return { ...record, derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
+      latestResult: results.items[0] ?? null, watermark: snapshot.watermark };
+  });
+  route('GET', '/api/investigations/:id/events', async (request, _reply, actor) => {
+    const query = request.query as Record<string, string>;
+    if (Object.keys(query).some(k => !['after', 'limit'].includes(k))) throw invalid();
+    const number = (value: string | undefined, fallback: number) => value === undefined ? fallback : /^\d+$/.test(value) ? Number(value) : NaN;
+    const result = await observation.stream.replay(actor, uuid((request.params as { id: string }).id), number(query.after, 0), number(query.limit, 200));
+    return { ...result, ...(result.replayRequired ? { code: 'replay_required' } : {}) };
+  });
+  route('GET', '/api/investigations/:id/evidence/:eid', async (request, reply, actor) => {
+    const { id, eid } = request.params as { id: string; eid: string };
+    const query = request.query as Record<string, string>;
+    if (Object.keys(query).some(k => k !== 'raw') || query.raw !== undefined && query.raw !== 'true') throw invalid();
+    const value = await observation.evidence.get(actor, uuid(id), uuid(eid), query.raw === 'true');
+    if (query.raw === 'true' && value.status === 'expired') return reply.code(410).send({ error: 'EVIDENCE_EXPIRED', evidence: value });
+    return value;
+  });
+  route('GET', '/api/investigations/:id/results', async (request, _reply, actor) => {
+    const query = request.query as Record<string, string>;
+    if (Object.keys(query).some(k => !['before', 'limit'].includes(k)) || Object.values(query).some(v => !/^\d+$/.test(v))) throw invalid();
+    return observation.results.list(actor, uuid((request.params as { id: string }).id), query.before === undefined ? undefined : Number(query.before), query.limit === undefined ? 20 : Number(query.limit));
   });
   route('PATCH', '/api/investigations/:id', async (request, _reply, actor) => {
     if (!Value.Check(InvestigationPatchRequestSchema, request.body)) throw invalid();
@@ -118,6 +154,14 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     if (Object.keys(query).some(k => k !== 'limit')) throw invalid();
     const limit = query.limit === undefined ? 200 : /^\d+$/.test(query.limit) ? Number(query.limit) : NaN;
     return { messages: await bridge.messages(actor, uuid((request.params as { id: string }).id), limit) };
+  });
+  route('GET', '/api/investigations/:id/facts', async (request, _reply, actor) => {
+    const query = request.query as Record<string, string>;
+    if (Object.keys(query).some(k => !['limit', 'before'].includes(k)) || query.before !== undefined
+      && (!/^\d+:\d+:\d+$/.test(query.before) || query.before.split(':').some(n => !Number.isSafeInteger(Number(n))))) throw invalid();
+    const limit = query.limit === undefined ? 200 : /^\d+$/.test(query.limit) ? Number(query.limit) : NaN;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw invalid();
+    return bridge.facts(actor, uuid((request.params as { id: string }).id), limit, query.before);
   });
   route('POST', '/api/investigations/:id/requests/:requestId/cancel', async (request, reply, actor) => {
     if (request.body !== undefined && (typeof request.body !== 'object' || request.body === null || Object.keys(request.body).length)) throw invalid();

@@ -10,6 +10,11 @@ import { InvestigationAuthorization, freezeInvestigationCaller, type Investigati
 import { MysqlInvestigationStore, InvestigationStoreError, type InvestigationAdmission, type InvestigationCreate,
   type InvestigationAcceptance, type InvestigationRecord, type InvestigationCancellation } from './store.js';
 import type { TransactionConnection, OutboxInput } from '../workflows/outbox-service.js';
+import { InvestigationStreamStore } from './stream.js';
+import { InvestigationEvidenceStore } from './evidence-store.js';
+import { InvestigationResultStore } from './result-schema.js';
+import { CanonicalStore } from '../adapter/canonical-store.js';
+import { publicDocument } from './stream.js';
 
 type RequestCommand = Omit<InvestigationAdmission, 'actor'>;
 type CreateCommand = Omit<InvestigationCreate, 'actor'>;
@@ -39,6 +44,20 @@ export class InvestigationSessionBridge {
   storeFor(actor: ActorContext): MysqlInvestigationStore {
     return new MysqlInvestigationStore(this.poolProvider, this.authorization.forActor(actor),
       (connection, cancellation) => this.cancelBudgetOnConnection(connection, cancellation));
+  }
+
+  /** Minimal read-side composition reuses this exact configured pool and live
+   * authority. Tests/workers must never fall back to another global database. */
+  observationServices() {
+    return { stream: new InvestigationStreamStore(this.poolProvider, this.authorization),
+      evidence: new InvestigationEvidenceStore(this.poolProvider, this.authorization),
+      results: new InvestigationResultStore(this.poolProvider, this.authorization) };
+  }
+  async facts(actor: ActorContext, id: string, limit = 200, before?: string) {
+    return this.storeFor(actor).transaction(async c => {
+      const page = await new CanonicalStore(this.poolProvider as never, this.authorization).getObservationPage(c as never, actor, id, limit, before);
+      return { documents: page.messages.flatMap(m => m.messageParts ? [publicDocument(m.messageParts)] : []), nextBefore: page.nextBefore };
+    });
   }
 
   private async cancelBudgetOnConnection(connection: TransactionConnection, value: Readonly<InvestigationCancellation>): Promise<void> {
