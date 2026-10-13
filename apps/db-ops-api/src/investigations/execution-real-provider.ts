@@ -27,6 +27,8 @@ import { createInvestigationWorkflowHandler } from "./workflow-handler.js";
 
 const journal = process.env.T04_REAL_SEND_JOURNAL!;
 const evidence = process.env.T04_REAL_EVIDENCE!;
+// v1.2.7: explicit qualification route only; shared defaults remain unchanged.
+const model = "deepseek-flash";
 if (
   process.env.T04_REAL_AUTHORIZATION !== T04_AUTHORIZATION ||
   !journal ||
@@ -76,12 +78,12 @@ async function configuredProvider(
   if (!(await dbConnection.initialize())) throw Error("LOCAL_PROVIDER_DATABASE_UNAVAILABLE");
   let provider: LLMProvider;
   try {
-    const p = (await llmDatabaseService.getAllProviders()).find((p) => p.name === "deepseek");
-    assert(p?.enabled && p.supports_function_call);
+    const stored = (await llmDatabaseService.getAllProviders()).find((p) => p.name === "deepseek");
+    assert(stored?.enabled && stored.supports_function_call);
+    assert(Number.isSafeInteger(stored.max_tokens) && stored.max_tokens! > 0);
+    const p = { ...stored, max_tokens: Math.min(stored.max_tokens!, 2048) };
     assert.equal(p.api_base_url, "https://api.deepseek.com/v1");
     assert.equal(p.api_format, "openai-completions");
-    assert.equal(p.default_model, "deepseek-v4-flash");
-    assert.equal(p.max_tokens, 2048);
     assert(p.api_key_encrypted);
     // USD / 1k tokens -> micro USD / million tokens. No cached rate is
     // configured, so use the full input rate as a conservative estimate.
@@ -97,7 +99,7 @@ async function configuredProvider(
       {
         getAllProviders: async () => [p],
         getSceneBindings: async () => [
-          { scene: "fault_diagnosis", provider_id: p.id, model: p.default_model! },
+          { scene: "fault_diagnosis", provider_id: p.id, model },
         ],
         getProviderApiKey: async (name) => {
           assert.equal(name, p.name);
@@ -108,12 +110,18 @@ async function configuredProvider(
       true,
       false,
     );
+    assert.equal(provider.getDefaultModel(), model);
+    const capabilities = provider.getModelCapabilities?.(model);
+    assert(capabilities?.supportsTools);
     record({
       configuration: {
         provider: p.name,
         endpoint: p.api_base_url,
-        model: p.default_model,
+        model,
+        sharedDefaultModel: p.default_model,
+        supportsTools: capabilities.supportsTools,
         outputCeiling: p.max_tokens,
+        sharedOutputCeiling: stored.max_tokens,
         prices,
         scene: "isolated in-memory fault_diagnosis binding",
         sharedWrites: 0,
@@ -137,7 +145,7 @@ async function configuredProvider(
       max_tokens: number;
       stream?: boolean;
     };
-    assert.equal(body.model, "deepseek-v4-flash");
+    assert.equal(body.model, model);
     assert(Number.isSafeInteger(body.max_tokens) && body.max_tokens > 0 && body.max_tokens <= 2048);
     assert(!body.stream);
     if (scenario === "replay") throw Error("T04_UNEXPECTED_PROVIDER_REPLAY");
