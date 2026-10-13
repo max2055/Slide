@@ -74,6 +74,7 @@ import { handleChatSend } from './src/chat-handler.js';
 import { registerInvestigationRoutes } from './src/investigations/routes.js';
 import { registerInvestigationProfileRoutes } from './src/investigations/profile-routes.js';
 import { registerInvestigationGovernanceRoutes } from './src/investigations/governance-routes.js';
+import { registerAnalysisBridgeRoutes } from './src/investigations/bridge-routes.js';
 import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
@@ -405,6 +406,7 @@ async function start() {
   await registerInvestigationRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
+  await registerAnalysisBridgeRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
   await registerDeviceAuthRoutes(fastify, verifyToken);
@@ -3850,6 +3852,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
               return reply.code(400).send({ error: '告警 RCA 需要 related_id (alert_id)' });
             }
             const rcaResult = await alertRCAService.analyzeAlert(related_id, 'manual', (request as any).user);
+            if (rcaResult.investigationId) {
+              return reply.code(202).send({ id: rcaResult.investigationId, investigationId: rcaResult.investigationId,
+                requestId: rcaResult.requestId, status: rcaResult.status ?? 'pending' });
+            }
             if (!rcaResult.success) {
               return reply.code(500).send({ error: rcaResult.error });
             }

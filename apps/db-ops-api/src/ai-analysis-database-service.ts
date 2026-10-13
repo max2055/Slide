@@ -39,6 +39,7 @@ export interface AiAnalysisRecord {
   current_run_id?: string | null;
   request_actor_id?: number | null;
   authorization_version?: string | null;
+  investigation_id?: string | null;
 }
 
 export interface ActiveAiAnalysis {
@@ -340,7 +341,8 @@ class AiAnalysisDatabaseService {
     try {
       const [rows] = await pool.execute(
         `SELECT a.*, i.lifecycle_state AS instance_lifecycle_state, d.job_id, d.request_state, d.attempt_number, d.current_run_id, d.authorization_version,
-         JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id
+         JSON_UNQUOTE(JSON_EXTRACT(d.request_snapshot, '$.actor.userId')) AS request_actor_id,
+         (SELECT investigation_id FROM investigation_legacy_analysis_links WHERE analysis_id=a.id) AS investigation_id
          FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id = a.id LEFT JOIN database_instances i ON i.id = a.instance_id WHERE a.id = ?`,
         [analysisId]
       ) as any;

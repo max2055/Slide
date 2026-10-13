@@ -31,6 +31,8 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <div><dt>业务问题</dt><dd><app-badge>${problemLabels[detail.problemStatus]}</app-badge></dd></div>
       </dl>
       <p class="muted">${detail.profileId === 'system' ? 'System' : 'Ops'} · 只读调查 · ${detail.resources.map(r => `${r.type}:${r.id}`).join('、') || '平台'} · ${detail.sessionId}</p>
+      ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
+        <p class="muted">原结果不补跑；根因与恢复尚未验证。</p><pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre>` : nothing}
       <button class="btn evidence-toggle" @click=${options.onEvidence}>查看证据与成果</button>
       <button class="btn" ?disabled=${controller.busy} @click=${() => void controller.select(detail.id)}>刷新调查</button>
       ${active ? html`<button class="btn" ?disabled=${controller.busy || controller.operationForbidden || controller.cancelRequested || !controller.online}
