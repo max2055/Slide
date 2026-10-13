@@ -52,6 +52,7 @@ agent token/费用实际遥测不可用，没有自行估算为实测；子代�
 | `bash scripts/qualification/run-investigation-bridges.sh --browser-all` | 25/25 正式 MySQL 桥接 + 49/49 Chromium，无 skip/retry |
 | 新 `alert-bridge-pool.test.ts` | 11/11：容量 1/2/10 × 自动/手动/旧路径，各 10 个不同 source 并发及 flag 回切；单连接生产旧配置/派发入口；独立连接池的同 ID 50 次竞争 |
 | Outbox / AI bridge / Scene routing / Trigger policy focused | 4 文件 38/38，无 skip（其他未命中文件不计入） |
+| Provider factory 错误传播契约 | 23/23；按无参/带参方法实际签名调用，保留底层错误 cause 断言 |
 | `bash scripts/qualification/run-auth-boundary.sh` | 183/183 |
 | `bash scripts/qualification/run-analysis-recovery.sh` | 41/41 |
 | API typecheck / contracts check / diff check | 通过 |
@@ -59,3 +60,5 @@ agent token/费用实际遥测不可用，没有自行估算为实测；子代�
 小业务池在正式迁移两次运行并关闭初始化池后创建。首轮容量 1 的夹具提前限制迁移连接池，暴露 runner 既有 nested invariant query 问题并阻塞初始化；只调整夹具初始化顺序，未修改迁移模块。失败轮的即时 deadlock 重试仍有冲突，保留失败日志，采用有界随机退避后全部业务回归通过。所有容器/独立 schema 与本次服务均已收尾，无平台/生产数据操作。
 
 准确最终 PR head 的 CI 结果和文件 SHA256 随交接附件交付；父独立 Review、普通 merge/main 核验仍为完整出口前置，不以本地通过代替。本次新增外部模型请求 0，历史 5/6 成功停发记录保留；子代理 0，累计 token/费用实测不可用。
+
+首个修复 head `c5cb8e61` CI `38395261633`：新增 11 项池回归通过，后端 3315 passed / 1 failed / 615 既有 skipped。失败为旧 provider factory 测试将字符串传给原无参 `getAllProviders`，与新增内部预留连接参数冲突；修正测试调用签名后重新收集新 head CI，不将该失败轮作为完整 gate 通过。
