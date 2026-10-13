@@ -19,7 +19,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then echo 'Isolated T08 MySQL unavailable' >&2; exit 1; fi
-T08_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/investigations/legacy-analysis-bridge.test.ts src/investigations/alert-bridge.test.ts
+T08_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/investigations/legacy-analysis-bridge.test.ts src/investigations/alert-bridge.test.ts src/investigations/alert-bridge-pool.test.ts
 if [[ "${1:-}" == '--browser' ]]; then
   T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts investigation-bridges.spec.ts
 elif [[ "${1:-}" == '--browser-all' ]]; then

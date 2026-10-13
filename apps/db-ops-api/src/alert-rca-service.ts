@@ -1,4 +1,5 @@
 import type { ActorContext } from './auth/actor-context.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警根因分析服务 (Alert Root Cause Analysis)
@@ -65,7 +66,7 @@ class AlertRCAService {
       return { success: false, error: 'INVESTIGATION_NOT_FOUND' };
 
     assertWorkflowActive();
-    const legacy = async (): Promise<AlertBridgeResponse> => {
+    const legacy = async (connection?: PoolConnection): Promise<AlertBridgeResponse> => {
     const result = await dispatchOrReuse({
         type: 'alert_rca', cacheKey: `alert:${alertId}:${subjectType}:${subjectId}`,
         instanceId, serverId, sessionKey: `rca-${subjectType}-${alertId}`,
@@ -82,7 +83,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 - 发生时间：${alert.created_at instanceof Date ? alert.created_at.toISOString() : String(alert.created_at)}
 
 请基于以上已持久化的告警事实分析根因、明确证据边界并给出修复建议。当前后台分析仅提供 slide_complete_analysis 工具；不要调用其他工具。完成后必须调用该工具保存结果。`,
-    });
+    }, connection);
     return { success: result.success !== false, analysisId: result.analysisId,
       sessionKey: `rca-${subjectType}-${alertId}-${result.analysisId}`, status: result.status,
       ...(result.status === 'unknown' ? { error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' } : {}),

@@ -332,8 +332,8 @@ class AiAnalysisDatabaseService {
   /**
    * 根据 ID 获取分析记录
    */
-  async getAnalysisById(analysisId: number): Promise<AiAnalysisRecord | null> {
-    const pool = this.getPool();
+  async getAnalysisById(analysisId: number, connection?: Pick<mysql.Pool, 'execute'>): Promise<AiAnalysisRecord | null> {
+    const pool = connection ?? this.getPool();
     if (!pool) {
       return null;
     }

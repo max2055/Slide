@@ -32,9 +32,12 @@ export async function bridgeTestFixture(connectionLimit = 12) {
     await new Promise(resolve=>setTimeout(resolve,500));
   } }
   await admin.query(`CREATE DATABASE ${database}`);
+  // Startup schema verification has its own pool requirements. Close that
+  // pool before constructing the strictly bounded business-path pool.
+  const migrationPool = mysql.createPool({ ...options, database, connectionLimit: 12 });
+  try { await new MigrationRunner(migrationPool).run(); await new MigrationRunner(migrationPool).run(); }
+  finally { await migrationPool.end(); }
   const pool: Pool = mysql.createPool({ ...options, database, connectionLimit });
-  await new MigrationRunner(pool).run();
-  await new MigrationRunner(pool).run();
   await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:view','AI read','ai','view'),('ai:manage','AI manage','ai','manage')");
   await pool.query("INSERT INTO users (id,username,password_hash) VALUES (101,'t08-owner','no-login'),(102,'t08-other','no-login')");
   await pool.query("INSERT INTO roles (id,name) VALUES (101,'t08-readonly')");
@@ -60,13 +63,13 @@ export async function bridgeTestFixture(connectionLimit = 12) {
     () => ({ configured: true, serviceUserId: serviceId, instanceIds: [101,102], policyId: 'database-alert-pilot', policyVersion: 1 }));
   let oldCalls = 0;
   const alerts = new Map<number, DatabaseAlertSource>();
-  const oldFor = (alert: DatabaseAlertSource) => async () => {
+  const oldFor = (alert: DatabaseAlertSource) => async (connection?: mysql.PoolConnection) => {
     oldCalls++;
     return new AnalysisDispatchStore(()=>pool).enqueue({analysisType:'alert_rca',cacheKey:`alert:${alert.id}:instance:${alert.instance_id}`,
       triggerType:'manual',relatedId:alert.id,request:{purpose:'alert_rca',subject:{type:'instance',id:alert.instance_id!},actor:owner,
-        message:'Synthetic persisted legacy input',systemPrompt:'Read only',evidenceVersion:'fixture',configVersion:'fixture',authorizationVersion:'fixture'}});
+        message:'Synthetic persisted legacy input',systemPrompt:'Read only',evidenceVersion:'fixture',configVersion:'fixture',authorizationVersion:'fixture'}}, connection);
   };
-  const old = () => oldFor([...alerts.values()].at(-1)!)();
+  const old = (connection?: mysql.PoolConnection) => oldFor([...alerts.values()].at(-1)!)(connection);
   const source = (id: number, metric = 'cpu_usage', instance = 101): DatabaseAlertSource => {
     const value = { id, instance_id: instance, title: `CPU/慢SQL ${metric}`, message: '受控只读事实', level: 'critical',
       created_at: new Date('2026-10-13T10:00:00Z'), metric_name: metric };
@@ -88,6 +91,7 @@ export async function bridgeTestFixture(connectionLimit = 12) {
   };
   return { pool, admin, app, contexts, authorization, bridge, legacy, alertBridge, owner, other, serviceId, flags,
     source, headers, count, insertLegacy, old, oldFor, oldCalls: () => oldCalls,
+    openPeerPool: () => mysql.createPool({ ...options, database, connectionLimit }),
     close: async () => { try { await app.close(); await pool.end(); await admin.query(`DROP DATABASE ${database}`); await admin.end(); }
       finally { if(container)execFileSync('docker',['stop','--time','10',container],{stdio:'pipe'}); } } };
 }
