@@ -14,6 +14,8 @@ import { InvestigationAuthorization } from '../../../apps/db-ops-api/src/investi
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from '../../../apps/db-ops-api/src/investigations/session-bridge.js';
 import { registerInvestigationRoutes } from '../../../apps/db-ops-api/src/investigations/routes.js';
 import { registerInvestigationProfileRoutes } from '../../../apps/db-ops-api/src/investigations/profile-routes.js';
+import { registerInvestigationGovernanceRoutes } from '../../../apps/db-ops-api/src/investigations/governance-routes.js';
+import { InvestigationGovernanceStore } from '../../../apps/db-ops-api/src/investigations/governance-store.js';
 import { InvestigationStreamStore, InvestigationWatchService } from '../../../apps/db-ops-api/src/investigations/stream.js';
 import { InvestigationExecutor } from '../../../apps/db-ops-api/src/investigations/executor.js';
 import { DirectAdapter } from '../../../apps/db-ops-api/src/adapter/direct-adapter.js';
@@ -46,6 +48,7 @@ export async function startInvestigationServer() {
   let worker: WorkerRuntime | undefined, timer: ReturnType<typeof setInterval> | undefined;
   let current: Promise<unknown> | undefined;
   let holdChat = false;
+  let governanceAvailable = true;
   let holdTools = false, paused = false, toolCalls = 0, providerCalls = 0;
   const workerErrors: string[] = [];
   const observationErrors: unknown[] = [];
@@ -138,6 +141,7 @@ export async function startInvestigationServer() {
     const verify = createVerifyToken(secret, contexts);
     await registerInvestigationRoutes(app, verify, bridge);
     await registerInvestigationProfileRoutes(app, verify);
+    await registerInvestigationGovernanceRoutes(app, verify, new InvestigationGovernanceStore(() => governanceAvailable ? pool : null, investigationBudgetConfiguration, contexts));
     await registerChatRoutes(app, { verifyToken: verify, service: chatDatabaseService, handleChatSend: async () => { throw new Error('USE_REAL_WS_CHAT'); } });
     app.get('/api/auth/permissions', { preHandler: verify }, async (request: any) => request.user.permissions);
     app.get('/api/agents', { preHandler: verify }, async () => ({ defaultId: 'main', agents: [{ id: 'main', name: 'Fixture' }] }));
@@ -159,6 +163,7 @@ export async function startInvestigationServer() {
     const address = vite.httpServer!.address() as { port: number };
     return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner, viewer, adapter, workerErrors, observationErrors, close,
       token: (actor = owner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
+      governanceStorage: (available: boolean) => governanceAvailable = available,
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },
       delaySnapshot: (id: string) => {
         let arrived!: () => void, release!: () => void;

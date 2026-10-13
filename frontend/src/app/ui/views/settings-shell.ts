@@ -15,6 +15,7 @@ import "../components/app-empty-state.js";
 import "./source-settings.js";
 import "./metric-settings.js";
 import "./investigation-profiles.ts";
+import "./investigation-governance.ts";
 
 function readPermissions(): Set<string> | null {
   try {
@@ -384,6 +385,9 @@ export class SettingsShell extends LitElement {
       case "models": return html`<llm-config-page .activeTab=${this.activeView}></llm-config-page>`;
       case "prompts": return html`<prompt-settings-page></prompt-settings-page>`;
       case "profiles": return html`<investigation-profiles-page></investigation-profiles-page>`;
+      case "policies":
+      case "budget":
+      case "usage": return html`<investigation-governance-page .kind=${this.activePage} .permissions=${this.permissions}></investigation-governance-page>`;
       case "sessions": return html`<agent-sessions-page></agent-sessions-page>`;
       case "capabilities": return this.activeView === "tools"
         ? html`<agent-tools-page></agent-tools-page>`
