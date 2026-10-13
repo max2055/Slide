@@ -18,6 +18,13 @@ export async function observationRows(c: Pick<PoolConnection, 'execute'>, sql: s
 export interface ResultBinding { investigationId: string; requestId: string; runId: string; }
 type EventInput = InvestigationStreamEvent extends infer E ? E extends InvestigationStreamEvent ? Omit<E, 'sequence' | 'schemaVersion' | 'investigationId'> : never : never;
 
+/** Only ordinals allocated by this store are excluded from content identity.
+ * All source data, including Parts operations and timestamps, remain binding. */
+function observationIdentity(event: InvestigationStreamEvent): unknown {
+  return { ...event, sequence: 0, ...(event.type === 'parts.operation'
+    ? { payload: { ...event.payload, sequence: 0 } } : {}) };
+}
+
 /** Caller holds Session -> Investigation locks. The head participates in the
  * same transaction as the content; rollback cannot advance a cursor. */
 export async function appendObservation(c: PoolConnection, id: string, source: string, input: EventInput): Promise<number> {
@@ -27,7 +34,7 @@ export async function appendObservation(c: PoolConnection, id: string, source: s
   const [existing] = await observationRows(c, 'SELECT sequence, event_json FROM investigation_stream_events WHERE investigation_id = ? AND source_key = ?', [id, Buffer.from(source)]);
   if (existing) {
     const previous = decode(existing.event_json);
-    if (evidenceHash({ ...previous, sequence: 0 }) !== evidenceHash({ ...input, schemaVersion: 1, investigationId: id, sequence: 0 }))
+    if (evidenceHash(observationIdentity(previous)) !== evidenceHash(observationIdentity({ ...input, schemaVersion: 1, investigationId: id, sequence: 0 })))
       throw new InvestigationStoreError('IDEMPOTENCY_PAYLOAD_MISMATCH');
     return Number(existing.sequence);
   }

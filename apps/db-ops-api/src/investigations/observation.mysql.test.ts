@@ -13,7 +13,8 @@ import { ActorContextService, signAccessToken, type ActorContext } from '../auth
 import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationExecutor } from './executor.js';
-import { InvestigationStreamStore, InvestigationWatchService, reduceInvestigationEvents, emptyInvestigationProjection } from './stream.js';
+import { InvestigationStreamStore, InvestigationWatchService, reduceInvestigationEvents, emptyInvestigationProjection, captureCanonicalDocument } from './stream.js';
+import { appendObservation } from './observation-db.js';
 import { InvestigationEvidenceStore } from './evidence-store.js';
 import { InvestigationResultStore } from './result-schema.js';
 import { registerInvestigationRoutes } from './routes.js';
@@ -94,6 +95,56 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     inv.turnId = (await rows('SELECT message_id FROM investigation_requests WHERE id=?',[binding.requestId]))[0].message_id;
     await tx(c => canonical.appendInvestigationToolFacts(c, owner, binding, facts(), 0));
   }
+
+  it('A -> B -> A recapture returns the original sequence without adding events or losing payload checks', async () => {
+    await appendFacts();
+    const initial = await stream.snapshot(owner, inv.id);
+    const document = structuredClone(initial.documents.find(d => d.id === 'tool-m')!);
+    document.id = randomUUID();
+    const capture = (occurredAt: string) => stream.transaction(owner, inv.id,
+      c => captureCanonicalDocument(c, inv.id, binding.requestId, document, occurredAt));
+    await capture('2026-10-13T00:00:00.000Z');
+    await capture('2026-10-13T00:00:01.000Z');
+    const before = await rows('SELECT sequence, source_key, event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence', [inv.id]);
+    await capture('2026-10-13T00:00:00.000Z');
+    expect(await rows('SELECT sequence, source_key, event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence', [inv.id])).toEqual(before);
+    const stored = before.at(-2)!;
+    const event = typeof stored.event_json === 'string' ? JSON.parse(stored.event_json) : stored.event_json;
+    const { schemaVersion: _schema, investigationId: _id, sequence: _sequence, ...input } = event;
+    input.payload.sequence = 0;
+    expect(await stream.transaction(owner, inv.id, c => appendObservation(c, inv.id, stored.source_key.toString(), input))).toBe(Number(stored.sequence));
+    input.payload.operations[0].documents[0].parts[0].content = 'changed actual payload';
+    await expect(stream.transaction(owner, inv.id, c => appendObservation(c, inv.id, stored.source_key.toString(), input))).rejects.toThrow('IDEMPOTENCY_PAYLOAD_MISMATCH');
+    const restart = new InvestigationStreamStore(() => pool, authorization);
+    expect((await restart.snapshot(owner, inv.id)).projectionHash).toBe((await stream.snapshot(owner, inv.id)).projectionHash);
+    const replay = await restart.replay(owner, inv.id);
+    expect((await restart.replay(owner, inv.id)).events).toEqual(replay.events);
+    await pool.query('DELETE FROM investigation_stream_events WHERE investigation_id=?', [inv.id]);
+    const head = (await rows('SELECT sequence FROM investigation_stream_heads WHERE investigation_id=?', [inv.id]))[0].sequence;
+    await capture('2026-10-13T00:00:00.000Z');
+    expect(await rows('SELECT sequence FROM investigation_stream_events WHERE investigation_id=?', [inv.id])).toEqual([]);
+    expect((await rows('SELECT sequence FROM investigation_stream_heads WHERE investigation_id=?', [inv.id]))[0].sequence).toBe(head);
+  });
+
+  it('same-second Runs derive current HTTP state from accepted request order, never random Run IDs', async () => {
+    const service = new AgentRunService(() => pool as never, authorization);
+    await tx(c => service.terminateInvestigation(c, owner, binding, 'failed', 'FIXTURE_FAILURE'));
+    await pool.query("UPDATE agent_runs SET id='zz-old-run',created_at='2026-10-13 00:00:00' WHERE id=?", [binding.runId]);
+    const current = (await rows('SELECT version FROM investigations WHERE id=?', [inv.id]))[0];
+    const next = await bridge.admit(owner, { investigationId: inv.id, message: 'new request', idempotencyKey: randomUUID(), expectedVersion: Number(current.version) });
+    const request = (await rows('SELECT message_id FROM investigation_requests WHERE id=?', [next.requestId]))[0];
+    const { run } = await service.claim(owner.userId, inv.sessionId, request.message_id, `investigation:${next.requestId}`);
+    await pool.query("UPDATE agent_runs SET id='aa-new-run',state='cancelled',created_at='2026-10-13 00:00:00' WHERE id=?", [run.id]);
+    await pool.query('UPDATE investigations SET active_request_id=NULL WHERE id=?', [inv.id]);
+    const app = Fastify();
+    await registerInvestigationRoutes(app, async request => { (request as any).user = owner; }, bridge, { stream, evidence, results });
+    try {
+      const response = await app.inject({ method: 'GET', url: `/api/investigations/${inv.id}` });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().derivedRunState).toBe('cancelled');
+      expect((await stream.snapshot(owner, inv.id)).runs.map(r => r.runId)).toEqual(['zz-old-run', 'aa-new-run']);
+    } finally { await app.close(); }
+  });
 
   it('captures every Parts commit, exact duplicate checkpoints do not increment the durable cursor', async () => {
     const start = await stream.snapshot(owner, inv.id);
@@ -390,7 +441,30 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       two.ws.send(JSON.stringify({type:'investigation.unwatch',id:inv.id})); await eventually(()=>!(watch as any).peers.size);
       const count=two.events.length;await evidence.put(owner,binding,'after-unwatch',input());await watch.tick();expect(two.events).toHaveLength(count);
       two.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));await eventually(()=>two.events.filter(e=>e.type==='investigation.snapshot').length===2);
-      const closing=once(two.ws,'close');await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');await watch.tick();
+      await pool.query("CREATE TRIGGER t05_observation_fault BEFORE INSERT ON investigation_stream_events FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='FIXTURE_OBSERVATION_UNAVAILABLE'");
+      await pool.query('UPDATE investigations SET version=version+1 WHERE id=?', [inv.id]);
+      const failing = once(two.ws, 'close');
+      await watch.tick();
+      expect((await failing)[0]).toBe(1011);
+      expect(two.events.some(e => e.type === 'investigation.event' && e.event.type === 'investigation.changed' && e.event.payload.version > 1)).toBe(false);
+      await pool.query('DROP TRIGGER t05_observation_fault');
+      const recovered = await connect();
+      recovered.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));
+      await eventually(() => recovered.events.some(e => e.type === 'investigation.snapshot'));
+      expect(recovered.events.find(e => e.type === 'investigation.snapshot').metadata.version).toBeGreaterThan(1);
+      recovered.ws.send(JSON.stringify({type:'investigation.unwatch',id:inv.id}));
+      await eventually(() => !(watch as any).peers.size);
+      await pool.query("CREATE TRIGGER t05_initial_observation_fault BEFORE INSERT ON investigation_stream_events FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='FIXTURE_INITIAL_OBSERVATION_UNAVAILABLE'");
+      await pool.query('UPDATE investigations SET version=version+1 WHERE id=?', [inv.id]);
+      const initialFailure = await connect();
+      const initialClosing = once(initialFailure.ws, 'close');
+      initialFailure.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));
+      expect((await initialClosing)[0]).toBe(1011);
+      expect(initialFailure.events.some(e => e.type === 'investigation.snapshot' || e.type === 'investigation.event' || e.type === 'investigation.error')).toBe(false);
+      await pool.query('DROP TRIGGER t05_initial_observation_fault');
+      recovered.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));
+      await eventually(() => recovered.events.filter(e => e.type === 'investigation.snapshot').length === 2);
+      const closing=once(recovered.ws,'close');await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');await watch.tick();
       expect((await closing)[0]).toBe(4001); expect((await rows('SELECT state FROM agent_runs'))[0].state).toBe('running');
     } finally {for(const ws of sockets)ws.terminate();await adapter.dispose(); if(savedPort===undefined)delete process.env.AGENT_WS_PORT;else process.env.AGENT_WS_PORT=savedPort;await rm(workspace,{recursive:true,force:true});}
   },20_000);

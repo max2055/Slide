@@ -6,6 +6,7 @@ import { projectionDocuments, createMessageProjection, hydrateMessageProjection,
 import type { MessageParts } from '@slide/agent-core';
 import { InvestigationObservationDatabase, captureObservation, observationRows, decode, invalidObservation } from './observation-db.js';
 import { validateInvestigationStreamEvent, type InvestigationStreamEvent } from './contracts.js';
+import { InvestigationStoreError } from './store.js';
 import { freezeInvestigationCaller } from './authorization.js';
 
 export function publicDocument(document: MessageParts): MessageParts {
@@ -96,7 +97,7 @@ export class InvestigationStreamStore extends InvestigationObservationDatabase {
       occurredAt: at(request.created_at), payload: { jobId: request.job_id, version: Number(request.accepted_version) } });
     const rows = await observationRows(c, `SELECT ar.*, ir.id AS request_id FROM agent_runs ar JOIN investigation_requests ir
       ON ir.investigation_id = ? AND ar.session_id = ? AND ar.message_id = ir.message_id
-      AND ar.actor_id = ir.actor_id AND ar.idempotency_key = CONCAT('investigation:', ir.id) ORDER BY ar.created_at, ar.id`, [id, investigation.sessionId]);
+      AND ar.actor_id = ir.actor_id AND ar.idempotency_key = CONCAT('investigation:', ir.id) ORDER BY ir.accepted_version, ar.created_at, ar.id`, [id, investigation.sessionId]);
     const runs: InvestigationSnapshot['runs'] = [];
     for (const run of rows) {
       await captureObservation(c, id, `run:${run.id}:started`, { type: 'run.started', requestId: run.request_id, runId: run.id, occurredAt: at(run.created_at), payload: {} });
@@ -183,7 +184,13 @@ export function investigationProjectionHash(projection: InvestigationProjection)
 }
 const instantRetention = (value: string) => Number.isFinite(Date.parse(value)) && Date.parse(value) <= Date.now() - 90 * 86_400_000;
 
-interface WatchPeer { send(value: Record<string, unknown>): boolean; close(): void; }
+export type InvestigationWatchFailure = 'authority_revoked' | 'observation_unavailable';
+export function investigationWatchFailure(error: unknown): InvestigationWatchFailure {
+  return error instanceof InvestigationStoreError
+    && ['INVESTIGATION_NOT_FOUND', 'INVESTIGATION_OPERATION_FORBIDDEN'].includes(error.code)
+    ? 'authority_revoked' : 'observation_unavailable';
+}
+interface WatchPeer { send(value: Record<string, unknown>): boolean; close(reason: InvestigationWatchFailure): void; }
 interface Watch { generation: number; cursor: number; actor: ActorContext; ready: boolean; }
 /** Durable polling observes commits from every worker. No ephemeral subscribe
  * gap, no execution ownership and no cancellation on transport disconnect. */
@@ -246,9 +253,9 @@ export class InvestigationWatchService {
                 watch.cursor = event.sequence;
               }
             });
-          } catch {
+          } catch (error) {
             if (this.peers.get(peer)?.get(id) !== watch) continue;
-            this.unwatch(peer); peer.close(); break;
+            this.unwatch(peer); peer.close(investigationWatchFailure(error)); break;
           }
         }
       } finally { this.inFlight.delete(peer); }
