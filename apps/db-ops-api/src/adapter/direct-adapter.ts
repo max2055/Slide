@@ -3,7 +3,7 @@ import { projectionDocuments, reduceMessageProjection, type ProjectionOperation 
 import { PARTS_STREAM_CAPABILITY, type DisplayCursor } from '@slide/agent-core/display-stream';
 import { DisplayStreamAuthority, type DisplayStreamLimits } from './display-stream.js';
 import { AdapterMessageProjection } from './message-projection.js';
-import { InvestigationWatchService } from '../investigations/stream.js';
+import { investigationWatchFailure, type InvestigationWatchFailure, InvestigationWatchService } from '../investigations/stream.js';
 import { InvestigationWatchSchema, InvestigationUnwatchSchema } from '../investigations/observation-contracts.js';
 import { Value } from '@sinclair/typebox/value';
 import { persistedMessageParts } from './message-parts.js';
@@ -411,7 +411,14 @@ export class DirectAdapter implements IAgentEngine {
       const investigationPeer = {
         send: (event: Record<string, unknown>) => authState === 'authenticated' && ws.readyState === WebSocket.OPEN
           && this.sendSocketEvent(ws, event),
-        close: () => { this.investigationWatches.unwatch(investigationPeer); ws.close(4001, 'Investigation authority revoked'); },
+        close: (reason: InvestigationWatchFailure) => {
+          this.investigationWatches.unwatch(investigationPeer);
+          if (reason === 'authority_revoked') ws.close(4001, 'Investigation authority revoked');
+          else {
+            console.error('[DirectAdapter] Investigation observation unavailable');
+            ws.close(1011, 'Investigation observation unavailable');
+          }
+        },
       };
 
       const subscribeToSession = (sessionKey: string, subscriptionId?: string) => {
@@ -654,9 +661,13 @@ export class DirectAdapter implements IAgentEngine {
               // admin promotion cannot expand an existing subscription.
               if (!watchId || investigationIntents.get(watchId) !== currentInvestigationIntent) break;
               await this.investigationWatches.watch(investigationPeer, connectionCeiling!, watchId, msg.afterSequence as number | undefined);
-            } catch {
-              if (authGeneration === commandGeneration && ws.readyState === WebSocket.OPEN)
-                this.sendSocketEvent(ws, { type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' });
+            } catch (error) {
+              if (authGeneration === commandGeneration && ws.readyState === WebSocket.OPEN
+                && investigationIntents.get(watchId!) === currentInvestigationIntent) {
+                const failure = investigationWatchFailure(error);
+                if (failure === 'authority_revoked') this.sendSocketEvent(ws, { type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' });
+                else investigationPeer.close(failure);
+              }
             }
             break;
           }
