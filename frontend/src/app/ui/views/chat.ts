@@ -9,7 +9,7 @@ import {
 } from "../chat/attachment-support.ts";
 import { DeletedMessages } from "../chat/deleted-messages.ts";
 import { exportChatMarkdown } from "../chat/export.ts";
-import { authFetch } from "../../../api/index.js";
+import { apiClient, authFetch } from "../../../api/index.js";
 import {
   renderMessageGroup,
   renderReadingIndicatorGroup,
@@ -125,6 +125,7 @@ export type ChatProps = {
   assistantAttachmentAuthToken?: string | null;
   autoExpandToolCalls?: boolean;
   attachments?: ChatAttachment[];
+  readAttachments?: () => ChatAttachment[];
   onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
   showNewMessages?: boolean;
   onScrollToBottom?: () => void;
@@ -172,22 +173,39 @@ const deletedMessagesMap = new Map<string, DeletedMessages>();
 // Agent greeting cache — fetched once from backend
 let _agentGreeting: string | null = null;
 let _agentGreetingPending = false;
+let _greetingIdentity: string | null = null;
+let _greetingGeneration = 0;
+
+export function clearChatViewCaches() {
+  resetChatViewState();
+  for (const cache of [inputHistories, pinnedMessagesMap, deletedMessagesMap, expandedToolCardsBySession, initializedToolCardsBySession, lastAutoExpandPrefBySession]) cache.clear();
+  _agentGreeting = null; _agentGreetingPending = false; _greetingIdentity = null; _greetingGeneration++;
+}
+
+function syncGreetingIdentity() {
+  const identity = apiClient.getToken();
+  if (identity !== _greetingIdentity) {
+    _greetingIdentity = identity; _greetingGeneration++; _agentGreeting = null; _agentGreetingPending = false;
+  }
+}
 
 async function _fetchAgentGreeting(requestUpdate: () => void): Promise<void> {
   if (_agentGreeting !== null || _agentGreetingPending) return;
   _agentGreetingPending = true;
+  const generation = _greetingGeneration;
+  const identity = _greetingIdentity;
   try {
     const res = await authFetch('/api/chat/greeting', {
       headers: { 'Content-Type': 'application/json' },
     });
     if (res.ok) {
       const data = await res.json();
-      _agentGreeting = data.greeting || null;
+      if (generation === _greetingGeneration && identity === apiClient.getToken()) _agentGreeting = data.greeting || null;
     }
   } catch {
     // Silently fail — greeting is cosmetic
   } finally {
-    _agentGreetingPending = false;
+    if (generation === _greetingGeneration) _agentGreetingPending = false;
     requestUpdate();
   }
 }
@@ -706,16 +724,19 @@ function handlePaste(e: ClipboardEvent, props: ChatProps) {
     if (!file) {
       continue;
     }
+    appendChatFiles([file], props);
+  }
+}
+
+/** Reads append against the latest state of the captured Session receiver. */
+export function appendChatFiles(files: Iterable<File>, props: Pick<ChatProps, 'attachments' | 'readAttachments' | 'onAttachmentsChange'>) {
+  for (const file of files) {
+    if (!isSupportedChatAttachmentMimeType(file.type)) continue;
     const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      const dataUrl = reader.result as string;
-      const newAttachment: ChatAttachment = {
-        id: generateAttachmentId(),
-        dataUrl,
-        mimeType: file.type,
-      };
-      const current = props.attachments ?? [];
-      props.onAttachmentsChange?.([...current, newAttachment]);
+    reader.addEventListener('load', () => {
+      const current = props.readAttachments?.() ?? props.attachments ?? [];
+      const attachment = { id: generateAttachmentId(), dataUrl: String(reader.result), mimeType: file.type };
+      props.onAttachmentsChange?.([...current, attachment]);
     });
     reader.readAsDataURL(file);
   }
@@ -726,28 +747,7 @@ function handleFileSelect(e: Event, props: ChatProps) {
   if (!input.files || !props.onAttachmentsChange) {
     return;
   }
-  const current = props.attachments ?? [];
-  const additions: ChatAttachment[] = [];
-  let pending = 0;
-  for (const file of input.files) {
-    if (!isSupportedChatAttachmentMimeType(file.type)) {
-      continue;
-    }
-    pending++;
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      additions.push({
-        id: generateAttachmentId(),
-        dataUrl: reader.result as string,
-        mimeType: file.type,
-      });
-      pending--;
-      if (pending === 0) {
-        props.onAttachmentsChange?.([...current, ...additions]);
-      }
-    });
-    reader.readAsDataURL(file);
-  }
+  appendChatFiles(input.files, props);
   input.value = "";
 }
 
@@ -757,28 +757,7 @@ function handleDrop(e: DragEvent, props: ChatProps) {
   if (!files || !props.onAttachmentsChange) {
     return;
   }
-  const current = props.attachments ?? [];
-  const additions: ChatAttachment[] = [];
-  let pending = 0;
-  for (const file of files) {
-    if (!isSupportedChatAttachmentMimeType(file.type)) {
-      continue;
-    }
-    pending++;
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      additions.push({
-        id: generateAttachmentId(),
-        dataUrl: reader.result as string,
-        mimeType: file.type,
-      });
-      pending--;
-      if (pending === 0) {
-        props.onAttachmentsChange?.([...current, ...additions]);
-      }
-    });
-    reader.readAsDataURL(file);
-  }
+  appendChatFiles(files, props);
 }
 
 function renderAttachmentPreview(props: ChatProps): TemplateResult | typeof nothing {
@@ -1109,6 +1088,7 @@ const WELCOME_SUGGESTIONS = [
 function renderWelcomeState(props: ChatProps, requestUpdate: () => void): TemplateResult {
   const name = props.assistantName || "Assistant";
 
+  syncGreetingIdentity();
   // Initiate greeting fetch on first render
   if (_agentGreeting === null && !_agentGreetingPending) {
     _fetchAgentGreeting(requestUpdate);

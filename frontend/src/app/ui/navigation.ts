@@ -6,11 +6,11 @@ import { isSettingsPath } from "./settings-navigation.ts";
 export const TAB_GROUPS = [
   {
     label: "workspace",
-    tabs: ["chat", "dashboard"],
+    tabs: ["attention", "investigations", "chat"],
   },
   {
     label: "resources",
-    tabs: ["servers", "network-devices", "instances-db"],
+    tabs: ["instances-db", "servers", "network-devices"],
   },
   {
     label: "operations",
@@ -34,6 +34,8 @@ export type Tab =
   | "agent-tools"
   | "sessions"
   | "chat"
+  | "attention"
+  | "investigations"
   | "config"
   | "cron-jobs"
   | "health-center"
@@ -77,6 +79,8 @@ const TAB_PATHS: Record<Tab, string> = {
   "network-device-detail": "/network-device-detail",
   sessions: "/sessions",
   chat: "/chat",
+  attention: "/attention",
+  investigations: "/investigations",
   config: "/config",
   "cron-jobs": "/cron-jobs",
   "health-center": "/health",
@@ -112,11 +116,12 @@ const PATH_TO_TAB = new Map<string, Tab>([
  */
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
-  "chat", "dashboard", "instances-db", "servers", "network-devices", "sql-console",
+  "chat", "dashboard", "attention", "investigations", "instances-db", "servers", "network-devices", "sql-console",
   "reports", "events", "approval", "audit-center", "cron-jobs", "health-center", "feedback", "settings",
 ];
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
+  'investigations': 'chat:view',
   // Slide tabs — require specific permission codes
   'users': 'admin:*',
   'rbac': 'admin:*',
@@ -239,6 +244,10 @@ export function iconForTab(tab: Tab): IconName {
       return "settings";
     case "chat":
       return "message-square";
+    case "attention":
+      return "alert-circle";
+    case "investigations":
+      return "sparkles";
     case "cron-jobs":
       return "loader";
     case "health-center":
