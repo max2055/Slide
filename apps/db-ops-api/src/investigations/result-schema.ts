@@ -73,6 +73,31 @@ export class InvestigationResultStore extends InvestigationObservationDatabase {
       runId: binding.runId, occurredAt: result.createdAt, payload: { resultId: id, resultVersion: version, schemaVersion: 2 } });
     return { ...binding, id, version, result };
   }
+  /** Called only by the fenced Run terminal owner on its completion transaction.
+   * Readers never manufacture a version. No staged answer or reasoning is used. */
+  async persistExecutionSummary(c: PoolConnection, actor: ActorContext, binding: ResultBinding): Promise<void> {
+    const investigation = await this.authorization.load(c as never, binding.investigationId);
+    await this.authorization.authorize(c as never, actor, investigation, 'content');
+    const { run, snapshot } = await this.assertBinding(c, actor, investigation, binding);
+    if (run.state === 'running' || run.state === 'cancelled') throw invalidObservation();
+    const source = `execution-summary:${run.id}`;
+    const [existing] = await observationRows(c, 'SELECT id FROM investigation_results WHERE investigation_id = ? AND source_key = ?', [investigation.id, Buffer.from(source)]);
+    if (existing) return;
+    // Older admitted requests omit context.subject but still persist their
+    // primary resource. Use that declared subject, never invent a target.
+    const primary = snapshot.resources?.find((resource: { role: string }) => resource.role === 'primary');
+    const subject = snapshot.context?.subject ?? (primary ? { kind: 'resource', resource: { type: primary.type, id: primary.id } } : null);
+    if (!subject) throw invalidObservation();
+    const [latest] = await observationRows(c, 'SELECT COALESCE(MAX(version), 0) AS version FROM investigation_results WHERE investigation_id = ?', [investigation.id]);
+    const execution = decode(run.result_json)?.investigationExecution;
+    await this.putOnConnection(c, actor, investigation, binding, source, Number(latest.version), {
+      schemaVersion: 2, subject, summary: `执行状态：${run.state}；根因与业务恢复尚未验证。`,
+      facts: [], hypotheses: [], claims: [], rootCauseVerification: { status: 'unverified' },
+      unresolvedQuestions: ['工具事实与结果引用仅表示关联；需要独立证据确认根因和恢复。'], recommendations: [], problemStatus: 'unconfirmed',
+      provenance: { modelVersion: 'unavailable', promptVersion: 'unavailable', toolVersions: {}, runtimeRunId: run.id,
+        usageStatus: execution && !execution.usageUnknown ? 'available' : 'unavailable' }, createdAt: new Date(run.finished_at).toISOString(),
+    });
+  }
   private view(row: any): VersionedInvestigationResult {
     return { id: row.id, investigationId: row.investigation_id, requestId: row.request_id, runId: row.run_id,
       version: Number(row.version), result: decode(row.result_json) };

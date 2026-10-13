@@ -214,7 +214,7 @@ export class InvestigationExecutor {
   constructor(private readonly options: InvestigationExecutorOptions) {
     this.authorization = options.authorization ?? new InvestigationAuthorization();
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
-    this.runs = new AgentRunService(options.pool as never);
+    this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
     this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy);
   }
@@ -764,7 +764,16 @@ export class InvestigationExecutor {
       await this.settle(terminal, base);
       return terminal;
     } catch (error) {
-      const code = this.reason(control.signal.aborted ? control.signal.reason : error);
+      let code = this.reason(control.signal.aborted ? control.signal.reason : error);
+      const persisted = await this.runs.getForActor(binding.runId, actor.userId, run.sessionId);
+      if (persisted?.state === 'running' && (persisted.result as { completionPending?: boolean })?.completionPending && !control.signal.aborted) {
+        // Completion storage failed after the durable answer intent. Preserve it
+        // for a new fenced invocation; never turn it into failed or call a model.
+        let live = false;
+        try { await this.transaction(c => this.canonical.lockInvestigationExecution(c, actor, binding)); live = true; }
+        catch (authorityError) { code = this.reason(authorityError); }
+        if (live) throw error;
+      }
       if (
         code === 'INVESTIGATION_FENCE_LOST' ||
         code === 'INVESTIGATION_EXECUTION_ALREADY_RUNNING' ||

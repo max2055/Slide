@@ -7,7 +7,6 @@ import type { MessageParts } from '@slide/agent-core';
 import { InvestigationObservationDatabase, captureObservation, observationRows, decode, invalidObservation } from './observation-db.js';
 import { validateInvestigationStreamEvent, type InvestigationStreamEvent } from './contracts.js';
 import { freezeInvestigationCaller } from './authorization.js';
-import { InvestigationResultStore } from './result-schema.js';
 
 export function publicDocument(document: MessageParts): MessageParts {
   const safe = redactEvidence(structuredClone(document)) as MessageParts;
@@ -128,7 +127,6 @@ export class InvestigationStreamStore extends InvestigationObservationDatabase {
     // only through their content APIs with per-reference live authorization.
     const evidenceRows = await observationRows(c, 'SELECT id, metadata_json FROM investigation_evidence WHERE investigation_id = ? ORDER BY id', [id]);
     for (const row of evidenceRows) await this.authorization.authorize(c as never, actor, investigation, 'content', decode(row.metadata_json).resources);
-    await this.captureExecutionSummaries(c, investigation, actor, rows, requests);
     const results = await observationRows(c, 'SELECT id, version FROM investigation_results WHERE investigation_id = ? ORDER BY version', [id]);
     const projection = emptyInvestigationProjection(id);
     projection.documents = projectionDocuments(documents);
@@ -143,31 +141,6 @@ export class InvestigationStreamStore extends InvestigationObservationDatabase {
     }
     return { investigationId: id, documents, metadata, runs, projection, evidenceIds: projection.evidenceIds,
       results: projection.results, truncated: omitted || page.nextBefore !== null, nextBefore: page.nextBefore };
-  }
-  /** A deterministic execution summary of committed facts, never a model's
-   * hidden reasoning or an assertion of root cause/recovery. Rich V2 producers
-   * use ResultStore.put with explicit original execution/evidence bindings. */
-  private async captureExecutionSummaries(c: PoolConnection, investigation: any, actor: ActorContext, runs: any[], requests: any[]): Promise<void> {
-    const store = new InvestigationResultStore(this.poolProvider, this.authorization);
-    for (const run of runs) {
-      if (run.state === 'running') continue;
-      const source = `execution-summary:${run.id}`;
-      const [existing] = await observationRows(c, 'SELECT id FROM investigation_results WHERE investigation_id = ? AND source_key = ?', [investigation.id, Buffer.from(source)]);
-      if (existing) continue;
-      const request = requests.find(r => r.id === run.request_id), subject = decode(request?.request_snapshot)?.context?.subject;
-      if (!subject) continue; // Legacy requests with no subject remain legacy-readable.
-      const bound = await observationRows(c, `SELECT id FROM investigation_evidence WHERE investigation_id = ? AND request_id = ? AND run_id = ?
-        AND expired_at IS NULL AND expires_at > NOW(3) ORDER BY id`, [investigation.id, request.id, run.id]);
-      const [latest] = await observationRows(c, 'SELECT COALESCE(MAX(version), 0) AS version FROM investigation_results WHERE investigation_id = ?', [investigation.id]);
-      const execution = decode(run.result_json)?.investigationExecution;
-      await store.putOnConnection(c, actor, investigation, { investigationId: investigation.id, requestId: request.id, runId: run.id }, source, Number(latest.version), {
-        schemaVersion: 2, subject, summary: `执行状态：${run.state}；保留 ${bound.length} 条可用工具证据。根因与业务恢复尚未验证。`,
-        facts: [], hypotheses: [], claims: [], rootCauseVerification: { status: 'unverified' },
-        unresolvedQuestions: ['工具事实与结果引用仅表示关联；需要独立证据确认根因和恢复。'], recommendations: [], problemStatus: 'unconfirmed',
-        provenance: { modelVersion: 'unavailable', promptVersion: 'unavailable', toolVersions: {}, runtimeRunId: run.id,
-          usageStatus: execution && !execution.usageUnknown ? 'available' : 'unavailable' }, createdAt: at(run.finished_at ?? run.created_at),
-      });
-    }
   }
   async snapshot(caller: ActorContext, id: string): Promise<InvestigationSnapshot> {
     return this.transaction(caller, id, async (c, investigation, actor) => {

@@ -1,4 +1,8 @@
-import type { ActorContext } from '../auth/actor-context.js';
+import { ActorAuthenticationError, ActorContextService, type ActorContext } from '../auth/actor-context.js';
+import { InvestigationAuthorization } from '../investigations/authorization.js';
+import { InvestigationResultStore } from '../investigations/result-schema.js';
+import { captureObservation, decode } from '../investigations/observation-db.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { CanonicalStore, type InvestigationConnection, type InvestigationExecutionBinding } from './canonical-store.js';
 import { randomUUID } from 'node:crypto';
 import { dbConnection } from '../db-connection.js';
@@ -24,7 +28,8 @@ const ordinaryRun = `NOT EXISTS (SELECT 1 FROM investigation_requests ir
   AND agent_runs.actor_id = ir.actor_id AND agent_runs.message_id = ir.message_id)`;
 
 export class AgentRunService {
-  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null) {}
+  constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null,
+    private readonly authorization = new InvestigationAuthorization(new ActorContextService(poolProvider as never))) {}
 
   async claim(actorId: number, sessionId: string, messageId: string, idempotencyKey: string): Promise<{ run: AgentRun; created: boolean }> {
     const pool = this.requirePool();
@@ -123,6 +128,10 @@ export class AgentRunService {
       last_message_at = (SELECT MAX(created_at) FROM chat_messages WHERE session_id = ?),
       metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST('null' AS JSON)) WHERE session_id = ?`, [access.sessionId,access.sessionId,access.sessionId]);
     await connection.query("UPDATE investigations SET active_request_id = NULL, lifecycle = 'waiting', version = version + 1 WHERE id = ? AND active_request_id = ?", [binding.investigationId,binding.requestId]);
+    const { captureCanonicalDocument } = await import('../investigations/stream.js');
+    await captureCanonicalDocument(connection as unknown as PoolConnection, binding.investigationId, binding.requestId,
+      acknowledged, new Date(access.request.created_at).toISOString());
+    await this.persistInvestigationTerminal(connection, actor, binding);
     await canonical.assertInvestigationLease(connection,binding);
     return { ...current,state:'completed',result:committed,error:null };
   }
@@ -162,7 +171,29 @@ export class AgentRunService {
     await connection.query("UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRuntimeCheckpoint', CAST('null' AS JSON)) WHERE session_id = ?", [sessionId]);
     const [live] = await connection.query<any[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW(3) FOR UPDATE`, [binding.jobId,binding.workerId,binding.fencingToken]);
     if(!live[0]) throw new Error('INVESTIGATION_FENCE_LOST');
+    await this.persistInvestigationTerminal(connection, actor, binding);
     return { ...run,state:terminal,result,error:{reasonCode} };
+  }
+
+  private async persistInvestigationTerminal(connection: InvestigationConnection, actor: ActorContext,
+    binding: InvestigationExecutionBinding): Promise<void> {
+    const [rows] = await connection.query<any[]>('SELECT * FROM agent_runs WHERE id = ?', [binding.runId]);
+    const run = rows[0], c = connection as unknown as PoolConnection;
+    if (run.state !== 'cancelled') {
+      try {
+        await new InvestigationResultStore(this.poolProvider as never, this.authorization).persistExecutionSummary(c, actor, binding);
+      } catch (error) {
+        // Withdrawal may still close the exact Run/receipt, but cannot publish a
+        // derived result. Storage failures are never treated as withdrawal.
+        if (run.state === 'completed' || !(error instanceof ActorAuthenticationError ||
+          ['INVESTIGATION_NOT_FOUND', 'INVESTIGATION_OPERATION_FORBIDDEN'].includes((error as { code?: string }).code ?? ''))) throw error;
+      }
+    }
+    const result = decode(run.result_json);
+    const unknown = run.state === 'partial' && (/UNKNOWN/.test(result?.resolution?.reasonCode ?? '') || result?.resolution?.kind === 'outcome_unknown');
+    await captureObservation(c, binding.investigationId, `run:${run.id}:terminal`, { type: 'run.terminal',
+      requestId: binding.requestId, runId: run.id, occurredAt: new Date(run.finished_at).toISOString(),
+      payload: { state: run.state, resolution: unknown ? 'outcome_unknown' : 'known' } });
   }
 
   async findByIdempotencyKey(actorId: number, idempotencyKey: string): Promise<AgentRun | null> {

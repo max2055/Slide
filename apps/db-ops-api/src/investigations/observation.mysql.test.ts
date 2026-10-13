@@ -247,12 +247,13 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     finally {stream.snapshot=original;late.dispose();}
   });
   it('unknown is a partial resolution, never completion or a rewrite of a cancelled Run', async () => {
-    await pool.query("UPDATE agent_runs SET state='partial',result_json=?,finished_at=NOW() WHERE id=?",[JSON.stringify({resolution:{kind:'partial',reasonCode:'INVESTIGATION_PROVIDER_UNKNOWN'}}),binding.runId]);
+    await tx(c => new AgentRunService(() => pool as never, authorization).terminateInvestigation(c,owner,binding,'partial','INVESTIGATION_PROVIDER_UNKNOWN'));
+    expect(await rows('SELECT id FROM investigation_results')).toHaveLength(1);
     const unknown=await stream.snapshot(owner,inv.id);expect(unknown.runs[0]).toMatchObject({state:'partial',resolution:'outcome_unknown'});
     expect((await results.list(owner,inv.id)).items[0].result).toMatchObject({schemaVersion:2,rootCauseVerification:{status:'unverified'},problemStatus:'unconfirmed'});
     expect((await rows('SELECT state FROM agent_runs'))[0].state).toBe('partial');
   });
-  it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {
+  function completionFixture() {
     let providerCalls=0,toolCalls=0;
     const provider:LLMProvider={getDefaultModel:()=> 'fixture',getModelCapabilities:()=>({model:'fixture',contextWindowTokens:32768,preferredOutputTokens:4096,source:'configuration',version:'fixture/v1'}),
       chat:async()=>{providerCalls++;return {content:providerCalls===1?null:'根因待核验',finishReason:providerCalls===1?'tool_calls':'stop',
@@ -262,16 +263,90 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       execute:async()=>{toolCalls++;return {success:true,qps:null,password:'fake-secret',sql:"SELECT * FROM t WHERE email='private-value'"};}});
     const executor=new InvestigationExecutor({pool:()=>pool,authorization,providerForPurpose:async()=>provider,toolsForActor:()=>tools,
       budget:{domain:'t05-controlled-fixture',policy:investigationBudgetConfiguration().policy,reserveCostMicros:1000000,prices:{input:100,cachedInput:50,output:200}}});
+    return {executor,counts:()=>({providerCalls,toolCalls})};
+  }
+  const completionCommand=()=>({investigationId:inv.id,requestId:binding.requestId,
+    job:{id:binding.jobId,type:'investigation.execute',payload:{investigationId:inv.id,requestId:binding.requestId},attempts:1,maxAttempts:5,fencingToken:binding.fencingToken},
+    context:{workerId:binding.workerId,fencingToken:binding.fencingToken,signal:new AbortController().signal}});
+  it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {
+    const {executor,counts}=completionFixture();
     const terminal=await executor.execute({investigationId:inv.id,requestId:binding.requestId,
       job:{id:binding.jobId,type:'investigation.execute',payload:{investigationId:inv.id,requestId:binding.requestId},attempts:1,maxAttempts:5,fencingToken:binding.fencingToken},
       context:{workerId:binding.workerId,fencingToken:binding.fencingToken,signal:new AbortController().signal}});
-    expect(terminal.state).toBe('completed');expect(providerCalls).toBe(2);expect(toolCalls).toBe(1);
+    expect(terminal.state).toBe('completed');expect(counts()).toEqual({providerCalls:2,toolCalls:1});
+    const beforeObserver = await rows('SELECT * FROM investigation_results WHERE investigation_id=?', [inv.id]);
+    const streamBeforeObserver = await rows('SELECT event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence', [inv.id]);
+    expect(streamBeforeObserver.find(r=>r.event_json.type==='result.persisted')!.event_json.sequence).toBeLessThan(streamBeforeObserver.find(r=>r.event_json.type==='run.terminal')!.event_json.sequence);
+    expect(beforeObserver, 'A03: completed Run must persist V2 without snapshot/replay/watch').toHaveLength(1);
     const snapshot=await stream.snapshot(owner,inv.id);expect(snapshot.evidenceIds).toHaveLength(1);expect(snapshot.results).toHaveLength(1);
     expect(JSON.stringify(await evidence.get(owner,inv.id,snapshot.evidenceIds[0],true))).not.toMatch(/fake-secret|private-value/);
+    const afterObservation=await rows('SELECT event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence',[inv.id]);
+    expect(afterObservation.find(r=>r.event_json.type==='result.persisted')!.event_json.sequence, 'Result must be durable before publishing terminal').toBeLessThan(afterObservation.find(r=>r.event_json.type==='run.terminal')!.event_json.sequence);
     const summary=(await results.list(owner,inv.id)).items[0];expect(summary.result.rootCauseVerification).toEqual({status:'unverified'});
     expect(summary.result.provenance).toMatchObject({runtimeRunId:terminal.id,usageStatus:'available',modelVersion:'unavailable'});
     const restart=await new InvestigationStreamStore(()=>pool,authorization).snapshot(owner,inv.id);
     expect(restart.projectionHash).toBe(snapshot.projectionHash);expect(restart.results).toEqual(snapshot.results);
+  });
+  it.each(['chat_messages','investigation_results','investigation_stream_events','investigations'])('completion SQL failure in %s rolls back message/result/terminal and recovers staged answer without model calls', async table => {
+    const fixture=completionFixture();
+    const timing=table==='investigations'?'BEFORE UPDATE':'BEFORE INSERT';
+    const condition=table==='investigation_stream_events'?"IF JSON_UNQUOTE(JSON_EXTRACT(NEW.event_json,'$.type')) = 'run.terminal' THEN ":table==='investigations'?"IF NEW.active_request_id IS NULL THEN ":table==='chat_messages'?"IF NEW.role = 'assistant' THEN ":'';
+    await pool.query(`CREATE TRIGGER t05_completion_failure ${timing} ON ${table} FOR EACH ROW BEGIN ${condition}SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'T05_COMPLETION_SQL_FAILURE'; ${condition?'END IF;':''}END`);
+    try {await expect(fixture.executor.execute(completionCommand())).rejects.toThrow('T05_COMPLETION_SQL_FAILURE');}
+    finally {await pool.query('DROP TRIGGER t05_completion_failure');}
+    const [staged]=await rows('SELECT * FROM agent_runs WHERE id=?',[binding.runId]);
+    expect(staged.state).toBe('running');expect(staged.result_json.completionPending).toBe(true);
+    expect(await rows("SELECT id FROM chat_messages WHERE role='assistant'")).toHaveLength(0);
+    expect(await rows('SELECT id FROM investigation_results')).toHaveLength(0);
+    expect((await rows('SELECT event_json FROM investigation_stream_events')).some(r=>r.event_json.type==='run.terminal'||r.event_json.type==='result.persisted')).toBe(false);
+    expect(fixture.counts()).toEqual({providerCalls:2,toolCalls:1});
+    await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?',[binding.jobId]);
+    const job=await new MysqlWorkflowStore(()=>pool as never).claim('t05-recovery',60,{types:['investigation.execute'],exclude:false});
+    binding={...binding,workerId:'t05-recovery',fencingToken:job!.fencingToken};
+    const recovery=completionFixture();expect((await recovery.executor.execute(completionCommand())).state).toBe('completed');
+    expect(recovery.counts()).toEqual({providerCalls:0,toolCalls:0});
+    const [version]=await rows('SELECT * FROM investigation_results');expect(Number(version.version)).toBe(1);
+    await recovery.executor.execute(completionCommand());
+    expect((await rows('SELECT * FROM investigation_results'))[0].id).toBe(version.id);
+  });
+  it.each(['cancel','scope','member','disabled'])('staged completion after %s withdrawal never publishes answer or V2, even after permission restoration', async mode => {
+    const runs=new AgentRunService(()=>pool as never,authorization);
+    if(mode==='member') {
+      await pool.query('UPDATE investigations SET owner_id=102 WHERE id=?',[inv.id]);
+      await pool.query('UPDATE chat_sessions SET user_id=102 WHERE session_id=?',[inv.sessionId]);
+      await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,101,'operator',102)",[inv.id]);
+    }
+    await tx(c=>runs.stageInvestigationCompletion(c,canonical,owner,binding,{type:'complete',stopReason:'completed',finalContent:'withdrawn staged secret'}));
+    if(mode==='cancel') await bridge.storeFor(owner).cancel({kind:'user',id:owner.userId},inv.id,binding.requestId);
+    if(mode==='scope') await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');
+    if(mode==='member') await pool.query('DELETE FROM investigation_members WHERE investigation_id=? AND user_id=101',[inv.id]);
+    if(mode==='disabled') await pool.query("UPDATE users SET status='inactive' WHERE id=101");
+    const fixture=completionFixture();const terminal=await fixture.executor.execute(completionCommand());
+    expect(terminal.state).toBe(mode==='cancel'?'cancelled':'failed');
+    expect(fixture.counts()).toEqual({providerCalls:0,toolCalls:0});
+    expect(await rows("SELECT id FROM chat_messages WHERE role='assistant'")).toHaveLength(0);
+    expect(await rows('SELECT id FROM investigation_results')).toHaveLength(0);
+    expect((await rows('SELECT result_json FROM agent_runs'))[0].result_json.event).toBeUndefined();
+    await pool.query("UPDATE users SET status='active' WHERE id=101");
+    if(mode==='scope') await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,102,'read-only')");
+    if(mode==='member') await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,101,'operator',102)",[inv.id]);
+    await stream.snapshot(owner,inv.id);await stream.replay(owner,inv.id);
+    expect(await rows('SELECT id FROM investigation_results')).toHaveLength(0);
+  });
+  it('follow-up request creates another Run and version while the first durable result remains immutable',async()=>{
+    const firstFixture=completionFixture();await firstFixture.executor.execute(completionCommand());
+    const [first]=await rows('SELECT * FROM investigation_results');
+    const current=(await rows('SELECT version FROM investigations WHERE id=?',[inv.id]))[0];
+    const accepted=await bridge.admit(owner,{investigationId:inv.id,message:'Follow up',idempotencyKey:randomUUID(),expectedVersion:Number(current.version)});
+    const job=await new MysqlWorkflowStore(()=>pool as never).claim('t05-followup',60,{types:['investigation.execute'],exclude:false});
+    // The prior completed workflow is still running in this direct executor fixture;
+    // claim() selects only queued jobs, so the new request owns this distinct lease.
+    binding={...binding,requestId:accepted.requestId,jobId:job!.id,workerId:'t05-followup',fencingToken:job!.fencingToken};
+    const secondFixture=completionFixture();const second=await secondFixture.executor.execute(completionCommand());
+    expect(second.state).toBe('completed');expect(second.id).not.toBe(first.run_id);
+    const versions=await rows('SELECT * FROM investigation_results ORDER BY version');
+    expect(versions.map(v=>Number(v.version))).toEqual([1,2]);expect(versions[0]).toEqual(first);
+    expect(versions[1].request_id).toBe(accepted.requestId);expect(versions[1].run_id).toBe(second.id);
   });
   it('snapshot->subscription gap catches commits; unwatch supersedes a pending snapshot; periodic ACL closes without cancelling Run', async () => {
     const watch=new InvestigationWatchService(stream,60_000), sent:any[]=[]; let closed=false;
