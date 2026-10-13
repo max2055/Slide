@@ -48,8 +48,9 @@ pnpm --filter slide-api exec vitest run \
 
 - Parts/DisplayStream/Analysis/公开契约相关 9 文件 112 passed、0 skipped。其后新增 late append 测试已被上面的 221 模块运行覆盖。
 - 最新 `pnpm security:agent`：17 文件 187 passed、0 skipped，覆盖最终 WS strict validation/intent 限制/异步 unwatch 改动。
-- API typecheck、contracts:generate/check、前端 typecheck/build、security:scan、diff check 通过。lint 无 error，263 条既有 warning；前端 build 保留既有 chunk 提示。
-- 托管工作树第一次 backend 全量：3287 passed、576 skipped、1 failed；唯一失败为 docs structure 看到了托管起始快照自带 `docs/reviews`，该资料不在 main，原用户资料保留，不删除、不更改断言。干净 PR 候选的全量结果在最终交付收据补充。
+- 干净 PR 候选：API typecheck、contracts:check、qualification:matrix、前端 typecheck/build、security:scan 通过；lint 261 条 warning、0 error，前端 build 保留既有 chunk 提示。托管工作树先前 contracts:generate 与 diff check 也通过。
+- 干净 PR 候选 backend 全量：338 文件通过、40 文件跳过；3288 passed、578 skipped、0 failed。agent-core 全量 33 文件/675 passed，前端全量 93 文件/757 passed。测试集合有重叠，不合计用作独立验收数量。
+- 托管工作树第一次 backend 全量：3287 passed、576 skipped、1 failed；唯一失败为 docs structure 看到了托管起始快照自带 `docs/reviews`，该资料不在 main，原用户资料保留，不删除、不更改断言。干净候选已通过该断言及全量回归。
 - 普通 backend 全量未开启所有历史 SQL 环境，其 skip 不用于替代本任务的真实 SQL/JWT/WS/浏览器验收。本任务必需模块已显式开启且 0 skip；最终 CI 现有 browser-qualification 也执行该模块。
 
 测试 MySQL 为短生命周期、只绑定 loopback 的独立 mysql:8.4 容器，各套使用随机隔离 schema 与正式迁移，afterAll 删除 schema；无生产数据迁移。交付时停止本任务夹具，不停止其他服务。
