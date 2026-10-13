@@ -24,9 +24,14 @@ import { MysqlWorkflowStore, WorkerRuntime } from '../../../apps/db-ops-api/src/
 import { JobRegistry } from '../../../apps/db-ops-api/src/workflows/job-registry.js';
 import { createInvestigationWorkflowHandler } from '../../../apps/db-ops-api/src/investigations/workflow-handler.js';
 import { ToolRegistry } from '../../../packages/agent-core/src/index.js';
+import { DatabaseAlertBridge } from '../../../apps/db-ops-api/src/investigations/alert-bridge.js';
+import { AlertRCAService } from '../../../apps/db-ops-api/src/alert-rca-service.js';
+import { LegacyAnalysisBridge } from '../../../apps/db-ops-api/src/investigations/legacy-analysis-bridge.js';
+import { registerAnalysisBridgeRoutes } from '../../../apps/db-ops-api/src/investigations/bridge-routes.js';
+import { provisionInvestigationServiceIdentity } from '../../../apps/db-ops-api/src/investigations/authorization.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer() {
+export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -77,6 +82,23 @@ export async function startInvestigationServer() {
     const owner = await contexts.loadActiveActor(101), viewer = await contexts.loadActiveActor(102);
     const authorization = new InvestigationAuthorization(contexts);
     const bridge = new InvestigationSessionBridge(() => pool, authorization);
+    const bridgeFlags = { manual: !!optionsInput.databaseAlertPilot, opsAuto: !!optionsInput.databaseAlertPilot, legacy: !!optionsInput.databaseAlertPilot };
+    let pilotServiceId = 0;
+    if (optionsInput.databaseAlertPilot) {
+      await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:manage','AI manage','ai','manage')");
+      await pool.query("INSERT INTO roles (id,name) VALUES (102,'t08-human-ai')");
+      await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 102,id FROM permissions WHERE code IN ('ai:manage','ai:view')");
+      await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,102),(102,102)');
+      const c = await pool.getConnection();
+      try { pilotServiceId = await provisionInvestigationServiceIdentity(c as never, 't08-browser'); } finally { c.release(); }
+      await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (?,101)',[pilotServiceId]);
+      await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (?,101,'read-only')",[pilotServiceId]);
+    }
+    const pilotBridge = new DatabaseAlertBridge(() => pool, contexts, authorization, bridge, () => bridgeFlags,
+      () => ({ configured: !!pilotServiceId, serviceUserId: pilotServiceId, instanceIds: [101], policyId: 'database-alert-pilot', policyVersion: 1 }),
+      () => ({ ...investigationBudgetConfiguration(), domain: 't06-synthetic' }));
+    const rca = new AlertRCAService(pilotBridge);
+    const legacy = new LegacyAnalysisBridge(() => pool, authorization, bridge);
     const tools = new ToolRegistry();
     tools.register({ name: 'get_instance_summary', description: 'Synthetic readonly resource', parameters: { type: 'object', properties: { instance_id: { type: 'number' } } },
       readOnly: true, concurrencySafe: true, exclusive: false,
@@ -139,7 +161,16 @@ export async function startInvestigationServer() {
     const wsServer = (adapter as any).wsServer;
     if (!wsServer.address()) await new Promise<void>(r => wsServer.once('listening', r));
     const verify = createVerifyToken(secret, contexts);
-    await registerInvestigationRoutes(app, verify, bridge);
+    await registerInvestigationRoutes(app, verify, bridge, bridge.observationServices(), legacy);
+    await registerAnalysisBridgeRoutes(app, verify, legacy, () => bridgeFlags, rca);
+    if (optionsInput.databaseAlertPilot) {
+      app.get('/api/alerts', { preHandler: verify }, async (request: any) => {
+        // Synthetic source rows, real SQL/HTTP. Tests never fake admission.
+        const [items] = await pool.query('SELECT *, level AS severity FROM alerts WHERE instance_id=101 ORDER BY id');
+        return { items, total: items.length, critical: items.length, unread: items.length };
+      });
+      app.get('/api/ai/analysis', { preHandler: verify }, async () => []);
+    }
     await registerInvestigationProfileRoutes(app, verify);
     await registerInvestigationGovernanceRoutes(app, verify, new InvestigationGovernanceStore(() => governanceAvailable ? pool : null, investigationBudgetConfiguration, contexts));
     await registerChatRoutes(app, { verifyToken: verify, service: chatDatabaseService, handleChatSend: async () => { throw new Error('USE_REAL_WS_CHAT'); } });
@@ -161,8 +192,11 @@ export async function startInvestigationServer() {
           '/agent-ws': { target: `http://127.0.0.1:${wsServer.address().port}`, ws: true, changeOrigin: true } } } });
     await vite.listen();
     const address = vite.httpServer!.address() as { port: number };
-    return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner, viewer, adapter, workerErrors, observationErrors, close,
-      token: (actor = owner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
+    const currentOwner = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(101) : owner;
+    const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
+    return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
+      bridgeFlags, rca,
+      token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       governanceStorage: (available: boolean) => governanceAvailable = available,
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },
       delaySnapshot: (id: string) => {

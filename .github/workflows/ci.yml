@@ -196,6 +196,8 @@ jobs:
         run: bash scripts/qualification/run-auth-boundary.sh
       - name: Analysis dispatch crashes, unknown billing windows and revoked authority
         run: bash scripts/qualification/run-analysis-recovery.sh
+      - name: Database alert single ownership and legacy result bridges in isolated MySQL
+        run: bash scripts/qualification/run-investigation-bridges.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL
         run: bash scripts/qualification/run-metric-retention.sh
       - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL

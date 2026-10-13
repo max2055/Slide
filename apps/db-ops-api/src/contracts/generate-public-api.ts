@@ -8,6 +8,7 @@ import { InvestigationSchemas } from '../investigations/contracts.js';
 import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
 import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
 import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
+import { InvestigationBridgeSchemas } from '../investigations/bridge-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -40,11 +41,26 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      '/api/alerts/{id}/investigation': { post: {
+        operationId: 'openAlertInvestigation', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+        description: 'Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.',
+        responses: { '202': { description: 'Accepted or linked investigation', content: { 'application/json': { schema: refSchema(InvestigationBridgeSchemas.AlertInvestigationResponse) } } },
+          '200': { description: 'Legacy analysis response (numeric id)' }, '400': { description: 'Invalid input' }, '401': { description: 'JWT required' },
+          '403': { description: 'AI management permission required' }, '404': { description: 'Source not visible' }, '409': { description: 'Legacy result unknown; no replay' },
+          '422': { description: 'Source excluded or suppressed' }, '503': { description: 'Acceptance unavailable; never fallback to another owner' } },
+      } },
+      '/api/ai/analysis/{id}/investigation': { post: {
+        operationId: 'linkLegacyAnalysis', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+        description: 'Explicit lazy readonly legacy link (INVESTIGATION_LEGACY_BRIDGE_ENABLED). Requires live ai:view/chat/resource authority and original principal for manual results. Unique per Analysis; does not enqueue, replay or invent a Run/result version. Archived view cannot be reopened or appended. Unknown stays unknown. Empty body only; private/no-store.',
+        responses: { '200': { description: 'Unique archived historical link', content: { 'application/json': { schema: refSchema(InvestigationBridgeSchemas.LegacyAnalysisLink) } } },
+          '400': { description: 'Invalid input' }, '401': { description: 'JWT required' }, '404': { description: 'Source or original actor not visible' },
+          '409': { description: 'Historical analysis is still active' }, '503': { description: 'Bridge disabled or store unavailable' } },
+      } },
       ...Object.fromEntries(['policies', 'budget', 'usage'].map(kind => {
         const name = kind === 'policies' ? 'InvestigationPoliciesResponse' : kind === 'budget' ? 'InvestigationBudgetResponse' : 'InvestigationUsageResponse';
         return [`/api/investigation-${kind}`, { get: {
           operationId: `getInvestigation${kind[0].toUpperCase()}${kind.slice(1)}`, security: [{ bearerAuth: [] }],
-          description: `Readonly governance facts. Requires live ai:view${kind === 'policies' ? '' : ' AND config:manage (global configuration management, not resource-scoped access)'}. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. ${kind === 'policies' ? 'No production registry: not_configured/not_connected with empty items; investigation_engine persists only.' : kind === 'budget' ? 'Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger not connected.' : 'All-history persisted ledger AGGREGATES ONLY, grouped by currency/state/mode; no individual ledger or resource identifiers. Offset pagination of groups after authorization, total counts reservations and groupCount counts groups; concurrent writes can shift pages. Counts cover every state. Costs grouped by currency, rate estimates only, never provider invoices. Input includes cached input; unknown or missing rates retain allowance, not zero.'}`,
+          description: `Readonly governance facts. Requires live ai:view${kind === 'policies' ? '' : ' AND config:manage (global configuration management, not resource-scoped access)'}. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. ${kind === 'policies' ? 'Actual operator-owned database alert pilot configuration/flag status only; no principal or resource identifiers. Configuration never implies live authority or budget. investigation_engine persists only.' : kind === 'budget' ? 'Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status reflects the database pilot configuration and flag.' : 'All-history persisted ledger AGGREGATES ONLY, grouped by currency/state/mode; no individual ledger or resource identifiers. Offset pagination of groups after authorization, total counts reservations and groupCount counts groups; concurrent writes can shift pages. Counts cover every state. Costs grouped by currency, rate estimates only, never provider invoices. Input includes cached input; unknown or missing rates retain allowance, not zero.'}`,
           ...(kind === 'usage' ? { parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } },
             { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, maximum: 200000, default: 0 } }] } : {}),
           responses: { '200': { description: 'Actual configuration or durable facts; no read-side writes', content: { 'application/json': { schema: refSchema(InvestigationGovernanceSchemas[name]) } } },
@@ -515,7 +531,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {

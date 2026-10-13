@@ -537,7 +537,7 @@ export class AlertsPage extends LitElement {
   @state() private filterTargetType = '';
   @state() private filterServerId: number | null = null;
   @state() private servers: any[] = [];
-  @state() private analyzedStatuses: Map<number, { status: string; trigger_type: string; result?: any; sessionKey?: string }> = new Map();
+  @state() private analyzedStatuses: Map<number, { id?: number; status: string; trigger_type: string; result?: any; sessionKey?: string }> = new Map();
   @state() private activeAnalysisRecord: { alert: Alert; record: any } | null = null;
   @state() private activeRCAAnalysis: { alertId: number; analysisId?: number; sessionKey?: string } | null = null;
   @state() private page = 0;
@@ -778,10 +778,11 @@ export class AlertsPage extends LitElement {
       const res = await authFetch("/api/ai/analysis?analysis_type=alert_rca&limit=500");
       if (res.ok) {
         const records = await res.json();
-        const statusMap = new Map<number, { status: string; trigger_type: string; result?: any; sessionKey?: string }>();
+        const statusMap = new Map<number, { id?: number; status: string; trigger_type: string; result?: any; sessionKey?: string }>();
         for (const r of records) {
           if (r.related_id) {
             statusMap.set(r.related_id, {
+              id: r.id,
               status: r.status,
               trigger_type: r.trigger_type,
               result: r.result,
@@ -981,7 +982,7 @@ export class AlertsPage extends LitElement {
     }
     // Check running analysis
     if (this.activeRCAAnalysis?.alertId === alertId) {
-      this.activeAnalysisRecord = { alert, record: { status: this.diagnosisStatus, trigger_type: 'manual', result: this.diagnosisResult } };
+      this.activeAnalysisRecord = { alert, record: { id: this.activeRCAAnalysis.analysisId, status: this.diagnosisStatus, trigger_type: 'manual', result: this.diagnosisResult } };
     }
   }
 
@@ -1045,18 +1046,18 @@ export class AlertsPage extends LitElement {
     this.requestUpdate();
     // Direct API call — bypasses DOM query timing issues
     try {
-      const res = await authFetch("/api/ai/analysis", {
+      const res = await authFetch(`/api/alerts/${alert.id}/investigation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          analysis_type: "alert_rca",
-          instance_id: alert.instance_id,
-          related_id: alert.id,
-          trigger_type: "manual",
-        }),
+        body: JSON.stringify({}),
       });
       if (res.ok) {
         const data = await res.json();
+        if (data.investigationId) {
+          this.activeRCAAnalysis = null;
+          window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'investigations', investigationId: data.investigationId } }));
+          return;
+        }
         if (data.cached) {
           this.diagnosisStatus = "completed";
           this.diagnosisResult = data.result || data;
@@ -1101,7 +1102,7 @@ export class AlertsPage extends LitElement {
               // Update analyzedStatuses so badge persists after activeRCAAnalysis changes
               this.analyzedStatuses = new Map(this.analyzedStatuses).set(
                 this.activeRCAAnalysis.alertId,
-                { status: 'completed', trigger_type: 'manual', result: fullData.result }
+                { id: analysisId, status: 'completed', trigger_type: 'manual', result: fullData.result }
               );
             }
           } else {

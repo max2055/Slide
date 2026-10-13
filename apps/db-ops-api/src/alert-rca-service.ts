@@ -1,4 +1,5 @@
 import type { ActorContext } from './auth/actor-context.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警根因分析服务 (Alert Root Cause Analysis)
@@ -8,6 +9,8 @@ import { dbConnection } from './db-connection.js';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { alertDatabaseService } from './alert-database-service.js';
+import { databaseAlertBridge, type AlertBridgeResponse } from './investigations/alert-bridge.js';
+import { canReadResource } from './resources/resource-service.js';
 
 const RCA_LEVELS = new Set(['warning', 'error', 'critical']);
 
@@ -27,6 +30,7 @@ interface AlertDetails {
 }
 
 class AlertRCAService {
+  constructor(private readonly investigationBridge = databaseAlertBridge) {}
   /**
    * 分析单个告警的根因
    * @param alertId 告警 ID
@@ -37,7 +41,7 @@ class AlertRCAService {
     alertId: number,
     trigger: 'manual' | 'auto' = 'auto',
     actor?: ActorContext, retryOf?: number,
-  ): Promise<{ success: boolean; analysisId?: number; sessionKey?: string; error?: string; status?: string }> {
+  ): Promise<AlertBridgeResponse> {
     // a. 获取告警详情
     assertWorkflowActive();
     const alert = await this._getAlertById(alertId);
@@ -58,8 +62,11 @@ class AlertRCAService {
     }
     const subjectType = serverId ? 'server' : 'instance';
     const subjectId = serverId ?? instanceId!;
+    if (trigger === 'manual' && (!actor || !canReadResource(actor, { type: subjectType, id: subjectId })))
+      return { success: false, error: 'INVESTIGATION_NOT_FOUND' };
 
     assertWorkflowActive();
+    const legacy = async (connection?: PoolConnection): Promise<AlertBridgeResponse> => {
     const result = await dispatchOrReuse({
         type: 'alert_rca', cacheKey: `alert:${alertId}:${subjectType}:${subjectId}`,
         instanceId, serverId, sessionKey: `rca-${subjectType}-${alertId}`,
@@ -76,11 +83,13 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 - 发生时间：${alert.created_at instanceof Date ? alert.created_at.toISOString() : String(alert.created_at)}
 
 请基于以上已持久化的告警事实分析根因、明确证据边界并给出修复建议。当前后台分析仅提供 slide_complete_analysis 工具；不要调用其他工具。完成后必须调用该工具保存结果。`,
-    });
+    }, connection);
     return { success: result.success !== false, analysisId: result.analysisId,
       sessionKey: `rca-${subjectType}-${alertId}-${result.analysisId}`, status: result.status,
       ...(result.status === 'unknown' ? { error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' } : {}),
     };
+    };
+    return instanceId ? this.investigationBridge.dispatch(alert, trigger, actor, legacy, retryOf) : legacy();
   }
 
   /**

@@ -40,7 +40,7 @@ export class MysqlOperationalEventIngest {
     this.binding = freezeTriggerBinding(binding);
   }
 
-  async ingest(value: EventInput): Promise<EventReceipt> {
+  async ingest(value: EventInput, reservedConnection?: TransactionConnection): Promise<EventReceipt> {
     const input = structuredClone(value); // Freeze producer mutation before connection acquisition.
     // Validate including absence of producer-supplied server fields BEFORE IO.
     normalizeEvent(input, this.binding, randomUUID(), new Date().toISOString());
@@ -49,7 +49,10 @@ export class MysqlOperationalEventIngest {
     // Bounded transaction retry only. External calls never occur in this port.
     for (let attempt = 0; ; attempt++) {
       try {
-        return await new OutboxService(pool as unknown as TransactionPool).transaction(async (connection, append) => {
+        const outbox = new OutboxService(pool as unknown as TransactionPool);
+        const transaction = reservedConnection
+          ? outbox.transactionOnConnection.bind(outbox, reservedConnection) : outbox.transaction.bind(outbox);
+        return await transaction(async (connection, append) => {
           const [clock] = await rows(connection, "SELECT DATE_FORMAT(UTC_TIMESTAMP(3), '%Y-%m-%dT%H:%i:%s.%fZ') AS now");
           const now = new Date(clock.now).toISOString();
           const event = normalizeEvent(input, this.binding, randomUUID(), now);

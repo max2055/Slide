@@ -59,7 +59,7 @@ describe('dispatchOrReuse durable admission', () => {
   });
   it('freezes network-device subject and actor with explicit unknown retry identity', async () => {
     await dispatchOrReuse({ type: 'resource_diagnosis', resourceType: 'network_device', resourceId: 17, networkDeviceId: 17, cacheKey: 'resource:17', sessionKey: 'resource', userMessage: 'analyze', diagnosticContext: resourceContext(), actor, retryOf: 70 });
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ retryOf: 70, analysisType: 'fault_diagnosis', request: expect.objectContaining({ subject: { type: 'network_device', id: 17 } }) }));
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ retryOf: 70, analysisType: 'fault_diagnosis', request: expect.objectContaining({ subject: { type: 'network_device', id: 17 } }) }), undefined);
   });
   it('requires an actor for manual analysis and honors the dispatch stop switch', async () => {
     const params = { type: 'topsql_analysis', instanceId: 7, cacheKey: 'sql:7', sessionKey: 'sql', userMessage: 'SELECT 1' } as const;

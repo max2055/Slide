@@ -12,6 +12,7 @@ import '../components/app-form-field.js';
 import '../components/app-empty-state.js';
 import '../components/app-badge.js';
 import '../components/app-dialog.js';
+import '../components/legacy-analysis-link.ts';
 import './resource-evaluation.js';
 import './source-manifest.js';
 
@@ -207,6 +208,7 @@ export class ResourceDiagnosisPage extends LitElement {
         <h3>分析结论（待人工确认）</h3>${conclusions.length ? html`<ul>${conclusions.map(value => html`<li>${value}</li>`)}</ul>` : summary ? html`<pre>${summary}</pre>` : html`<p>历史结果未提供结论，不能据此判断异常。</p>`}
         <h3>建议下一步</h3>${recommendations.length ? html`<ul>${recommendations.map(value => html`<li>${value.action}</li>`)}</ul><p>建议尚未执行，操作及恢复仍需人工确认。</p>` : html`<p>刷新当前证据并核对缺口，再人工确认处理方案。</p>`}<a href="#evidence-facts" @click=${(event: Event) => { event.preventDefault(); this.renderRoot.querySelector<HTMLElement>('#evidence-facts')?.focus(); }}>查看当前资源证据</a>` : nothing}
       <details><summary>查看任务技术详情</summary><p>任务 ID ${task.analysisId} · 原始状态 ${task.status}</p><pre>${JSON.stringify(task, null, 2)}</pre></details>
+      ${this.selected?.type === 'instance' ? html`<legacy-analysis-link .analysisId=${task.analysisId} .status=${task.status}></legacy-analysis-link>` : nothing}
       <button class="btn" .disabled=${this.statusController !== null || this.statusTimer !== null} @click=${this.startStatus}>查询任务状态</button></section>`;
   }
   private resourceName(ref: ResourceRef | null) {

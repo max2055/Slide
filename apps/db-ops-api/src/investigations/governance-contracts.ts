@@ -10,12 +10,13 @@ export const InvestigationBudgetPolicySchema = Type.Object({
   maxAutomaticTokensPerDay: count, maxTotalTokensPerDay: count, maxCostMicrosPerDay: count,
 }, strict);
 
-// No production binding registry exists yet. Empty facts are intentional;
-// historical events and qualification fixtures are not registered policies.
+// Repository/operator-owned database pilot only. Runtime grants/budget are
+// rechecked at ingestion; configuration does not imply authorization.
 export const InvestigationPoliciesResponseSchema = Type.Object({
-  schemaVersion: Type.Literal(1), configurationStatus: Type.Literal('not_configured'),
-  integrationStatus: Type.Literal('not_connected'), source: Type.Literal('production_composition'),
-  items: Type.Array(Type.Never(), { maxItems: 0 }),
+  schemaVersion: Type.Literal(1), configurationStatus: Type.Union([Type.Literal('not_configured'), Type.Literal('configured')]),
+  integrationStatus: Type.Union([Type.Literal('not_connected'), Type.Literal('connected')]), source: Type.Literal('production_composition'),
+  items: Type.Array(Type.Object({ id: Type.Literal('database-alert-pilot'), version: Type.Literal(1), profileId: Type.Literal('ops'),
+    source: Type.Literal('database-alert-engine'), enabled: Type.Boolean(), readonly: Type.Literal(true) }, strict), { maxItems: 1 }),
   originBoundary: Type.Literal('investigation_engine_persist_only'),
 }, { ...strict, $id: 'InvestigationPoliciesResponse' });
 export const InvestigationBudgetResponseSchema = Type.Object({
@@ -23,7 +24,7 @@ export const InvestigationBudgetResponseSchema = Type.Object({
   policy: InvestigationBudgetPolicySchema, reserveCostMicros: count,
   persistedPolicy: Type.Union([InvestigationBudgetPolicySchema, Type.Null()]),
   admissionStatus: Type.Union([Type.Literal('uninitialized'), Type.Literal('matching'), Type.Literal('conflict')]),
-  automaticTriggerStatus: Type.Literal('not_connected'), window: Type.Literal('UTC_admission_day_and_hour'),
+  automaticTriggerStatus: Type.Union([Type.Literal('not_connected'), Type.Literal('connected')]), window: Type.Literal('UTC_admission_day_and_hour'),
   profileLimitsSource: Type.Literal('/api/investigation-profiles'),
 }, { ...strict, $id: 'InvestigationBudgetResponse' });
 export const InvestigationUsageResponseSchema = Type.Object({

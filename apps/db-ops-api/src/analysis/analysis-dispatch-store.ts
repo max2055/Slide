@@ -38,14 +38,14 @@ export class AnalysisDispatchStore {
       LEFT JOIN analysis_dispatch_attempts a ON a.analysis_id = d.analysis_id LIMIT 0`);
     await this.pool().execute('SELECT scope_key FROM analysis_dispatch_keys LIMIT 0');
   }
-  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>): Promise<T> {
-    const connection = await this.pool().getConnection();
+  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection): Promise<T> {
+    const connection = reservedConnection ?? await this.pool().getConnection();
     try { await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result; }
     catch (error) { await connection.rollback(); throw error; }
-    finally { connection.release(); }
+    finally { if (!reservedConnection) connection.release(); }
   }
 
-  async enqueue(input: AnalysisEnqueueInput): Promise<AnalysisAcceptance> {
+  async enqueue(input: AnalysisEnqueueInput, reservedConnection?: PoolConnection): Promise<AnalysisAcceptance> {
     const { request } = input;
     if (!Number.isSafeInteger(request.subject.id) || request.subject.id <= 0
       || !['instance', 'server', 'network_device'].includes(request.subject.type)
@@ -136,7 +136,7 @@ export class AnalysisDispatchStore {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', session_key = ?, started_at = NULL WHERE id = ?", [snapshot.sessionKey, id]);
       await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [id, scope]);
       return { analysisId: id, cached: false, success: true, status: 'pending' };
-    });
+    }, reservedConnection);
   }
 
   private async lock(connection: PoolConnection, id: number) {

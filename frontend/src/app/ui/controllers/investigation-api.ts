@@ -10,6 +10,8 @@ export interface InvestigationRecord {
   lifecycle: InvestigationLifecycle; problemStatus: InvestigationProblemStatus; activeRequestId: string | null;
   resources: InvestigationCreateRequest['resourceRefs']; owner: { kind: string; id: number };
   derivedRunState?: InvestigationExecutionState | null; createdAt: string; updatedAt: string;
+  legacyAnalysis?: { analysisId: number; status: string; legacy: true; readOnly: true;
+    view: { kind: string; summary: string; rootCauseVerification: { status: 'unverified' }; value: unknown } } | null;
 }
 export interface InvestigationList {
   items: InvestigationRecord[]; authorizedCounts: { total: number }; nextCursor: string | null;

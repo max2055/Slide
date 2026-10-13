@@ -12,6 +12,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "./app-dialog.js";
 import "../views/ai-analysis-result.js";
+import './legacy-analysis-link.ts';
 
 interface Alert {
   id: number;
@@ -50,6 +51,7 @@ export class AlertAnalysisViewer extends LitElement {
 
         <!-- Result content -->
         <div style="overflow-y:auto;max-height:50vh;">
+          <legacy-analysis-link .analysisId=${record.id ?? 0} .status=${record.status} @legacy-investigation-opened=${() => this._emit('close')}></legacy-analysis-link>
           ${record.status === 'failed' ? html`
             <div style="padding:var(--space-lg);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--danger);text-align:center;">
               <div style="font-size:var(--text-md);font-weight:600;margin-bottom:var(--space-sm);">AI 分析失败</div>

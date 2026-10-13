@@ -79,6 +79,8 @@ describe('generated public API contract', () => {
     expect(Object.keys(document.paths)).toEqual([
       '/api/adapters/capabilities',
       '/api/ai/analysis/{id}/evidence',
+      '/api/ai/analysis/{id}/investigation',
+      '/api/alerts/{id}/investigation',
       '/api/alerts/events/{id}/close',
       '/api/alerts/events/{id}/investigate',
       '/api/alerts/events/{id}/resolve',

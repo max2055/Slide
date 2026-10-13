@@ -7,6 +7,7 @@ import { InvestigationSessionBridge } from './session-bridge.js';
 import { resolveInvestigationProfile } from './profiles.js';
 import { InvestigationStoreError, type InvestigationAcceptance, type InvestigationList } from './store.js';
 import { InvestigationCreateRequestSchema, InvestigationRequestSchema, InvestigationPatchRequestSchema } from './http-contracts.js';
+import { LegacyAnalysisBridge } from './legacy-analysis-bridge.js';
 
 const invalid = () => new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
 const actorOf = (request: FastifyRequest) => (request as FastifyRequest & { user: ActorContext }).user;
@@ -51,7 +52,8 @@ function listInput(request: FastifyRequest): { options: InvestigationList; finge
  * executor registration, Run state owner, or secondary enqueue path. */
 export async function registerInvestigationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
   bridge = new InvestigationSessionBridge(() => dbConnection.getPool()),
-  observation = bridge.observationServices()): Promise<void> {
+  observation = bridge.observationServices(),
+  legacy = new LegacyAnalysisBridge(() => dbConnection.getPool(), undefined, bridge)): Promise<void> {
   // Read expiry is immediate; unattended SQL purge is bounded and independently
   // removes raw bodies while preserving all historical metadata/hash bindings.
   let purge: Promise<unknown> | undefined;
@@ -116,7 +118,7 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     const run = record.activeRequestId
       ? snapshot.runs.find(run => run.requestId === record.activeRequestId)
       : snapshot.runs.at(-1);
-    return { ...record, derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
+    return { ...record, legacyAnalysis: await legacy.read(actor, id), derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
       latestResult: results.items[0] ?? null, watermark: snapshot.watermark };
   });
   route('GET', '/api/investigations/:id/events', async (request, _reply, actor) => {
@@ -140,10 +142,12 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     return observation.results.list(actor, uuid((request.params as { id: string }).id), query.before === undefined ? undefined : Number(query.before), query.limit === undefined ? 20 : Number(query.limit));
   });
   route('PATCH', '/api/investigations/:id', async (request, _reply, actor) => {
+    if (await legacy.read(actor, uuid((request.params as { id: string }).id))) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     if (!Value.Check(InvestigationPatchRequestSchema, request.body)) throw invalid();
     return bridge.storeFor(actor).patch(principal(actor), uuid((request.params as { id: string }).id), request.body);
   });
   route('POST', '/api/investigations/:id/runs', async (request, reply, actor) => {
+    if (await legacy.read(actor, uuid((request.params as { id: string }).id))) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     const idempotencyKey = key(request);
     if (!Value.Check(InvestigationRequestSchema, request.body)) throw invalid();
     return reply.code(202).send(accepted(await bridge.admit(actor, { ...request.body, idempotencyKey,

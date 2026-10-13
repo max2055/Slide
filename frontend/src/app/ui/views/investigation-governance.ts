@@ -97,12 +97,13 @@ export class InvestigationGovernancePage extends LitElement {
   }
   private renderPolicies(facts: InvestigationPoliciesResponse) {
     return html`<app-card><span slot="header">生产调查策略</span><dl>
-      <dt>配置状态</dt><dd>${facts.configurationStatus === 'not_configured' ? '尚未配置' : facts.configurationStatus}</dd>
-      <dt>接入状态</dt><dd>${facts.integrationStatus === 'not_connected' ? '尚未接入' : facts.integrationStatus}</dd>
+      <dt>配置状态</dt><dd>${facts.configurationStatus === 'not_configured' ? '尚未配置' : '已配置'}</dd>
+      <dt>接入状态</dt><dd>${facts.integrationStatus === 'not_connected' ? '尚未接入' : '已接入'}</dd>
       <dt>事实来源</dt><dd>当前生产组合（${facts.source}）</dd>
       <dt>内部来源边界</dt><dd>${facts.originBoundary}</dd></dl>
-      <p class="note">内部来源规则已实现；生产自动触发尚未连接，不能据此判断自动调查可用。</p>
-      <app-empty-state icon="shield" title="尚未配置调查策略" description="当前生产组合未注册策略，尚未接入自动触发。"></app-empty-state></app-card>`;
+      <p class="note">配置不代表服务主体拥有权限或预算；每次接入实时核验。内部调查事件只持久化，不触发自身调查。</p>
+      ${facts.items.length ? facts.items.map(item => html`<p>数据库告警试点 · Ops v${item.version} · ${item.enabled ? '自动触发已开启' : '自动触发未开启'} · 只读</p>`)
+        : html`<app-empty-state icon="shield" title="尚未配置调查策略" description="当前生产组合未注册策略，尚未接入自动触发。"></app-empty-state>`}</app-card>`;
   }
   private policyFields(policy: InvestigationBudgetResponse['policy']) {
     const fields: Array<[keyof typeof policy, string]> = [['maxConcurrent', '全局并发'], ['manualReserved', '手动并发保留'],
@@ -114,7 +115,7 @@ export class InvestigationGovernancePage extends LitElement {
   private renderBudget(facts: InvestigationBudgetResponse) {
     const status = { uninitialized: '尚未初始化冻结预算', matching: '当前配置与冻结预算匹配', conflict: '当前配置与冻结预算冲突，不能视为可准入' };
     return html`<p role=${facts.admissionStatus === 'conflict' ? 'alert' : 'status'}>${status[facts.admissionStatus]}</p>
-      <p class="note">有效加载器配置（${facts.source}）；UTC 准入日/小时窗口。额度不等于余额或供应商收费；Profile 上限见调查 Profiles。自动触发尚未接入。</p>
+      <p class="note">有效加载器配置（${facts.source}）；UTC 准入日/小时窗口。额度不等于余额或供应商收费；Profile 上限见调查 Profiles。${facts.automaticTriggerStatus === 'connected' ? '数据库告警试点已接入；每次实时校验权限与预算。' : '自动触发尚未接入。'}</p>
       <div class="cards"><app-card data-budget="loader"><span slot="header">当前加载器预算</span>${this.policyFields(facts.policy)}
         <p>每执行保留成本：${money(facts.reserveCostMicros, facts.policy.currency)}</p></app-card>
         <app-card data-budget="frozen"><span slot="header">持久冻结预算</span>${facts.persistedPolicy ? this.policyFields(facts.persistedPolicy)
