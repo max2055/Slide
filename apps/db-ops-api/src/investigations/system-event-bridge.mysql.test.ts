@@ -145,6 +145,73 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       await expect(registry.get('get_platform_observations')!.execute({})).rejects.toMatchObject({ code: 'INVESTIGATION_NOT_FOUND' });
     } finally { await composition.close(); }
   }, 60_000);
+  it('seven-day backlog executes real System tools and repairs canonical completion in a new process without another Provider call', async () => {
+    const composition = await createSystemComposition(() => pool, { contexts,
+      configuration: { enabled: true, automatic: true, serviceUserId: serviceId },
+      budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100,
+        prices: { input: 100, cachedInput: 50, output: 200 } } });
+    let calls = 0;
+    const input = failure({ occurredAt: new Date(Date.now() - 7 * 24 * 3_600_000).toISOString() });
+    const final = { content: '持久原始事实已读取；日志窗口有缺口，根因待验证。', finishReason: 'stop', toolCalls: [],
+      hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 0 } };
+    const provider: LLMProvider = {
+      getDefaultModel: () => 'controlled-system-backlog',
+      getModelCapabilities: () => ({ model: 'controlled-system-backlog', contextWindowTokens: 32768,
+        preferredOutputTokens: 2048, source: 'configuration', version: 'fixture/v1' }),
+      chat: async messages => {
+        calls++;
+        if (calls === 1) return { ...final, content: null, finishReason: 'tool_calls',
+          toolCalls: [{ id: 'backlog-facts', name: 'get_platform_observations', arguments: {} }], hasToolCalls: true, shouldExecuteTools: true };
+        const evidence = messages.filter(m => m.role === 'tool').map(m => JSON.parse(String(m.content)));
+        expect(evidence).toHaveLength(1);
+        expect(evidence[0].data.facts[0].event.sourceEventId).toBe(input.sourceEventId);
+        expect(evidence[0].data.gaps).toContain('SYSTEM_EVENT_WINDOW_TRUNCATED');
+        return final;
+      },
+      chatStream: async () => { throw new Error('STREAM_NOT_EXPECTED'); },
+    };
+    try {
+      const saved = await composition.bridge.record(input), accepted = await composition.bridge.deliver(saved.jobId);
+      const workerId = 't09-backlog-worker';
+      const job = await new MysqlWorkflowStore(() => pool as never).claim(workerId, 120, { types: ['investigation.execute'], exclude: false });
+      expect(job).not.toBeNull();
+      const command = { investigationId: accepted.investigationId!, requestId: accepted.requestId!, job: job!,
+        context: { workerId, fencingToken: job!.fencingToken, signal: new AbortController().signal } };
+      const executor = new InvestigationExecutor({ pool: () => pool, authorization,
+        systemToolsForInvestigation: composition.toolsForInvestigation,
+        toolsForActor: () => new ToolRegistry(), providerForPurpose: async () => provider,
+        budget: { domain: 'system-test', policy: quota, reserveCostMicros: 100 } });
+      await pool.query(`CREATE TRIGGER t09_completion_failure BEFORE UPDATE ON agent_runs FOR EACH ROW
+        BEGIN IF NEW.state = 'completed' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'T09_COMPLETION_STORAGE_FAILURE'; END IF; END`);
+      try { await expect(executor.execute(command)).rejects.toThrow('T09_COMPLETION_STORAGE_FAILURE'); }
+      finally { await pool.query('DROP TRIGGER t09_completion_failure'); }
+      expect(calls).toBe(2);
+      const [pending] = await pool.query<RowDataPacket[]>('SELECT id, state, result_json FROM agent_runs');
+      expect(pending).toHaveLength(1); expect(pending[0].state).toBe('running');
+      expect(pending[0].result_json.completionPending).toBe(true);
+      // A new process must obtain a new real Workflow fence; the old lease
+      // remains protected against duplicate simultaneous execution.
+      await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [job!.id]);
+      const next = await new MysqlWorkflowStore(() => pool as never).claim('t09-recovery-worker', 120,
+        { types: ['investigation.execute'], exclude: false });
+      expect(next!.id).toBe(job!.id); expect(next!.fencingToken).toBeGreaterThan(job!.fencingToken);
+      const recoveredCommand = { ...command, job: next!,
+        context: { workerId: 't09-recovery-worker', fencingToken: next!.fencingToken } };
+      const recover = () => JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', 'src/investigations/system-event-recovery-child.ts'], {
+        cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, SYSTEM_RECOVERY_FIXTURE: JSON.stringify({ port, database, serviceId,
+          investigationId: accepted.investigationId, composed: true, quota, execute: recoveredCommand }) },
+      }));
+      const first = recover();
+      expect(first).toMatchObject({ runId: pending[0].id, state: 'completed', results: 1, evidence: 1, toolMessages: 1,
+        count: 1, sourceEventId: input.sourceEventId });
+      expect(recover()).toEqual(first); // terminal replay does not duplicate canonical/result/evidence.
+      expect(calls).toBe(2);
+      expect(await count('agent_runs')).toBe(1);
+      const [evidence] = await pool.query<RowDataPacket[]>('SELECT raw_json FROM investigation_evidence');
+      expect(JSON.stringify(evidence)).toContain(input.sourceEventId);
+      expect(JSON.stringify(evidence)).toContain('SYSTEM_EVENT_WINDOW_TRUNCATED');
+    } finally { await composition.close(); }
+  }, 60_000);
 
   it('durable original precedes admission; 100 retries and immutable conflicts survive recreation', async () => {
     const input = failure();
@@ -271,11 +338,13 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       vi.stubEnv('SLIDE_SOURCE_ROOT', root); vi.stubEnv('SLIDE_SOURCE_SIGNING_KEY', signingKey);
       vi.stubEnv('SLIDE_RELEASE_MANIFEST', ''); vi.stubEnv('SLIDE_RELEASE_ID', 'fixture-release');
       vi.stubEnv('SLIDE_COMMIT_SHA', commitSha); vi.stubEnv('SLIDE_SOURCE_DIGEST', manifest.treeDigest);
-      const saved = await bridge.record(failure()); target = (await bridge.deliver(saved.jobId)).investigationId!;
-      const tools = createSystemTools({ pool: () => pool, caller: actor, scope: { investigationId: target, from, to, component: 'api' },
-        authorization, bridge, source: new SourceManagementService(() => pool as never) });
-      const tool = tools.find(t => t.name === 'read_source_region')!;
-      const read = () => tool.handler({ path: 'src/selected.ts', startLine: 1, endLine: 1 });
+      const saved = await bridge.record(failure({ occurredAt: new Date(Date.now() - 2 * 3_600_000).toISOString() }));
+      const accepted = await bridge.deliver(saved.jobId); target = accepted.investigationId!;
+      const [requests] = await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id = ?', [accepted.requestId]);
+      const composition = await createSystemComposition(() => pool, { contexts, configuration: { enabled: false, automatic: false, serviceUserId: 0 },
+        source: new SourceManagementService(() => pool as never) });
+      const tool = composition.toolsForInvestigation(actor, requests[0].request_snapshot).get('read_source_region')!;
+      const read = () => tool.execute({ path: 'src/selected.ts', startLine: 1, endLine: 1 });
       expect(await read()).toMatchObject({ success: true, data: { content: 'export function selected() { return 1; }',
         commitSha, quality: 'good', rootCauseVerified: false } });
       await pool.execute('REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)', ['source.gitlab', JSON.stringify({ ...config, allowModelContent: false })]);
@@ -284,6 +353,7 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
       expect(await read()).toMatchObject({ data: { quality: 'unknown', gaps: ['SOURCE_COMMIT_MISMATCH'] } });
       vi.stubEnv('SLIDE_COMMIT_SHA', '');
       expect(await read()).toMatchObject({ data: { quality: 'unknown', gaps: ['SOURCE_DEPLOYMENT_UNKNOWN'] } });
+      await composition.close();
     } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
   });
 });

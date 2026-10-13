@@ -13,6 +13,8 @@ import type { MysqlSystemEventBridge, SystemComponent } from './system-event-bri
 
 export interface SystemToolScope {
   investigationId: string; component: SystemComponent; from: string; to: string;
+  /** Original DB receipt time, separate from the bounded evidence query. */
+  receivedAt?: string;
 }
 export interface SystemToolOptions {
   pool: () => Pool | null; caller: ActorContext; scope: SystemToolScope;
@@ -69,7 +71,8 @@ export function createSystemTools(options: SystemToolOptions): AnyAgentTool[] {
   const caller = freezeInvestigationCaller(options.caller), scope = Object.freeze({ ...options.scope });
   if (!/^[a-f0-9-]{36}$/.test(scope.investigationId) || !['api', 'collector', 'queue', 'agent'].includes(scope.component)
     || !Number.isFinite(Date.parse(scope.from)) || !Number.isFinite(Date.parse(scope.to)) || Date.parse(scope.from) > Date.parse(scope.to)
-    || Date.parse(scope.to) - Date.parse(scope.from) > 3_600_000) throw new Error('SYSTEM_TOOL_SCOPE_INVALID');
+    || Date.parse(scope.to) - Date.parse(scope.from) > 3_600_000
+    || scope.receivedAt !== undefined && !Number.isFinite(Date.parse(scope.receivedAt))) throw new Error('SYSTEM_TOOL_SCOPE_INVALID');
   const authorization = options.authorization ?? new InvestigationAuthorization();
   const authority = async (name: string) => {
     const pool = options.pool(); if (!pool) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
@@ -100,6 +103,8 @@ export function createSystemTools(options: SystemToolOptions): AnyAgentTool[] {
       let result: Awaited<ReturnType<AnyAgentTool['handler']>>;
       if (d.mode === 'observations') {
         const gaps: string[] = [];
+        if (scope.receivedAt && Date.parse(scope.receivedAt) > Date.parse(scope.to)) gaps.push('SYSTEM_EVENT_WINDOW_TRUNCATED');
+        if (scope.receivedAt && Date.parse(scope.receivedAt) < Date.parse(scope.from)) gaps.push('SYSTEM_EVENT_CLOCK_AHEAD');
         let logs: unknown = null;
         try {
           const summary = (options.logs ?? platformLogs).query(scope); gaps.push(...summary.gaps);
@@ -119,6 +124,7 @@ export function createSystemTools(options: SystemToolOptions): AnyAgentTool[] {
           bounded.push(fact);
         }
         result = { success: true, data: { schemaVersion: 1, observedFrom: scope.from, observedTo: scope.to,
+          ...(scope.receivedAt ? { eventOccurredAt: scope.from, receivedAt: scope.receivedAt } : {}),
           persistence: 'mysql', facts: bounded, logs, quality: gaps.length ? 'degraded' : 'good', gaps: [...new Set(gaps)],
           interpretation: 'original-error-facts' } };
       } else {

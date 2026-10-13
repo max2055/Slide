@@ -1,5 +1,19 @@
 # T09 System 领域与共享装配验收
 
+## v1.2.19：T09-WINDOW-01 积压窗口修复
+
+父在 PR165 `08b8ccaa` 真实 MySQL 复现两小时积压：准入成功，但发生时间到摄入时间的间隔被直接当作工具查询窗口，超过一小时后抛 `SYSTEM_TOOL_SCOPE_INVALID`；事件时钟领先数据库也会产生反向窗口。历史准入/CI/失败证据保留。
+
+正式 `createSystemComposition` 现在将两个持久时间解释为事件发生时间 `context.from` 和数据库摄入时间 `context.to`，并生成 `[occurredAt, occurredAt + min(1h, max(0, receivedAt - occurredAt))]` 查询窗口。原请求快照、事件原件、关联、调查/component/Commit 均不改写；旧积压请求也使用同一装配恢复。没有扩大 `createSystemTools` 或 `readFacts` 的一小时上限，没有平移窗口丢弃原事件，没有新增事务/迁移/执行 owner。
+
+超出窗口时 observations 同时返回原 `eventOccurredAt`、数据库 `receivedAt` 与实际 `observedFrom/observedTo`，并标记 `SYSTEM_EVENT_WINDOW_TRUNCATED`；负间隔返回零宽事件窗口和 `SYSTEM_EVENT_CLOCK_AHEAD`。日志仍按原进程证据质量降级，不推测不存在的历史日志。正常窗口保持既有工具输出，避免增加后续 Run 的上下文体积。源码仍使用原事件精确版本、签名 manifest 和实时权限；没有改动源码同步链路，复用既有真实 sync 验收。
+
+本轮真实隔离 MySQL 8.4、两次正式迁移：**17/17**，无条件跳过。新增两小时/七天积压及未来两小时时钟偏差的三项 SQL 测试先在旧代码上以 `SYSTEM_TOOL_SCOPE_INVALID` 失败，再通过。每项新建服务实例与独立 Node 进程读取原事件，验证哈希、关联、最多一小时窗口、缺口及实时撤权。七天积压经正式 executor/AgentRunner/工具/SQL canonical 执行；真实 SQL trigger 拒绝完成提交，随后新进程以正式 Workflow 新 fence 恢复完成，Provider factory 禁止调用。再重投仅保留同一 completed Run、一版结果、一份证据和一条 canonical tool fact。源码用例改为两小时积压下的正式装配，继续验证签名快照/egress/部署错版本关闭读取。
+
+受控本地 Provider 实际消费原事件并返回缺口结论，**不替代真实 Provider**。Chromium/JWT/真实 HTTP/WS 原 System 三 Run 回归通过；本轮初版在正常 observations 增加时间字段导致第三 Run `CONTEXT_UNRECOVERABLE` 的失败历史保留，最终仅异常时间返回新增字段，正常场景回归通过。测试夹具曾误复用旧 fence、误查 `chat_messages` 的 tool 行，已分别改为正式新 fence 与 `agent_canonical_facts`，未修改执行核心。
+
+零新增外部模型请求、Issue、子代理、生产操作；原外部 Provider 5/6 成功停发且不转授/重置。家族 token/费用可靠实测不可用。当前为修复候选，完整 T09 仍待新 head CI、父独立 Review/真实验收、真实 Provider System 消费及普通 merge/main 核验；不释放共享 owner 或 T10/T12。
+
 历史领域阶段：2026-10-13，授权 MAX-150 v1.2.16；父 MAX-140 同版本。保留 T09-A / PR157 历史，不重做准备阶段，不把本次领域交付称为完整 T09 出口。
 
 ## 行为及文件边界

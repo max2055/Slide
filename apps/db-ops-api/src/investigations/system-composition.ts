@@ -70,9 +70,19 @@ export async function createSystemComposition(poolProvider: () => Pool | null, o
       const registry = new ToolRegistry();
       if (snapshot.profileId !== 'system' || context?.subject?.kind !== 'platform'
         || !context.from || !context.to) return registry; // no invented window
+      // Automatic context retains occurrence and DB receipt times, not a
+      // query duration. Preserve that immutable context (including old queued
+      // requests), and anchor evidence at the original event. Never slide a
+      // backlog window to ingestion time and silently lose the original fact.
+      const occurred = Date.parse(context.from), received = Date.parse(context.to);
+      if (!Number.isFinite(occurred) || !Number.isFinite(received)) throw new Error('SYSTEM_TOOL_SCOPE_INVALID');
+      const to = new Date(occurred + Math.min(3_600_000, Math.max(0, received - occurred))).toISOString();
       for (const tool of createSystemTools({ pool: poolProvider, caller: actor, bridge, source, authorization,
         scope: { investigationId: snapshot.id, component: context.subject.component as SystemComponent,
-          from: context.from, to: context.to } })) registry.register({
+          from: context.from, to,
+          // Keep the established tool payload for ordinary in-range events;
+          // carry the separate receipt only when the query omits that time.
+          ...(received > occurred + 3_600_000 || received < occurred ? { receivedAt: context.to } : {}) } })) registry.register({
         name: tool.name, description: tool.description, parameters: tool.parameters as Tool['parameters'],
         readOnly: true, requiresApproval: false, concurrencySafe: false, exclusive: true,
         execute: (args, ctx) => tool.handler(args, { signal: ctx?.signal }),
