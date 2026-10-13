@@ -2,6 +2,8 @@
 
 2026-10-13，MAX-147。基线 `3269f2062611ce17fe0a6a4623120993492c2901`（T04 #154）；复用已合并 T05-A #153。本文仅描述完整 T05 的实现与证据边界，不代替父独立 Review 或 T12 全 V1 A01–A18 gate。
 
+后台结果持久化的父审查缺口已沿原 PR 修复：结果与 Run 终态同事务提交，snapshot/replay 不再生成版本。最新 SQL/JWT/WS/Chromium/完成恢复 235 项及回滚/撤权证据见 [后台完成事务修复验收](t05-background-completion-validation.md)；本文下方测试数字保留原交付历史，不作为新 head 的替代证据。
+
 ## 实现与兼容
 
 - 117 additive 迁移由正式 MigrationRunner 自动发现，新增事件/head、capture hash、证据和结果存储。Session→Investigation 锁序与实时授权复用既有实现；sequence、canonical Parts revision、工具证据同事务提交，失败不推进 checkpoint/cursor。
