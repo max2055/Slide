@@ -14,17 +14,22 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
 controller_pid=''
 mysql_container="slide-t12-nonce-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+# The SQL fixture uses the runner's separate stock daemon. Only sandbox jobs
+# use DOCKER_HOST/rootless; neither daemon socket is mounted into those jobs.
+fixture_docker=(docker --host unix:///var/run/docker.sock)
 cleanup() {
   local result=$?
   trap - EXIT
   set +e
   if [[ -n "$controller_pid" ]]; then kill -TERM "$controller_pid" 2>/dev/null || true; wait "$controller_pid" || true; fi
   docker ps -aq --filter name=slide-sandbox- | xargs -r docker rm -f > "$out/job-cleanup.log" 2>&1
-  if docker inspect "$mysql_container" >/dev/null 2>&1; then
-    docker stop --timeout 10 "$mysql_container" > "$out/nonce-cleanup.log" 2>&1
-    docker rm -v "$mysql_container" >> "$out/nonce-cleanup.log" 2>&1
+  if "${fixture_docker[@]}" inspect "$mysql_container" >/dev/null 2>&1; then
+    "${fixture_docker[@]}" stop --timeout 10 "$mysql_container" > "$out/nonce-cleanup.log" 2>&1
+    "${fixture_docker[@]}" rm -v "$mysql_container" >> "$out/nonce-cleanup.log" 2>&1
     if [[ $? != 0 ]]; then cat "$out/nonce-cleanup.log"; result=1; fi
   fi
+  "${fixture_docker[@]}" ps -a --filter "name=^${mysql_container}$" --format '{{.Names}}' > "$out/nonce-after-cleanup.txt"
+  if [[ -s "$out/nonce-after-cleanup.txt" ]]; then cat "$out/nonce-after-cleanup.txt"; result=1; fi
   if docker info >/dev/null 2>&1; then
     docker ps -a --format '{{.Names}}' > "$out/containers-after-cleanup.txt"
     if [[ -s "$out/containers-after-cleanup.txt" ]]; then cat "$out/containers-after-cleanup.txt"; result=1; fi
@@ -49,7 +54,6 @@ task_codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
 printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' "$(dpkg --print-architecture)" "$task_codename" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt-get update -qq
 sudo apt-get install -y uidmap dbus-user-session slirp4netns docker-ce-rootless-extras
-sudo systemctl stop docker.service docker.socket
 sudo loginctl enable-linger "$(id -un)"
 sudo mkdir -p /etc/systemd/system/user@.service.d
 printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/slide-qualification.conf >/dev/null
@@ -70,7 +74,9 @@ stat -fc %T /sys/fs/cgroup > "$out/cgroup-filesystem.txt"
 docker info --format '{{json .SecurityOptions}}' | tee "$out/security-options.json"
 docker info --format '{{json .SecurityOptions}}' | grep -q rootless
 
-for image in mysql:8.4 node:24-alpine python:3.12-alpine; do docker pull "$image"; done
+for image in node:24-alpine python:3.12-alpine; do docker pull "$image"; done
+"${fixture_docker[@]}" pull mysql:8.4
+"${fixture_docker[@]}" info --format '{{json .SecurityOptions}}' > "$out/nonce-daemon-security-options.json"
 node_image="$(docker image inspect node:24-alpine --format '{{index .RepoDigests 0}}')"
 python_image="$(docker image inspect python:3.12-alpine --format '{{index .RepoDigests 0}}')"
 export SANDBOX_IMAGES="$(node -e 'process.stdout.write(JSON.stringify({node:process.argv[1],shell:process.argv[1],python:process.argv[2]}))' "$node_image" "$python_image")"
@@ -78,11 +84,11 @@ printf '%s\n' "$SANDBOX_IMAGES" > "$out/runtime-images.json"
 export SANDBOX_CONTROLLER_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 export SANDBOX_NONCE_DB_PASSWORD="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 export SANDBOX_NONCE_DB_HOST=127.0.0.1 SANDBOX_NONCE_DB_NAME=t12_nonce SANDBOX_NONCE_DB_USER=t12_controller
-docker run -d --name "$mysql_container" -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127.0.0.1::3306 mysql:8.4 >/dev/null
-export SANDBOX_NONCE_DB_PORT="$(docker port "$mysql_container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
+"${fixture_docker[@]}" run -d --name "$mysql_container" -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127.0.0.1::3306 mysql:8.4 >/dev/null
+export SANDBOX_NONCE_DB_PORT="$("${fixture_docker[@]}" port "$mysql_container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
 for _ in $(seq 1 90); do
-  if docker exec "$mysql_container" mysqladmin ping --protocol=tcp --host=127.0.0.1 --silent >/dev/null 2>&1; then ready=1; break; fi
+  if "${fixture_docker[@]}" exec "$mysql_container" mysqladmin ping --protocol=tcp --host=127.0.0.1 --silent >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 [[ "$ready" == 1 ]] || { echo 'Isolated nonce MySQL unavailable' >&2; exit 1; }
