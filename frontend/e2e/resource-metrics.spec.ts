@@ -46,8 +46,8 @@ for (const width of [375, 1440, 1920]) for (const theme of ['light', 'dark']) te
   }
   expect(errors).toEqual([]);
 });
-test('preview, failed trial, invalidation, publish and application', async ({ page }) => {
-  let published = false, applied = false, succeed = false; const writes: string[] = []; const pack = { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }; const resolved = { settings: {}, sources: {}, metric_templates: [], metric_sources: {} };
+test('preview, failed and empty trials, invalidation, publish and application', async ({ page }) => {
+  let published = false, applied = false, succeed = false, hasSamples = false; const writes: string[] = []; const pack = { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }; const resolved = { settings: {}, sources: {}, metric_templates: [], metric_sources: {} };
   await page.route('**/api/**', route => {
     const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback();
     if (p.endsWith('/catalog')) return route.fulfill({ json: { packages: [{ package: pack, recommendations: {}, documentation: [] }], metrics: [] } });
@@ -55,13 +55,20 @@ test('preview, failed trial, invalidation, publish and application', async ({ pa
     if (p.endsWith('/attempts')) return route.fulfill({ json: [] });
     if (p.endsWith('/effective')) return route.fulfill({ json: { resolved } });
     if (p.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, resources: [{ resolved }] } });
-    if (p.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: succeed ? 'succeeded' : 'failed' }], samples: [] } });
+    if (p.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: succeed ? 'succeeded' : 'failed' }], samples: hasSamples ? [{ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', value: { encoding: 'float64', value: 60 }, quality: { status: 'good' } }] : [] } });
     if (p.endsWith('/publish')) { writes.push(p); published = true; return route.fulfill({ json: {} }); }
-    return route.fulfill({ status: published ? 200 : 404, json: published ? { binding: { package: pack, revision: 1, group_id: null, overrides: {} }, application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null } } : {} });
+    return route.fulfill({ status: published ? 200 : 404, json: published ? { binding: { package: pack, revision: 1, group_id: null, overrides: {} }, application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null } } : { error: 'POLICY_NOT_FOUND' } });
   });
   await page.setViewportSize({ width: 375, height: 900 }); await fixture(page, '<metric-configuration resourceid="1"></metric-configuration>', 'components/metric-configuration');
   const preview = page.getByRole('button', { name: '预检与影响预览' }), trial = page.getByRole('button', { name: '试采', exact: true }), publish = page.getByRole('button', { name: '发布', exact: true });
-  await preview.click(); await trial.click(); await expect(publish).toBeDisabled(); succeed = true; await trial.click(); await expect(publish).toBeEnabled();
+  await preview.click(); await trial.click(); await expect(publish).toBeDisabled();
+  succeed = true;
+  await trial.click();
+  await expect(page.getByText('试采未返回样本，不能发布。请检查指标是否启用并重新试采。', { exact: true })).toBeVisible();
+  await expect(publish).toBeDisabled();
+  expect(writes).toHaveLength(0);
+  hasSamples = true;
+  await trial.click(); await expect(publish).toBeEnabled();
   await page.getByLabel('采集开关', { exact: true }).selectOption('disable'); await expect(trial).toBeDisabled(); await expect(publish).toBeDisabled(); await page.getByLabel('采集开关', { exact: true }).selectOption('inherit');
   await preview.click(); await trial.click(); await publish.click(); await expect(page.getByText(/当前发布版本 1.*等待应用/)).toBeVisible(); expect(writes).toHaveLength(1); applied = true; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.getByText(/当前应用版本 1.*已应用/)).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
