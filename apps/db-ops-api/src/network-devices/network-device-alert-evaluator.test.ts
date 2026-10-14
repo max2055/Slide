@@ -7,7 +7,7 @@ import {
 } from './network-device-alert-evaluator.js';
 
 // The injected observation store is a legacy source; test its alert behavior independently of the real rollout database.
-vi.mock('../metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: async () => ({ handled: false }) }));
+vi.mock('../metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: (...args: unknown[]) => mocks.semantic(...args) }));
 
 const device = { id: 7, name: 'edge-1', label: 'edge-1', status: 'online', collectionEnabled: true };
 
@@ -23,6 +23,7 @@ function observation(metricId: string, value: number | null, dimensions?: Record
 }
 
 const mocks = vi.hoisted(() => ({
+  semantic: vi.fn(),
   getAlertRules: vi.fn(),
   findActiveNetworkDeviceAlert: vi.fn(),
   createAlert: vi.fn(),
@@ -72,6 +73,7 @@ describe('NetworkDeviceAlertEvaluator', () => {
     ]);
     mocks.findActiveNetworkDeviceAlert.mockResolvedValue(null);
     mocks.createAlert.mockResolvedValue({ success: true, alertId: 101 });
+    mocks.semantic.mockResolvedValue({handled:false});
     mocks.getActiveAlerts.mockResolvedValue([]);
     mocks.resolveAlert.mockResolvedValue({ success: true });
   });
@@ -103,8 +105,26 @@ describe('NetworkDeviceAlertEvaluator', () => {
       network_device_id: 7,
       target_type: 'network_device',
       metric_name: 'device_cpu_percent',
+      tags: expect.objectContaining({observed_at:'2026-08-26T00:00:00.000Z',observed_to:'2026-08-26T00:00:00.000Z',quality:'good'}),
       level: 'error',
     }));
+  });
+
+  it('retains the semantic bucket window and partial quality without inventing a collection time',async()=>{
+    const from='2026-08-25T23:59:00.000Z',to='2026-08-26T00:00:00.000Z';
+    mocks.semantic.mockResolvedValue({handled:true,level:'error',value:91,dimensions:{},migration:{version:1},
+      observation:{from,to,observedAt:null,quality:'partial'}});
+    const evaluator=new NetworkDeviceAlertEvaluator({store:store(),clock:()=>new Date('2026-08-26T00:01:00.000Z')});
+    await evaluator.evaluateNetworkDeviceRules();
+    expect(mocks.createAlert).toHaveBeenCalledWith(expect.objectContaining({tags:expect.objectContaining({
+      observed_at:null,observed_from:from,observed_to:to,quality:'partial'})}));
+  });
+  it('touches active alert value, message and observation metadata together',async()=>{
+    mocks.findActiveNetworkDeviceAlert.mockResolvedValue({id:707});
+    await new NetworkDeviceAlertEvaluator({store:store(),clock:()=>new Date('2026-08-26T00:01:00.000Z')}).evaluate();
+    expect(mocks.createAlert).not.toHaveBeenCalled();
+    expect(mocks.touchAlert).toHaveBeenCalledWith(707,92,expect.objectContaining({message:expect.stringContaining('92'),
+      tags:expect.objectContaining({observed_at:'2026-08-26T00:00:00.000Z',quality:'good'})}));
   });
 
   it('keeps interface dimensions on the deduplication and alert payload', async () => {

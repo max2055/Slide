@@ -12,6 +12,9 @@ export interface NetworkDeviceAlertObservation {
   dimensions?: Record<string, string>;
   quality: ObservationQuality;
   observedAt: Date | null;
+  observedFrom?: Date | null;
+  observedTo?: Date | null;
+  aggregateQuality?: 'good' | 'partial';
   validUntil: Date | null;
   reason?: string;
   /** Synthetic status evidence is derived from the persisted device state. */
@@ -177,8 +180,11 @@ export class NetworkDeviceAlertEvaluator {
             const identity = alertIdentity(device.id, rule, semantic.dimensions ?? undefined);
             if (semantic.level && semantic.value !== null) {
               firingKeys.add(identity); triggered++;
-              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: 'good',
-                observedAt: this.clock(), validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
+              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: semantic.observation?.quality === 'good' ? 'good' : 'unknown',
+                aggregateQuality: semantic.observation?.quality,
+                observedAt: semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : null,
+                observedFrom: semantic.observation?.from ? new Date(semantic.observation.from) : null,
+                observedTo: semantic.observation?.to ? new Date(semantic.observation.to) : null, validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
                 semantic.value, compileAlertRule(rule, 'network_device', macroContext(rule.metric_name)));
             } else {
               const recovery = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule,
@@ -306,12 +312,26 @@ export class NetworkDeviceAlertEvaluator {
   private async persistAlert(device: NetworkDeviceAlertDevice, rule: NetworkDeviceAlertRule, observation: NetworkDeviceAlertObservation, level: AlertLevel, currentValue: number, compiled: ReturnType<typeof compileAlertRule>): Promise<void> {
     let dimensions: Record<string, string> | undefined;
     try { dimensions = canonicalDimensions(observation.dimensions); } catch { return; }
+    const tags = {
+      rule_id: rule.id,
+      rule_name: rule.name,
+      target_type: 'network_device',
+      auto_generated: true,
+      observed_at: observation.observedAt?.toISOString() ?? null,
+      observed_from: (observation.observedFrom ?? observation.observedAt)?.toISOString() ?? null,
+      observed_to: (observation.observedTo ?? observation.observedAt)?.toISOString() ?? null,
+      rule_window_seconds: rule.duration_seconds,
+      quality: observation.aggregateQuality ?? observation.quality,
+      semantic_migration: observation.reason?.startsWith('{"version"') ? observation.reason : null,
+      ...(dimensions ? { dimensions } : {}),
+    };
+    const message = `网络设备指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 (${rule.operator})`;
     const finder = (alertDatabaseService as any).findActiveNetworkDeviceAlert as undefined | ((deviceId: number, metricId: string, ruleId: number, dimensions?: Record<string, string>) => Promise<unknown>);
     assertWorkflowActive();
     const existing = finder ? await finder.call(alertDatabaseService, device.id, rule.metric_name, rule.id, dimensions) : null;
     if (existing && typeof (alertDatabaseService as any).touchAlert === 'function') {
       assertWorkflowActive();
-      await alertDatabaseService.touchAlert((existing as any).id, currentValue);
+      await alertDatabaseService.touchAlert((existing as any).id, currentValue, {tags, message});
       return;
     }
     assertWorkflowActive();
@@ -321,20 +341,13 @@ export class NetworkDeviceAlertEvaluator {
       alert_type: alertTypeForMetric(rule.metric_name),
       level,
       title: `[${level.toUpperCase()}] ${rule.name} - ${stableDeviceName(device)}`,
-      message: `网络设备指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 (${rule.operator})`,
+      message,
       description: rule.description || `网络设备告警规则：${rule.name}`,
       source: 'network-device-monitor',
       metric_name: rule.metric_name,
       metric_value: String(currentValue),
       threshold_value: String(compiled.thresholds[level] ?? rule.threshold),
-      tags: {
-        rule_id: rule.id,
-        rule_name: rule.name,
-        target_type: 'network_device',
-        auto_generated: true,
-        semantic_migration: observation.reason?.startsWith('{"version"') ? observation.reason : undefined,
-        ...(dimensions ? { dimensions } : {}),
-      },
+      tags,
     });
   }
 }

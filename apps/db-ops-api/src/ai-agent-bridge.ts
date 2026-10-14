@@ -80,7 +80,7 @@ export async function dispatchOrReuse(
     if (!expected || [hasInstance, hasServer, hasNetworkDevice].filter(Boolean).length !== 1) {
       throw new Error('ANALYSIS_SUBJECT_INVALID');
     }
-  } else if (hasInstance === hasServer || hasNetworkDevice) {
+  } else if ([hasInstance, hasServer, hasNetworkDevice].filter(Boolean).length !== 1 || hasNetworkDevice && params.type !== 'alert_rca') {
     throw new Error('ANALYSIS_SUBJECT_INVALID');
   }
   if (process.env.ANALYSIS_DISPATCH_ENABLED === 'false') throw new Error('ANALYSIS_DISPATCH_DISABLED');
@@ -89,7 +89,7 @@ export async function dispatchOrReuse(
   const ttl = DEFAULT_TTL[params.type] ?? 30 * 60 * 1000;
 
   const subject = params.type === 'resource_diagnosis' ? { type: params.resourceType, id: params.resourceId }
-    : params.serverId ? { type: 'server' as const, id: params.serverId } : { type: 'instance' as const, id: params.instanceId! };
+    : params.networkDeviceId ? { type: 'network_device' as const, id: params.networkDeviceId } : params.serverId ? { type: 'server' as const, id: params.serverId } : { type: 'instance' as const, id: params.instanceId! };
   const authorizationVersion = analysisAuthorizationVersion(params.actor);
   const evidence = freezeEvidence(subject, authorizationVersion, params.evidenceData ?? (serializedDiagnosticContext ? JSON.parse(serializedDiagnosticContext) : { input: params.userMessage, gaps: [{ code: 'STRUCTURED_EVIDENCE_UNAVAILABLE' }] }));
 

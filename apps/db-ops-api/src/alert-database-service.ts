@@ -641,12 +641,18 @@ class AlertDatabaseService {
   /**
    * 更新已有告警的指标值和更新时间（去重 touch）
    */
-  async touchAlert(alertId: number, metricValue: number): Promise<void> {
+  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string }): Promise<void> {
     const pool = this.getPool();
     if (!pool) return;
 
     try {
-      await pool.execute(
+      if (observation) await pool.execute(
+        `UPDATE alerts SET metric_value = ?, message = ?,
+          tags = JSON_MERGE_PATCH(CASE WHEN JSON_VALID(tags) THEN tags ELSE JSON_OBJECT() END, CAST(? AS JSON)),
+          updated_at = NOW() WHERE id = ?`,
+        [metricValue, observation.message, JSON.stringify(observation.tags), alertId]
+      );
+      else await pool.execute(
         `UPDATE alerts SET metric_value = ?, updated_at = NOW() WHERE id = ?`,
         [metricValue, alertId]
       );

@@ -10,17 +10,20 @@ import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { MysqlOperationalEventIngest } from './event-ingest.js';
 import { investigationBridgeFlags, databaseAlertPilotConfiguration } from './bridge-flags.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
+import { alertResource, alertInvestigationInput } from './resource-event-bridge.js';
 import type { TriggerBinding } from './trigger-policy.js';
 
 export interface DatabaseAlertSource {
   id: number; instance_id: number | null; server_id?: number | null; network_device_id?: number | null;
+  metric_value?: string | number | null; threshold_value?: string | null; tags?: unknown;
+  updated_at?: Date | string;
   title: string; message: string; level: string; created_at: Date | string; metric_name: string | null;
 }
 export interface AlertBridgeResponse {
   success: boolean; analysisId?: number; sessionKey?: string; status?: string; error?: string;
   investigationId?: string; id?: string; requestId?: string; disposition?: string;
 }
-type FrozenCommand = { trigger: 'manual' | 'auto'; actor?: ActorContext; alert: DatabaseAlertSource };
+type FrozenCommand = { version?: 2; trigger: 'manual' | 'auto'; actor?: ActorContext; alert: DatabaseAlertSource };
 const parse = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
 const localQueues = new WeakMap<Pool, Map<number, Promise<void>>>();
 
@@ -39,7 +42,7 @@ async function retryAdmission<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-/** All database RCA entrances share this source owner. The committed lane is
+/** All resource RCA entrances share this source owner. The committed lane is
  * retained even when acceptance is uncertain: rollback never starts a second
  * owner. Named locks serialize the two independent legacy/new transactions;
  * their durable idempotency keys recover a crash before attaching the link. */
@@ -49,14 +52,15 @@ export class DatabaseAlertBridge {
     private readonly authorization = new InvestigationAuthorization(contexts),
     private readonly bridge = new InvestigationSessionBridge(poolProvider, authorization),
     private readonly flags = investigationBridgeFlags,
-    private readonly pilot = databaseAlertPilotConfiguration,
+    private readonly pilot: () => { configured: boolean; serviceUserId: number; instanceIds: number[]; serverIds?: number[]; networkDeviceIds?: number[]; policyId: string; policyVersion: 1 } = databaseAlertPilotConfiguration,
     private readonly budget = investigationBudgetConfiguration) {}
 
   /** legacy is a trusted, durable unsent-admission callback. It must use the
    * supplied idle connection for ALL SQL and never invoke a provider inline. */
   async dispatch(alert: DatabaseAlertSource, trigger: 'manual' | 'auto', caller: ActorContext | undefined,
     legacy: (connection: PoolConnection) => Promise<AlertBridgeResponse>, retryOf?: number): Promise<AlertBridgeResponse> {
-    if (!Number.isSafeInteger(alert.id) || alert.id <= 0 || !alert.instance_id || alert.server_id || alert.network_device_id)
+    alertResource(alert);
+    if (!Number.isSafeInteger(alert.id) || alert.id <= 0)
       throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
     const pool = this.poolProvider();
     if (!pool) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
@@ -73,6 +77,9 @@ export class DatabaseAlertBridge {
 
   private async dispatchLocked(pool: Pool, alert: DatabaseAlertSource, trigger: 'manual' | 'auto', caller: ActorContext | undefined,
     legacy: (connection: PoolConnection) => Promise<AlertBridgeResponse>, retryOf?: number): Promise<AlertBridgeResponse> {
+    const resource = alertResource(alert);
+    const field = resource.type === 'instance' ? 'instance_id' : resource.type === 'server' ? 'server_id' : 'network_device_id';
+    const kind = resource.type === 'instance' ? 'database_alert' : resource.type === 'server' ? 'server_alert' : 'network_alert';
     const c = await pool.getConnection();
     let lock = '';
     const authorityConnection = c as unknown as import('../workflows/outbox-service.js').TransactionConnection;
@@ -90,29 +97,30 @@ export class DatabaseAlertBridge {
           LEFT JOIN analysis_dispatches d ON d.analysis_id=a.id WHERE a.id=?`, [retryOf]);
         const row = previous[0], request = row && parse(row.request_snapshot);
         if (!caller || !row || row.analysis_type !== 'alert_rca' || Number(row.related_id) !== alert.id
-          || Number(row.instance_id) !== alert.instance_id || row.trigger_type !== 'auto' && Number(request?.actor?.userId) !== caller.userId)
+          || Number(row[field]) !== resource.id || row.trigger_type !== 'auto' && Number(request?.actor?.userId) !== caller.userId)
           throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
       }
       const [owners] = await c.execute<RowDataPacket[]>('SELECT * FROM investigation_alert_owners WHERE alert_id=?', [alert.id]);
       let owner = owners[0];
       if (!owner) {
         const [historical] = await c.execute<RowDataPacket[]>(`SELECT a.id FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id=a.id
-          WHERE a.analysis_type='alert_rca' AND a.related_id=? AND a.instance_id=?
+          WHERE a.analysis_type='alert_rca' AND a.related_id=? AND a.${field}=?
           AND (a.trigger_type='auto' OR JSON_EXTRACT(d.request_snapshot,'$.actor.userId')=? OR a.status IN ('pending','running','unknown'))
-          AND a.status IN ('pending','running','unknown','completed') ORDER BY a.id DESC LIMIT 1`, [alert.id, alert.instance_id, caller?.userId ?? 0]);
+          AND a.status IN ('pending','running','unknown','completed') ORDER BY a.id DESC LIMIT 1`, [alert.id, resource.id, caller?.userId ?? 0]);
         const flags = this.flags(), pilot = this.pilot();
         const enabled = trigger === 'manual' ? flags.manual : flags.opsAuto;
         const lane = historical.length || !enabled ? 'legacy' : 'investigation';
         let actor = caller;
         if (lane === 'investigation' && trigger === 'auto') {
-          if (!pilot.configured || !pilot.instanceIds.includes(alert.instance_id))
-            return { success: false, status: 'suppressed', error: 'DATABASE_ALERT_PILOT_UNCONFIGURED' };
+          const allowed = resource.type === 'instance' ? pilot.instanceIds : resource.type === 'server' ? pilot.serverIds ?? [] : pilot.networkDeviceIds ?? [];
+          if (!pilot.configured || !allowed.includes(resource.id))
+            return { success: false, status: 'suppressed', error: resource.type === 'instance' ? 'DATABASE_ALERT_PILOT_UNCONFIGURED' : 'RESOURCE_ALERT_PILOT_UNCONFIGURED' };
           const live = await this.contexts.loadInvestigationActorFrom(authorityConnection, pilot.serviceUserId, 'service');
-          actor = { ...live, resourceBoundary: { instanceIds: [alert.instance_id], serverIds: [], networkDeviceIds: [] } };
+          actor = { ...live, resourceBoundary: { instanceIds: resource.type === 'instance' ? [resource.id] : [], serverIds: resource.type === 'server' ? [resource.id] : [], networkDeviceIds: resource.type === 'network_device' ? [resource.id] : [] } };
           await this.authorizeSubject(authorityConnection, actor, alert);
         }
         if (lane === 'investigation' && !actor) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
-        const command: FrozenCommand = { trigger, actor, alert: structuredClone(alert) };
+        const command: FrozenCommand = { version: 2, trigger, actor, alert: structuredClone(alert) };
         // Autocommit precedes execution. Failure cannot erase a chosen lane.
         await c.execute('INSERT INTO investigation_alert_owners (alert_id,lane,command_snapshot,analysis_id) VALUES (?,?,?,?)',
           [alert.id, lane, JSON.stringify(command), historical[0]?.id ?? null]);
@@ -136,33 +144,37 @@ export class DatabaseAlertBridge {
       }
       const command = parse(owner.command_snapshot) as FrozenCommand;
       if (!command.actor) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+      const input = alertInvestigationInput(command.alert);
+      // Recover pre-T10 durable database intents with their ORIGINAL payload/hash.
+      const modern = command.version === 2;
+      if (input.resource.type !== resource.type || input.resource.id !== resource.id) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
       let id = owner.investigation_id as string | null;
       let response: AlertBridgeResponse;
       if (id) response = { success: true, investigationId: id, id };
       else if (command.trigger === 'auto') {
         const config = this.budget();
-        const binding: TriggerBinding = { source: 'database-alert-engine', verified: true, allowedOrigins: ['collector'],
-          policy: { id: 'database-alert-pilot', version: 1, domain: config.domain, actor: command.actor,
-            profileId: 'ops', profileVersion: 1, resources: [{ type: 'instance', id: command.alert.instance_id!, role: 'primary' }],
-            kinds: ['database_alert'], threshold: 1, windowMs: 300_000, cooldownMs: 300_000, criticalSingle: true,
+        const binding: TriggerBinding = { source: resource.type === 'instance' ? 'database-alert-engine' : `${resource.type}-alert-engine`, verified: true, allowedOrigins: ['collector'],
+          policy: { id: resource.type === 'instance' ? 'database-alert-pilot' : `${resource.type}-alert-pilot`, version: 1, domain: config.domain, actor: command.actor,
+            profileId: 'ops', profileVersion: 1, resources: [{ ...resource, role: 'primary' }],
+            kinds: [kind], threshold: 1, windowMs: 300_000, cooldownMs: 300_000, criticalSingle: true,
             reserveTokens: 32_000, reserveCostMicros: config.reserveCostMicros } };
         const ingest = new MysqlOperationalEventIngest(this.poolProvider, binding,
-          new MysqlInvestigationBudgetLedger(this.poolProvider, config.policy), this.authorization, this.bridge);
-        const receipt = await ingest.ingest({ schemaVersion: 1, sourceEventId: `alert:${command.alert.id}`, kind: 'database_alert',
-          subject: { kind: 'resource', resource: { type: 'instance', id: command.alert.instance_id! } },
+          new MysqlInvestigationBudgetLedger(this.poolProvider, config.policy), this.authorization, this.bridge, modern ? input.context : undefined);
+        const receipt = await ingest.ingest({ schemaVersion: 1, sourceEventId: `alert:${command.alert.id}`, kind,
+          subject: input.context.subject,
           occurredAt: new Date(command.alert.created_at).toISOString(), severity: command.alert.level as 'warning' | 'error' | 'critical',
-          summary: command.alert.title.slice(0, 2_000), origin: 'collector', stableErrorCode: command.alert.metric_name ?? 'DATABASE_ALERT', callsite: 'alert-engine' }, authorityConnection);
+          summary: modern ? `${command.alert.title}\n持久告警观测：${input.facts}\n缺指标不证明正常或设备宕机。`.slice(0, 2_000) : command.alert.title.slice(0, 2_000), origin: 'collector', stableErrorCode: command.alert.metric_name ?? 'DATABASE_ALERT', callsite: resource.type === 'instance' ? 'alert-engine' : `${resource.type}-alert-engine` }, authorityConnection);
         id = receipt.investigationId;
         response = { success: !!id, ...(id ? { investigationId: id, id } : {}), requestId: receipt.requestId ?? undefined,
           disposition: receipt.disposition, status: id ? 'pending' : 'suppressed', ...(receipt.suppressionReason ? { error: receipt.suppressionReason } : {}) };
       } else {
-        const key = `database-alert:${command.alert.id}`;
+        const key = `${resource.type === 'instance' ? 'database' : resource.type}-alert:${command.alert.id}`;
         const result = await retryAdmission(() => new OutboxService(pool as unknown as TransactionPool).transactionOnConnection(authorityConnection,
           (connection, append) => this.bridge.createOnConnection(command.actor!, connection, append, { title: command.alert.title.slice(0, 200),
-          goal: '只读调查数据库告警，引用事实并说明证据缺口。', profileId: 'ops', profileVersion: 1,
-          resources: [{ type: 'instance', id: command.alert.instance_id!, role: 'primary' }], idempotencyKey: key,
-          context: { subject: { kind: 'resource', resource: { type: 'instance', id: command.alert.instance_id! } } } },
-        { idempotencyKey: key, message: `${command.alert.title}\n${command.alert.message}`.slice(0, 2_000) }))).catch(error => {
+          goal: modern ? '只读调查资源告警，引用事实并说明证据缺口。' : '只读调查数据库告警，引用事实并说明证据缺口。', profileId: 'ops', profileVersion: 1,
+          resources: [{ ...resource, role: 'primary' }], idempotencyKey: key,
+          context: modern ? input.context : {subject:input.context.subject} },
+        { idempotencyKey: key, message: modern ? input.message : `${command.alert.title}\n${command.alert.message}`.slice(0, 2_000) }))).catch(error => {
           if (error instanceof InvestigationStoreError) throw error;
           throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE', error);
         });
@@ -191,7 +203,7 @@ export class DatabaseAlertBridge {
   private authorizeSubject(c: Pick<import('../workflows/outbox-service.js').TransactionConnection, 'execute'>, actor: ActorContext, alert: DatabaseAlertSource) {
     const inv: AdmissionInvestigation = { id: 'alert-read', sessionId: 'alert-read', profileId: 'ops', profileVersion: 1,
       scopeVersion: '', version: 1, lifecycle: 'open', owner: { kind: actor.principalKind ?? 'user', id: actor.userId },
-      resources: [{ type: 'instance', id: alert.instance_id!, role: 'primary' }] };
+      resources: [{ ...alertResource(alert), role: 'primary' }] };
     return this.authorization.authorize(c, actor, inv, 'content');
   }
 }

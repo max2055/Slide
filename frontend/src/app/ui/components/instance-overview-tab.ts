@@ -1,3 +1,4 @@
+import './resource-investigation-links.js';
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -253,6 +254,7 @@ export class InstanceOverviewTab extends LitElement {
 
     return html`
       <style>${InstanceOverviewTab.stylesText}</style>
+      <resource-investigation-links resourceType="instance" .resourceId=${inst.id}></resource-investigation-links>
       <!-- Hero KPIs -->
       ${this.metrics ? html`
         <div class="hero-stats">

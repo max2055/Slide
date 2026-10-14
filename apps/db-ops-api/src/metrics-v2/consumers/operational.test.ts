@@ -16,7 +16,7 @@ it('a missing V2 binding never authorizes a legacy fallback after formal cutover
 it('preserves count threshold, returns matching value and migration trace, scopes the internal reader', async () => {
   const to = new Date().toISOString(), from = new Date(Date.parse(to) - 60000).toISOString();
   mocks.query.mockResolvedValue({ metrics: [{ definition: { id: 'mysql.processlist.count', unit: 'count' }, state: 'available', series: [{ dimensions: {}, buckets: [{ value: { encoding: 'uint64', value: '80' }, unit: 'count', window: { from, to }, freshness: 'fresh', coverage: 1, quality: { status: 'good' }, accuracy: 'exact' }] }] }] });
-  expect(await evaluateOperationalRule({ type: 'instance', id: 7 }, rule, 60)).toMatchObject({ handled: true, level: 'warning', value: 80, migration: { metric_id: 'mysql.processlist.count', threshold_conversion: 'none', resource: { type: 'instance', id: 7 } } });
+  expect(await evaluateOperationalRule({ type: 'instance', id: 7 }, rule, 60)).toMatchObject({ handled: true, level: 'warning', value: 80, observation:{from,to,observedAt:null,quality:'good'}, migration: { metric_id: 'mysql.processlist.count', threshold_conversion: 'none', resource: { type: 'instance', id: 7 } } });
   expect(mocks.query.mock.calls[0][0].instanceScopes).toEqual({ 7: 'read-only' });
   expect(mocks.query.mock.calls[0][0].permissions).not.toContain('*');
 });
