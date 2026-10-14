@@ -20,7 +20,7 @@ export function alertObservation(alert: DatabaseAlertSource) {
   try { const parsed = typeof alert.tags === 'string' ? JSON.parse(alert.tags) : alert.tags;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) tags = parsed;
   } catch { /* Historical malformed metadata remains unknown. */ }
-  const occurredAt = instant(alert.created_at);
+  const occurredAt = instant(alert.updated_at ?? alert.created_at);
   if (!occurredAt) throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
   const suppliedTime = tags.observed_at ?? tags.collected_at;
   const rawTime = instant(suppliedTime);

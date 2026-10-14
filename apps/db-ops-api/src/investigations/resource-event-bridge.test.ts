@@ -5,6 +5,7 @@ import { bridgeTestFixture } from './bridge-test-fixture.js';
 import { DatabaseAlertBridge, type DatabaseAlertSource } from './alert-bridge.js';
 import { AlertRCAService } from '../alert-rca-service.js';
 import { dbConnection } from '../db-connection.js';
+import { alertDatabaseService } from '../alert-database-service.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { registerAnalysisBridgeRoutes } from './bridge-routes.js';
 import { registerInvestigationRoutes } from './routes.js';
@@ -90,6 +91,28 @@ describe('three resource bridges / formal isolated MySQL migrations, JWT and HTT
     const receipt=await bridge.dispatch(alert,'manual',owner,legacy);
     expect(receipt).toMatchObject({success:true,analysisId:insert.insertId,status:'running',sessionKey:'network-legacy'});
     expect(receipt.investigationId).toBeUndefined();expect(calls).toBe(0);
+  });
+  it('active alert touch freezes the new value with its real new window, then keeps that owner snapshot',async()=>{
+    const [insert]=await f.pool.query<any>(`INSERT INTO alerts (server_id,target_type,alert_type,level,title,message,metric_name,metric_value,tags,created_at)
+      VALUES (101,'server','performance','critical','active CPU','old value','cpu_usage','80',?,'2026-10-13 00:00:00')`,[JSON.stringify({...source.tags,rule_id:123})]);
+    const to=new Date(Date.now()-2000).toISOString(),from=new Date(Date.now()-62000).toISOString();
+    const tags={collected_at:to,observed_from:from,observed_to:to,quality:'good'};
+    await alertDatabaseService.touchAlert(insert.insertId,93,{message:'new CPU93',tags});
+    const [rows]=await f.pool.query<any[]>('SELECT * FROM alerts WHERE id=?',[insert.insertId]);
+    expect(rows[0].message).toBe('new CPU93');
+    expect(alertObservation(rows[0])).toMatchObject({value:93,quality:'good',from,to});
+    const persisted=typeof rows[0].tags==='string'?JSON.parse(rows[0].tags):rows[0].tags;
+    expect(persisted.rule_id).toBe(123);
+    const admitted=await new AlertRCAService(bridge).analyzeAlert(insert.insertId,'manual',owner);
+    const detail=await app.inject({url:`/api/investigations/${admitted.investigationId}`,headers:headers()});
+    expect(detail.json().context).toMatchObject({from,to});
+    await alertDatabaseService.touchAlert(insert.insertId,94,{message:'later CPU94',tags:{collected_at:null,observed_from:null,observed_to:null,quality:'unknown'}});
+    const [later]=await f.pool.query<any[]>('SELECT * FROM alerts WHERE id=?',[insert.insertId]);
+    expect(alertObservation(later[0])).toMatchObject({value:94,quality:'unknown',from:null,to:null});
+    expect((await bridge.dispatch(later[0],'manual',owner,legacy)).investigationId).toBe(admitted.investigationId);
+    const [commands]=await f.pool.query<any[]>('SELECT command_snapshot FROM investigation_alert_owners WHERE alert_id=?',[insert.insertId]);
+    const command=typeof commands[0].command_snapshot==='string'?JSON.parse(commands[0].command_snapshot):commands[0].command_snapshot;
+    expect(command.alert.metric_value).toBe('93');
   });
   it('live permission removal blocks all resource and linked deep entrances, no legacy fallback', async()=>{
     const saved=await f.pool.query<any[]>("SELECT permission_id FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE role_id=101 AND p.code='network_devices:view'");

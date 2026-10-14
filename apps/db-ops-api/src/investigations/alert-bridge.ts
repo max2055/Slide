@@ -16,6 +16,7 @@ import type { TriggerBinding } from './trigger-policy.js';
 export interface DatabaseAlertSource {
   id: number; instance_id: number | null; server_id?: number | null; network_device_id?: number | null;
   metric_value?: string | number | null; threshold_value?: string | null; tags?: unknown;
+  updated_at?: Date | string;
   title: string; message: string; level: string; created_at: Date | string; metric_name: string | null;
 }
 export interface AlertBridgeResponse {

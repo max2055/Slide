@@ -35,10 +35,14 @@ describe('network reachability / formal MySQL evaluator', () => {
     expect(await state('online',now)).toMatchObject({ evaluated:1, triggered:0 });
     const [recovered] = await f.pool.query<any[]>('SELECT status FROM alerts WHERE network_device_id=901');
     expect(recovered[0].status).toBe('resolved');
-    expect(await state('unreachable',now)).toMatchObject({ evaluated:1, triggered:1 });
+    const earlier=new Date(now.getTime()-1000);
+    expect(await state('unreachable',earlier)).toMatchObject({ evaluated:1, triggered:1 });
     const [active] = await f.pool.query<any[]>("SELECT * FROM alerts WHERE network_device_id=901 AND status='unread'");
     expect(active).toHaveLength(1); expect(active[0].metric_value).toBe('0');
     expect(await state('unreachable',now)).toMatchObject({ triggered:1 });
+    const [touched]=await f.pool.query<any[]>("SELECT tags FROM alerts WHERE network_device_id=901 AND status='unread'");
+    const tags=typeof touched[0].tags==='string'?JSON.parse(touched[0].tags):touched[0].tags;
+    expect(tags).toMatchObject({observed_at:now.toISOString(),observed_from:now.toISOString(),observed_to:now.toISOString(),quality:'good'});
     const [count] = await f.pool.query<any[]>('SELECT COUNT(*) n FROM alerts WHERE network_device_id=901');
     expect(Number(count[0].n)).toBe(2);
   });

@@ -123,4 +123,13 @@ describe('ServerAlertEvaluator rule contract', () => {
 
     expect(mocks.createAlert).not.toHaveBeenCalled();
   });
+  it('updates active values and observation metadata together on dedup touch',async()=>{
+    mocks.getAlertRules.mockResolvedValue([{id:2,name:'Server CPU',target_type:'server',metric_name:'cpu_usage',
+      operator:'>=',threshold:80,severity:'warning',duration_seconds:0,enabled:true,server_id:null}]);
+    mocks.findActiveServerAlert.mockResolvedValue({id:707});
+    await serverAlertEvaluator.evaluateServerRules();
+    expect(mocks.createAlert).not.toHaveBeenCalled();
+    expect(mocks.touchAlert).toHaveBeenCalledWith(707,91,expect.objectContaining({message:expect.stringContaining('91'),
+      tags:expect.objectContaining({collected_at:expect.any(String),observed_from:expect.any(String),observed_to:expect.any(String),quality:'good'})}));
+  });
 });

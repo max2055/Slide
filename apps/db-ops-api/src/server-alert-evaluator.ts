@@ -175,6 +175,22 @@ class ServerAlertEvaluator {
             assertWorkflowActive();
             if (!semantic.handled && !await this._durationMet(serverId, rule, currentValue)) continue;
 
+            const title = `[${rule.severity.toUpperCase()}] ${rule.name} - ${server.label || server.host}`;
+            const dimensions = selectedDimensions;
+            const collectedAt = selectedRecordedAt?.toISOString() ?? null;
+            const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
+            const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
+
+            const observation = { message, tags: {
+              semantic_migration: semantic.migration,
+              collected_at: collectedAt,
+              observed_from: semantic.handled ? semantic.observation?.from ?? null : collectedAt,
+              observed_to: semantic.handled ? semantic.observation?.to ?? null : collectedAt,
+              rule_window_seconds: rule.duration_seconds,
+              quality: semantic.handled ? semantic.observation?.quality ?? 'unknown' : collectedAt ? 'good' : 'unknown',
+              dimensions,
+            } };
+
             // Check for existing active alert (dedup)
             assertWorkflowActive();
             const existing = await alertDatabaseService.findActiveServerAlert(
@@ -184,20 +200,13 @@ class ServerAlertEvaluator {
               // Touch existing alert with updated value
               try {
                 assertWorkflowActive();
-                await alertDatabaseService.touchAlert(existing.id, currentValue);
+                await alertDatabaseService.touchAlert(existing.id, currentValue, observation);
               } catch {
                 assertWorkflowActive();
                 // Non-critical: touch failures are logged internally
               }
               continue;
             }
-
-            // Create alert
-            const title = `[${rule.severity.toUpperCase()}] ${rule.name} - ${server.label || server.host}`;
-            const dimensions = selectedDimensions;
-            const collectedAt = selectedRecordedAt?.toISOString() ?? null;
-            const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
-            const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
 
             assertWorkflowActive();
             await alertDatabaseService.createAlert({
@@ -212,17 +221,11 @@ class ServerAlertEvaluator {
               metric_value: String(currentValue),
               threshold_value: String(rule.threshold),
               tags: {
-                semantic_migration: semantic.migration,
+                ...observation.tags,
                 rule_id: rule.id,
                 rule_name: rule.name,
                 target_type: 'server',
                 auto_generated: true,
-                dimensions,
-                collected_at: collectedAt,
-                observed_from: semantic.handled ? semantic.observation?.from ?? null : collectedAt,
-                observed_to: semantic.handled ? semantic.observation?.to ?? null : collectedAt,
-                rule_window_seconds: rule.duration_seconds,
-                quality: semantic.handled ? semantic.observation?.quality ?? 'unknown' : collectedAt ? 'good' : 'unknown',
               },
             });
 

@@ -20,6 +20,7 @@ interface AlertDetails {
   server_id: number | null;
   network_device_id: number | null;
   tags?: unknown;
+  updated_at?: Date | string;
   alert_type: string;
   level: string;
   title: string;
@@ -157,7 +158,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
     try {
       const [rows] = await pool.execute(
         `SELECT id, instance_id, server_id, network_device_id, tags, alert_type, level, title, message,
-                metric_name, metric_value, threshold_value, created_at
+                metric_name, metric_value, threshold_value, created_at, updated_at
          FROM alerts WHERE id = ?`,
         [alertId]
       ) as any;
@@ -170,6 +171,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
         server_id: row.server_id,
         network_device_id: row.network_device_id,
         tags: row.tags,
+        updated_at: row.updated_at,
         alert_type: row.alert_type,
         level: row.level,
         title: row.title,
