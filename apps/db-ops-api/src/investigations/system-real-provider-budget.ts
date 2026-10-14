@@ -48,7 +48,7 @@ export function initializeSystemJournal(path: string, options: {
       else {
         if (previous.batch) fail('T09_BATCH_LEDGER_MISSING');
         if (!options.batchLedger && previous.cumulativeTokens < 12_536) fail('T09_BASELINE_INVALID');
-        syncWrite(ledger, { ...SYSTEM_BATCH, activeJournal: canonical(previousJournal) }, 'wx');
+        syncWrite(ledger, { ...SYSTEM_BATCH, activeJournal: canonical(previousJournal), sha256: digest(previousJournal) }, 'wx');
       }
       if (existsSync(claimPath(previousJournal)) || existsSync(claimPath(previousJournal, SYSTEM_STANDING_AUTHORIZATION)))
         fail('T09_AUTHORIZATION_ALREADY_CONSUMED');
@@ -59,11 +59,7 @@ export function initializeSystemJournal(path: string, options: {
         historicalPaths: paths }, 'wx');
       // Crash before pointer replacement fails closed: the predecessor grant is
       // consumed, and the new scene cannot send until it is the recorded owner.
-      const next = ledger + '.next';
-      syncWrite(next, { ...SYSTEM_BATCH, activeJournal: canonical(path) }, 'wx');
-      renameSync(next, ledger);
-      const fd = openSync(dirname(ledger), 'r');
-      try { fsyncSync(fd); } finally { closeSync(fd); }
+      writeBatchPointer(ledger, path);
     }));
   }
   if (!old!.stopped || old!.pending || old!.requests !== 2 || old!.totalTokens !== 3081
@@ -143,7 +139,8 @@ export function readSystemJournal(path: string, ancestors: Set<string> = new Set
       pending = undefined;
     } else if (e.kind === 'checkpoint') {
       const tokens = baselineTokens + usage.inputTokens + usage.outputTokens;
-      const threshold = { BATCH_50_REPORT: .5, BATCH_80_CONVERGE: .8, BATCH_100_STOP: 1 }[e.reason!];
+      const thresholds: Record<string, number> = { BATCH_50_REPORT: .5, BATCH_80_CONVERGE: .8, BATCH_100_STOP: 1 };
+      const threshold = thresholds[e.reason!];
       if (!binding || pending || !threshold || tokens < SYSTEM_BATCH.tokenLimit * threshold) fail('T09_JOURNAL_INVALID');
     } else fail('T09_JOURNAL_INVALID');
   }
@@ -155,6 +152,13 @@ export function readSystemJournal(path: string, ancestors: Set<string> = new Set
     baselineTokens, cumulativeTokens: baselineTokens + usage.inputTokens + usage.outputTokens,
     cumulativeRequests: baselineRequests + requests, historicalTokenUsage: 'unavailable; original stopped journal not reset' };
 }
+function writeBatchPointer(ledger: string, journal: string) {
+  const next = ledger + '.next';
+  syncWrite(next, { ...SYSTEM_BATCH, activeJournal: canonical(journal), sha256: digest(journal) }, 'wx');
+  renameSync(next, ledger);
+  const fd = openSync(dirname(ledger), 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
 function assertBatchOwner(ledger: string, journal: string, paths: Record<string, string> = {}) {
   const state = JSON.parse(readFileSync(ledger, 'utf8'));
   if (state.id !== SYSTEM_BATCH.id || state.tokenLimit !== SYSTEM_BATCH.tokenLimit
@@ -162,6 +166,7 @@ function assertBatchOwner(ledger: string, journal: string, paths: Record<string,
   // Aliases may relocate unavailable originals; they cannot steal an extant owner.
   const active = existsSync(state.activeJournal) ? state.activeJournal : paths[state.activeJournal] ?? state.activeJournal;
   if (!existsSync(active) || canonical(active) !== canonical(journal)) fail('T09_BATCH_FORK');
+  if (state.sha256 !== digest(journal)) fail('T09_BATCH_JOURNAL_CHANGED');
 }
 function sceneLocked<T>(path: string, action: () => T): T {
   const s = readSystemJournal(path);
@@ -169,7 +174,14 @@ function sceneLocked<T>(path: string, action: () => T): T {
   if (!s.batch) fail('T09_BATCH_INITIALIZATION_REQUIRED'); // legacy evidence stays readable only
   return locked(s.batch.ledger, () => {
     assertBatchOwner(s.batch!.ledger, path, (s.entries[0] as any).historicalPaths);
-    return locked(path, action);
+    return locked(path, () => {
+      const before = digest(path);
+      try { return action(); } finally {
+        // Persist the new hash even when usage validation appended a stop and threw.
+        // An interrupted write leaves a mismatch/lock, requiring diagnosis, never a reset.
+        if (digest(path) !== before) writeBatchPointer(s.batch!.ledger, path);
+      }
+    });
   });
 }
 function locked<T>(path: string, action: () => T): T {
