@@ -34,6 +34,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
+import { systemInvestigationHistory } from './system-tools.js';
 
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -63,6 +64,7 @@ export interface InvestigationRuntimeDependencies {
 export interface InvestigationExecutorOptions extends InvestigationRuntimeDependencies {
   pool: () => Pool | null;
   authorization?: InvestigationAuthorization;
+  systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
   budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices };
 }
 interface ExecutionState {
@@ -527,13 +529,14 @@ export class InvestigationExecutor {
             role: 'tool',
             tool_call_id: call.id,
             name: call.function.name,
-            content: JSON.stringify(state.tools[call.id].result, null, 2),
+            content: profile.id === 'system' ? JSON.stringify(state.tools[call.id].result) : JSON.stringify(state.tools[call.id].result, null, 2),
           })),
         };
         await this.persistCheckpoint(actor, binding, checkpoint);
       }
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
+      const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
@@ -583,6 +586,13 @@ export class InvestigationExecutor {
         chatStream: (messages, tools, callbacks, options) =>
           dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools]),
       };
+      // Compact only successful System JSON in the live model context. Keep the
+      // complete structured receipt for SQL evidence/recovery and preserve
+      // object failure semantics in ToolExecutor. No field or source text is cut.
+      const contextToolResult = (result: unknown) => profile.id === 'system' && result !== null
+        && typeof result === 'object' && (result as { success?: boolean }).success === true
+        && (result as { status?: string }).status !== 'error'
+        ? JSON.stringify(result) : result;
       let currentToolId: string | undefined;
       const effective = await this.transaction(async (c) =>
         this.authorization.authorize(
@@ -594,14 +604,17 @@ export class InvestigationExecutor {
           frozen,
         ),
       );
-      const source = runtime.toolsForActor(effective.actor),
+      const scopedRegistry = (actor: ActorContext) => profile.id === 'system'
+        ? this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry()
+        : runtime.toolsForActor(actor);
+      const source = scopedRegistry(effective.actor),
         tools = new ToolRegistry();
       for (const name of effective.tools) {
         const tool = source.get(name),
           security = getToolSecurityDefinition(name);
         if (
           !tool ||
-          !BACKGROUND_SAFE.has(name) ||
+          !(profile.id === 'system' ? !!this.options.systemToolsForInvestigation && profile.toolAllowlist.includes(name) : BACKGROUND_SAFE.has(name)) ||
           !tool.readOnly ||
           tool.requiresApproval ||
           tool.ownerOnly ||
@@ -638,14 +651,14 @@ export class InvestigationExecutor {
             if (existing) {
               if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
                 throw new Error('INVESTIGATION_TOOL_UNKNOWN');
-              return existing.result;
+              return contextToolResult(existing.result);
             }
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
             });
             toolContext?.signal?.throwIfAborted();
             control.signal.throwIfAborted();
-            const liveTool = runtime.toolsForActor(live.actor).get(name);
+            const liveTool = scopedRegistry(live.actor).get(name);
             if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
               throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
             const result = boundedResult(
@@ -658,7 +671,7 @@ export class InvestigationExecutor {
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });
-            return result;
+            return contextToolResult(result);
           },
         });
       }
@@ -679,7 +692,7 @@ export class InvestigationExecutor {
           contextAuthority: 'policy',
           content: INVESTIGATION_PROMPTS[profile.id as 'ops' | 'system'],
         },
-        ...messages,
+        ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];
       const hook = new NoopHook();
       hook.beforeIteration = async (ctx) => {
@@ -690,9 +703,13 @@ export class InvestigationExecutor {
         initialMessages,
         tools,
         model: provider.getDefaultModel(),
-        contextWindowTokens: Math.min(actual.getModelCapabilities?.()?.contextWindowTokens ?? 16_000, 16_000),
+        contextWindowTokens: Math.min(modelCapabilities?.contextWindowTokens ?? 16_000, 16_000),
         maxIterations: profile.budget.maxProviderAttempts,
-        maxTokens: Math.min(4096, state.reservedTokens),
+        // Context admission must reserve the same configured output ceiling
+        // as dispatch, including qualification-only reductions. Keep the
+        // existing hard context and execution-token ceilings unchanged.
+        maxTokens: Math.min(4096, state.reservedTokens,
+          modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
         maxToolResultChars: profile.budget.maxBytes,
         budgetLimits: {
           maxToolCalls: profile.budget.maxToolCalls,
@@ -711,6 +728,9 @@ export class InvestigationExecutor {
         idempotencyKey: `investigation:${requestId}`,
         resumeCheckpoint: checkpoint,
         recoveryLimits: { total: 0, empty: 0, continuation: 0, stream: 0, repetition: 0, context: 0 },
+        // System uses deterministic history references; do not attempt an
+        // unbudgeted summary at the soft watermark. The hard context cap stays.
+        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {

@@ -1,5 +1,7 @@
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
+import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
+import { registerSystemEventRoutes, SystemEventReader } from './src/investigations/system-event-routes.js';
 import { instanceHistoryContext } from './src/resources/instance-history-context.js';
 import { InstanceRemovalResponseSchema } from './src/contracts/public-api.js';
 import { instanceRemovalStore, instanceRemovalService } from './src/resources/instance-removal-service.js';
@@ -255,6 +257,7 @@ async function start() {
   let cronManager: CronManager | undefined;
   let engine: Awaited<ReturnType<typeof getAgentEngine>> | undefined;
   let stopWorkflow: (() => Promise<boolean>) | undefined;
+  let systemComposition: SystemComposition | undefined;
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
   let dispatchAvailable = false;
   let metricLifecycle: MetricSchedulerLifecycle | undefined;
@@ -273,6 +276,7 @@ async function start() {
     maintenanceWindowService.stopCacheRefresh();
     stopSessionCleanup();
     promptManager.stopWatch();
+    await systemComposition?.close();
     await Promise.all([
       configBackupScheduler.stop(), cronManager?.stop(), engine?.dispose?.(),
       metricLifecycle?.stop().then(stopped => { if (!stopped) throw new Error('METRIC_SHUTDOWN_TIMEOUT'); }),
@@ -305,6 +309,8 @@ async function start() {
   // Required on every API process; timers and connection recovery are leader-only.
   const initializeApi = async () => {
   await startup.step(() => agentSecurityPolicyService.initialize());
+  systemComposition = await startup.step(() => createSystemComposition(() => dbConnection.getPool()), resource => resource.close());
+  systemComposition.install(); // every API process records; only the leader consumes
 
   // 加载预定义技能到 skillRegistry
   try {
@@ -406,6 +412,7 @@ async function start() {
   await registerInvestigationRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
+  await registerSystemEventRoutes(fastify, verifyToken, new SystemEventReader(() => dbConnection.getPool()));
   await registerAnalysisBridgeRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
@@ -5521,6 +5528,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowStore = new MysqlWorkflowStore(() => dbConnection.getPool() as any);
   notificationWorkflowStore = workflowStore;
   const workflowRegistry = new JobRegistry();
+  if (!systemComposition) throw new Error('SYSTEM_COMPOSITION_NOT_INITIALIZED');
   await startup.step(() => analysisDispatchStore.assertSchema());
   await startup.step(() => analysisDispatchStore.recoverLegacy());
   await startup.step(() => analysisDispatchStore.recover());
@@ -5547,9 +5555,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   );
   engine!.configureInvestigationExecutor?.(new InvestigationExecutor({
     pool: () => dbConnection.getPool(), providerForPurpose: createLLMProvider, toolsForActor: createActorBoundToolRegistry,
+    systemToolsForInvestigation: systemComposition.toolsForInvestigation,
     budget: investigationBudgetConfiguration(),
   }));
   registerWorkflowHandlers(workflowRegistry, {
+    ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),
     investigationEngine: getAgentEngine,
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,

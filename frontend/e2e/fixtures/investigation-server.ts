@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
@@ -29,9 +29,15 @@ import { AlertRCAService } from '../../../apps/db-ops-api/src/alert-rca-service.
 import { LegacyAnalysisBridge } from '../../../apps/db-ops-api/src/investigations/legacy-analysis-bridge.js';
 import { registerAnalysisBridgeRoutes } from '../../../apps/db-ops-api/src/investigations/bridge-routes.js';
 import { provisionInvestigationServiceIdentity } from '../../../apps/db-ops-api/src/investigations/authorization.js';
+import { createSystemComposition, type SystemComposition } from '../../../apps/db-ops-api/src/investigations/system-composition.js';
+import { registerSystemEventRoutes, SystemEventReader } from '../../../apps/db-ops-api/src/investigations/system-event-routes.js';
+import { SYSTEM_EVENT_JOB } from '../../../apps/db-ops-api/src/investigations/system-event-bridge.js';
+import { installPlatformObservation } from '../../../apps/db-ops-api/src/platform/platform-observation-service.js';
+import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/source-snapshot-service.js';
+import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean } = {}) {
+export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -52,23 +58,31 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
   let adapter: DirectAdapter | undefined, vite: Awaited<ReturnType<typeof createServer>> | undefined;
   let worker: WorkerRuntime | undefined, timer: ReturnType<typeof setInterval> | undefined;
   let current: Promise<unknown> | undefined;
+  let system: SystemComposition | undefined;
+  const sourceEnvKeys = ['SLIDE_SOURCE_ROOT','SLIDE_SOURCE_SIGNING_KEY','SLIDE_RELEASE_ID','SLIDE_COMMIT_SHA','SLIDE_SOURCE_DIGEST','SLIDE_RELEASE_MANIFEST'];
+  const previousSourceEnv = new Map(sourceEnvKeys.map(k => [k, process.env[k]]));
   let holdChat = false;
   let governanceAvailable = true;
   let holdTools = false, paused = false, toolCalls = 0, providerCalls = 0;
   const workerErrors: string[] = [];
   const observationErrors: unknown[] = [];
+  const promptObservations: Array<{ bytes:number; messages:number; roles:string[]; fields:unknown }> = [];
+  const systemConsumption: Array<{originalFact:boolean; exactSource:boolean}> = [];
   const workspace = resolve('.qualification/t06-workspace', schema);
   await mkdir(workspace, { recursive: true });
   const close = async () => {
     if (timer) clearInterval(timer);
+    await system?.close();
     await worker?.shutdown(); await current;
     await vite?.close(); await adapter?.dispose(); await app.close();
     (dbConnection as any).getPool = originalPool; (chatDatabaseService as any).pool = originalChatPool;
     await pool.end();
     if (!/^t06_workspace_\d+_[a-f0-9]+$/.test(schema)) throw new Error('UNSAFE_SCHEMA');
     await admin.query(`DROP DATABASE ${schema}`); await admin.end();
+    if (optionsInput.systemPilot) for (const [key,value] of previousSourceEnv) { if (value === undefined) delete process.env[key]; else process.env[key]=value; }
   };
   try {
+    await new MigrationRunner(pool).run();
     await new MigrationRunner(pool).run();
     // The historical migration catalog does not seed the existing ai:view code.
     await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:view','AI settings read','ai','view')");
@@ -82,6 +96,25 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const owner = await contexts.loadActiveActor(101), viewer = await contexts.loadActiveActor(102);
     const authorization = new InvestigationAuthorization(contexts);
     const bridge = new InvestigationSessionBridge(() => pool, authorization);
+    let systemServiceId = 0;
+    if (optionsInput.systemPilot) {
+      systemServiceId = await provisionInvestigationServiceIdentity(pool as never, 't09-browser');
+      await pool.query('INSERT INTO roles (id,name) VALUES (109,\'t09-system\')');
+      await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 109,id FROM permissions WHERE code IN ('chat:view','config:view')");
+      await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (?,109)',[systemServiceId]);
+      const commitSha = 'a'.repeat(40), signingKey = randomUUID()+randomUUID(), root = resolve(workspace,'source');
+      const repository = { origin:'https://github.com',provider:'github' as const,ref:commitSha,allowedPaths:['src/'] };
+      const manifest = await new SourceSnapshotService(root,signingKey).publish({ releaseId:'t09-snapshot',commitSha,
+        projectId:'fixture/system',repository },[{ path:'src/system-fixture.ts',content:'export function observedFailure() { return "fixture-failure"; }\n' }]);
+      const key = 'source.snapshot.'+createHash('sha256').update(JSON.stringify({...repository,projectId:'fixture/system'})).digest('hex');
+      await pool.query('REPLACE INTO system_config (config_key,config_value) VALUES (?,?),(?,?)',[
+        'source.gitlab',JSON.stringify({baseUrl:repository.origin,provider:repository.provider,ref:commitSha,allowedPaths:repository.allowedPaths,repositoryPath:'fixture/system',allowModelContent:true}),
+        key,JSON.stringify({releaseId:manifest.releaseId,commitSha,treeDigest:manifest.treeDigest})]);
+      Object.assign(process.env,{SLIDE_SOURCE_ROOT:root,SLIDE_SOURCE_SIGNING_KEY:signingKey,SLIDE_RELEASE_ID:'t09-deployment',
+        SLIDE_COMMIT_SHA:commitSha,SLIDE_SOURCE_DIGEST:manifest.treeDigest,SLIDE_RELEASE_MANIFEST:''});
+      system = await createSystemComposition(() => pool,{contexts,configuration:{enabled:true,automatic:true,serviceUserId:systemServiceId},
+        source:new SourceManagementService(() => pool),budget:{...investigationBudgetConfiguration(),domain:'t06-synthetic',prices:{input:100,cachedInput:50,output:200}}});
+    }
     const bridgeFlags = { manual: !!optionsInput.databaseAlertPilot, opsAuto: !!optionsInput.databaseAlertPilot, legacy: !!optionsInput.databaseAlertPilot };
     let pilotServiceId = 0;
     if (optionsInput.databaseAlertPilot) {
@@ -115,12 +148,25 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const provider = () => {
       let call = 0;
       return { getDefaultModel: () => 'controlled-fixture', getModelCapabilities: () => ({ model: 'controlled-fixture', contextWindowTokens: 32768, preferredOutputTokens: 2048, source: 'configuration', version: 'fixture/v1' }),
-        chat: async () => { providerCalls++; return ++call === 1 ? { ...final, content: null, finishReason: 'tool_calls', toolCalls: [{ id: randomUUID(), name: 'get_instance_summary', arguments: { instance_id: 101 } }], hasToolCalls: true, shouldExecuteTools: true } : final; },
+        countPromptTokens: optionsInput.systemPilot ? (messages:any[]) => {promptObservations.push({bytes:Buffer.byteLength(JSON.stringify(messages.map(({messageParts:_parts,...m})=>m))),messages:messages.length,roles:messages.map(m=>m.role),fields:messages.map(m=>Object.fromEntries(Object.entries(m).filter(([k])=>k!=='messageParts').map(([k,v])=>[k,Buffer.byteLength(JSON.stringify(v)??'')])))});return undefined;} : undefined,
+        chat: async (messages:any[]) => { providerCalls++;
+          if (optionsInput.systemPilot && call > 0) {
+            const values = messages.filter(m=>m.role==='tool').map(m=>{try{return {name:m.name,value:JSON.parse(m.content)};}catch{return null;}});
+            systemConsumption.push({originalFact:values.some(v=>v?.name==='get_platform_observations'&&v.value.data?.facts?.some((f:any)=>f.event.stableErrorCode==='HTTP_503')),
+              exactSource:values.some(v=>v?.name==='read_source_region'&&v.value.data?.quality==='good'&&v.value.data?.content?.includes('fixture-failure')&&v.value.data?.rootCauseVerified===false)});
+          }
+          return ++call === 1 ? { ...final, content: null, finishReason: 'tool_calls',
+          toolCalls: optionsInput.systemPilot ? [
+            {id:randomUUID(),name:'get_platform_observations',arguments:{}},
+            {id:randomUUID(),name:'get_deployment_manifest',arguments:{}},
+            {id:randomUUID(),name:'read_source_region',arguments:{path:'src/system-fixture.ts',startLine:1,endLine:1}},
+          ] : [{ id: randomUUID(), name: 'get_instance_summary', arguments: { instance_id: 101 } }], hasToolCalls: true, shouldExecuteTools: true } : final; },
         chatStream: async (_messages: unknown, _tools: unknown, callbacks: any, options: any) => { providerCalls++;
           if (holdChat) await new Promise<void>((done, reject) => { const signal = options?.signal; if (signal?.aborted) reject(signal.reason); else signal?.addEventListener('abort', () => reject(signal.reason), { once: true }); }); await callbacks.onContentDelta('普通对话合成回答'); return { ...final, content: '普通对话合成回答' }; },
       } as any;
     };
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, toolsForActor: () => tools, providerForPurpose: async () => provider(),
+      ...(system ? {systemToolsForInvestigation:system.toolsForInvestigation} : {}),
       budget: { domain: 't06-synthetic', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000, prices: { input: 100, cachedInput: 50, output: 200 } } });
     const stream = new InvestigationStreamStore(() => pool, authorization);
     const snapshot = stream.snapshot.bind(stream);
@@ -161,6 +207,13 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const wsServer = (adapter as any).wsServer;
     if (!wsServer.address()) await new Promise<void>(r => wsServer.once('listening', r));
     const verify = createVerifyToken(secret, contexts);
+    if (system) {
+      await installPlatformObservation(app,verify);
+      await registerSystemEventRoutes(app,verify,new SystemEventReader(() => pool,authorization));
+      app.get('/fixture/system-failure',async (_r:any,reply:any) => reply.code(503).send({error:'controlled failure'}));
+      app.get('/fixture/system-400',async (_r:any,reply:any) => reply.code(400).send({}));
+      app.get('/fixture/system-403',async (_r:any,reply:any) => reply.code(403).send({}));
+    }
     await registerInvestigationRoutes(app, verify, bridge, bridge.observationServices(), legacy);
     await registerAnalysisBridgeRoutes(app, verify, legacy, () => bridgeFlags, rca);
     if (optionsInput.databaseAlertPilot) {
@@ -180,6 +233,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     app.get('/api/chat/greeting', { preHandler: verify }, async () => ({ greeting: '合成测试对话' }));
     const apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
     const registry = new JobRegistry(); registry.register('investigation.execute', createInvestigationWorkflowHandler(async () => adapter!));
+    if (system) {registry.register(SYSTEM_EVENT_JOB,system.bridge.handler());system.install();}
     worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool), 't06-ui-worker', 60);
     timer = setInterval(() => {
       if (current || paused) return;
@@ -196,6 +250,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
     return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
       bridgeFlags, rca,
+      system,systemServiceId,apiUrl,promptObservations,systemConsumption,
       token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       governanceStorage: (available: boolean) => governanceAvailable = available,
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },

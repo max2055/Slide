@@ -124,6 +124,8 @@ describe('generated public API contract', () => {
       '/api/network-devices/{id}/relations',
       '/api/network-devices/test-connection',
       '/api/platform/observations',
+      '/api/platform/system-events',
+      '/api/platform/system-events/{id}',
       '/api/resources',
       '/api/resources/{type}/{id}/diagnose',
       '/api/resources/{type}/{id}/diagnose-agent',

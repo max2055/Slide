@@ -15653,6 +15653,230 @@
         ],
         "type": "object"
       },
+      "SystemEventDetail": {
+        "$id": "SystemEventDetail",
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "const": "accepted",
+                "type": "string"
+              },
+              {
+                "const": "linked",
+                "type": "string"
+              },
+              {
+                "const": "suppressed",
+                "type": "string"
+              }
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "fact": {},
+          "investigationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "type": "string"
+          },
+          "stableErrorCode": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "suppressionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "eventId",
+          "component",
+          "occurredAt",
+          "summary",
+          "stableErrorCode",
+          "disposition",
+          "suppressionReason",
+          "investigationId",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SystemEventsPage": {
+        "$id": "SystemEventsPage",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$id": "SystemEventSummary",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "string"
+                },
+                "disposition": {
+                  "anyOf": [
+                    {
+                      "const": "accepted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "linked",
+                      "type": "string"
+                    },
+                    {
+                      "const": "suppressed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "eventId": {
+                  "type": "string"
+                },
+                "investigationId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "occurredAt": {
+                  "type": "string"
+                },
+                "stableErrorCode": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "suppressionReason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "eventId",
+                "component",
+                "occurredAt",
+                "summary",
+                "stableErrorCode",
+                "disposition",
+                "suppressionReason",
+                "investigationId"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "SystemEventSummary": {
+        "$id": "SystemEventSummary",
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "const": "accepted",
+                "type": "string"
+              },
+              {
+                "const": "linked",
+                "type": "string"
+              },
+              {
+                "const": "suppressed",
+                "type": "string"
+              }
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "investigationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "type": "string"
+          },
+          "stableErrorCode": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "suppressionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "eventId",
+          "component",
+          "occurredAt",
+          "summary",
+          "stableErrorCode",
+          "disposition",
+          "suppressionReason",
+          "investigationId"
+        ],
+        "type": "object"
+      },
       "VersionedInvestigationResult": {
         "$id": "VersionedInvestigationResult",
         "additionalProperties": false,
@@ -19253,6 +19477,80 @@
           },
           "403": {
             "description": "Observation permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events": {
+      "get": {
+        "description": "Live chat:view and config:view required. At most 100 durable System events, including suppressed engine failures. Investigation links require the original ACL; no implicit service sharing.",
+        "operationId": "listSystemEvents",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventsPage"
+                }
+              }
+            },
+            "description": "Durable System event summaries"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "No authorized System scope"
+          },
+          "503": {
+            "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events/{id}": {
+      "get": {
+        "description": "Live System scope required. Returns immutable body-free original fact and hash; never request/job/model payloads.",
+        "operationId": "getSystemEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventDetail"
+                }
+              }
+            },
+            "description": "Original System event fact"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Absent or unauthorized"
+          },
+          "503": {
+            "description": "Store unavailable"
           }
         },
         "security": [

@@ -3,13 +3,26 @@ import { platformLogs, type StructuredLogEvidenceAdapter } from './structured-lo
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 import type { QueueObservation } from '../workflows/worker-runtime.js';
+import { randomUUID } from 'node:crypto';
+import { publishSystemFailure } from './system-failure-publisher.js';
 
 export async function installPlatformObservation(app: FastifyInstance, verifyToken: preHandlerHookHandler, logs: StructuredLogEvidenceAdapter = platformLogs,
   observeQueue?: () => Promise<QueueObservation>): Promise<void> {
   const starts = new WeakMap<object, number>();
   const clientEvents = new FixedWindowRateLimiter(120, 60_000);
+  const processId = randomUUID();
   app.addHook('onRequest', async request => { starts.set(request, performance.now()); });
   app.addHook('onResponse', async (request, reply) => {
+    if (reply.statusCode >= 500) {
+      const route = request.routeOptions.url ?? 'unmatched';
+      publishSystemFailure({ component: 'api', sourceEventId: `${processId}:${request.id}`, occurredAt: new Date().toISOString(),
+        correlationId: request.id, stableErrorCode: `HTTP_${reply.statusCode}`, callsite: `api:${request.method}:${route}`,
+        origin: route.startsWith('/api/investigations') || route.startsWith('/api/platform/system-events')
+          ? 'investigation_engine' : 'user_operation',
+        httpStatus: reply.statusCode,
+        releaseId: process.env.SLIDE_RELEASE_ID,
+        commitSha: /^[a-f0-9]{40}$/.test(process.env.SLIDE_COMMIT_SHA ?? '') ? process.env.SLIDE_COMMIT_SHA : undefined });
+    }
     if (request.routeOptions.url?.startsWith('/api/platform/')) return;
     logs.record({ component: 'api', eventType: 'request.completed', status: reply.statusCode >= 500 ? 'failed' : 'ok',
       durationMs: Math.max(0, performance.now() - (starts.get(request) ?? performance.now())), correlationId: request.id,

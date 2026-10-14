@@ -12,6 +12,7 @@ import { metricRegistry, type MetricDefinition } from '../metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from '../collection-scheduler.js';
 import type { Pool } from 'mysql2/promise';
 import { legacyMetricSourceActive, withLegacyMetricWrite } from '../metrics-v2/rollout/legacy-write-fence.js';
+import { publishCollectorFailure } from '../platform/system-failure-publisher.js';
 
 const NETWORK_DEVICE_COLLECTION_HEARTBEAT_MS = 10_000;
 const NETWORK_DEVICE_PROVIDER_ID = 'huawei-snmp';
@@ -264,6 +265,7 @@ export class NetworkDeviceCollector {
   }
 
   private async recordFailure(id: number, error: string): Promise<{ success: false; error: string }> {
+    publishCollectorFailure(/^[A-Z][A-Z0-9_]{0,127}$/.test(error) ? error : 'NETWORK_COLLECTION_FAILED', 'network-device-collector:collectDevice');
     const failures = (this.failures.get(id) ?? 0) + 1;
     this.failures.set(id, failures);
     const authFailure = error === 'SNMP_AUTH_FAILED' || error === 'SNMP_UNSUPPORTED_SECURITY';

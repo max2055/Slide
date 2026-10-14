@@ -50,6 +50,9 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     createReportScheduleJob: vi.fn(), createReportNotificationJob: vi.fn(),
     createCapacityConsistencyJob: vi.fn(), workflowWorkerId: 'metric-quality-test',
     analysisDispatchStore: { assertSchema: vi.fn(), recoverLegacy: vi.fn(), recover: vi.fn() },
+    // initializeApi owns System composition; this isolated worker-start harness
+    // supplies the same disabled dependency without installing producers.
+    systemComposition: { enabled: false, toolsForInvestigation: vi.fn() },
     registerAnalysisDispatchHandler: vi.fn(), registerAnalysisRecoveryHandler: vi.fn(),
     authorizeAnalysisRequest: vi.fn(), analysisConfigurationVersion: vi.fn(), createAnalysisRecoveryJob: vi.fn(),
     workflowConcurrency: () => 3,

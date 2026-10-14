@@ -18,6 +18,7 @@ import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
 import { metricRegistry, type MetricDefinition as RegistryMetricDefinition } from './metric-registry.js';
 import { dueStoredMetricIds, MysqlCollectionScheduleStore, type CollectionScheduleStore } from './collection-scheduler.js';
 import { legacyMetricSourceActive, withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
+import { publishCollectorFailure } from './platform/system-failure-publisher.js';
 
 const SERVER_COLLECTION_HEARTBEAT_MS = 10_000;
 const SERVER_PROVIDER_ID = 'ssh';
@@ -249,6 +250,7 @@ class ServerCollector {
   }
 
   private async recordFailure(serverId: number, _result: ServerCollectionResult): Promise<void> {
+    publishCollectorFailure(/^[A-Z][A-Z0-9_]{0,127}$/.test(_result.error ?? '') ? _result.error! : 'SERVER_COLLECTION_FAILED', 'server-collector:collectServer');
     if (this.protocolOnline.has(serverId)) return;
     const failures = (this.failureCounts.get(serverId) || 0) + 1;
     this.failureCounts.set(serverId, failures);

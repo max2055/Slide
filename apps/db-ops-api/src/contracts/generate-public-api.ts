@@ -9,6 +9,7 @@ import { InvestigationObservationSchemas } from '../investigations/observation-c
 import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
 import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
 import { InvestigationBridgeSchemas } from '../investigations/bridge-contracts.js';
+import { SystemHttpSchemas } from '../investigations/system-http-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -141,6 +142,15 @@ export function buildOpenApiDocument() {
           '401': { description: 'Authentication required' }, '403': { description: 'Observation permission denied' },
         },
       } },
+      '/api/platform/system-events': { get: { operationId: 'listSystemEvents', security: [{ bearerAuth: [] }],
+        description: 'Live chat:view and config:view required. At most 100 durable System events, including suppressed engine failures. Investigation links require the original ACL; no implicit service sharing.',
+        responses: { '200': { description: 'Durable System event summaries', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemEventsPage) } } },
+          '401': { description: 'Authentication required' }, '404': { description: 'No authorized System scope' }, '503': { description: 'Store unavailable' } } } },
+      '/api/platform/system-events/{id}': { get: { operationId: 'getSystemEvent', security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        description: 'Live System scope required. Returns immutable body-free original fact and hash; never request/job/model payloads.',
+        responses: { '200': { description: 'Original System event fact', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemEventDetail) } } },
+          '401': { description: 'Authentication required' }, '404': { description: 'Absent or unauthorized' }, '503': { description: 'Store unavailable' } } } },
       '/api/database/instances/{id}': { delete: {
         operationId: 'removeDatabaseInstance', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
         description: 'Requires instance:delete and instance admin access. Commits deletion intent before stopping tasks and closing connections. Retains an ID tombstone and historical data; never nulls task targets. Repeat DELETE retries incomplete cleanup. History endpoints retain their response shape and expose X-Instance-Lifecycle-State.',
@@ -531,7 +541,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas, ...SystemHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {
