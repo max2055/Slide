@@ -3,9 +3,16 @@ import { createServer, type ViteDevServer } from 'vite';
 import { resolve } from 'node:path';
 import { startFeedbackFixture } from '../../apps/db-ops-api/src/investigations/feedback-test-fixture.ts';
 
-async function localObservedTime(_page: Page, value: string): Promise<string> {
-  const d = new Date(value);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
+async function localObservedTime(page: Page, value: string): Promise<string> {
+  return page.evaluate(value => {
+    const d = new Date(value);
+    // Chromium normalizes trailing fractional zeros and zero seconds. Fill
+    // requires this canonical value; retain the exact instant in browser time.
+    const input = document.createElement('input');
+    input.type = 'datetime-local';
+    input.value = new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
+    return input.value;
+  }, value);
 }
 
 let fixture: Awaited<ReturnType<typeof startFeedbackFixture>>, vite: ViteDevServer, url: string;
