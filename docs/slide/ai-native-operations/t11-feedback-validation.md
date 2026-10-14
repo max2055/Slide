@@ -5,7 +5,7 @@
 ## 当前行为
 
 - `server.ts` 注册反馈 GET/POST，复用默认 pool 与真实 JWT；前端消费生成类型，在调查详情绑定最新实际结果与调查 revision，保存后通过原 controller 刷新事实，不创建新的 Session/Run。
-- 显式 closed/archived→open/waiting 重开及新的 admission，在原事务清除旧 problem_status 为 unconfirmed；单纯标题编辑与幂等重放不重新清除。旧人工反馈保留原结果版本，不再被当作新执行的恢复结论。
+- 显式 closed/archived→open/waiting 重开及新的 admission，在原事务清除旧 problem_status 为 unconfirmed，新请求不可变快照也记录 unconfirmed；单纯标题编辑与幂等重放不重新清除。旧人工反馈保留原结果版本，不再被当作新执行的恢复结论。
 - 人工根因、外部处理和业务恢复仍分别记录；无当前有界证据不能 resolved；负反馈没有可信知识发布路径。撤权会使真实 WS 隐藏详情/反馈，HTTP 历史与重放重新授权。
 - CI 的既有 MySQL browser-qualification job 新增 feedback SQL、实际 server 子进程和 workspace 测试；不改变自动调查开关、生产配置或基础设施。
 
@@ -20,6 +20,8 @@
 |安全|`pnpm security:agent` 17文件187项通过；无权限核心重构|
 |类型/构建/契约|前后端typecheck、build/CSP、contracts:check通过；既有chunk/dynamic import warnings保留|
 |样本与runner|原30项离线校验通过；新增7项真实runner出站/绑定/审阅hash守卫通过|
+
+新增admission快照回归在旧实现读到resolved（1项RED），同步快照状态后GREEN，证明旧恢复结论不会进入新执行输入。
 
 第一次扩展边界检查因未配置测试JWT及并发迁移超过旧10秒hook失败，属本轮测试环境配置问题；显式合成JWT、串行与60秒hook后221/221通过，不改产品/旧测试代码。浏览器新增断言的列名/terminal lifecycle预期已按正式迁移和executor纠正；最终两项通过。
 

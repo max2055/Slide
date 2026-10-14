@@ -412,7 +412,7 @@ export class MysqlInvestigationStore {
     const jobKey = `investigation.execute:${requestId}`;
     // Only IDs go in the Workflow queue; the immutable request owns the
     // execution snapshot. No Agent Run is fabricated at admission time.
-    const snapshot = { ...investigation, actor: { ...input.actor }, message: input.message };
+    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: input.message };
     await connection.execute(`INSERT INTO investigation_requests
       (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

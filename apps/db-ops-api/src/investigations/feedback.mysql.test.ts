@@ -83,6 +83,8 @@ describe.skipIf(!port)('T11 feedback real MySQL/JWT/HTTP', () => {
     const admitted = await f.bridge.admit(f.owner, command);
     expect((await f.rows('SELECT problem_status,active_request_id,version FROM investigations WHERE id=?', [s.inv.id]))[0])
       .toMatchObject({ problem_status: 'unconfirmed', active_request_id: admitted.requestId, version: admitted.version });
+    const [request] = await f.rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [admitted.requestId]);
+    expect(request.request_snapshot.problemStatus).toBe('unconfirmed');
     const replay = await f.bridge.admit(f.owner, command);
     expect(replay).toEqual(admitted);
     expect((await get()).json().items[0].command.resultId).toBe(s.result.id);
