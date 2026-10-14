@@ -5821,6 +5821,1453 @@
           }
         ]
       },
+      "InvestigationFeedbackPage": {
+        "$id": "InvestigationFeedbackPage",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$id": "InvestigationFeedbackRecord",
+              "additionalProperties": false,
+              "properties": {
+                "actorId": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "command": {
+                  "$id": "InvestigationFeedbackRequest",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expectedVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "rating",
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 4000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "rating": {
+                          "anyOf": [
+                            {
+                              "const": "helpful",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unhelpful",
+                              "type": "string"
+                            },
+                            {
+                              "const": "incorrect",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "resultId": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "resultVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "resultId",
+                        "resultVersion",
+                        "expectedVersion",
+                        "note",
+                        "kind",
+                        "rating"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "evidenceIds": {
+                          "items": {
+                            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                            "type": "string"
+                          },
+                          "maxItems": 100,
+                          "minItems": 0,
+                          "type": "array",
+                          "uniqueItems": true
+                        },
+                        "expectedVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "handling",
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 4000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "performedAt": {
+                          "maxLength": 32,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "resultId": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "resultVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "resultId",
+                        "resultVersion",
+                        "expectedVersion",
+                        "note",
+                        "kind",
+                        "performedAt",
+                        "evidenceIds"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expectedVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "root_cause",
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 4000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "resultId": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "resultVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "verification": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidenceIds": {
+                              "items": {
+                                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                "type": "string"
+                              },
+                              "maxItems": 100,
+                              "minItems": 1,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "from": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "method": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "to": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "method",
+                            "from",
+                            "to",
+                            "evidenceIds"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "resultId",
+                        "resultVersion",
+                        "expectedVersion",
+                        "note",
+                        "kind",
+                        "verification"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expectedVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "recovery",
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 4000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "resultId": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "resultVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "verification": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidenceIds": {
+                              "items": {
+                                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                "type": "string"
+                              },
+                              "maxItems": 100,
+                              "minItems": 1,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "from": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "method": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "to": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "method",
+                            "from",
+                            "to",
+                            "evidenceIds"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "resultId",
+                        "resultVersion",
+                        "expectedVersion",
+                        "note",
+                        "kind",
+                        "verification"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expectedVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "kind": {
+                          "const": "close",
+                          "type": "string"
+                        },
+                        "lifecycle": {
+                          "anyOf": [
+                            {
+                              "const": "closed",
+                              "type": "string"
+                            },
+                            {
+                              "const": "archived",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "note": {
+                          "maxLength": 4000,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "problemStatus": {
+                          "$id": "InvestigationProblemStatus",
+                          "anyOf": [
+                            {
+                              "const": "unconfirmed",
+                              "type": "string"
+                            },
+                            {
+                              "const": "in_progress",
+                              "type": "string"
+                            },
+                            {
+                              "const": "resolved",
+                              "type": "string"
+                            },
+                            {
+                              "const": "not_applicable",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "resultId": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "resultVersion": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "verification": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidenceIds": {
+                              "items": {
+                                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                "type": "string"
+                              },
+                              "maxItems": 100,
+                              "minItems": 1,
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "from": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "method": {
+                              "maxLength": 2000,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            },
+                            "to": {
+                              "maxLength": 32,
+                              "minLength": 1,
+                              "pattern": "\\S",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "method",
+                            "from",
+                            "to",
+                            "evidenceIds"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "resultId",
+                        "resultVersion",
+                        "expectedVersion",
+                        "note",
+                        "kind",
+                        "lifecycle",
+                        "problemStatus"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                  "type": "string"
+                },
+                "investigationId": {
+                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                  "type": "string"
+                },
+                "references": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "contentHash": {
+                        "pattern": "^[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "id": {
+                        "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                        "type": "string"
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "const": "available",
+                            "type": "string"
+                          },
+                          {
+                            "const": "expired",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "status",
+                      "contentHash"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                "staleResult": {
+                  "type": "boolean"
+                },
+                "verification": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidenceIds": {
+                      "items": {
+                        "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "minItems": 1,
+                      "type": "array",
+                      "uniqueItems": true
+                    },
+                    "from": {
+                      "maxLength": 32,
+                      "minLength": 1,
+                      "pattern": "\\S",
+                      "type": "string"
+                    },
+                    "method": {
+                      "maxLength": 2000,
+                      "minLength": 1,
+                      "pattern": "\\S",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "human_confirmed",
+                      "type": "string"
+                    },
+                    "to": {
+                      "maxLength": 32,
+                      "minLength": 1,
+                      "pattern": "\\S",
+                      "type": "string"
+                    },
+                    "verifiedAt": {
+                      "maxLength": 32,
+                      "minLength": 1,
+                      "pattern": "\\S",
+                      "type": "string"
+                    },
+                    "verifiedBy": {
+                      "maximum": 9007199254740991,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "from",
+                    "to",
+                    "evidenceIds",
+                    "verifiedBy",
+                    "verifiedAt",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "version": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "investigationId",
+                "actorId",
+                "createdAt",
+                "version",
+                "command",
+                "staleResult",
+                "references"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "nextBefore": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextBefore"
+        ],
+        "type": "object"
+      },
+      "InvestigationFeedbackRecord": {
+        "$id": "InvestigationFeedbackRecord",
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "command": {
+            "$id": "InvestigationFeedbackRequest",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "rating",
+                    "type": "string"
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "rating": {
+                    "anyOf": [
+                      {
+                        "const": "helpful",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unhelpful",
+                        "type": "string"
+                      },
+                      {
+                        "const": "incorrect",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "resultId": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "resultVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "resultId",
+                  "resultVersion",
+                  "expectedVersion",
+                  "note",
+                  "kind",
+                  "rating"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "evidenceIds": {
+                    "items": {
+                      "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 0,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "handling",
+                    "type": "string"
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "performedAt": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "resultId": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "resultVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "resultId",
+                  "resultVersion",
+                  "expectedVersion",
+                  "note",
+                  "kind",
+                  "performedAt",
+                  "evidenceIds"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "root_cause",
+                    "type": "string"
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "resultId": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "resultVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "verification": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "evidenceIds": {
+                        "items": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "from": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "method": {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "to": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "from",
+                      "to",
+                      "evidenceIds"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "resultId",
+                  "resultVersion",
+                  "expectedVersion",
+                  "note",
+                  "kind",
+                  "verification"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "recovery",
+                    "type": "string"
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "resultId": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "resultVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "verification": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "evidenceIds": {
+                        "items": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "from": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "method": {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "to": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "from",
+                      "to",
+                      "evidenceIds"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "resultId",
+                  "resultVersion",
+                  "expectedVersion",
+                  "note",
+                  "kind",
+                  "verification"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "close",
+                    "type": "string"
+                  },
+                  "lifecycle": {
+                    "anyOf": [
+                      {
+                        "const": "closed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "archived",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "note": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "problemStatus": {
+                    "$id": "InvestigationProblemStatus",
+                    "anyOf": [
+                      {
+                        "const": "unconfirmed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "in_progress",
+                        "type": "string"
+                      },
+                      {
+                        "const": "resolved",
+                        "type": "string"
+                      },
+                      {
+                        "const": "not_applicable",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "resultId": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "resultVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "verification": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "evidenceIds": {
+                        "items": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "from": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "method": {
+                        "maxLength": 2000,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "to": {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "from",
+                      "to",
+                      "evidenceIds"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "resultId",
+                  "resultVersion",
+                  "expectedVersion",
+                  "note",
+                  "kind",
+                  "lifecycle",
+                  "problemStatus"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "createdAt": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+            "type": "string"
+          },
+          "investigationId": {
+            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+            "type": "string"
+          },
+          "references": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contentHash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "available",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "status",
+                "contentHash"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "staleResult": {
+            "type": "boolean"
+          },
+          "verification": {
+            "additionalProperties": false,
+            "properties": {
+              "evidenceIds": {
+                "items": {
+                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "from": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "method": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "status": {
+                "const": "human_confirmed",
+                "type": "string"
+              },
+              "to": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "verifiedAt": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "verifiedBy": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "method",
+              "from",
+              "to",
+              "evidenceIds",
+              "verifiedBy",
+              "verifiedAt",
+              "status"
+            ],
+            "type": "object"
+          },
+          "version": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "investigationId",
+          "actorId",
+          "createdAt",
+          "version",
+          "command",
+          "staleResult",
+          "references"
+        ],
+        "type": "object"
+      },
+      "InvestigationFeedbackRequest": {
+        "$id": "InvestigationFeedbackRequest",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "rating",
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "rating": {
+                "anyOf": [
+                  {
+                    "const": "helpful",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unhelpful",
+                    "type": "string"
+                  },
+                  {
+                    "const": "incorrect",
+                    "type": "string"
+                  }
+                ]
+              },
+              "resultId": {
+                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "expectedVersion",
+              "note",
+              "kind",
+              "rating"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "evidenceIds": {
+                "items": {
+                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 0,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "expectedVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "handling",
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "performedAt": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultId": {
+                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "expectedVersion",
+              "note",
+              "kind",
+              "performedAt",
+              "evidenceIds"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "root_cause",
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultId": {
+                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "verification": {
+                "additionalProperties": false,
+                "properties": {
+                  "evidenceIds": {
+                    "items": {
+                      "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "from": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "method": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "to": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method",
+                  "from",
+                  "to",
+                  "evidenceIds"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "expectedVersion",
+              "note",
+              "kind",
+              "verification"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "recovery",
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultId": {
+                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "verification": {
+                "additionalProperties": false,
+                "properties": {
+                  "evidenceIds": {
+                    "items": {
+                      "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "from": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "method": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "to": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method",
+                  "from",
+                  "to",
+                  "evidenceIds"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "expectedVersion",
+              "note",
+              "kind",
+              "verification"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "close",
+                "type": "string"
+              },
+              "lifecycle": {
+                "anyOf": [
+                  {
+                    "const": "closed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "note": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "problemStatus": {
+                "$id": "InvestigationProblemStatus",
+                "anyOf": [
+                  {
+                    "const": "unconfirmed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "in_progress",
+                    "type": "string"
+                  },
+                  {
+                    "const": "resolved",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_applicable",
+                    "type": "string"
+                  }
+                ]
+              },
+              "resultId": {
+                "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "verification": {
+                "additionalProperties": false,
+                "properties": {
+                  "evidenceIds": {
+                    "items": {
+                      "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "from": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "method": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "to": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method",
+                  "from",
+                  "to",
+                  "evidenceIds"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "expectedVersion",
+              "note",
+              "kind",
+              "lifecycle",
+              "problemStatus"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "InvestigationLifecycle": {
         "$id": "InvestigationLifecycle",
         "anyOf": [
@@ -18159,6 +19606,141 @@
           },
           "404": {
             "description": "Absent or inaccessible"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/feedback": {
+      "get": {
+        "operationId": "listInvestigationFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationFeedbackPage"
+                }
+              }
+            },
+            "description": "Version-bound human feedback with expired reference tombstones"
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "404": {
+            "description": "Absent or live authority withdrawn"
+          },
+          "503": {
+            "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Human operator only, live all-resource authorization and expected investigation/result versions. Root cause and business recovery are independent; resolved requires current bounded recovery evidence. Negative feedback never publishes trusted knowledge.",
+        "operationId": "recordInvestigationFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationFeedbackRecord"
+                }
+              }
+            },
+            "description": "Atomic audit/state/stream record, or authorized idempotent replay"
+          },
+          "400": {
+            "description": "Invalid command or missing evidence"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "403": {
+            "description": "Operator required"
+          },
+          "404": {
+            "description": "Absent or inaccessible"
+          },
+          "409": {
+            "description": "Stale result/version, active request or idempotency conflict"
+          },
+          "410": {
+            "description": "Evidence expired"
+          },
+          "503": {
+            "description": "Transaction rolled back"
           }
         },
         "security": [

@@ -73,6 +73,7 @@ import {
 import { monitorCollector } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
+import { registerInvestigationFeedbackRoutes } from './src/investigations/feedback-routes.js';
 import { registerInvestigationRoutes } from './src/investigations/routes.js';
 import { registerInvestigationProfileRoutes } from './src/investigations/profile-routes.js';
 import { registerInvestigationGovernanceRoutes } from './src/investigations/governance-routes.js';
@@ -410,6 +411,7 @@ async function start() {
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
   await registerFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationRoutes(fastify, verifyToken);
+  await registerInvestigationFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
   await registerSystemEventRoutes(fastify, verifyToken, new SystemEventReader(() => dbConnection.getPool()));

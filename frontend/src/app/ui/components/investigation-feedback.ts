@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { InvestigationFeedbackRequest, InvestigationFeedbackRecord } from '../../../../../apps/db-ops-api/src/investigations/feedback-types.js';
+import type { InvestigationFeedbackRequest, InvestigationFeedbackRecord } from '../../../api/generated/public-api.ts';
 import { investigationApi, InvestigationApiError, investigationErrorText } from '../controllers/investigation-api.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import './app-card.ts';
@@ -10,8 +10,7 @@ import './app-empty-state.ts';
 const kindLabels = { rating: '结果反馈', handling: '外部处理记录', root_cause: '人工根因确认', recovery: '业务恢复验证', close: '关闭调查' };
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 
-/** Independent T11 component. Parent supplies the current actual result and
- * investigation revision; workspace mounting awaits shared-file ownership. */
+/** Human feedback bound to the latest result and live investigation revision. */
 @customElement('investigation-feedback')
 export class InvestigationFeedback extends LitElement {
   @property() investigationId = '';

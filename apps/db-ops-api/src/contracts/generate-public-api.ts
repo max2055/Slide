@@ -1,3 +1,4 @@
+import { InvestigationFeedbackSchemas } from '../investigations/feedback-contracts.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,6 +122,19 @@ export function buildOpenApiDocument() {
         { name: 'eid', in: 'path', required: true, schema: { type: 'string' } }, { name: 'raw', in: 'query', schema: { const: 'true' } }],
         description: 'Investigation/original request/Run bound redacted evidence. Missing observation windows are null. Default response retains metadata/hash/tombstone; raw=true reauthorizes all resource scopes and returns redacted raw data only before seven-day retention. Expired raw returns 410 after authorization; invisible evidence always 404.',
         responses: { '200': { description: 'Evidence or tombstone', content: { 'application/json': { schema: refSchema(InvestigationObservationSchemas.InvestigationEvidence) } } }, '404': { description: 'Absent or inaccessible' }, '410': { description: 'Authorized raw snapshot expired' } } } },
+      '/api/investigations/{id}/feedback': {
+        get: { operationId: 'listInvestigationFeedback', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+          { name: 'before', in: 'query', schema: { type: 'integer', minimum: 1 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } }],
+          responses: { '200': { description: 'Version-bound human feedback with expired reference tombstones', content: { 'application/json': { schema: refSchema(InvestigationFeedbackSchemas.InvestigationFeedbackPage) } } },
+            '400': { description: 'Invalid query' }, '401': { description: 'JWT required' }, '404': { description: 'Absent or live authority withdrawn' }, '503': { description: 'Store unavailable' } } },
+        post: { operationId: 'recordInvestigationFeedback', security: [{ bearerAuth: [] }], parameters: [investigationId(),
+          { name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } }],
+          description: 'Human operator only, live all-resource authorization and expected investigation/result versions. Root cause and business recovery are independent; resolved requires current bounded recovery evidence. Negative feedback never publishes trusted knowledge.',
+          requestBody: { required: true, content: { 'application/json': { schema: refSchema(InvestigationFeedbackSchemas.InvestigationFeedbackRequest) } } },
+          responses: { '200': { description: 'Atomic audit/state/stream record, or authorized idempotent replay', content: { 'application/json': { schema: refSchema(InvestigationFeedbackSchemas.InvestigationFeedbackRecord) } } },
+            '400': { description: 'Invalid command or missing evidence' }, '401': { description: 'JWT required' }, '403': { description: 'Operator required' }, '404': { description: 'Absent or inaccessible' },
+            '409': { description: 'Stale result/version, active request or idempotency conflict' }, '410': { description: 'Evidence expired' }, '503': { description: 'Transaction rolled back' } } },
+      },
       '/api/investigations/{id}/results': { get: { operationId: 'listInvestigationResults', security: [{ bearerAuth: [] }], parameters: [investigationId(),
         { name: 'before', in: 'query', schema: { type: 'integer', minimum: 1 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } }],
         description: 'Immutable V2 result versions. Every supporting/contradicting reference is bound to the original investigation/request/Run and reauthorized. Expired references retain tombstones and never become new proof. Machine results cannot assert human/experimental verification or resolved. Execution summaries do not expose unbounded reasoning or confidence as accuracy.',
@@ -541,7 +555,7 @@ function schemaType(schema: TSchema): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas, ...SystemHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas, ...InvestigationFeedbackSchemas, ...SystemHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {

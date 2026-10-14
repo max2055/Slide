@@ -32,6 +32,7 @@ export async function startFeedbackFixture(port: number) {
   };
   try {
     await new MigrationRunner(pool).run();
+    await new MigrationRunner(pool).run();
     await rows("INSERT INTO users (id,username,password_hash) VALUES (101,'t11-owner','no-login'),(102,'t11-viewer','no-login'),(103,'t11-operator','no-login')");
     await rows("INSERT INTO roles (id,name) VALUES (101,'t11-readonly')");
     await rows("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('chat:view','instance:view','metric:view','alert:view')");
@@ -70,7 +71,7 @@ export async function startFeedbackFixture(port: number) {
       const base = { resultId: result.id, resultVersion: result.version, expectedVersion: Number(state.version), note: '人工检查记录' };
       return { inv, binding, proof, result, value, base, verification: { method: '核对合成有界指标', from, to, evidenceIds: [proof.id] } };
     };
-    return { app, pool, rows, owner, viewer, operator, contexts, authorization, bridge, results, evidence, feedback, seed, close,
+    return { app, pool, rows, secret, database, owner, viewer, operator, contexts, authorization, bridge, results, evidence, feedback, seed, close,
       tokens: { owner: signAccessToken(owner, secret), viewer: signAccessToken(viewer, secret), operator: signAccessToken(operator, secret) } };
   } catch (error) { await close(); throw error; }
 }

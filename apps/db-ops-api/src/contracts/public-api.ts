@@ -1,3 +1,4 @@
+import { InvestigationFeedbackSchemas } from '../investigations/feedback-contracts.js';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
 import { InvestigationSchemas } from '../investigations/contracts.js';
@@ -666,6 +667,7 @@ export const PublicApiSchemas = {
   ...InvestigationGovernanceSchemas,
   ...InvestigationSchemas, ...InvestigationObservationSchemas,
   ...InvestigationHttpSchemas,
+  ...InvestigationFeedbackSchemas,
   ...InvestigationBridgeSchemas,
   ...SystemHttpSchemas,
   QueueObservation: QueueObservationSchema,

@@ -5,8 +5,7 @@ import { InvestigationStoreError } from './store.js';
 import { invalidObservation } from './observation-db.js';
 import { InvestigationFeedbackPageSchema, InvestigationFeedbackRecordSchema } from './feedback-contracts.js';
 
-/** Dedicated T11 registration port; production composition requires the shared
- * server owner to register it. No execution, knowledge publication or raw reads. */
+/** Human feedback routes used by production server and isolated qualification. */
 export async function registerInvestigationFeedbackRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
   store = new InvestigationFeedbackStore()): Promise<void> {
   for (const method of ['GET', 'POST'] as const) {

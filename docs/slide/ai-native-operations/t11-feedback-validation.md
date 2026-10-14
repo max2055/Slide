@@ -1,3 +1,50 @@
+# T11 反馈装配与验收记录
+
+2026-10-14，v1.2.28 共享准入后，原 PR164 在 main `dbe5ef53` 基础上补接正式服务注册、公共 OpenAPI/生成类型与 workspace。以下当前结果覆盖历史阶段的“未挂载”描述；历史领域模块与 PR156 的40样本/ID/版本原样保留。
+
+## 当前行为
+
+- `server.ts` 注册反馈 GET/POST，复用默认 pool 与真实 JWT；前端消费生成类型，在调查详情绑定最新实际结果与调查 revision，保存后通过原 controller 刷新事实，不创建新的 Session/Run。
+- 显式 closed/archived→open/waiting 重开及新的 admission，在原事务清除旧 problem_status 为 unconfirmed；单纯标题编辑与幂等重放不重新清除。旧人工反馈保留原结果版本，不再被当作新执行的恢复结论。
+- 人工根因、外部处理和业务恢复仍分别记录；无当前有界证据不能 resolved；负反馈没有可信知识发布路径。撤权会使真实 WS 隐藏详情/反馈，HTTP 历史与重放重新授权。
+- CI 的既有 MySQL browser-qualification job 新增 feedback SQL、实际 server 子进程和 workspace 测试；不改变自动调查开关、生产配置或基础设施。
+
+## 本轮验证
+
+|检查|证据|
+|---|---|
+|反馈+核心边界|12文件221项通过，0skip；隔离MySQL8.4、正式MigrationRunner重复启动、真实JWT/HTTP/WS，含反馈focused31项|
+|真实生产注册|独立启动实际 `server.ts`，测试库持有D1 lease使服务API-only standby；真实GET/POST/PATCH、幂等、无证据拒绝、撤权重放拒绝，1项通过。未启动采集/worker/Provider|
+|workspace/反馈浏览器|`playwright.feedback.config.ts` 两项通过、0重试/skip；正式workspace/真实WS与生产route模块，runtime使用明确合成Provider/只读工具；单独局部组件用当前证据完成闭环。两类证据分开，不把合成Provider作为真实模型验收|
+|前端边界|40项通过；覆盖迟到响应、权限清空、版本变化、409草稿保留、未知接受原key重试|
+|安全|`pnpm security:agent` 17文件187项通过；无权限核心重构|
+|类型/构建/契约|前后端typecheck、build/CSP、contracts:check通过；既有chunk/dynamic import warnings保留|
+|样本与runner|原30项离线校验通过；新增7项真实runner出站/绑定/审阅hash守卫通过|
+
+第一次扩展边界检查因未配置测试JWT及并发迁移超过旧10秒hook失败，属本轮测试环境配置问题；显式合成JWT、串行与60秒hook后221/221通过，不改产品/旧测试代码。浏览器新增断言的列名/terminal lifecycle预期已按正式迁移和executor纠正；最终两项通过。
+
+## 真实40样本与评议限制
+
+`tests/qualification/investigation-real-eval.ts` 为显式启动的固定证据真实模型runner。只SELECT既有enabled Provider与scene配置，复用Provider工厂；不导入生产startup、不改配置，不执行基础设施工具。拒绝样本不发送隐藏快照，样本标注只用于事后review。逐样本保存ID/版本/hash、实际输入/输出、请求hash、token回执与模型耗时；没有评分时保留null。`--review collected-report.json review.json output.json` 按完整报告/模型输出/rubric hash导入七维0/1/2评议；agent评分始终provisional，不冒充human_review_required已通过，也不提升product runtime安全状态。
+
+40个DeepSeek Flash实际答案已收齐。38个通过固定证据输出绑定检查；DB-06、NW-05把输入authority作为无引用事实，按真实失败保留。已逐项按原七维rubric完成agent评议，40项provisional；人工有帮助比例/盲评未完成，不能宣称软门槛达标。空工具固定证据transport没有生产tool/runtime轨迹，四项产品硬安全仍unscored；已有SQL/JWT/WS安全回归与模型输出评估分别交付。**完整T11模型质量/硬安全出口尚未通过，T12不放行。**
+
+## 预算与恢复
+
+authenticated附件中的原4journal/3claim按字节及SHA256核验，迁入 `~/.slide/qualification` 持久目录；用原initialize链式移交default共享T09-System-V1 ledger，原stop/claim不清除，12536历史基线不重置。
+
+本轮41次真实请求（40答案+1judge）共78906 input+output token，缓存包含在输入，不重复计。judge触达配置4096输出上限后协议检查失败关闭；10908token全部结算、无pending，经核验后链式继续同批次并复用完整DB-01答案，未重发未知请求。其余39个答案均实测结算。当前累计91442，剩余9908558，phase normal，已stop、无pending。本轮输入25518、输出53388、缓存输入6528；累计包括既有T09计数，T04更早5次的token仍未知，实付与编码agent遥测不可用，不冒充0。
+
+共享账本守卫20项通过。最终journal/hash、完整receipt、原claim历史与review报告作为Issue附件交付；样本无改版。本任务无生产操作、新Issue或子代理。
+
+## 待验收
+
+原PR164准确head CI与父独立Review齐备前不合并；真人逐项评议/盲评和生产runtime模型硬安全证据仍需补齐，故只交in_review，不把固定证据评估或离线校验宣称为完整V1验收。
+
+---
+
+## 2026-10-13 领域交付历史（PR164初版）
+
 # T11 反馈领域交付与共享装配请求
 
 本阶段实现领域模块和局部真实验收。生产 `server.ts`、公共契约注册和 workspace 主容器仍由父任务按 T08→T09→T11 移交。**本交付不等于完整 T11 出口，也不能释放 T12。**

@@ -152,6 +152,22 @@ jobs:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
+      - name: Feedback formal SQL transactions and workspace HTTP/WS acceptance
+        env:
+          T11_TEST_MYSQL_PORT: '3306'
+          T11_TEST_MYSQL_PASSWORD: qualification-test-password
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: |
+          pnpm --filter slide-api exec vitest run src/investigations/feedback.mysql.test.ts src/investigations/feedback.production.mysql.test.ts
+          pnpm --filter slide-frontend exec playwright test --config playwright.feedback.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feedback-qualification-${{ github.sha }}
+          path: frontend/test-results-feedback/
+          include-hidden-files: true
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
         with:

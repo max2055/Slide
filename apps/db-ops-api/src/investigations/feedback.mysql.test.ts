@@ -3,6 +3,7 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
 import { startFeedbackFixture } from './feedback-test-fixture.js';
 import { InvestigationFeedbackStore } from './feedback.js';
 import { provisionInvestigationServiceIdentity } from './authorization.js';
+import { MysqlInvestigationStore } from './store.js';
 
 const port = Number(process.env.T11_TEST_MYSQL_PORT);
 describe.skipIf(!port)('T11 feedback real MySQL/JWT/HTTP', () => {
@@ -66,6 +67,26 @@ describe.skipIf(!port)('T11 feedback real MySQL/JWT/HTTP', () => {
     const [state] = await f.rows('SELECT version FROM investigations WHERE id=?', [s.inv.id]);
     expect((await post({ ...rating(), expectedVersion: Number(state.version) })).json().error).toBe('VERSION_CONFLICT');
     expect((await get()).json().items[0]).toMatchObject({ staleResult: true, command: { resultId: s.result.id, resultVersion: 1 } });
+  });
+  it('explicit reopen clears old recovery; metadata edits preserve it; new admission clears it atomically', async () => {
+    const closure = await post({ ...s.base, kind: 'close', lifecycle: 'closed', problemStatus: 'resolved', verification: s.verification });
+    expect(closure.statusCode).toBe(200);
+    const store = new MysqlInvestigationStore(() => f.pool, f.authorization.forActor(f.owner));
+    const actor = { kind: 'user' as const, id: 101 };
+    const renamed = await store.patch(actor, s.inv.id, { expectedVersion: closure.json().version, title: 'Retain history' });
+    expect(renamed.problemStatus).toBe('resolved');
+    const reopened = await store.patch(actor, s.inv.id, { expectedVersion: renamed.version, lifecycle: 'open' });
+    expect(reopened.problemStatus).toBe('unconfirmed');
+    // Also prove the admission path independently of the reopen transition.
+    await f.rows("UPDATE investigations SET problem_status='resolved' WHERE id=?", [s.inv.id]);
+    const command = { investigationId: s.inv.id, expectedVersion: reopened.version, message: 'New readonly observation', idempotencyKey: randomUUID() };
+    const admitted = await f.bridge.admit(f.owner, command);
+    expect((await f.rows('SELECT problem_status,active_request_id,version FROM investigations WHERE id=?', [s.inv.id]))[0])
+      .toMatchObject({ problem_status: 'unconfirmed', active_request_id: admitted.requestId, version: admitted.version });
+    const replay = await f.bridge.admit(f.owner, command);
+    expect(replay).toEqual(admitted);
+    expect((await get()).json().items[0].command.resultId).toBe(s.result.id);
+    expect((await post({ ...s.base, expectedVersion: admitted.version, kind: 'close', lifecycle: 'closed', problemStatus: 'resolved', verification: s.verification })).statusCode).toBe(409);
   });
   it('expired evidence remains a tombstone in history and cannot be reused for closure', async () => {
     expect((await post({ ...s.base, kind: 'root_cause', verification: s.verification })).statusCode).toBe(200);
