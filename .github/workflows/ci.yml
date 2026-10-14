@@ -151,6 +151,8 @@ jobs:
         env:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
+          T11_TEST_MYSQL_PORT: '3306'
+          T11_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
       - name: Feedback formal SQL transactions and workspace HTTP/WS acceptance
         env:
