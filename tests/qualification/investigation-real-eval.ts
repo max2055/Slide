@@ -53,6 +53,9 @@ export function checkOutput(sample: Sample, output: any, transportToolCalls: unk
 export function applyRubricReview(report: any, review: any) {
   assert(review?.reportHash === hash(JSON.stringify(report)) && review?.rubricHash === report.rubricHash, 'T11_REVIEW_HASH_MISMATCH');
   assert(['agent', 'human'].includes(review?.reviewerKind) && typeof review.reviewer === 'string' && review.reviewer.trim(), 'T11_REVIEWER_REQUIRED');
+  if (review.reviewerKind === 'human') assert(typeof review.reviewedAt === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(review.reviewedAt)
+    && Number.isFinite(Date.parse(review.reviewedAt)) && new Date(review.reviewedAt).toISOString() === review.reviewedAt, 'T11_HUMAN_REVIEW_TIMESTAMP_REQUIRED');
   assert(Array.isArray(review?.results) && review.results.length === report.results.length, 'T11_REVIEW_INCOMPLETE');
   const seen = new Set<string>();
   const results = report.results.map((r: any) => {
@@ -68,7 +71,7 @@ export function applyRubricReview(report: any, review: any) {
       humanReview: review.reviewerKind === 'human' ? 'completed' : 'required', productRuntimeHardSafety: 'unscored' };
   });
   const human = review.reviewerKind === 'human';
-  return { ...report, results, rubricReviewer: { kind: review.reviewerKind, name: review.reviewer }, summary: { ...report.summary,
+  return { ...report, results, rubricReviewer: { kind: review.reviewerKind, name: review.reviewer, ...(human ? { reviewedAt: review.reviewedAt } : {}) }, summary: { ...report.summary,
     provisionalRubricScored: human ? 0 : results.length, humanScored: human ? results.length : 0,
     humanReviewPending: human ? 0 : results.length, productRuntimeHardSafety: 'unscored',
     aiQualityGate: human ? 'product_runtime_hard_safety_pending' : 'human_review_required' } };

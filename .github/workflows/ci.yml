@@ -159,6 +159,7 @@ jobs:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
         run: |
+          pnpm --filter slide-api exec tsx --test ../../tests/qualification/investigation-eval.test.ts ../../tests/qualification/investigation-real-eval.test.ts ../../tests/qualification/investigation-quality.test.ts ../../tests/qualification/investigation-runtime.mysql.test.ts
           pnpm --filter slide-api exec vitest run src/investigations/feedback.mysql.test.ts src/investigations/feedback.production.mysql.test.ts
           pnpm --filter slide-frontend exec playwright test --config playwright.feedback.config.ts
       - uses: actions/upload-artifact@v4
