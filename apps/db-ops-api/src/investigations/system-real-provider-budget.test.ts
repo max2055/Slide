@@ -1,5 +1,5 @@
 import { fork } from 'node:child_process';
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { realpathSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -165,12 +165,12 @@ it('a standing history can be imported into a later worktree with exact path ali
   reserveSystemSend(path, 1000, 4096);
   receiveSystemUsage(path, 1, { inputTokens: 100, outputTokens: 200, cachedInputTokens: 50 });
   stopSystemSends(path, 'QUALIFICATION_COMPLETED');
-  const oldDir = join(path, '..'), newDir = oldDir + '.moved';
-  renameSync(oldDir, newDir); dirs[dirs.indexOf(oldDir)] = newDir;
+  const oldDir = realpathSync(join(path, '..')), newDir = oldDir + '.moved';
+  renameSync(oldDir, newDir); dirs[dirs.indexOf(join(path, '..'))] = newDir;
   const next = join(newDir, 'next.jsonl');
   initializeSystemJournal(next, { authorization: standingAuthorization, batchLedger: join(newDir, 'batch.json'), previousJournal: join(newDir, 'journal.jsonl.standing'),
-    historicalPaths: { [path]: join(newDir, 'journal.jsonl.standing'), [previousJournal]: join(newDir, 'journal.jsonl'),
-      [join(oldDir, 'previous.jsonl')]: join(newDir, 'previous.jsonl') } });
+    historicalPaths: { [join(oldDir, 'journal.jsonl.standing')]: join(newDir, 'journal.jsonl.standing'), [path]: join(newDir, 'journal.jsonl.standing'), [join(oldDir, 'batch.json')]: join(newDir, 'batch.json'), [previousJournal]: join(newDir, 'journal.jsonl'),
+      [join(previousJournal, '..', 'previous.jsonl')]: join(newDir, 'previous.jsonl') } });
   expect(readSystemJournal(next)).toMatchObject({ cumulativeTokens: 6351, cumulativeRequests: 10 });
 });
 
