@@ -95,6 +95,13 @@ describe.skipIf(process.env.MYSQL96_TEST !== 'true')('MySQL 9.6 real SQL, HTTP, 
       const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
       await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
       if (width === 1440) await browserExpect(page.getByText('首次绑定', { exact: false })).toBeVisible();
+      await page.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(old.digest);
+      await page.getByRole('button', { name: '预检与影响预览', exact: true }).click();
+      await browserExpect(page.getByText('版本不适用', { exact: false }).first()).toBeVisible();
+      await page.getByRole('button', { name: '试采', exact: true }).click();
+      await browserExpect(page.getByText('版本或资源不适用，不能发布。请选择支持当前版本的采集包。', { exact: true })).toBeVisible();
+      await browserExpect(page.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
+      if (artifacts) await page.screenshot({ path: `${artifacts}/mysql96-unsupported-${width}.png`, fullPage: true });
       await page.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(pack.digest);
       await browserExpect(page.getByText('Queries 累计计数及速率缺少可信生命周期证据', { exact: false })).toBeVisible();
       await page.getByRole('button', { name: '预检与影响预览', exact: true }).click();
