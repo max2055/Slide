@@ -10,23 +10,24 @@ import { AdapterError } from '../packages/adapters.js';
 
 describe('configuration HTTP routes', () => {
   let app: ReturnType<typeof Fastify>, actor: ActorContext | undefined, store: MemoryPolicyStore;
+  let accessError: AdapterError | undefined;
   let held: boolean, calls: number, fail: boolean, pending: (() => Promise<void>) | undefined;
   const base = '/api/metrics-v2/config';
   const payload = { expected_revision: 0, package: pin };
   const trial = (body = payload) => app.inject({ method: 'POST', url: `${base}/resources/instance/1/trial`, payload: body });
   beforeEach(async () => {
-    held = false; calls = 0; fail = false; pending = undefined; actor = admin; store = new MemoryPolicyStore();
+    accessError = undefined; held = false; calls = 0; fail = false; pending = undefined; actor = admin; store = new MemoryPolicyStore();
     const registry = createBuiltinRegistry(), policy = new PolicyService(store, registry, testResources);
     const implementation = new MetricConfigurationService(policy, registry, {
       reserve: async () => { if (held) return null; held = true; return { connection: { ping: async () => {} }, release: async () => { held = false; } }; },
       attempts: async () => [],
-    }, { resolve: async () => ({ resource: resource(), credential_ref: 'credential:canary-secret',
+    }, { resolve: async () => { if (accessError) throw accessError; return ({ resource: resource(), credential_ref: 'credential:canary-secret',
       evidence: { counter: { bits: '64', start_at: '2026-09-01T00:00:00.000Z' } },
       resolve: async () => ({ method: 'sql', pool: { query: async () => {
         calls++; if (pending) await pending(); if (fail) throw new AdapterError('timeout');
         return [[{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }], []];
       } } }),
-    }) });
+    }); } });
     app = Fastify();
     await registerMetricConfigurationRoutes(app, async request => { (request as any).user = actor; }, implementation);
   });
@@ -51,6 +52,13 @@ describe('configuration HTTP routes', () => {
     fail = true; const result = (await trial()).json();
     expect(result.attempts[0]).toMatchObject({ status: 'failed', error: 'timeout' });
     expect(result.capabilities.every((c: any) => c.status !== 'unsupported')).toBe(true);
+  });
+  it.each(['permission_denied', 'connection_error'] as const)('reports target access %s without losing its reason or leaking details', async code => {
+    accessError = new AdapterError(code);
+    const result = await trial();
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ decision: 'failed', error: code, persisted: false, samples: [], attempts: [] });
+    expect(held).toBe(false); expect(calls).toBe(0); expect(store.bindings.size).toBe(0);
   });
   it('retains reservation through cancellation, discards late results and rejects overlap', async () => {
     let release!: () => void, entered!: () => void;
