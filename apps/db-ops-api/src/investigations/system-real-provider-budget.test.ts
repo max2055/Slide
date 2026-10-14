@@ -259,3 +259,18 @@ it('missing batch state and abandoned shared locks never recreate a fresh batch'
   writeFileSync(ledger + '.lock', 'abandoned');
   expect(() => reserveSystemSend(path, 1, 1)).toThrow();
 });
+
+it('linked scenes retain cumulative usage and cannot change their shared batch ledger', () => {
+  const { path } = standingJournal(), ledger = readSystemJournal(path).batch!.ledger;
+  reserveSystemSend(path, 9_993_946, 1);
+  receiveSystemUsage(path, 1, { inputTokens: 9_993_946, outputTokens: 1, cachedInputTokens: 1000 });
+  stopSystemSends(path, 'QUALIFICATION_COMPLETED');
+  expect(() => initializeSystemJournal(path + '.fork', { authorization: standingAuthorization,
+    previousJournal: path, batchLedger: ledger + '.another' })).toThrow('T09_BATCH_FORK');
+  initializeSystemJournal(path + '.next', { authorization: standingAuthorization, previousJournal: path, batchLedger: ledger });
+  expect(readSystemJournal(path + '.next').cumulativeTokens).toBe(9_999_998);
+  expect(() => reserveSystemSend(path + '.next', 2, 1)).toThrow('T09_TOKEN_LIMIT');
+  reserveSystemSend(path + '.next', 1, 1);
+  receiveSystemUsage(path + '.next', 1, { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 });
+  expect(readSystemJournal(path + '.next')).toMatchObject({ stopped: true, cumulativeTokens: 10_000_000 });
+});

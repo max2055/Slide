@@ -26,13 +26,13 @@ import { createSystemComposition, type SystemComposition } from './system-compos
 import { registerSystemEventRoutes, SystemEventReader } from './system-event-routes.js';
 import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 import { readSystemJournal, receiveSystemUsage, reserveSystemSend, stopSystemSends,
-  SYSTEM_STANDING_AUTHORIZATION } from './system-real-provider-budget.js';
+  SYSTEM_STANDING_AUTHORIZATION, SYSTEM_BATCH_LEDGER } from './system-real-provider-budget.js';
 
 const journal = process.env.T09_REAL_JOURNAL!, evidence = process.env.T09_REAL_EVIDENCE!;
 if (process.env.T09_REAL_AUTHORIZATION !== SYSTEM_STANDING_AUTHORIZATION || !journal || !evidence
   || !process.env.T09_PROVIDER_ENV || !process.env.T09_REAL_ARTIFACTS) throw Error('T09_EXPLICIT_AUTHORIZATION_REQUIRED');
 const initial = readSystemJournal(journal);
-if (initial.entries[0].authorization !== SYSTEM_STANDING_AUTHORIZATION || initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
+if (initial.entries[0].authorization !== SYSTEM_STANDING_AUTHORIZATION || initial.batch?.ledger !== SYSTEM_BATCH_LEDGER || initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
 config({ path: process.env.T09_PROVIDER_ENV, quiet: true });
 const artifacts = resolve(process.env.T09_REAL_ARTIFACTS);
 mkdirSync(artifacts, { recursive: true, mode: 0o700 });

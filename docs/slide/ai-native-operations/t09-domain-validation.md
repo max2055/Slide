@@ -1,5 +1,19 @@
 # T09 System 领域与共享装配验收
 
+## v1.2.27：固定批次硬门禁（2026-10-14）
+
+本轮仅修验收预算脚手架，不修改产品 executor、Provider 配置或生产权限；父已核验的真实源码消费、最终回答及 completed 故障新进程恢复证据复用，新增模型请求为 0。
+
+长期授权仍不限请求次数和单次审批输入/输出，但同一验收批次固定为 `T09-System-V1`，累计 input + output 不超过 10,000,000 token（cached input 已含在 input）。新场景从最新 stopped、无 pending 的历史导入；当前真实基线为 12,536 token / 7 T09 请求 / 12 跨阶段请求。T04 历史 token 和编码代理遥测不可用，分别报告。
+
+默认共享指针位于 `~/.slide/qualification/T09-System-V1.json`，跨 worktree 使用同一文件；记录唯一 active journal 与哈希，实际累计仍从 journal 哈希链读取。初始化、预留、回执和 stop 共用批次锁；预留先持久化完整输入上界 + 实际配置输出，实测 usage 释放多余预留。缺历史、未知发送/usage、遗留锁、指针缺失、复制分叉或有效旧快照回滚均失败关闭，不自动删锁、重建指针或重放请求。旧无 batch 的 standing journal 只供证据回读，不能继续发送。
+
+50%/80%/100% 在 journal 持久记录 `BATCH_50_REPORT` / `BATCH_80_CONVERGE` / `BATCH_100_STOP`，回读给出 `batch.phase` 和剩余/预留 token。操作者在 50% 报告累计与剩余验收，在 80% 收敛到既定验收；100% 写 stop 并留检查点，不允许新场景恢复额度。超过预留的实际 usage 仍结算并停发。实际模型/runtime 配置继续生效。
+
+下面的初始化命令现在默认注册上述共享指针；首次导入必须包含最新 12,536 历史，不能从较早场景初始化。`batchLedger` 参数仅供独立零调用保护测试使用；正式 qualification 启动强制校验默认指针，不能改路径重置批次。迁移提供精确历史路径映射并保留原始字节、claim 和 stop；只有原 active 文件已不可用时才允许别名迁移指针，不复制一个仍可用的 owner。
+
+父独立 Review 与普通 merge/main 核验之前，T09 完整出口和共享 owner 不释放。旧 144.5ms 未确认根因，100ms 门禁不变；T11 40 unscored、T10/T12 门禁保留。
+
 ## v1.2.25：长期授权与真实 completed 恢复验收（2026-10-14）
 
 当前状态以本节为准；下文保存历史失败、限额与交付阶段，不再作为当前调用审批规则。Max 评论 `01a137d7-4d36-757f-a0ad-2d92cb91299b` 取消验收的3请求/2048输出/32000累计授权预算，覆盖失败后再索取token/Provider审批。仅opt-in qualification使用新模式；共享Provider配置、16k运行上下文、32k单次执行预算、权限、源码egress和生产默认关闭状态均未修改。

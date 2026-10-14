@@ -31,7 +31,6 @@ export function initializeSystemJournal(path: string, options: {
   if (![SYSTEM_REAL_AUTHORIZATION, SYSTEM_STANDING_AUTHORIZATION].includes(options?.authorization)) fail('T09_EXPLICIT_AUTHORIZATION_REQUIRED');
   if (existsSync(path)) fail('T09_JOURNAL_EXISTS');
   const previousJournal = resolve(options.previousJournal);
-  const old = options.authorization === SYSTEM_REAL_AUTHORIZATION ? readSystemJournal(previousJournal, new Set(), options.historicalPaths) : undefined;
   if (options.authorization === SYSTEM_STANDING_AUTHORIZATION) {
     // One shared pointer selects the only active scene across worktrees. The
     // immutable journal chain remains the source of actual usage, not a second counter.
@@ -62,9 +61,10 @@ export function initializeSystemJournal(path: string, options: {
       writeBatchPointer(ledger, path);
     }));
   }
-  if (!old!.stopped || old!.pending || old!.requests !== 2 || old!.totalTokens !== 3081
-    || old!.usage.inputTokens !== 2469 || old!.usage.outputTokens !== 612 || old!.usage.cachedInputTokens !== 640
-    || old!.entries[0].authorization !== PREVIOUS_AUTHORIZATION || digest(previousJournal) !== SYSTEM_PREVIOUS_SHA256)
+  const old = readSystemJournal(previousJournal, new Set(), options.historicalPaths);
+  if (!old.stopped || old.pending || old.requests !== 2 || old.totalTokens !== 3081
+    || old.usage.inputTokens !== 2469 || old.usage.outputTokens !== 612 || old.usage.cachedInputTokens !== 640
+    || old.entries[0].authorization !== PREVIOUS_AUTHORIZATION || digest(previousJournal) !== SYSTEM_PREVIOUS_SHA256)
     fail('T09_BASELINE_INVALID');
   const baseline = { previousJournal, sha256: SYSTEM_PREVIOUS_SHA256, requests: 2, tokens: 3081 };
   // Durable one-time grant shared by every new scene linked to this old journal.
