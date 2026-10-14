@@ -1,3 +1,8 @@
+import { registerResourceRoutes } from '../../../apps/db-ops-api/src/resources/resource-routes.js';
+import { registerInstanceListRoutes } from '../../../apps/db-ops-api/src/instance-list-routes.js';
+import { registerEvidenceRoutes } from '../../../apps/db-ops-api/src/evidence/evidence-api.js';
+import { registerEvidenceEvaluationRoutes } from '../../../apps/db-ops-api/src/evidence/evidence-evaluation-api.js';
+import { registerSourceRoutes } from '../../../apps/db-ops-api/src/platform/source-routes.js';
 import { registerNetworkDeviceRoutes } from '../../../apps/db-ops-api/src/network-devices/network-device-routes.js';
 import { serverDatabaseService } from '../../../apps/db-ops-api/src/server-database-service.js';
 import { requirePermission } from '../../../apps/db-ops-api/src/auth/require-permission.js';
@@ -41,7 +46,7 @@ import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/sou
 import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; realProvider?: LLMProvider } = {}) {
+export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; realProvider?: LLMProvider } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -261,6 +266,11 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
         const [rows]=await pool.query('SELECT id,name,host,port,db_type,status,environment FROM database_instances WHERE id=?',[request.params.id]);
         return rows[0]??reply.code(404).send({error:'NOT_FOUND'});
       });
+    }
+    if (optionsInput.uiAcceptance) {
+      await registerInstanceListRoutes(app,verify);
+      await registerResourceRoutes(app,verify); await registerEvidenceRoutes(app,verify); await registerEvidenceEvaluationRoutes(app,verify);
+      await registerSourceRoutes(app,verify,new SourceManagementService(() => pool));
     }
     await registerInvestigationProfileRoutes(app, verify);
     await registerInvestigationGovernanceRoutes(app, verify, new InvestigationGovernanceStore(() => governanceAvailable ? pool : null, investigationBudgetConfiguration, contexts));

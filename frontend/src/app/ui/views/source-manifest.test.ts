@@ -10,7 +10,7 @@ it.each(['SOURCE_SIGNING_KEY_INVALID', 'SOURCE_SNAPSHOT_UNTRUSTED', 'SOURCE_NOT_
   const root = view.shadowRoot!;
   expect(root.querySelector('[role="alert"]')!.textContent).not.toMatch(/SOURCE_|Error:/);
   expect(root.querySelector('details')!.hasAttribute('open')).toBe(false);
-  expect(root.querySelector('button')).toBeNull();
+  expect([...root.querySelectorAll('button')].filter(button => !button.closest('app-dialog'))).toHaveLength(0);
   if (code === 'SOURCE_SIGNING_KEY_INVALID') {
     expect(root.textContent).toContain('SLIDE_SOURCE_SIGNING_KEY');
     expect(root.textContent).toContain('至少 32 字节');

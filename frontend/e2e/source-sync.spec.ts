@@ -28,7 +28,7 @@ for (const width of [390, 1280]) test(`HTTP repository sync retains warned files
     <source-settings></source-settings>
     <script type="module">import '/src/app/styles.css'; import '/src/app/ui/views/source-settings.ts';</script>
     </body></html>` }));
-  await page.goto('/source-sync-fixture');
+  await page.goto('/source-sync-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   await expect(page.getByLabel('GitLab URL')).toHaveValue('http://gitlab.internal');
   await page.getByLabel('分支、标签或 Commit').fill('release');
   await page.getByRole('button', { name: '保存配置' }).click();
@@ -39,11 +39,13 @@ for (const width of [390, 1280]) test(`HTTP repository sync retains warned files
   await expect(page.locator('source-manifest')).toContainText('未验证部署一致性');
   await expect(page.locator('source-manifest')).toContainText('同步完成');
   await expect(page.locator('source-manifest')).not.toContainText('部分同步');
-  await expect(page.locator('source-manifest')).toContainText('提示（文件已保留，2 项）');
+  await expect(page.locator('source-manifest')).toContainText('文件已保留');
+  await page.getByRole('button', { name: '查看提示 →' }).click();
   await expect(page.locator('source-manifest')).toContainText('src/private.json');
   await expect(page.locator('source-manifest')).toContainText('含疑似敏感信息');
   await expect(page.locator('source-manifest')).toContainText('较大文件，已保留');
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('single-use-fixture');
+  await page.getByRole('button', { name: '返回源码仓库' }).click();
   await page.getByLabel('分支、标签或 Commit').fill('main');
   await page.getByRole('button', { name: '保存配置' }).click();
   await expect(page.locator('source-manifest')).toContainText('当前仓库和分支尚未同步');
@@ -79,14 +81,14 @@ for (const provider of ['gitlab', 'github']) for (const width of [390, 1440]) te
     return route.fulfill(synced ? { json: manifest } : { status: 409, json: { error: 'SOURCE_NOT_SYNCED' } });
   });
   await page.route('**/saved-source-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
-  await page.goto('/saved-source-fixture');
+  await page.goto('/saved-source-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   const sync = page.getByRole('button', { name: '同步源码', exact: true });
   await expect(sync).toBeDisabled();
   await page.getByLabel('同步令牌', { exact: true }).fill('saved-fixture');
   await page.getByLabel('保留同步令牌', { exact: true }).check();
   await sync.click(); await expect(page.getByLabel('同步令牌', { exact: true })).toHaveValue('');
   await expect(page.locator('source-settings')).toContainText('当前仓库已保存令牌'); expect(saved).toBe('saved-fixture');
-  await page.reload(); await expect(sync).toBeEnabled();
+  await page.reload(); await page.getByText('仓库配置与同步', { exact: true }).click(); await expect(sync).toBeEnabled();
   await expect(page.getByLabel('保留同步令牌', { exact: true })).not.toBeChecked();
   await sync.click(); await expect(page.locator('source-settings')).toContainText('源码同步完成');
   await page.getByLabel('同步令牌', { exact: true }).fill('override-fixture'); await sync.click();
@@ -127,7 +129,7 @@ for (const code of ['SOURCE_SIGNING_KEY_INVALID', 'SOURCE_CREDENTIAL_INVALID', '
     return route.fulfill({ json: fail ? manifest : { ...manifest, releaseId: 'fresh-snapshot' } });
   });
   await page.route('**/source-error-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
-  await page.goto('/source-error-fixture');
+  await page.goto('/source-error-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   const sync = page.getByRole('button', { name: '同步源码', exact: true });
   await expect(sync).toBeEnabled(); await sync.click();
   // Locators pierce Lit shadow roots; scope the form alert to exclude the snapshot alert.

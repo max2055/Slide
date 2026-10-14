@@ -22,8 +22,8 @@ describe('cross-resource diagnosis', () => {
     document.body.append(element);
     await new Promise(resolve => setTimeout(resolve, 10));
     await element.updateComplete;
-    expect(authFetch).toHaveBeenCalledWith('/api/resources/network_device/3/evidence');
-    expect(element.shadowRoot?.textContent).toContain('OBSERVATIONS_EMPTY');
+    expect(authFetch).toHaveBeenCalledWith('/api/resources/network_device/3/evidence', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(element.shadowRoot?.textContent).toContain('缺少观测数据');
     expect(element.shadowRoot?.querySelector('[data-kind="facts"] app-empty-state')).not.toBeNull();
   });
 
@@ -54,14 +54,15 @@ describe('business diagnosis explanation', () => {
     element.evidence = { generatedAt: new Date().toISOString(), facts: [{ id: 'raw-evidence-id', kind: 'observation', status: 'fact', quality: 'good', observedAt: '2020-01-01T00:00:00Z', validUntil: '2020-01-01T00:05:00Z', source: 'collector', payload: { metricId: 'cpu', value: 0 } }], inferences: [], hypotheses: [], gaps: ['EVIDENCE_STALE'], truncated: false };
     await element.updateComplete;
     const text = element.shadowRoot.querySelector('[data-diagnosis-overview]').textContent;
-    expect(text).toContain('订单数据库'); expect(text).toContain('不能据此判断当前异常'); expect(text).toContain('刷新');
-    expect(element.shadowRoot.querySelector('[data-evidence-id] summary').textContent).not.toContain('raw-evidence-id');
-    expect(element.shadowRoot.querySelector('[data-evidence-id] summary').textContent).toContain('已过期');
+    expect(text).toContain('订单数据库'); expect(element.shadowRoot.textContent).toContain('不能据此判断当前正常或异常'); expect(element.shadowRoot.textContent).toContain('刷新');
+    expect(element.shadowRoot.querySelector('[data-evidence-id]').textContent).not.toContain('raw-evidence-id');
+    expect(element.shadowRoot.querySelector('app-data-table').textContent).toContain('已过期');
   });
   it('separates execution completion, partial verification and historical snapshot time', async () => {
     const element = await mount();
     element.agentResult = { analysisId: 7, status: 'completed', completedAt: '2026-10-01T10:00:00Z', result: { verification: 'partial', evidenceSnapshot: { collectedAt: '2026-10-01T09:00:00Z' }, conclusions: ['CPU 超出配置范围'], recommendations: [{ action: '检查采集连接' }] } };
     await element.updateComplete;
+    element.switchTab('result'); await element.updateComplete;
     const text = element.shadowRoot.querySelector('[data-analysis-id]').textContent;
     expect(text).toContain('部分完成'); expect(text).toContain('CPU 超出配置范围'); expect(text).toContain('检查采集连接'); expect(text).toContain('2026-10-01'); expect(text).toContain('未验证 Evidence ID');
   });
@@ -76,7 +77,7 @@ describe('business diagnosis explanation', () => {
   });
   it('shows an unconfirmed query separately from the last running state', async () => {
     const element = await mount(); element.agentResult = { analysisId: 7, status: 'running' }; element.statusDeadline = Date.now() - 1;
-    await element.checkStatus(); await element.updateComplete;
+    await element.checkStatus(); element.switchTab('result'); await element.updateComplete;
     expect(element.shadowRoot.querySelector('[data-task-status]').textContent).toContain('状态待确认');
     expect(element.agentResult.status).toBe('running');
   });
@@ -86,10 +87,10 @@ describe('business diagnosis explanation', () => {
     element.evidence = { generatedAt: 'bad-date', facts: [item, { ...item, id: 'future', quality: 'good', observedAt: new Date(Date.now() + 120_000).toISOString() }, { ...item, id: 'no-expiry', quality: 'good', validUntil: null }], inferences: [], hypotheses: [], gaps: ['NEW_GAP'], truncated: true };
     await element.updateComplete;
     const text = element.shadowRoot.querySelector('[data-diagnosis-overview]').textContent;
-    expect(text).toContain('有效期内且质量有效的事实 0 项'); expect(text).toContain('时间未知'); expect(text).toContain('返回证据已截断');
+    expect(element.shadowRoot.textContent).toContain('0 / 3 项事实处于有效期且质量有效'); expect(text).toContain('时间未知'); expect(element.shadowRoot.textContent).toContain('返回证据已截断');
     expect(element.shadowRoot.textContent).toContain('部分证据无法确认');
-    expect(element.shadowRoot.querySelector('[data-evidence-id="future"] summary').textContent).toContain('时间未知');
-    expect(element.shadowRoot.querySelector('[data-evidence-id="no-expiry"] summary').textContent).toContain('有效期未知');
+    expect(element.shadowRoot.querySelector('[data-evidence-id="future"]').closest('tr').textContent).toContain('时间未知');
+    expect(element.shadowRoot.querySelector('[data-evidence-id="no-expiry"]').closest('tr').textContent).toContain('有效期未知');
   });
   it('keeps querying an existing unknown task even when refreshing evidence is forbidden', async () => {
     const element = await mount();
