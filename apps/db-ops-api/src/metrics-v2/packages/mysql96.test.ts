@@ -28,7 +28,7 @@ it.each(['9.6.0', '9.7.0', 'unknown'])('new uptime-only package bounds %s withou
   expect(release.derived).toEqual([]);
   const target = resource(); target.attributes['db.version'].value = version;
   const query = vi.fn(async () => [[{ Variable_name: 'Queries', Value: '9007199254740993' }, { Variable_name: 'Uptime', Value: '1000' }], []] as [unknown, unknown]);
-  const result = await runPackage(registry, { package: release.package, credential_ref: 'credential:target', overrides: {} }, {
+  const result = await runPackage(registry, { package: { id: release.package.id, version: release.package.version, digest: release.package.digest }, credential_ref: 'credential:target', overrides: {} }, {
     resource: target, binding_id: 'instance:1', attempt_id: 'trial:1', config_revision: 1, observed_at: at, clock: () => at, evidence: {},
     resolve: async () => ({ method: 'sql', pool: { query } }),
   });

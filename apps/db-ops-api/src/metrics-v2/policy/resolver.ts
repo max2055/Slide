@@ -1,3 +1,4 @@
+import { checkApplicability } from '../packages/applicability.js';
 import { CollectionPlanSchema, ResourceSchema, CapabilitySchema, TimestampSchema, resolveDecision, validateBindings,
   type Resource, type Capability, type MetricBinding } from '../../contracts/metrics-v2/index.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
@@ -63,13 +64,7 @@ export function resolvePolicy(registry: PackageRegistry, binding: Binding, group
     config_revision: binding.revision, enabled: settings.enabled };
   const { max_rows: _rows, ...policySettings } = settings;
   const policy = { id: collection.policy_id, revision: collection.policy_revision, ...policySettings };
-  const applicable = p.applicability.map(c => {
-    const attribute = resource.attributes[c.attribute];
-    const valid = attribute && Date.parse(attribute.observed_at) <= Date.parse(at);
-    const value = valid ? attribute.value : undefined;
-    const normalized = c.attribute === 'db.version' && typeof value === 'string' ? value.split('.').slice(0, 2).join('.') : String(value);
-    return { condition: c, status: value === undefined ? 'unknown' : c.values.includes(normalized) ? 'supported' : 'unsupported', attribute };
-  });
+  const applicable = checkApplicability(p, resource, at);
   const entries = mappings.map(m => {
     const method = m.source.kind === 'derived' ? 'derived' as const : p.collectors.find(c => c.id === (m.source as { collector_id: string }).collector_id)!.method;
     const supplied = capabilities.filter(c => c.resource_id === resource.id && metricKey(c.metric) === metricKey(m.metric) && c.method === method)
@@ -81,8 +76,8 @@ export function resolvePolicy(registry: PackageRegistry, binding: Binding, group
     };
     if (applicable.some(a => a.status !== 'supported')) capability = {
       ...capability, status: applicable.some(a => a.status === 'unsupported') ? 'unsupported' : 'unknown',
-      basis: applicable.map(a => ({ kind: a.condition.attribute.includes('version') ? 'version' as const : 'resource' as const,
-        evidence: `${a.condition.attribute}:${a.status};observed_at:${a.attribute?.observed_at ?? 'unknown'}` })),
+      basis: applicable.map(a => ({ kind: a.attribute.includes('version') ? 'version' as const : 'resource' as const,
+        evidence: `${a.attribute}:${a.status};observed_at:${resource.attributes[a.attribute]?.observed_at ?? 'unknown'}` })),
       evaluated_at: at, valid_until: new Date(Date.parse(at) + settings.stale_after_ms).toISOString(),
     };
     m.enabled = metricToggles.get(metricKey(m.metric))!;
@@ -118,7 +113,7 @@ export function resolvePolicy(registry: PackageRegistry, binding: Binding, group
   const estimatedSeries = entries.filter(e => e.decision !== 'disabled' && e.decision !== 'unsupported')
     .reduce((n, e) => n + (requiredDimensions(e.binding.metric).length ? settings.max_rows : 1), 0);
   rule(estimatedSeries <= settings.max_series_per_resource, 'POLICY_SERIES_BUDGET');
-  return { plan: CollectionPlanSchema.parse({ binding: collection, policy, resolved_at: at, entries: concreteEntries }), settings, sources, platform_limits: { ...PLATFORM_LIMITS },
+  return { applicability: applicable, plan: CollectionPlanSchema.parse({ binding: collection, policy, resolved_at: at, entries: concreteEntries }), settings, sources, platform_limits: { ...PLATFORM_LIMITS },
     metric_templates: entries.map(e => ({ metric: e.binding.metric, source: e.binding.source, enabled: e.binding.enabled,
       required_dimensions: requiredDimensions(e.binding.metric), capability: e.capability, decision: e.decision })),
     metric_sources: metricSources, dependencies, collector_timeouts: collectorTimeouts,

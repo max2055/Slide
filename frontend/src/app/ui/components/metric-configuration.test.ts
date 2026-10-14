@@ -30,7 +30,7 @@ it('editing invalidates previews and trial; sends full overrides without credent
 });
 it('409 clears prior proofs without retrying or overwriting revision', async () => {
   mock(); const el = await mount();
-  authFetch.mockResolvedValue({ ok: false, status: 409 });
+  authFetch.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'POLICY_REVISION_CONFLICT' }) });
   const before = authFetch.mock.calls.length; await el.execute('preview');
   expect(authFetch.mock.calls.length).toBe(before + 1);
   expect(el.preview).toBeNull(); expect(el.error).toContain('重新加载');
