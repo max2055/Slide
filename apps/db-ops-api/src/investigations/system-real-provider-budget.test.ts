@@ -100,7 +100,7 @@ const standingJournal = () => {
   }
   stopSystemSends(previousJournal, 'CONTEXT_UNRECOVERABLE');
   const path = previousJournal + '.standing';
-  initializeSystemJournal(path, { authorization: standingAuthorization, previousJournal });
+  initializeSystemJournal(path, { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal });
   return { path, previousJournal };
 };
 it('standing authorization removes approval ceilings while accumulating both stopped scenes', () => {
@@ -116,28 +116,28 @@ it('standing authorization removes approval ceilings while accumulating both sto
 });
 it('standing scenes cannot branch, copy or reopen a stopped scene; a new linked scene retains usage', () => {
   const { path, previousJournal } = standingJournal();
-  expect(() => initializeSystemJournal(path + '.branch', { authorization: standingAuthorization, previousJournal })).toThrow();
+  expect(() => initializeSystemJournal(path + '.branch', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal })).toThrow();
   const oldest = join(previousJournal, '..', 'previous.jsonl');
-  expect(() => initializeSystemJournal(path + '.bypass', { authorization: standingAuthorization, previousJournal: oldest })).toThrow();
+  expect(() => initializeSystemJournal(path + '.bypass', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal: oldest })).toThrow();
   writeFileSync(path + '.copy', readFileSync(path));
   expect(() => reserveSystemSend(path + '.copy', 1, 1)).toThrow('T09_AUTHORIZATION_ALREADY_CONSUMED');
   reserveSystemSend(path, 1000, 4096);
   receiveSystemUsage(path, 1, { inputTokens: 100, outputTokens: 200, cachedInputTokens: 50 });
-  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization, previousJournal: path })).toThrow();
+  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal: path })).toThrow();
   stopSystemSends(path, 'QUALIFICATION_ASSERTION_OR_ENVIRONMENT');
-  initializeSystemJournal(path + '.next', { authorization: standingAuthorization, previousJournal: path });
+  initializeSystemJournal(path + '.next', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal: path });
   expect(readSystemJournal(path + '.next')).toMatchObject({ requests: 0, baselineTokens: 6351, cumulativeRequests: 10 });
 });
 it('standing authorization still blocks unknown sends, missing usage, corrupt history and locks', () => {
   const { path, previousJournal } = standingJournal();
   reserveSystemSend(path, 1000, 4096);
   stopSystemSends(path, 'PROVIDER_HTTP_500');
-  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization, previousJournal: path })).toThrow('T09_BASELINE_INVALID');
+  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal: path })).toThrow('T09_BASELINE_INVALID');
   expect(() => reserveSystemSend(path, 1, 1)).toThrow('T09_PROVIDER_DIAGNOSIS_REQUIRED');
   const other = standingJournal();
   reserveSystemSend(other.path, 1000, 4096);
   expect(() => receiveSystemUsage(other.path, 1, { inputTokens: NaN, outputTokens: 1, cachedInputTokens: 0 })).toThrow('T09_USAGE_UNAVAILABLE');
-  expect(() => initializeSystemJournal(other.path + '.next', { authorization: standingAuthorization, previousJournal: other.path })).toThrow();
+  expect(() => initializeSystemJournal(other.path + '.next', { authorization: standingAuthorization, batchLedger: join(previousJournal, '..', 'batch.json'), previousJournal: other.path })).toThrow();
   writeFileSync(previousJournal, readFileSync(previousJournal, 'utf8') + ' ');
   expect(() => readSystemJournal(path)).toThrow('T09_BASELINE_INVALID');
 });
@@ -150,7 +150,7 @@ it('explicit worktree relocation verifies unchanged historical bytes and claims 
   const legacyBefore = readFileSync(legacy, 'utf8');
   renameSync(legacyDir, relocatedDir); dirs[dirs.indexOf(legacyDir)] = relocatedDir;
   const next = join(relocatedDir, 'next.jsonl');
-  initializeSystemJournal(next, { authorization: standingAuthorization, previousJournal: join(relocatedDir, 'journal.jsonl'),
+  initializeSystemJournal(next, { authorization: standingAuthorization, batchLedger: join(relocatedDir, 'batch.json'), previousJournal: join(relocatedDir, 'journal.jsonl'),
     historicalPaths: { [legacy]: join(relocatedDir, 'journal.jsonl'),
       [join(legacyDir, 'previous.jsonl')]: join(relocatedDir, 'previous.jsonl') } });
   expect(readSystemJournal(next)).toMatchObject({ cumulativeTokens: 3281, cumulativeRequests: 8 });
@@ -168,8 +168,76 @@ it('a standing history can be imported into a later worktree with exact path ali
   const oldDir = join(path, '..'), newDir = oldDir + '.moved';
   renameSync(oldDir, newDir); dirs[dirs.indexOf(oldDir)] = newDir;
   const next = join(newDir, 'next.jsonl');
-  initializeSystemJournal(next, { authorization: standingAuthorization, previousJournal: join(newDir, 'journal.jsonl.standing'),
+  initializeSystemJournal(next, { authorization: standingAuthorization, batchLedger: join(newDir, 'batch.json'), previousJournal: join(newDir, 'journal.jsonl.standing'),
     historicalPaths: { [path]: join(newDir, 'journal.jsonl.standing'), [previousJournal]: join(newDir, 'journal.jsonl'),
       [join(oldDir, 'previous.jsonl')]: join(newDir, 'previous.jsonl') } });
   expect(readSystemJournal(next)).toMatchObject({ cumulativeTokens: 6351, cumulativeRequests: 10 });
 });
+
+
+it('T09-BATCH-01 rejects a standing reservation exceeding the fixed batch before any send', () => {
+  const { path } = standingJournal();
+  expect(() => reserveSystemSend(path, 10_000_000, 4096)).toThrow('T09_TOKEN_LIMIT');
+  expect(readSystemJournal(path)).toMatchObject({ requests: 0, cumulativeTokens: 6051 });
+});
+it('settles actual usage, persists 50/80 checkpoints and stops at the exact batch boundary', () => {
+  const { path } = standingJournal();
+  reserveSystemSend(path, 6_000_000, 1000);
+  receiveSystemUsage(path, 1, { inputTokens: 4_993_948, outputTokens: 1, cachedInputTokens: 1000 });
+  expect(readSystemJournal(path)).toMatchObject({ cumulativeTokens: 5_000_000,
+    batch: { id: 'T09-System-V1', tokenLimit: 10_000_000, phase: 'report' } });
+  // Unused reservation released: the next 3M fits against actual 5M.
+  reserveSystemSend(path, 2_999_999, 1);
+  receiveSystemUsage(path, 2, { inputTokens: 2_999_999, outputTokens: 1, cachedInputTokens: 0 });
+  expect(readSystemJournal(path).batch.phase).toBe('converge');
+  expect(() => reserveSystemSend(path, 2_000_000, 1)).toThrow('T09_TOKEN_LIMIT');
+  reserveSystemSend(path, 1_999_999, 1);
+  receiveSystemUsage(path, 3, { inputTokens: 1_999_999, outputTokens: 1, cachedInputTokens: 0 });
+  expect(readSystemJournal(path)).toMatchObject({ cumulativeTokens: 10_000_000, stopped: true,
+    batch: { phase: 'stop' } });
+  expect(readSystemJournal(path).entries.filter(e => e.kind === 'checkpoint').map(e => e.reason))
+    .toEqual(['BATCH_50_REPORT', 'BATCH_80_CONVERGE', 'BATCH_100_STOP']);
+  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization,
+    previousJournal: path, batchLedger: join(path, '..', 'batch.json') })).toThrow('T09_TOKEN_LIMIT');
+});
+it('a shared batch rejects alternate roots and copied journals even when copied claims match', () => {
+  const one = standingJournal(), two = journal();
+  stopSystemSends(two, 'QUALIFICATION_COMPLETED');
+  expect(() => initializeSystemJournal(two + '.standing', { authorization: standingAuthorization,
+    previousJournal: two, batchLedger: join(one.path, '..', 'batch.json') })).toThrow('T09_BATCH_FORK');
+  reserveSystemSend(one.path, 1000, 1000);
+  receiveSystemUsage(one.path, 1, { inputTokens: 100, outputTokens: 10, cachedInputTokens: 0 });
+  stopSystemSends(one.path, 'QUALIFICATION_COMPLETED');
+  const copy = one.path + '.copy';
+  writeFileSync(copy, readFileSync(one.path));
+  const claimPath = one.previousJournal + '.' + standingAuthorization + '.claim';
+  writeFileSync(claimPath, readFileSync(claimPath, 'utf8').replace(one.path, copy));
+  expect(() => initializeSystemJournal(copy + '.next', { authorization: standingAuthorization,
+    previousJournal: copy, batchLedger: join(one.path, '..', 'batch.json') })).toThrow('T09_BATCH_FORK');
+});
+it('unknown usage and overbound receipts survive restart and cannot replenish a batch', () => {
+  const { path } = standingJournal();
+  reserveSystemSend(path, 9_993_948, 1);
+  expect(() => receiveSystemUsage(path, 1, { inputTokens: 9_993_949, outputTokens: 1, cachedInputTokens: 0 }))
+    .toThrow('T09_USAGE_BOUND_EXCEEDED');
+  expect(readSystemJournal(path)).toMatchObject({ cumulativeTokens: 10_000_001, stopped: true });
+  expect(() => reserveSystemSend(path, 1, 1)).toThrow();
+  const other = standingJournal();
+  reserveSystemSend(other.path, 1000, 1000);
+  expect(() => receiveSystemUsage(other.path, 1, { inputTokens: NaN, outputTokens: 1, cachedInputTokens: 0 })).toThrow();
+  expect(() => initializeSystemJournal(other.path + '.next', { authorization: standingAuthorization,
+    previousJournal: other.path, batchLedger: join(other.path, '..', 'batch.json') })).toThrow();
+});
+it('racing new processes share the standing batch reservation and preserve the full bound', async () => {
+  const { path } = standingJournal();
+  const codes = await Promise.all(Array.from({ length: 6 }, () => new Promise<number | null>((resolve, reject) => {
+    const child = fork(new URL('./system-real-provider-budget.ts', import.meta.url), [], {
+      execArgv: ['--import', import.meta.resolve('tsx'), '--eval',
+        `import {reserveSystemSend} from ${JSON.stringify(new URL('./system-real-provider-budget.ts', import.meta.url).href)}; try {reserveSystemSend(process.env.T09_TEST_JOURNAL,9993948,1);process.exit(0);}catch{process.exit(1);}`],
+      env: { ...process.env, T09_TEST_JOURNAL: path }, silent: true });
+    child.once('error', reject); child.once('exit', resolve);
+  })));
+  expect(codes.filter(code => code === 0)).toHaveLength(1);
+  expect(readSystemJournal(path)).toMatchObject({ requests: 1, cumulativeTokens: 6051,
+    batch: { reservedTokens: 9_993_949, remainingTokens: 0 } });
+}, 30_000);
