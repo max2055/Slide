@@ -241,3 +241,21 @@ it('racing new processes share the standing batch reservation and preserve the f
   expect(readSystemJournal(path)).toMatchObject({ requests: 1, cumulativeTokens: 6051,
     batch: { reservedTokens: 9_993_949, remainingTokens: 0 } });
 }, 30_000);
+
+it('a valid rollback to an earlier scene snapshot cannot replenish shared batch usage', () => {
+  const { path } = standingJournal(), before = readFileSync(path);
+  reserveSystemSend(path, 1000, 1000);
+  receiveSystemUsage(path, 1, { inputTokens: 500, outputTokens: 500, cachedInputTokens: 0 });
+  writeFileSync(path, before);
+  expect(() => reserveSystemSend(path, 1000, 1000)).toThrow('T09_BATCH_JOURNAL_CHANGED');
+});
+it('missing batch state and abandoned shared locks never recreate a fresh batch', () => {
+  const { path } = standingJournal(), ledger = readSystemJournal(path).batch!.ledger;
+  stopSystemSends(path, 'QUALIFICATION_COMPLETED');
+  renameSync(ledger, ledger + '.saved');
+  expect(() => initializeSystemJournal(path + '.next', { authorization: standingAuthorization,
+    previousJournal: path, batchLedger: ledger })).toThrow('T09_BATCH_LEDGER_MISSING');
+  renameSync(ledger + '.saved', ledger);
+  writeFileSync(ledger + '.lock', 'abandoned');
+  expect(() => reserveSystemSend(path, 1, 1)).toThrow();
+});
