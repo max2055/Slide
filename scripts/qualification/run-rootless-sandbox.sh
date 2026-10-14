@@ -8,6 +8,7 @@ cd "$(dirname "$0")/../.."
 [[ "$(id -u)" != 0 ]] || { echo 'Runner user must be non-root' >&2; exit 1; }
 out="$PWD/.qualification/rootless-sandbox"
 mkdir -p "$out"
+printf 'uid=%s\nhost=%s\n' "$(id -u)" "$(uname -s)" > "$out/setup-environment.txt"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
@@ -16,6 +17,7 @@ mysql_container="slide-t12-nonce-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 cleanup() {
   local result=$?
   trap - EXIT
+  set +e
   if [[ -n "$controller_pid" ]]; then kill -TERM "$controller_pid" 2>/dev/null || true; wait "$controller_pid" || true; fi
   docker ps -aq --filter name=slide-sandbox- | xargs -r docker rm -f >/dev/null
   docker rm -f -v "$mysql_container" >/dev/null 2>&1 || true
@@ -29,6 +31,12 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+sudo apt-get update -qq
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl --fail --silent --show-error https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+task_codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
+printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' "$(dpkg --print-architecture)" "$task_codename" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt-get update -qq
 sudo apt-get install -y uidmap dbus-user-session slirp4netns docker-ce-rootless-extras
 sudo systemctl stop docker.service docker.socket
