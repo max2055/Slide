@@ -8,6 +8,7 @@ import { freezeInvestigationCaller } from './authorization.js';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
 import { investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationBudgetPolicySchema, type InvestigationBudgetResponse, type InvestigationUsageResponse } from './governance-contracts.js';
+import { databaseAlertPilotConfiguration, investigationBridgeFlags } from './bridge-flags.js';
 
 export class GovernanceReadError extends Error {
   constructor(readonly code: 'GOVERNANCE_FORBIDDEN' | 'GOVERNANCE_UNAVAILABLE') { super(code); }
@@ -62,9 +63,14 @@ export class InvestigationGovernanceStore {
   }
 
   policies(caller: ActorContext) {
-    return this.read(caller, false, async () => ({ schemaVersion: 1 as const,
-      configurationStatus: 'not_configured' as const, integrationStatus: 'not_connected' as const,
-      source: 'production_composition' as const, items: [], originBoundary: 'investigation_engine_persist_only' as const }));
+    return this.read(caller, false, async () => {
+      const configured = databaseAlertPilotConfiguration().configured, enabled = investigationBridgeFlags().opsAuto;
+      return { schemaVersion: 1 as const, configurationStatus: configured ? 'configured' as const : 'not_configured' as const,
+        integrationStatus: configured && enabled ? 'connected' as const : 'not_connected' as const,
+        source: 'production_composition' as const,
+        items: configured ? [{ id: 'database-alert-pilot' as const, version: 1 as const, profileId: 'ops' as const,
+          source: 'database-alert-engine' as const, enabled, readonly: true as const }] : [], originBoundary: 'investigation_engine_persist_only' as const };
+    });
   }
 
   budget(caller: ActorContext): Promise<InvestigationBudgetResponse> {
@@ -80,7 +86,8 @@ export class InvestigationGovernanceStore {
       return { schemaVersion: 1, source: 'investigationBudgetConfiguration', policy: configured,
         reserveCostMicros: number(config.reserveCostMicros), persistedPolicy: persisted,
         admissionStatus: persisted === null ? 'uninitialized' : isDeepStrictEqual(persisted, configured) && domain.policy_hash === createHash('sha256').update(JSON.stringify(configured)).digest('hex') ? 'matching' : 'conflict',
-        automaticTriggerStatus: 'not_connected', window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles' };
+        automaticTriggerStatus: databaseAlertPilotConfiguration().configured && investigationBridgeFlags().opsAuto ? 'connected' : 'not_connected',
+        window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles' };
     });
   }
 

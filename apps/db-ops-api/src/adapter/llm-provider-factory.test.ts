@@ -113,6 +113,7 @@ describe('configured provider consistency', () => {
   it.each(['getAllProviders', 'getEnabledProviders', 'getDefaultProvider', 'getProviderByName', 'getProviderById', 'getProvidersByDeploymentType'] as const)('%s distinguishes database failure from missing configuration', async method => {
     const error = new Error('driver detail');
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute: vi.fn().mockRejectedValue(error) } as any);
-    await expect((llmDatabaseService[method] as any)('test')).rejects.toMatchObject({ message: 'LLM_CONFIGURATION_UNAVAILABLE', cause: error });
+    const args = ['getAllProviders', 'getEnabledProviders', 'getDefaultProvider'].includes(method) ? [] : ['test'];
+    await expect((llmDatabaseService[method] as any)(...args)).rejects.toMatchObject({ message: 'LLM_CONFIGURATION_UNAVAILABLE', cause: error });
   });
 });

@@ -127,8 +127,8 @@ export interface LLMQuotaAlert {
 }
 
 class LLMDatabaseService {
-  async getSceneBindings(): Promise<SceneBinding[]> {
-    const pool = this.getPool();
+  async getSceneBindings(connection?: Pick<mysql.Pool, 'execute'>): Promise<SceneBinding[]> {
+    const pool = connection ?? this.getPool();
     if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
     try {
       const [rows] = await pool.execute('SELECT scene, provider_id, model FROM llm_scene_bindings');
@@ -179,8 +179,8 @@ class LLMDatabaseService {
   /**
    * 获取所有提供商
    */
-  async getAllProviders(): Promise<LLMProvider[]> {
-    const pool = this.getPool();
+  async getAllProviders(connection?: Pick<mysql.Pool, 'execute'>): Promise<LLMProvider[]> {
+    const pool = connection ?? this.getPool();
     if (!pool) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
 
     try {

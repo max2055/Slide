@@ -15,12 +15,12 @@ describe("event center navigation", () => {
     return element;
   }
 
-  it("exposes the four lifecycle views and restores the requested view", async () => {
+  it("exposes lifecycle and System views and restores the requested view", async () => {
     const element = await renderAt("/events?view=aggregate");
     const root = element.shadowRoot!;
 
     expect([...root.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual([
-      "活动告警", "聚合事件", "规则与策略", "通知投递",
+      "活动告警", "聚合事件", "规则与策略", "通知投递", "平台异常",
     ]);
     expect(root.querySelector("event-management-page")).not.toBeNull();
   });

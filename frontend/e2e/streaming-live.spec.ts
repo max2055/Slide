@@ -78,7 +78,8 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
       socket.send = (data: string, callback: (error?: Error) => void) => {
         const event = JSON.parse(data); const at = performance.now();
         if (event.type === 'stream.delta' || event.type === 'stream.snapshot') raw.parts.push(event);
-        send(data, (error?: Error) => { serverTimings.push({ type: event.type, sendCallbackMs: performance.now() - at }); callback?.(error); });
+        const phase = event.snapshot?.phase ?? event.projection?.operations?.find((op: any) => op.type === 'run.status')?.phase;
+        send(data, (error?: Error) => { serverTimings.push({ type: event.type, phase, at, sendCallbackMs: performance.now() - at }); callback?.(error); });
       };
     });
     legacy = new WebSocket(`ws://127.0.0.1:${port}`);
@@ -159,7 +160,15 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     expect(reduction).toBeGreaterThanOrEqual(.8);
     const accepted = before.received.find((s: any) => s.event.type === 'run.started');
     const actual = before.received.find((s: any) => s.event.snapshot?.phase === 'waiting_model' || s.event.projection?.operations.some((op: any) => op.type === 'run.status' && op.phase === 'waiting_model'));
-    const acceptedToActualMs = actual.at - accepted.at; expect(acceptedToActualMs).toBeGreaterThanOrEqual(0); expect(acceptedToActualMs).toBeLessThanOrEqual(100);
+    const acceptedToActualMs = actual.at - accepted.at;
+    // Preserve boundary clocks even when the unchanged performance gate fails.
+    // Browser and server clocks are independent; compare durations, not epochs.
+    await writeFile(test.info().outputPath('MAX-129-startup-boundary.json'), JSON.stringify({
+      acceptedToActualMs, browserAcceptedAt: accepted.at, browserWaitingAt: actual.at,
+      serverFrames: serverTimings.filter((s: any) => s.type === 'run.started' || s.phase === 'waiting_model'),
+      sourceHead: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
+    }, null, 2));
+    expect(acceptedToActualMs).toBeGreaterThanOrEqual(0); expect(acceptedToActualMs).toBeLessThanOrEqual(100);
     const samples = [...before.samples, ...after.samples].filter(s => s.type.startsWith('stream.'));
     const p95 = (values: number[]) => [...values].sort((a,b) => a-b)[Math.ceil(values.length*.95)-1];
     const paintP95 = p95(samples.map(s => s.paintMs)); expect(paintP95).toBeLessThanOrEqual(100);

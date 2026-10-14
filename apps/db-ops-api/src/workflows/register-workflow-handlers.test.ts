@@ -60,6 +60,15 @@ it('registers exactly the ordered keys without executing handlers, querying stor
   expect(h.deps.reportSchedule.createOccurrenceStore).not.toHaveBeenCalled();
   expect(h.events).toEqual([]);
 });
+it('registers System ingestion only with an explicitly bound handler and preserves its job context', async () => {
+  const h = setup();
+  const execute = vi.fn(async () => ({ disposition: 'suppressed' })), handler = vi.fn(() => execute);
+  const registry = new JobRegistry();
+  registerWorkflowHandlers(registry, { ...h.deps, systemEventBridge: { handler } });
+  expect(execute).not.toHaveBeenCalled();
+  await registry.execute({id:'job',type:'system.event.ingest',payload:{},attempts:1,maxAttempts:5,fencingToken:7},h.context);
+  expect(execute).toHaveBeenCalledWith({}, expect.objectContaining({type:'system.event.ingest'}), h.context);
+});
 
 const simple = [
   ['fault.diagnose-unhealthy', 'fault'], ['capacity.collect', 'collect'],

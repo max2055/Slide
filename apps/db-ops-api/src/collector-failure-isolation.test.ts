@@ -10,8 +10,21 @@ vi.mock('./collection-capabilities.js', () => ({ collectionCapabilityTracker: { 
 
 import { unifiedCollector } from './collector.js';
 import { collectorRegistry } from './collectors/registry.js';
+import { SystemFailurePublisher, installSystemFailurePublisher } from './platform/system-failure-publisher.js';
 
 describe('UnifiedCollector provider failure isolation', () => {
+  it('publishes only stable failure facts, with correlation, without resource credentials or provider message', async () => {
+    const record = vi.fn(async () => {}), publisher = new SystemFailurePublisher(record), uninstall = installSystemFailurePublisher(publisher);
+    const provider = { name: 'system-failure-fixture', supportedDbTypes: ['system-failure'], collect: vi.fn().mockRejectedValue(new Error('password=private')) };
+    collectorRegistry.register(provider as any); state.definitions = [{ id: 'a', name: 'a', is_collected: true }];
+    try {
+      await unifiedCollector.collectInstance({ id: 999, db_type: 'system-failure', host: 'private-host' } as any);
+      await publisher.drain();
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ component: 'collector', stableErrorCode: 'COLLECTOR_PROVIDER_FAILED',
+        callsite: 'collector:provider.collect', origin: 'collector', correlationId: expect.any(String) }));
+      expect(JSON.stringify(record.mock.calls)).not.toContain('private');
+    } finally { uninstall(); }
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     recordMetrics.mockResolvedValue({ success: true });

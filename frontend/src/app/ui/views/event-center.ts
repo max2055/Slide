@@ -1,13 +1,15 @@
 import { LitElement, css, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import './system-events.ts';
 
-type EventCenterView = "active" | "aggregate" | "rules" | "notifications";
+type EventCenterView = "active" | "aggregate" | "rules" | "notifications" | "system";
 
 const EVENT_VIEWS: readonly { id: EventCenterView; label: string }[] = [
   { id: "active", label: "活动告警" },
   { id: "aggregate", label: "聚合事件" },
   { id: "rules", label: "规则与策略" },
   { id: "notifications", label: "通知投递" },
+  { id: "system", label: "平台异常" },
 ];
 
 @customElement("event-center-page")
@@ -84,6 +86,7 @@ export class EventCenterPage extends LitElement {
 
   private renderView() {
     switch (this.activeView) {
+      case "system": return html`<system-events-page></system-events-page>`;
       case "aggregate": return html`<event-management-page></event-management-page>`;
       case "rules": return html`<alerts-page mode="rules"></alerts-page>`;
       case "notifications": return html`<alerts-page mode="notifications"></alerts-page>`;

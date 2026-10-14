@@ -15,6 +15,7 @@ import { alertEventService } from './alert-event-service';
 import { dbConnection } from './db-connection';
 import { serverAlertEvaluator } from './server-alert-evaluator';
 import { networkDeviceAlertEvaluator } from './network-devices/network-device-alert-evaluator.js';
+import { investigationBridgeFlags } from './investigations/bridge-flags.js';
 
 interface AlertEngineStatus {
   running: boolean;
@@ -302,6 +303,12 @@ class AlertEngine {
     if (result.success && result.alertId) {
       assertWorkflowActive();
       await alertSilenceService.silence(instanceId, rule.metric_name, silenceDuration, result.alertId);
+      // Source ingestion commits an admission only; the Workflow worker owns
+      // all provider/tool execution. RCA's shared owner also covers cron/manual.
+      if (investigationBridgeFlags().opsAuto) {
+        const { alertRCAService } = await import('./alert-rca-service.js');
+        await alertRCAService.analyzeAlert(result.alertId, 'auto');
+      }
     }
 
     console.log(`🚨 创建告警：${title}`);

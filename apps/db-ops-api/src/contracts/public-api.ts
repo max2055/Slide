@@ -4,6 +4,8 @@ import { InvestigationSchemas } from '../investigations/contracts.js';
 import { InvestigationProfileSchemas } from '../investigations/profile-contracts.js';
 import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
 import { InvestigationObservationSchemas } from '../investigations/observation-contracts.js';
+import { InvestigationBridgeSchemas } from '../investigations/bridge-contracts.js';
+import { SystemHttpSchemas } from '../investigations/system-http-contracts.js';
 
 export const InfrastructureReadinessSchema = Type.Object({ ready: Type.Boolean() }, { $id: 'InfrastructureReadiness', additionalProperties: false });
 
@@ -664,6 +666,8 @@ export const PublicApiSchemas = {
   ...InvestigationGovernanceSchemas,
   ...InvestigationSchemas, ...InvestigationObservationSchemas,
   ...InvestigationHttpSchemas,
+  ...InvestigationBridgeSchemas,
+  ...SystemHttpSchemas,
   QueueObservation: QueueObservationSchema,
   PlatformObservations: PlatformObservationsSchema,
   EventResolveRequest: Type.Object({ resolution_notes: Type.String() }, { $id: 'EventResolveRequest', additionalProperties: false }),

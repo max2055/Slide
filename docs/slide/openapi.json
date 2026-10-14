@@ -580,6 +580,58 @@
         ],
         "type": "object"
       },
+      "AlertInvestigationResponse": {
+        "$id": "AlertInvestigationResponse",
+        "additionalProperties": false,
+        "properties": {
+          "analysisId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9-]{36}$",
+                "type": "string"
+              },
+              {
+                "minimum": 1,
+                "type": "integer"
+              }
+            ]
+          },
+          "investigationId": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          },
+          "requestId": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          },
+          "session_key": {
+            "type": "string"
+          },
+          "sessionKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
       "AnalysisEvidenceSnapshot": {
         "$id": "AnalysisEvidenceSnapshot",
         "additionalProperties": false,
@@ -5111,8 +5163,16 @@
             ]
           },
           "automaticTriggerStatus": {
-            "const": "not_connected",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "not_connected",
+                "type": "string"
+              },
+              {
+                "const": "connected",
+                "type": "string"
+              }
+            ]
           },
           "persistedPolicy": {
             "anyOf": [
@@ -5835,18 +5895,68 @@
         "additionalProperties": false,
         "properties": {
           "configurationStatus": {
-            "const": "not_configured",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "not_configured",
+                "type": "string"
+              },
+              {
+                "const": "configured",
+                "type": "string"
+              }
+            ]
           },
           "integrationStatus": {
-            "const": "not_connected",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "not_connected",
+                "type": "string"
+              },
+              {
+                "const": "connected",
+                "type": "string"
+              }
+            ]
           },
           "items": {
             "items": {
-              "not": {}
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "const": "database-alert-pilot",
+                  "type": "string"
+                },
+                "profileId": {
+                  "const": "ops",
+                  "type": "string"
+                },
+                "readonly": {
+                  "const": true,
+                  "type": "boolean"
+                },
+                "source": {
+                  "const": "database-alert-engine",
+                  "type": "string"
+                },
+                "version": {
+                  "const": 1,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "profileId",
+                "source",
+                "enabled",
+                "readonly"
+              ],
+              "type": "object"
             },
-            "maxItems": 0,
+            "maxItems": 1,
             "type": "array"
           },
           "originBoundary": {
@@ -10034,6 +10144,40 @@
           "identifier",
           "pid",
           "message"
+        ],
+        "type": "object"
+      },
+      "LegacyAnalysisLink": {
+        "$id": "LegacyAnalysisLink",
+        "additionalProperties": false,
+        "properties": {
+          "analysisId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          },
+          "investigationId": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          },
+          "legacy": {
+            "const": true,
+            "type": "boolean"
+          },
+          "readOnly": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "investigationId",
+          "analysisId",
+          "legacy",
+          "readOnly"
         ],
         "type": "object"
       },
@@ -15509,6 +15653,230 @@
         ],
         "type": "object"
       },
+      "SystemEventDetail": {
+        "$id": "SystemEventDetail",
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "const": "accepted",
+                "type": "string"
+              },
+              {
+                "const": "linked",
+                "type": "string"
+              },
+              {
+                "const": "suppressed",
+                "type": "string"
+              }
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "fact": {},
+          "investigationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "type": "string"
+          },
+          "stableErrorCode": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "suppressionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "eventId",
+          "component",
+          "occurredAt",
+          "summary",
+          "stableErrorCode",
+          "disposition",
+          "suppressionReason",
+          "investigationId",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SystemEventsPage": {
+        "$id": "SystemEventsPage",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$id": "SystemEventSummary",
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "string"
+                },
+                "disposition": {
+                  "anyOf": [
+                    {
+                      "const": "accepted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "linked",
+                      "type": "string"
+                    },
+                    {
+                      "const": "suppressed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "eventId": {
+                  "type": "string"
+                },
+                "investigationId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "occurredAt": {
+                  "type": "string"
+                },
+                "stableErrorCode": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "suppressionReason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "eventId",
+                "component",
+                "occurredAt",
+                "summary",
+                "stableErrorCode",
+                "disposition",
+                "suppressionReason",
+                "investigationId"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "SystemEventSummary": {
+        "$id": "SystemEventSummary",
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "const": "accepted",
+                "type": "string"
+              },
+              {
+                "const": "linked",
+                "type": "string"
+              },
+              {
+                "const": "suppressed",
+                "type": "string"
+              }
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "investigationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "type": "string"
+          },
+          "stableErrorCode": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "suppressionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "eventId",
+          "component",
+          "occurredAt",
+          "summary",
+          "stableErrorCode",
+          "disposition",
+          "suppressionReason",
+          "investigationId"
+        ],
+        "type": "object"
+      },
       "VersionedInvestigationResult": {
         "$id": "VersionedInvestigationResult",
         "additionalProperties": false,
@@ -16223,6 +16591,113 @@
           },
           "404": {
             "description": "Snapshot absent, legacy, or outside the current authorization scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/ai/analysis/{id}/investigation": {
+      "post": {
+        "description": "Explicit lazy readonly legacy link (INVESTIGATION_LEGACY_BRIDGE_ENABLED). Requires live ai:view/chat/resource authority and original principal for manual results. Unique per Analysis; does not enqueue, replay or invent a Run/result version. Archived view cannot be reopened or appended. Unknown stays unknown. Empty body only; private/no-store.",
+        "operationId": "linkLegacyAnalysis",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyAnalysisLink"
+                }
+              }
+            },
+            "description": "Unique archived historical link"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "404": {
+            "description": "Source or original actor not visible"
+          },
+          "409": {
+            "description": "Historical analysis is still active"
+          },
+          "503": {
+            "description": "Bridge disabled or store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/{id}/investigation": {
+      "post": {
+        "description": "Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.",
+        "operationId": "openAlertInvestigation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Legacy analysis response (numeric id)"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertInvestigationResponse"
+                }
+              }
+            },
+            "description": "Accepted or linked investigation"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "403": {
+            "description": "AI management permission required"
+          },
+          "404": {
+            "description": "Source not visible"
+          },
+          "409": {
+            "description": "Legacy result unknown; no replay"
+          },
+          "422": {
+            "description": "Source excluded or suppressed"
+          },
+          "503": {
+            "description": "Acceptance unavailable; never fallback to another owner"
           }
         },
         "security": [
@@ -17156,7 +17631,7 @@
     },
     "/api/investigation-budget": {
       "get": {
-        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger not connected.",
+        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status reflects the database pilot configuration and flag.",
         "operationId": "getInvestigationBudget",
         "responses": {
           "200": {
@@ -17191,7 +17666,7 @@
     },
     "/api/investigation-policies": {
       "get": {
-        "description": "Readonly governance facts. Requires live ai:view. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. No production registry: not_configured/not_connected with empty items; investigation_engine persists only.",
+        "description": "Readonly governance facts. Requires live ai:view. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Actual operator-owned database alert pilot configuration/flag status only; no principal or resource identifiers. Configuration never implies live authority or budget. investigation_engine persists only.",
         "operationId": "getInvestigationPolicies",
         "responses": {
           "200": {
@@ -19002,6 +19477,80 @@
           },
           "403": {
             "description": "Observation permission denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events": {
+      "get": {
+        "description": "Live chat:view and config:view required. At most 100 durable System events, including suppressed engine failures. Investigation links require the original ACL; no implicit service sharing.",
+        "operationId": "listSystemEvents",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventsPage"
+                }
+              }
+            },
+            "description": "Durable System event summaries"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "No authorized System scope"
+          },
+          "503": {
+            "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events/{id}": {
+      "get": {
+        "description": "Live System scope required. Returns immutable body-free original fact and hash; never request/job/model payloads.",
+        "operationId": "getSystemEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventDetail"
+                }
+              }
+            },
+            "description": "Original System event fact"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Absent or unauthorized"
+          },
+          "503": {
+            "description": "Store unavailable"
           }
         },
         "security": [

@@ -95,6 +95,8 @@
 
 stage及UUID以MAX-140当前Issue为准，不能只按旧附件的任务列举顺序并行启动。现存关联MAX-113(outbox)、MAX-114(Analysis)、MAX-126/127(Parts/display)、MAX-139(source错误)已完成各自工作，但本矩阵没有仅凭done认定新候选已修复。源码已包含#142/MAX-139错误分类与#130/MAX-126投影实现；新发现不能重复实现既有修复。本R00没有重新分配或启动子任务。
 
+T08 当前数据库桥消费增量见 [t08-validation.md](t08-validation.md)：数据库 alert source 持久冻结单 owner；真实 MySQL 验证无 snapshot 的 manual unknown 不被本桥采纳或重试，source viewer 不变 operator，flag 回切不接管新 job。Legacy link 按原主体及实时资源授权，只读查看不入队。只关闭本桥所消费的有界证据缺口；原 FINAL-0106 其他旧调用者及全 Analysis 领域 pending、父独立 Review/准确 head CI/普通 merge 与 T12 全量门禁均保留。
+
 ## 6. 验证与移交
 
 当前源码复用：后端18个测试文件247项通过、前端5个文件76项通过，没有skip。复现脚本含5组有界检查，其中实例边界覆盖2条候选；代码没有业务改动，全部命令与限制见 [验证记录](validation.md)。文档/输入hash/全部T01–T12映射/路径检查独立完成，不为文档写镜像测试。
