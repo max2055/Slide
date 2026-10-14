@@ -99,6 +99,7 @@ try {
     const repeated: any = await env!.rca.analyzeAlert(ids[0], 'auto');
     assert.equal(repeated.investigationId, admitted.investigationId);
     assert.equal(await count('SELECT COUNT(*) AS n FROM ai_analysis WHERE related_id=?', [ids[0]]), 0);
+    await waitFor(async () => await count('SELECT COUNT(*) AS n FROM investigation_results WHERE investigation_id=?', [admitted.investigationId]) === 1);
     // Flag off is confirmed at the bridge port, without invoking the legacy model lane.
     const [outside] = await env!.pool.query('SELECT * FROM alerts WHERE id=?', [ids[1]]);
     const providerCallsBefore = env!.counts().providerCalls;
