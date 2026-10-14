@@ -76,6 +76,25 @@ describe('NetworkDeviceAlertEvaluator', () => {
     mocks.resolveAlert.mockResolvedValue({ success: true });
   });
 
+  it.each([
+    ['error', new Date('2026-08-26T00:00:00Z')],
+    ['unreachable', null],
+    ['unreachable', new Date('2026-08-25T00:00:00Z')],
+    ['online', null],
+  ])('does not infer reachability from %s without a fresh check', async (status, lastCheckAt) => {
+    mocks.getAlertRules.mockResolvedValue([{ id: 17, name: '不可达', target_type: 'network_device',
+      metric_name: 'device_reachability', operator: '=', threshold: 0, duration_seconds: 0,
+      severity: 'error', enabled: true }]);
+    mocks.getActiveAlerts.mockResolvedValue([{ id: 77, target_type: 'network_device', network_device_id: 7,
+      metric_name: 'device_reachability', tags: { rule_id: 17 } }]);
+    const evaluator = new NetworkDeviceAlertEvaluator({ clock: () => new Date('2026-08-26T00:01:00Z'),
+      store: store({ getCollectionEnabledDevices: async () => [{ ...device, status, lastCheckAt }],
+        getLatestObservations: async () => [] }) });
+    await evaluator.evaluate();
+    expect(mocks.createAlert).not.toHaveBeenCalled();
+    expect(mocks.resolveAlert).not.toHaveBeenCalled();
+  });
+
   it('evaluates network rules and persists a device-targeted alert', async () => {
     const evaluator = new NetworkDeviceAlertEvaluator({ store: store(), clock: () => new Date('2026-08-26T00:01:00.000Z') });
 
