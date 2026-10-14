@@ -8,6 +8,7 @@
 - 新 command snapshot 使用 version 2。无版本的既有数据库 command 恢复时保留原 message/context/goal/idempotency hash；已有运行或未知 Analysis 不切换执行 owner。关闭 flag 后已提交 owner 继续复用。
 - 自动服务主体仅限当前资源，并实时重载权限。配置沿现有 `INVESTIGATION_OPS_SERVICE_USER_ID`，新增 `INVESTIGATION_OPS_SERVER_IDS` / `INVESTIGATION_OPS_NETWORK_DEVICE_IDS` 白名单；未配置不自动降级启动第二条执行。
 - 服务器/网络持久观测值、阈值、真实时间范围、质量、dimensions。Metrics V2 使用真实 bucket 范围，partial 保留；没有单点时间不补当前时间。legacy 单点只记录采集点，规则持续秒数另记 `rule_window_seconds`，不伪造连续采样。显式未来/无效时间与无值保持 unknown；缺指标不等于正常或宕机。
+- 实际可达性规则 `device_reachability` 的有效零值属于 observed_status；同一指标缺值仍为 unknown。兼容既有 `unreachable` / `network.device.status` 名称，不将缺测和已观测可达性混为一类。
 - 活跃 server/network 告警去重时，指标值、文案与观测 tags 在同一 SQL UPDATE 中刷新，保留其它规则元数据；不能将新值归到旧采集窗口。允许最新观测晚于告警首次创建时间，以持久 updated_at 核验未来时间，不能用 updated_at 伪造采集时间。已提交 owner 仍保持原冻结快照，不因后续 touch 启动第二条调查。
 - 三类资源共用 `resource-investigation-links` 查询现有调查，不隐式调用模型。调查详情返回原资源，列表读取 resource URL 筛选。保留旧诊断入口。`instance-overview-tab` 当前未被实际详情消费，故同时接入 `instance-detail.ts`。
 - 资源详情移动端修复限定于三个详情 host，保留可见导航栏所需宽度；左右位置均验收。没有全仓样式重构或生产配置变更。

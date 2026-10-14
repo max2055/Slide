@@ -36,7 +36,7 @@ export function alertObservation(alert: DatabaseAlertSource) {
     observedAt: observedAt ?? null, from: validWindow ? from : observedAt ?? null,
     to: validWindow ? to : observedAt ?? null, quality,
     dimensions: tags.dimensions && typeof tags.dimensions === 'object' ? tags.dimensions : {},
-    availability: alert.metric_name === 'unreachable' || alert.metric_name === 'network.device.status'
+    availability: ['unreachable','device_reachability','network.device.status'].includes(alert.metric_name ?? '')
       ? quality === 'good' ? 'observed_status' : 'unknown' : 'not_observed' };
 }
 export function alertInvestigationInput(alert: DatabaseAlertSource) {

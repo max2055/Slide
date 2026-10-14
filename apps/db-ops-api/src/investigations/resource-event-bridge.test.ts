@@ -30,6 +30,8 @@ describe('resource event subject and observation boundaries', () => {
       {...source,tags:{...source.tags,collected_at:'invalid'}}])
       expect(alertObservation(alert).quality).toBe('unknown');
     expect(alertObservation({...source,metric_name:'network.device.status',metric_value:null,tags:{quality:'unknown'}})).toMatchObject({quality:'unknown',availability:'unknown'});
+    expect(alertObservation({...source,metric_name:'device_reachability',metric_value:0})).toMatchObject({value:0,quality:'good',availability:'observed_status'});
+    expect(alertObservation({...source,metric_name:'device_reachability',metric_value:null})).toMatchObject({value:null,quality:'unknown',availability:'unknown'});
   });
 });
 
