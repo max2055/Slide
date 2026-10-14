@@ -3,7 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 mode="${1:---full}"
-case "$mode" in --full|--integration) ;; *) echo 'Use --full or --integration' >&2; exit 64 ;; esac
+case "$mode" in --full|--integration|--api) ;; *) echo 'Use --full, --integration or --api' >&2; exit 64 ;; esac
 container="slide-t12-$$-$RANDOM"
 cleanup() { docker stop --time 10 "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -29,7 +29,7 @@ export BUDGET_TEST_MYSQL_PORT="$port" BUDGET_TEST_MYSQL_PASSWORD=''
 export TRIGGER_TEST_MYSQL_PORT="$port" TRIGGER_TEST_MYSQL_PASSWORD=''
 export T08_TEST_MYSQL_PORT="$port" T08_TEST_MYSQL_PASSWORD=''
 export T11_TEST_MYSQL_PORT="$port" T11_TEST_MYSQL_PASSWORD=''
-if [[ "$mode" == --full ]]; then
+if [[ "$mode" == --full || "$mode" == --api ]]; then
   # The full API candidate enables all existing MySQL gates on this exclusive
   # server. Suites requiring other resources still need their own fixtures.
   for prefix in REPORT CRON METRICS_V2 DELIVERY ALERT_EVENT APPROVAL SOURCE METRIC_QUALITY ANALYSIS INSTANCE_REMOVAL; do
@@ -44,6 +44,10 @@ run_gate() {
   "$@" >"$T12_OUTPUT_DIR/$name.log" 2>&1 || { tail -60 "$T12_OUTPUT_DIR/$name.log"; return 1; }
   tail -8 "$T12_OUTPUT_DIR/$name.log"
 }
+if [[ "$mode" == --api ]]; then
+  run_gate api pnpm --filter slide-api test --maxWorkers=1 --reporter=default --reporter=json --outputFile="$T12_OUTPUT_DIR/api.json"
+  exit 0
+fi
 run_gate rollout pnpm --filter slide-api exec tsx ../../tests/qualification/investigation-rollout.ts
 if [[ "$mode" == --full ]]; then
   run_gate agent-core pnpm --filter @slide/agent-core test

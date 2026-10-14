@@ -125,7 +125,11 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const settings = await browser.newPage();
     await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
     await browserExpect(settings.locator('metric-settings')).toBeVisible();
-    await browserExpect(settings.locator('summary').filter({ hasText: 'MySQL 基础采集 · 1.0.0' })).toBeVisible();
+    const mysqlPackage = settings.locator('metric-settings summary')
+      .filter({ has: settings.getByText('MySQL 基础采集', { exact: true }) })
+      .filter({ hasText: /\bv1\.0\.0\b/ });
+    await browserExpect(mysqlPackage).toBeVisible();
+    await browserExpect(mysqlPackage).toContainText('数据库实例');
     await settings.close();
   }, 60000);
 });

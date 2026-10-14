@@ -46,9 +46,17 @@
 
 ## 性能与未完成项
 
-容量初版三次列表 P95 17,030ms；有效事件最终版三次 P95 7,163ms，均未达 500ms 提案。10,000 次重复投递最终版 P95 12.04ms 是 record+重复 deliver 延迟，不能代替首次 admission、事件入队、WS 或取消的独立 SLO。列表 `MysqlInvestigationStore.list` 对候选逐对象检查权限；当前范围记录实测，不扩大为查询重构。最终采样以附件最新 rollout 回执为准，三样本不能证明生产 SLO。
+容量初版三次列表 P95 17,030ms；最终旧候选本地三样本 P95 7,440.11ms、Linux CI 11,593.86ms，均未达 500ms 提案。10,000 次重复投递最终本地 P95 11.30ms 是 record+重复 deliver 延迟，不能代替首次 admission、事件入队、WS 或取消的独立 SLO。列表 `MysqlInvestigationStore.list` 对候选逐对象检查权限；当前范围记录实测，不扩大为查询重构。最终采样以附件最新 rollout 回执为准，三样本不能证明生产 SLO。
 
-`security:sandbox` 要求 Linux/rootless Docker 与真实隔离 controller 环境。当前 macOS 且 Docker SecurityOptions 无 rootless，门禁未通过；不复用生产 controller、不 fake 或 skip。下一步由父任务协调已有授权隔离入口后执行原门禁。未开展真人培训或生产灰度，独立 UI feature flag 当前不存在，UI artifact 回滚未实际执行。
+`security:sandbox` 要求 Linux/rootless Docker 与真实隔离 controller 环境。旧候选在 macOS 失败的原始报告保留。补齐候选由 CI `rootless-sandbox-qualification` 使用一次性 Linux runner、真正 rootless daemon/cgroup v2 delegation、nonce MySQL 专用最小权限账号及正式 controller 执行完整 `release:security-gate`；结果以当前准确 head 的 CI 原始报告为准。`qualification.json` 保存 UID/CapEff/readonly/workspace/socket/mount/network/memory/pids、真实 child spawn、三 runtime、timeout 与清理回执；任何硬检查失败不得发布。
+
+既有 artifact 回滚已经父独立核验：CI38541086523/job115786343852 于 2026-10-14T09:42:37Z 输出 `rollback drill passed: current -> previous`，实际校验 RELEASE.json/frontend/dist/index.html。CI merge-preview e25ef955 与 PR168 head ffe8edc0 的 tree 同为 `0b3dbf1a25693a1e94be1fc243453b84e91b388e`；未变脚本直接复用，当前候选 CI 仍执行同一回滚 gate。无独立 UI flag，不新增该实现。operator 场景手册已交付，未开展真人培训或生产灰度。
+
+## 父复核后的门禁证据
+
+旧候选完整 API 为 4017 passed / 1 failed / 27 skipped；已真实复现 Metrics summary 旧整串断言失败。仅改测试语义，验证同模板名称、版本与资源类型，不改产品。`run-investigation-rollout.sh --api` 使用独占 MySQL 执行完整 API 并保存 `api.json`；当前结果、27 skip 的逐项 suite/数量/条件/范围/独立覆盖映射随最终交付附件保存，旧数字不替代新回归。
+
+原始源码与工具/Prompt 未变部分继续复用，当前候选 source-manifest、CI head/tree 与 A01–A18 原始证据路径绑定在最终附件。完整工程证据齐备才 ready PR/in_review；父 Review 与 merge/main 核验仍是独立出口。SLO 提案和 T11 定性/数值边界保持原样。
 
 T11 已由 Max 真人定性接受，无需重复评审；七维数值 unscored、DB06/NW05 原失败、80%/90% 软目标未测与盲评 unavailable 全部保留。
 

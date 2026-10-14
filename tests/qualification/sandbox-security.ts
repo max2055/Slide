@@ -129,4 +129,14 @@ await eventually(async () => {
   }
 }, 'timed-out sandbox workspace was not removed');
 
+if (process.env.SANDBOX_QUALIFICATION_OUTPUT) {
+  await fs.writeFile(process.env.SANDBOX_QUALIFICATION_OUTPUT, JSON.stringify({
+    sourceCommit: (await execFile('git', ['rev-parse', 'HEAD'])).stdout.trim(),
+    sourceTree: (await execFile('git', ['rev-parse', 'HEAD^{tree}'])).stdout.trim(),
+    at: new Date().toISOString(), dockerSecurityOptions: dockerInfo,
+    baseline: probe, shell: shellProbe, python: pythonProbe, node: nodeProbe,
+    childSpawnLimit: pidProbe, timeout,
+    timeoutContainerRemoved: true, timeoutWorkspaceRemoved: true,
+  }, null, 2));
+}
 console.log('Linux rootless sandbox qualification passed');

@@ -30,3 +30,13 @@
 - 新增 `docs/slide/ai-native-operations/t12-runbook.md`、`t12-validation.md`：A01–A18 逐项证据、灰度/停机/恢复/回滚记录、操作者培训和明确停止条件。13.4 是提案，实际环境与延迟单列，不能冒充生产 SLO。
 - 保留 T11 数值 unscored、DB06/NW05 原失败、软目标未测和盲评 unavailable；复用 Max 已接受定性决定。
 - 源码、原始报告、哈希与环境记录打包到规定 outputs；独立 PR 写当前范围和完整验证，准确 head CI/父 Review 待齐时不声明完整合并出口。
+
+## 5. 父复核后最小补齐（原 v1.2.31 范围）
+
+保留上述实施及累计资源历史，沿 PR168 修复，不重做已接受产品与真实模型验收。
+
+- 在真实隔离 MySQL/Chromium 复现 Metrics 配置失败；只更新旧 summary 整串选择器，分别验证同一模板的名称、v1.0.0 与数据库实例类型。
+- 现有 rollout 脚本增加 `--api`：独占临时 MySQL，启用现有 MySQL gate，执行完整 API 并保存 JSON，以逐项分类剩余 skip。CI 在原 integration 前运行此步骤。
+- 增加仅允许 disposable GitHub-hosted Linux runner 的 rootless 装配，真实 user daemon/cgroup delegation、nonce MySQL 专用最小授权与正式 controller，运行原 `release:security-gate`，保存硬检查回执及退出清理证据。失败保持非零；不改阈值、不 fake/skip，不连接生产 Compose。
+- 复用 CI38541086523/job115786343852 已核验 artifact 回滚，补齐 head/tree 绑定。operator 手册为交付，不新增真人培训/生产灰度前置。
+- 最终附件对当前准确 head/tree 记录完整 gate、A01–A18、skip 范围与未测 SLO；仍需父独立 Review 和普通 merge/main 包含性核验。
