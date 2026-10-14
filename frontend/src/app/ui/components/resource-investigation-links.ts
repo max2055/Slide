@@ -40,6 +40,7 @@ export class ResourceInvestigationLinks extends LitElement {
     try {
       if (!['instance','server','network_device'].includes(this.resourceType) || !Number.isSafeInteger(this.resourceId) || this.resourceId <= 0) return;
       const list = await investigationApi<InvestigationList>(`?resource=${this.resourceType}:${this.resourceId}&limit=5`);
+      if (!Array.isArray(list?.items)) throw new Error('INVESTIGATION_RESPONSE_INVALID');
       if (generation === this.generation) this.items = list.items;
     } catch (error) { if (generation === this.generation) this.error = investigationErrorText(error); }
     finally { if (generation === this.generation) this.loading = false; }

@@ -23,6 +23,8 @@
 | 受影响模块 | investigations、Analysis、server/network evaluator 等既有模块 | 140 pass / 34 skip；skip 为既有依赖环境的 session-bridge suite，不宣称全量通过；必需 SQL 链路由上述无 skip gate 和 browser 覆盖 |
 | Agent 安全 gate | `pnpm security:agent` | 187/187 |
 | 前端 focused | investigations controller、network detail、server hosted instances、instance diagnosis/metric source | 36/36 |
+| 前端资源组件 focused | 资源链接正常读取、无效响应、撤权迟到响应与既有 host summary | 11/11；修复当前 head CI 发现的缺失 items 渲染异常 |
+| 前端模块 | `pnpm --filter slide-frontend test` | 825/825，103 files；无未处理异常 |
 | 受控 browser | `bash scripts/qualification/run-investigation-bridges.sh --resources-browser --output=<独立目录>` | 4/4：三类往返与同 JWT 撤权，正式 MySQL/JWT/HTTP/WS/Chromium，Provider/目标观测受控 |
 | 最终真实 browser | 上述命令加 `T10_REAL_PROVIDER=1`、独立 linked journal、`--trace=on` | 4/4；三类各两个 completed Runs、raw evidence、资源返回及撤权；12 次真实 Provider 请求 / 18470 token |
 | 静态/构建 | API/frontend typecheck、`pnpm contracts:check`、frontend build/CSP、lint | 通过；lint 已有 266 warnings / 0 errors，build 既有 chunk/import warnings；Lit dev-mode/update 提示保留 |
