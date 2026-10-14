@@ -158,7 +158,7 @@ export class InvestigationsController {
     }
     this.update();
   }
-  private refreshFacts(generation = this.generation): Promise<void> {
+  refreshFacts(generation = this.generation): Promise<void> {
     if (generation !== this.generation || this.disposed) return Promise.resolve();
     if (this.refreshing) { this.refreshAgain = true; return this.refreshing; }
     this.refreshing = (async () => {

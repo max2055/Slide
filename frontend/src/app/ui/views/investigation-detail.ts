@@ -4,6 +4,7 @@ import { messagePartsRenderRows, messagePartsToolOutputs } from '../chat/message
 import { renderMessageGroup } from '../chat/grouped-render.ts';
 import { apiClient } from '../../../api/index.ts';
 import '../components/investigation-context.ts';
+import '../components/investigation-feedback.ts';
 
 export const executionLabels: Record<string, string> = {
   queued: '排队中', running: '运行中', completed: '执行完成', failed: '执行失败', cancelled: '已取消',
@@ -22,6 +23,8 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
   const active = !!detail.activeRequestId;
   const messages = investigationMessages(controller.snapshot, controller.history);
   const tools = messagePartsToolOutputs(messages);
+  const result = controller.results.items.reduce<(typeof controller.results.items)[number] | undefined>((latest, item) =>
+    !latest || item.version > latest.version ? item : latest, undefined);
   return html`
     <app-card><span slot="header">${detail.title}</span>
       <p>${detail.goal}</p>
@@ -39,6 +42,10 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
+    <investigation-feedback .investigationId=${detail.id} .resultId=${result?.id ?? ''}
+      .resultVersion=${result?.version ?? 0} .investigationVersion=${detail.version}
+      .activeRequest=${active} .readonly=${controller.operationForbidden || !controller.online}
+      @investigation-feedback-saved=${() => void controller.refreshFacts()}></investigation-feedback>
     <app-card><span slot="header">执行与协作</span>
       ${controller.historyBefore ? html`<button class="btn" @click=${() => void controller.loadHistory()}>加载更早消息</button>` : nothing}
       <div class="investigation-messages" aria-label="调查消息">

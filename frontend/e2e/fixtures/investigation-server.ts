@@ -12,6 +12,7 @@ import { chatDatabaseService } from '../../../apps/db-ops-api/src/chat-database-
 import { registerChatRoutes } from '../../../apps/db-ops-api/src/chat-routes.js';
 import { InvestigationAuthorization } from '../../../apps/db-ops-api/src/investigations/authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from '../../../apps/db-ops-api/src/investigations/session-bridge.js';
+import { registerInvestigationFeedbackRoutes } from '../../../apps/db-ops-api/src/investigations/feedback-routes.js';
 import { registerInvestigationRoutes } from '../../../apps/db-ops-api/src/investigations/routes.js';
 import { registerInvestigationProfileRoutes } from '../../../apps/db-ops-api/src/investigations/profile-routes.js';
 import { registerInvestigationGovernanceRoutes } from '../../../apps/db-ops-api/src/investigations/governance-routes.js';
@@ -215,6 +216,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
       app.get('/fixture/system-403',async (_r:any,reply:any) => reply.code(403).send({}));
     }
     await registerInvestigationRoutes(app, verify, bridge, bridge.observationServices(), legacy);
+    await registerInvestigationFeedbackRoutes(app, verify);
     await registerAnalysisBridgeRoutes(app, verify, legacy, () => bridgeFlags, rca);
     if (optionsInput.databaseAlertPilot) {
       app.get('/api/alerts', { preHandler: verify }, async (request: any) => {

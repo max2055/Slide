@@ -311,8 +311,11 @@ export class MysqlInvestigationStore {
       if (record.activeRequestId && (patch.goal !== undefined && patch.goal !== record.goal
         || patch.lifecycle !== undefined && patch.lifecycle !== record.lifecycle))
         throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
-      await connection.execute(`UPDATE investigations SET title = ?, goal = ?, lifecycle = ?, version = version + 1 WHERE id = ?`,
-        [patch.title ?? record.title, patch.goal ?? record.goal, patch.lifecycle ?? record.lifecycle, id]);
+      const reopening = ['closed', 'archived'].includes(record.lifecycle)
+        && patch.lifecycle !== undefined && ['open', 'waiting'].includes(patch.lifecycle);
+      await connection.execute(`UPDATE investigations SET title = ?, goal = ?, lifecycle = ?, problem_status = ?, version = version + 1 WHERE id = ?`,
+        [patch.title ?? record.title, patch.goal ?? record.goal, patch.lifecycle ?? record.lifecycle,
+          reopening ? 'unconfirmed' : record.problemStatus, id]);
       return this.load(connection, id, 'UPDATE');
     });
   }
@@ -409,7 +412,7 @@ export class MysqlInvestigationStore {
     const jobKey = `investigation.execute:${requestId}`;
     // Only IDs go in the Workflow queue; the immutable request owns the
     // execution snapshot. No Agent Run is fabricated at admission time.
-    const snapshot = { ...investigation, actor: { ...input.actor }, message: input.message };
+    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: input.message };
     await connection.execute(`INSERT INTO investigation_requests
       (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -422,7 +425,7 @@ export class MysqlInvestigationStore {
     // Match the existing report/Analysis durable-delivery pattern: the job
     // and outbox publication are committed together by this single owner.
     await connection.execute('UPDATE outbox_events SET published_at = NOW() WHERE id = ?', [eventId]);
-    await connection.execute(`UPDATE investigations SET active_request_id = ?, version = ?, lifecycle = 'open' WHERE id = ?`,
+    await connection.execute(`UPDATE investigations SET active_request_id = ?, version = ?, lifecycle = 'open', problem_status = 'unconfirmed' WHERE id = ?`,
       [requestId, version, investigation.id]);
     await connection.execute(`UPDATE investigation_admission_keys SET request_id = ?
       WHERE actor_kind = ? AND actor_id = ? AND idempotency_key = ?`, [requestId, ...keyValues]);
