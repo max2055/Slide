@@ -213,6 +213,20 @@ jobs:
         run: bash scripts/qualification/run-auth-boundary.sh
       - name: Analysis dispatch crashes, unknown billing windows and revoked authority
         run: bash scripts/qualification/run-analysis-recovery.sh
+      - name: Investigation V1 rollout, 10k duplicates, capacity, formal SQL and recovery browser
+        run: |
+          pnpm --filter slide-frontend exec playwright install --with-deps chromium
+          bash scripts/qualification/run-investigation-rollout.sh --integration
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: investigation-rollout-${{ github.sha }}
+          path: |
+            .qualification/t12/
+            frontend/test-results-investigation/
+            frontend/test-results-feedback/
+          include-hidden-files: true
+          retention-days: 30
       - name: Database alert single ownership and legacy result bridges in isolated MySQL
         run: bash scripts/qualification/run-investigation-bridges.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL

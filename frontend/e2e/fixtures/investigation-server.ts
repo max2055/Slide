@@ -65,7 +65,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
   let system: SystemComposition | undefined;
   const sourceEnvKeys = ['SLIDE_SOURCE_ROOT','SLIDE_SOURCE_SIGNING_KEY','SLIDE_RELEASE_ID','SLIDE_COMMIT_SHA','SLIDE_SOURCE_DIGEST','SLIDE_RELEASE_MANIFEST'];
   const previousSourceEnv = new Map(sourceEnvKeys.map(k => [k, process.env[k]]));
-  let holdChat = false;
+  let holdChat = false, providerUnavailable = false;
   let governanceAvailable = true;
   let holdTools = false, paused = false, toolCalls = 0, providerCalls = 0;
   const workerErrors: string[] = [];
@@ -170,13 +170,15 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
       return { getDefaultModel: () => 'controlled-fixture', getModelCapabilities: () => ({ model: 'controlled-fixture', contextWindowTokens: 32768, preferredOutputTokens: 2048, source: 'configuration', version: 'fixture/v1' }),
         countPromptTokens: optionsInput.systemPilot ? (messages:any[]) => {promptObservations.push({bytes:Buffer.byteLength(JSON.stringify(messages.map(({messageParts:_parts,...m})=>m))),messages:messages.length,roles:messages.map(m=>m.role),fields:messages.map(m=>Object.fromEntries(Object.entries(m).filter(([k])=>k!=='messageParts').map(([k,v])=>[k,Buffer.byteLength(JSON.stringify(v)??'')])))});return undefined;} : undefined,
         chat: async (messages:any[]) => { providerCalls++;
-          if (optionsInput.systemPilot && call > 0) {
+          if (providerUnavailable) throw new Error('T12_PROVIDER_UNAVAILABLE');
+          const systemRun = !!optionsInput.systemPilot && messages.some(m => m.role === 'system' && String(m.content).includes('调查平台故障'));
+          if (systemRun && call > 0) {
             const values = messages.filter(m=>m.role==='tool').map(m=>{try{return {name:m.name,value:JSON.parse(m.content)};}catch{return null;}});
             systemConsumption.push({originalFact:values.some(v=>v?.name==='get_platform_observations'&&v.value.data?.facts?.some((f:any)=>f.event.stableErrorCode==='HTTP_503')),
               exactSource:values.some(v=>v?.name==='read_source_region'&&v.value.data?.quality==='good'&&v.value.data?.content?.includes('fixture-failure')&&v.value.data?.rootCauseVerified===false)});
           }
           return ++call === 1 ? { ...final, content: null, finishReason: 'tool_calls',
-          toolCalls: optionsInput.systemPilot ? [
+          toolCalls: systemRun ? [
             {id:randomUUID(),name:'get_platform_observations',arguments:{}},
             {id:randomUUID(),name:'get_deployment_manifest',arguments:{}},
             {id:randomUUID(),name:'read_source_region',arguments:{path:'src/system-fixture.ts',startLine:1,endLine:1}},
@@ -285,7 +287,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const currentOwner = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(101) : owner;
     const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
     return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
-      bridgeFlags, rca,
+      bridgeFlags, rca, alertBridge: pilotBridge,
       system,systemServiceId,apiUrl,promptObservations,systemConsumption,
       token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       governanceStorage: (available: boolean) => governanceAvailable = available,
@@ -297,6 +299,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
         return { started, release };
       },
       holdChat: (value: boolean) => holdChat = value,
+      failProvider: (value: boolean) => providerUnavailable = value,
       hold: (value: boolean) => holdTools = value,
       unknown: async () => {
         paused = true; await current;
