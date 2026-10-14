@@ -21,6 +21,9 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then echo 'Isolated T12 MySQL unavailable' >&2; exit 1; fi
+# Legacy suites also read DB_* directly. Bind them to this disposable server,
+# never the host's default or configured platform database.
+export DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD='' DB_NAME=slide_t12_isolated
 export T06_TEST_MYSQL_PORT="$port" T06_TEST_MYSQL_PASSWORD=''
 export INVESTIGATION_TEST_MYSQL_PORT="$port" INVESTIGATION_TEST_MYSQL_PASSWORD=''
 export AGENT_RUN_TEST_MYSQL_PORT="$port" AGENT_RUN_TEST_MYSQL_PASSWORD='' T04_BROWSER_TEST=1

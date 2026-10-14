@@ -41,8 +41,11 @@ sudo apt-get update -qq
 sudo apt-get install -y uidmap dbus-user-session slirp4netns docker-ce-rootless-extras
 sudo systemctl stop docker.service docker.socket
 sudo loginctl enable-linger "$(id -un)"
-sudo systemctl start "user@$(id -u).service"
-sudo systemctl set-property "user@$(id -u).service" Delegate=yes
+sudo mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/slide-qualification.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart "user@$(id -u).service"
+sudo systemctl show "user@$(id -u).service" -p Delegate -p ControlGroup > "$out/user-manager.txt"
 # Ubuntu 24.04 restricts unprivileged user namespaces. This isolated runner is
 # discarded after the job; no production host setting is changed.
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -69,7 +72,7 @@ docker run -d --name "$mysql_container" -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 127
 export SANDBOX_NONCE_DB_PORT="$(docker port "$mysql_container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
 for _ in $(seq 1 90); do
-  if docker exec "$mysql_container" mysqladmin ping --silent >/dev/null 2>&1; then ready=1; break; fi
+  if docker exec "$mysql_container" mysqladmin ping --protocol=tcp --host=127.0.0.1 --silent >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 [[ "$ready" == 1 ]] || { echo 'Isolated nonce MySQL unavailable' >&2; exit 1; }
