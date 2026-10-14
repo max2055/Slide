@@ -25,6 +25,7 @@ export interface NetworkDeviceAlertDevice {
   host?: string | null;
   status?: string | null;
   collectionEnabled?: boolean;
+  lastCheckAt?: Date | null;
 }
 
 export interface NetworkDeviceAlertRule extends AlertRule {
@@ -232,13 +233,18 @@ export class NetworkDeviceAlertEvaluator {
   private withReachabilityObservation(device: NetworkDeviceAlertDevice, observations: NetworkDeviceAlertObservation[]): NetworkDeviceAlertObservation[] {
     const now = this.clock();
     const status = String(device.status);
-    const failed = ['error', 'unreachable', 'offline'].includes(status);
-    if (!failed && status !== 'online') return observations;
+    // Authentication/collection errors and absent metrics do not establish
+    // reachability. Use the persisted check time, never evaluation time.
+    const failed = status === 'unreachable';
+    const checkedAt = device.lastCheckAt;
+    if ((!failed && status !== 'online') || !checkedAt
+      || !Number.isFinite(checkedAt.getTime()) || checkedAt > now
+      || now.getTime() - checkedAt.getTime() >= 5 * 60_000) return observations;
     return [
       ...observations,
       {
-        metricId: 'device_reachability', value: failed ? 0 : 1, quality: 'good', observedAt: now,
-        validUntil: new Date(now.getTime() + 5 * 60_000), reason: `device_status_${status}`,
+        metricId: 'device_reachability', value: failed ? 0 : 1, quality: 'good', observedAt: checkedAt,
+        validUntil: new Date(checkedAt.getTime() + 5 * 60_000), reason: `device_status_${status}`,
         synthetic: true,
       },
     ];
@@ -269,7 +275,7 @@ export class NetworkDeviceAlertEvaluator {
     const resolve = (alertDatabaseService as any).resolveAlert as undefined | ((alertId: number) => Promise<unknown>);
     if (!listActive || !resolve) return;
     assertWorkflowActive();
-    const active = await listActive();
+    const active = await listActive.call(alertDatabaseService);
     for (const alert of active ?? []) {
       if (alert?.target_type !== 'network_device' || alert?.network_device_id == null) continue;
       let tags: Record<string, any> = {};
@@ -291,9 +297,9 @@ export class NetworkDeviceAlertEvaluator {
       if (rule) {
         const semantic = await evaluateOperationalRule({ type: 'network_device', id: Number(alert.network_device_id) },
           { ...rule, dimensions }, rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name));
-        if (semantic.handled) { if (semantic.recovery) await resolve(Number(alert.id)); continue; }
+        if (semantic.handled) { if (semantic.recovery) await resolve.call(alertDatabaseService, Number(alert.id)); continue; }
       }
-      if (freshKeys.has(key) && !firingKeys.has(key)) await resolve(Number(alert.id));
+      if (freshKeys.has(key) && !firingKeys.has(key)) await resolve.call(alertDatabaseService, Number(alert.id));
     }
   }
 
@@ -302,7 +308,7 @@ export class NetworkDeviceAlertEvaluator {
     try { dimensions = canonicalDimensions(observation.dimensions); } catch { return; }
     const finder = (alertDatabaseService as any).findActiveNetworkDeviceAlert as undefined | ((deviceId: number, metricId: string, ruleId: number, dimensions?: Record<string, string>) => Promise<unknown>);
     assertWorkflowActive();
-    const existing = finder ? await finder(device.id, rule.metric_name, rule.id, dimensions) : null;
+    const existing = finder ? await finder.call(alertDatabaseService, device.id, rule.metric_name, rule.id, dimensions) : null;
     if (existing && typeof (alertDatabaseService as any).touchAlert === 'function') {
       assertWorkflowActive();
       await alertDatabaseService.touchAlert((existing as any).id, currentValue);
@@ -344,9 +350,10 @@ export class MysqlNetworkDeviceAlertStore implements NetworkDeviceAlertStore {
     const pool = this.pool();
     assertWorkflowActive();
     const [rows] = await pool.execute(
-      'SELECT id, name, label, host, status, collection_enabled AS collectionEnabled FROM network_devices WHERE collection_enabled = 1 ORDER BY id',
+      'SELECT id, name, label, host, status, last_check_at AS lastCheckAt, collection_enabled AS collectionEnabled FROM network_devices WHERE collection_enabled = 1 ORDER BY id',
     );
-    return (rows as any[]).map((row) => ({ ...row, id: Number(row.id), collectionEnabled: Boolean(row.collectionEnabled) }));
+    return (rows as any[]).map((row) => ({ ...row, id: Number(row.id), collectionEnabled: Boolean(row.collectionEnabled),
+      lastCheckAt: row.lastCheckAt == null ? null : new Date(row.lastCheckAt) }));
   }
 
   async getLatestObservations(deviceId: number): Promise<NetworkDeviceAlertObservation[]> {
