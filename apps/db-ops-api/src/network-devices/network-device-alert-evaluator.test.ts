@@ -151,7 +151,7 @@ describe('NetworkDeviceAlertEvaluator', () => {
       severity: 'error', silence_minutes: 5, enabled: true,
     }]);
     const evaluator = new NetworkDeviceAlertEvaluator({
-      store: store({ getCollectionEnabledDevices: vi.fn(async () => [{ ...device, status: 'unreachable' }]), getLatestObservations: vi.fn(async () => []) }),
+      store: store({ getCollectionEnabledDevices: vi.fn(async () => [{ ...device, status: 'unreachable', lastCheckAt: new Date('2026-08-26T00:00:00Z') }]), getLatestObservations: vi.fn(async () => []) }),
       clock: () => new Date('2026-08-26T00:01:00.000Z'),
     });
     await expect(evaluator.evaluateNetworkDeviceRules()).resolves.toMatchObject({ evaluated: 1, triggered: 1 });
