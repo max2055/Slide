@@ -237,4 +237,3 @@ export function receiveSystemUsage(path: string, sequence: number, usage: Usage)
     return readSystemJournal(path);
   });
 }
-
