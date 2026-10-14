@@ -19,10 +19,20 @@ cleanup() {
   trap - EXIT
   set +e
   if [[ -n "$controller_pid" ]]; then kill -TERM "$controller_pid" 2>/dev/null || true; wait "$controller_pid" || true; fi
-  docker ps -aq --filter name=slide-sandbox- | xargs -r docker rm -f >/dev/null
-  docker rm -f -v "$mysql_container" >/dev/null 2>&1 || true
-  docker ps -a --format '{{.Names}}' > "$out/containers-after-cleanup.txt" || true
-  find "$SANDBOX_WORKSPACE_ROOT" -mindepth 1 -print > "$out/workspaces-after-cleanup.txt" 2>/dev/null || true
+  docker ps -aq --filter name=slide-sandbox- | xargs -r docker rm -f > "$out/job-cleanup.log" 2>&1
+  if docker inspect "$mysql_container" >/dev/null 2>&1; then
+    docker stop --timeout 10 "$mysql_container" > "$out/nonce-cleanup.log" 2>&1
+    docker rm -v "$mysql_container" >> "$out/nonce-cleanup.log" 2>&1
+    if [[ $? != 0 ]]; then cat "$out/nonce-cleanup.log"; result=1; fi
+  fi
+  if docker info >/dev/null 2>&1; then
+    docker ps -a --format '{{.Names}}' > "$out/containers-after-cleanup.txt"
+    if [[ -s "$out/containers-after-cleanup.txt" ]]; then cat "$out/containers-after-cleanup.txt"; result=1; fi
+  fi
+  if [[ -d "$SANDBOX_WORKSPACE_ROOT" ]]; then
+    find "$SANDBOX_WORKSPACE_ROOT" -mindepth 1 -print > "$out/workspaces-after-cleanup.txt"
+    if [[ -s "$out/workspaces-after-cleanup.txt" ]]; then cat "$out/workspaces-after-cleanup.txt"; result=1; fi
+  fi
   systemctl --user stop docker.service || true
   exit "$result"
 }
