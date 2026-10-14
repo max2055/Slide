@@ -26,13 +26,13 @@ import { createSystemComposition, type SystemComposition } from './system-compos
 import { registerSystemEventRoutes, SystemEventReader } from './system-event-routes.js';
 import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 import { readSystemJournal, receiveSystemUsage, reserveSystemSend, stopSystemSends,
-  SYSTEM_REAL_AUTHORIZATION, SYSTEM_REAL_LIMITS } from './system-real-provider-budget.js';
+  SYSTEM_STANDING_AUTHORIZATION } from './system-real-provider-budget.js';
 
 const journal = process.env.T09_REAL_JOURNAL!, evidence = process.env.T09_REAL_EVIDENCE!;
-if (process.env.T09_REAL_AUTHORIZATION !== SYSTEM_REAL_AUTHORIZATION || !journal || !evidence
+if (process.env.T09_REAL_AUTHORIZATION !== SYSTEM_STANDING_AUTHORIZATION || !journal || !evidence
   || !process.env.T09_PROVIDER_ENV || !process.env.T09_REAL_ARTIFACTS) throw Error('T09_EXPLICIT_AUTHORIZATION_REQUIRED');
 const initial = readSystemJournal(journal);
-if (initial.entries[0].authorization !== SYSTEM_REAL_AUTHORIZATION || initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
+if (initial.entries[0].authorization !== SYSTEM_STANDING_AUTHORIZATION || initial.requests || initial.stopped) throw Error('T09_EXISTING_SCENARIO_REQUIRES_REVIEW');
 config({ path: process.env.T09_PROVIDER_ENV, quiet: true });
 const artifacts = resolve(process.env.T09_REAL_ARTIFACTS);
 mkdirSync(artifacts, { recursive: true, mode: 0o700 });
@@ -42,6 +42,7 @@ const record = (value: Record<string, unknown>) => {
 };
 const safeCode = (error: unknown) => error instanceof Error && /^[A-Z][A-Z0-9_]{0,127}$/.test(error.message)
   ? error.message : 'QUALIFICATION_ASSERTION_OR_ENVIRONMENT';
+const sentToolContents: string[] = [];
 
 async function configuredProvider() {
   const shared = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 3306),
@@ -58,7 +59,8 @@ async function configuredProvider() {
       && stored.supports_function_call && stored.api_key_encrypted, 'T09_PROVIDER_CONFIGURATION_CHANGED');
     const bindings = await llmDatabaseService.getSceneBindings(select as never);
     assert.equal(bindings.length, 0, 'T09_SCENE_CONFIGURATION_CHANGED');
-    const p = { ...stored, max_tokens: Math.min(stored.max_tokens!, SYSTEM_REAL_LIMITS.output) };
+    const p = stored;
+    assert(Number.isSafeInteger(p.max_tokens) && p.max_tokens! > 0, 'T09_PROVIDER_OUTPUT_INVALID');
     const key = decryptData(p.api_key_encrypted!); // memory only; never print/persist.
     prices = { input: Math.ceil(p.input_cost_per_1k * 1_000_000_000),
       cachedInput: Math.ceil(p.input_cost_per_1k * 1_000_000_000), output: Math.ceil(p.output_cost_per_1k * 1_000_000_000) };
@@ -69,7 +71,7 @@ async function configuredProvider() {
     assert.equal(provider.getDefaultModel(), 'deepseek-flash');
     record({ configuration: { provider: p.name, model: provider.getDefaultModel(), outputCeiling: p.max_tokens,
       sharedOutputCeiling: stored.max_tokens, scene: 'fault_diagnosis via existing default route', sharedWrites: 0, prices,
-      authorization: SYSTEM_REAL_AUTHORIZATION, baseline: initial.entries[0], historicalRequests: 7, historicalStopped: true } });
+      authorization: SYSTEM_STANDING_AUTHORIZATION, baseline: initial.entries[0], historicalRequests: initial.cumulativeRequests, historicalStopped: true } });
     const client = (provider as any).client as { fetch: typeof fetch; maxRetries: number };
     assert.equal(client.maxRetries, 0);
     const originalFetch = client.fetch;
@@ -79,18 +81,18 @@ async function configuredProvider() {
       assert.equal(request.url, 'https://api.deepseek.com/v1/chat/completions');
       assert.equal(request.method, 'POST'); assert.equal(body.model, 'deepseek-flash'); assert(!body.stream);
       assert(!bodyText.includes(key), 'T09_SECRET_IN_BODY');
-      assert(Number.isSafeInteger(body.max_tokens) && body.max_tokens > 0 && body.max_tokens <= 2048);
+      assert(Number.isSafeInteger(body.max_tokens) && body.max_tokens > 0 && body.max_tokens <= p.max_tokens!);
       // Byte-level upper bound on this small UTF-8/BPE request plus conservative
       // 1024-token chat-template margin. Also count schemas and all tool history.
       const upper = Buffer.byteLength(bodyText) + 1024;
       const send = reserveSystemSend(journal, upper, body.max_tokens);
+      sentToolContents.push(...body.messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)));
       record({ send, requestHash: createHash('sha256').update(bodyText).digest('hex'),
         requestBytes: Buffer.byteLength(bodyText),
         toolResultsSent: body.messages.filter((m: any) => m.role === 'tool').map((m: any) => ({
           toolCallId: m.tool_call_id, contentHash: createHash('sha256').update(String(m.content)).digest('hex'),
           signedSourceIncluded: String(m.content).includes('export function qualifyFailure'),
-        })), state: readSystemJournal(journal),
-        checkpoint: send.sequence! >= 3 ? '100% requests: no further sends' : send.sequence! >= 2 ? '50% requests' : null });
+        })), state: readSystemJournal(journal) });
       try {
         const response = await originalFetch(input, { ...init, redirect: 'error' });
         if (!response.ok) {
@@ -104,8 +106,7 @@ async function configuredProvider() {
         assert(raw.choices?.length === 1 && ['stop', 'tool_calls'].includes(raw.choices[0].finish_reason), 'T09_PROVIDER_PROTOCOL');
         record({ sequence: send.sequence, providerStatus: response.status, usage: raw.usage,
           finishReason: raw.choices[0].finish_reason, toolCalls: raw.choices[0].message.tool_calls ?? [],
-          content: raw.choices[0].message.content, state,
-          checkpoint: state.cumulativeTokens >= 25600 ? '80% tokens: no expansion' : state.cumulativeTokens >= 16000 ? '50% tokens' : null });
+          content: raw.choices[0].message.content, state });
         return response;
       } catch (error) {
         stopSystemSends(journal, safeCode(error)); throw Error(safeCode(error));
@@ -116,7 +117,8 @@ async function configuredProvider() {
   const bounded: LLMProvider = { getDefaultModel: provider!.getDefaultModel.bind(provider!),
     getModelCapabilities: provider!.getModelCapabilities?.bind(provider!), projectMessages: provider!.projectMessages?.bind(provider!),
     chat: async (messages, tools, options) => {
-      const result = await chat(messages, tools, { ...options, maxTokens: Math.min(options?.maxTokens ?? 2048, 2048) });
+      // Preserve the executor's configured model/runtime output and run budget.
+      const result = await chat(messages, tools, options);
       if (result.finishReason === 'error') { stopSystemSends(journal, 'PROVIDER_RUNTIME_ERROR'); throw Error('T09_PROVIDER_RUNTIME_ERROR'); }
       return result;
     }, chatStream: async () => { throw Error('T09_REAL_STREAM_NOT_AUTHORIZED'); } };
@@ -247,12 +249,17 @@ async function main() {
     assert(names.includes('get_platform_observations'), 'T09_FACTS_NOT_CONSUMED');
     assert(names.includes('get_deployment_manifest'), 'T09_MANIFEST_NOT_CONSUMED');
     assert(names.some(n => ['read_source_region', 'get_symbol_definition'].includes(n)), 'T09_SOURCE_NOT_CONSUMED');
+    const outbound = sentToolContents.join('\n');
+    assert(outbound.includes(input.sourceEventId) && outbound.includes(commitSha)
+      && outbound.includes(JSON.stringify(source.trimEnd()).slice(1, -1)), 'T09_SOURCE_NOT_SENT_TO_MODEL');
+    assert.equal(toolEvidence.length, 5, 'T09_FIVE_EVIDENCE_REQUIRED');
     assert(rendered.includes(input.sourceEventId) && rendered.includes(commitSha) && rendered.includes('SYSTEM_EVENT_WINDOW_TRUNCATED')
       && rendered.includes('qualifyFailure'), 'T09_EVIDENCE_BINDING_MISSING');
     assert(answer.includes('SYNTHETIC_TIMEOUT') && answer.includes('system-fixture.ts') && /未验证|待验证|不能确认|无法确认/.test(answer), 'T09_RESULT_EVIDENCE_INCOMPLETE');
     assert.equal(eventDetail.investigationId, accepted.investigationId);
     const usage = readSystemJournal(journal);
     assert.equal(ledger[0].state, 'settled'); assert.equal(Number(ledger[0].charged_tokens), usage.totalTokens);
+    stopSystemSends(journal, 'QUALIFICATION_COMPLETED');
     record({ completed: true, requests: usage.requests, cumulativeRequests: usage.cumulativeRequests, cumulativeTokens: usage.cumulativeTokens, usage: usage.usage,
       consumedTools: names, syntheticTargetAndSource: true, realProvider: 'deepseek/deepseek-flash',
       actualProviderCharge: 'unavailable; ledger cost uses configured estimate', familyAgentTokenTelemetry: 'unavailable' });
@@ -268,6 +275,6 @@ catch (error) {
   record({ completed: false, code: safeCode(error), errorType: error instanceof Error ? error.name : 'unknown',
     // Locations only, never raw DB/HTTP error messages which may include secrets.
     location: error instanceof Error ? error.stack?.split('\n').filter(l => l.trim().startsWith('at ')).slice(0, 5) : [],
-    state: readSystemJournal(journal), reason: 'first failure stopped; no retry or fallback' });
+    state: readSystemJournal(journal), reason: 'scene stopped; diagnose before a new linked scene; no transport retry or fallback' });
   process.exitCode = 1;
 }

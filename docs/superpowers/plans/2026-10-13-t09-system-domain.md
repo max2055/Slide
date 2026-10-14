@@ -29,3 +29,12 @@
 4. System 专属只读 events/facts HTTP 契约、注册及生成类型；实际用户实时授权，原事件持久查询包括 suppressed，关联调查仍要求原 ACL，不能用 service 身份开放内容。
 5. 在既有浏览器夹具复用正式 composition/worker/routes，新增持久错误→事件→调查→System tools→canonical→WS→workspace→两轮追问；真实MySQL重复迁移、撤权/400/403/自身故障、source版本缺口由相关SQL测试补齐。受控Provider仅证明受控链路。
 6. 受影响 focused/security/contracts、本地浏览器、准确新head CI一次前台收集；更新原PR、证据与一次终态交接。父独立Review、真实Provider缺口或CI未齐全时保留in_review，不合并、不释放下游。
+
+## v1.2.25 长期授权续接（2026-10-14）
+
+Max评论01a137d7-4d36-757f-a0ad-2d92cb91299b覆盖旧模型调用授权限额和失败后审批，不更改产品技术保护。原两场景6051 token、四请求和T04五请求保留。
+
+1. 已完成opt-in长期授权、哈希链/claim/累计usage、显式worktree路径映射；未知发送/usage继续失败关闭，零调用RED/GREEN保护测试15通过。
+2. 已完成独占正式MySQL/重复迁移、已有配置SELECT与真实DeepSeek三次请求；模型自主消费全部五工具/原事件/精确版本/源码并生成最终回答。
+3. 已完成真实completed SQL故障、新进程/新fence恢复和终态重投；同一Run、一版结果、五证据、零Provider重发。新增6485 token，T09累计12536，跨阶段12请求。
+4. 准确新head CI及父独立Review/普通merge/main仍为完整出口；本轮交付in_review，不自行释放共享owner或T10/T12。旧144.5ms失败历史保留，100ms门禁不变。

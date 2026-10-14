@@ -1,5 +1,31 @@
 # T09 System 领域与共享装配验收
 
+## v1.2.25：长期授权与真实 completed 恢复验收（2026-10-14）
+
+当前状态以本节为准；下文保存历史失败、限额与交付阶段，不再作为当前调用审批规则。Max 评论 `01a137d7-4d36-757f-a0ad-2d92cb91299b` 取消验收的3请求/2048输出/32000累计授权预算，覆盖失败后再索取token/Provider审批。仅opt-in qualification使用新模式；共享Provider配置、16k运行上下文、32k单次执行预算、权限、源码egress和生产默认关闭状态均未修改。
+
+长期账本从最新已停发且全部请求有usage的场景建立不可变哈希关联，fsync claim阻止分叉，锁及发送前持久计数阻止未知发送重放。新场景仅在前一场景停止并完成诊断后创建，不清除原stop，不重开partial Run。工作树迁移使用显式绝对路径映射验证原journal与claim原始字节，不重写旧文件；后续账本继续携带路径映射与累计基线。缺usage、未知发送、损坏或缺失历史、残留锁均失败关闭。保留旧两场景3081+2970=6051 token、原四请求和T04五请求；T04 token与家族遥测不可用。
+
+本轮共享DB仅SELECT已有deepseek/deepseek-flash及场景配置，通过原Provider factory使用实际4096配置输出；零共享写入。业务使用独占mysql:8.4、两次正式迁移、合成两小时积压事件与允许出站的签名夹具源码。三次HTTP200中模型自主调用全部五个System工具，第三次实际请求包含原事件、精确Commit、manifest及完整源码。最终回答引用`SYNTHETIC_TIMEOUT`、`src/system-fixture.ts`，明确缺日志/窗口截断、合成夹具性质和未验证根因/恢复。源码及目标为fixture，不能称生产根因验收。
+
+真实Run `896e3f04-cce5-4752-ab16-06ec26612511` 在模型最终回答后确实触发`T09_REAL_COMPLETION_FAILURE` SQL trigger。移除trigger并dispose原Adapter，正式Workflow重新claim获得新fence；独立Node进程以禁止Provider调用的factory恢复，再终态重投。两次均为同一completed Run、单版结果、五份完整证据/五条canonical tool fact，Provider重发增量0。JWT/真实TCP HTTP200读取原事实并关联原调查；SQL ledger settled且charged_tokens与原始HTTP usage、journal一致。独占容器/schema已清理。
+
+本轮input4781+output1704=6485 token；cached2560已含input。T09累计12536 token、七次请求；跨阶段累计12请求，T04历史token不可用。ledger费用8189 microUSD仅配置估算，供应商实付与家族token/费用不可用。新场景以`QUALIFICATION_COMPLETED`停止，旧两份journal/hash/claim/stop不变。
+
+零调用保护测试15/15（长期超过旧上限、基线/分叉/复制/未知usage/残留锁/跨worktree迁移）；前三个新用例在旧实现RED，修复后GREEN。类型检查、秘密扫描通过；其余未变化System/SQL/浏览器回归复用父已核验结果。最终准确head CI见PR165 checks及MAX-150证据附件。真实复验后仅补齐后续worktree导入的路径映射继承，并验证原场景账本零发送读取；executor和真实qualification发送源码未变化。
+
+当前运行方式（环境中的全部文件路径为绝对路径，历史路径映射文件按实际迁移提供）：
+
+```bash
+pnpm --filter slide-api exec tsx -e 'import {initializeSystemJournal,SYSTEM_STANDING_AUTHORIZATION} from "./src/investigations/system-real-provider-budget.ts"; import {readFileSync} from "node:fs"; initializeSystemJournal(process.env.T09_REAL_JOURNAL!, {authorization:SYSTEM_STANDING_AUTHORIZATION,previousJournal:process.env.T09_PREVIOUS_JOURNAL!,historicalPaths:process.env.T09_HISTORY_PATHS ? JSON.parse(readFileSync(process.env.T09_HISTORY_PATHS,"utf8")) : undefined});'
+T09_REAL_AUTHORIZATION=01a137d7-4d36-757f-a0ad-2d92cb91299b \
+  pnpm --filter slide-api exec tsx src/investigations/system-real-provider-qualification.ts
+```
+
+另需`T09_PROVIDER_ENV`、`T09_REAL_EVIDENCE`、`T09_REAL_ARTIFACTS`；`T09_REAL_PREPARE_ONLY=true`仅零调用预检，不能替代真实验收。脚手架不由生产启动或常规测试隐式执行。禁止用上述命令重开已完成场景。
+
+真实模型消费/回答/completed恢复验收已通过；完整T09仍待父独立复核、准确新head CI与普通merge/main核验。共享owner仍T09，T11的40样本unscored、T10/T12门禁未释放。旧144.5ms根因未确认，100ms门禁保留；无新增Issue/子代理/生产操作。
+
 ## v1.2.21：真实 Provider 有界验收与输出预留修复候选
 
 Max 授权评论 `01a135cd-25dd-7ab7-aca4-f92d31398f37` 覆盖本场景的旧零请求限制。共享 MySQL 仅通过应用环境认证执行 Provider/场景 SELECT，沿现有 `createConfiguredAgentProvider` 默认场景路由使用 deepseek/deepseek-flash；密钥仅在内存解密，未改共享配置。本场景独立持久账本记录发送前计数、输入字节保守上界、输出额度及真实 usage；锁竞争、未完成请求、缺失 usage、HTTP/协议错误均停发，不自动重试或 fallback。上限为 3 次 HTTP、32,000 input+output、每次输出 2,048；缓存属于 input 子集，不重复相加。原 5/6 成功停发历史保留，未挪用剩余额度。
