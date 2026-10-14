@@ -1,3 +1,4 @@
+import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
@@ -409,6 +410,7 @@ export class ServerDetailPage extends LitElement {
           </div>
         </div>
 
+        <resource-investigation-links resourceType="server" .resourceId=${this.serverId ?? this.server.id}></resource-investigation-links>
         <div class="tabs">
           ${[
             { key: "overview", label: "概览" },

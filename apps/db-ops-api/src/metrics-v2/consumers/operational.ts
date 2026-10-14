@@ -13,6 +13,7 @@ const actorFor = (ref: Ref): ActorContext => ({ userId: 0, username: 'metric-pol
 type Rule = Parameters<typeof compileAlertRule>[0] & { missing_policy?: 'unknown'; threshold_type?: string; recovery_threshold?: number; dimensions?: Record<string, string> };
 export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}) {
   const unavailable = { handled: true, state: 'unknown', level: null as 'warning' | 'error' | 'critical' | null,
+    observation: null as {from:string;to:string;observedAt:string|null;quality:'good'|'partial'} | null,
     recovery: false, value: null as number | null, dimensions: null as Record<string, string> | null, migration: null as ReturnType<typeof migrateReference> | null };
   if (ref.type === 'network_device' && rule.metric_name === 'device_reachability') return { ...unavailable, handled: false };
   if (!dbConnection.isConnected()) return unavailable;
@@ -40,10 +41,17 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
         unit: metric.series[0]?.buckets[0]?.unit ?? metric.definition.unit, threshold, operator: compiled.operator,
         duration_seconds: seconds, recovery_seconds: seconds, recovery_threshold: rule.recovery_threshold, missing: rule.missing_policy ?? 'unknown' });
       recovery &&= evaluation.recovery; value = evaluation.value;
-      if (evaluation.state === 'firing') return { handled: true, ...evaluation, level, migration };
+      if (evaluation.state === 'firing') {
+        const series = metric.series.find(s => Object.keys(s.dimensions).length === Object.keys(evaluation.dimensions ?? {}).length
+          && Object.entries(s.dimensions).every(([key,value]) => evaluation.dimensions?.[key] === value));
+        const buckets = series?.buckets ?? [];
+        const observation = buckets.length ? {from:buckets[0].window.from,to:buckets.at(-1)!.window.to,
+          observedAt:metric.observed_at ?? null,quality:buckets.some(b => b.quality.status === 'partial') ? 'partial' as const : 'good' as const} : null;
+        return { handled: true, ...evaluation, level, migration, observation };
+      }
       if (evaluation.state !== 'healthy') state = evaluation.state;
     }
-    return { handled: true, state, level: null, recovery, value, migration, dimensions: null };
+    return { handled: true, state, level: null, recovery, value, migration, dimensions: null, observation: null };
   } catch { return unavailable; }
 }
 

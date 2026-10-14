@@ -1,3 +1,6 @@
+import { registerNetworkDeviceRoutes } from '../../../apps/db-ops-api/src/network-devices/network-device-routes.js';
+import { serverDatabaseService } from '../../../apps/db-ops-api/src/server-database-service.js';
+import { requirePermission } from '../../../apps/db-ops-api/src/auth/require-permission.js';
 import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -24,7 +27,7 @@ import { AgentRunService } from '../../../apps/db-ops-api/src/adapter/agent-run-
 import { MysqlWorkflowStore, WorkerRuntime } from '../../../apps/db-ops-api/src/workflows/worker-runtime.js';
 import { JobRegistry } from '../../../apps/db-ops-api/src/workflows/job-registry.js';
 import { createInvestigationWorkflowHandler } from '../../../apps/db-ops-api/src/investigations/workflow-handler.js';
-import { ToolRegistry } from '../../../packages/agent-core/src/index.js';
+import { ToolRegistry, type LLMProvider } from '../../../packages/agent-core/src/index.js';
 import { DatabaseAlertBridge } from '../../../apps/db-ops-api/src/investigations/alert-bridge.js';
 import { AlertRCAService } from '../../../apps/db-ops-api/src/alert-rca-service.js';
 import { LegacyAnalysisBridge } from '../../../apps/db-ops-api/src/investigations/legacy-analysis-bridge.js';
@@ -38,7 +41,7 @@ import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/sou
 import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean } = {}) {
+export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; realProvider?: LLMProvider } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -93,6 +96,11 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,101),(102,101)');
     await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted) VALUES (101,'合成资源','fixture.invalid',3306,'fixture','unused')");
     await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only'),(102,101,'read-only')");
+    if (optionsInput.resourcePilot) {
+      await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('servers:view','network_devices:view')");
+      await pool.query("INSERT INTO servers (id,host,label,port,os_type,credential_type,credential_encrypted,status) VALUES (101,'server.fixture.invalid','服务器受控夹具',22,'linux','password','unused','online')");
+      await pool.query("INSERT INTO network_devices (id,name,host,vendor,status) VALUES (101,'网络无数据夹具','network.fixture.invalid','huawei','unknown')");
+    }
     const contexts = new ActorContextService(() => pool);
     const owner = await contexts.loadActiveActor(101), viewer = await contexts.loadActiveActor(102);
     const authorization = new InvestigationAuthorization(contexts);
@@ -129,12 +137,12 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
       await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (?,101,'read-only')",[pilotServiceId]);
     }
     const pilotBridge = new DatabaseAlertBridge(() => pool, contexts, authorization, bridge, () => bridgeFlags,
-      () => ({ configured: !!pilotServiceId, serviceUserId: pilotServiceId, instanceIds: [101], policyId: 'database-alert-pilot', policyVersion: 1 }),
+      () => ({ configured: !!pilotServiceId, serviceUserId: pilotServiceId, instanceIds: [101], serverIds: optionsInput.resourcePilot ? [101] : [], networkDeviceIds: optionsInput.resourcePilot ? [101] : [], policyId: 'database-alert-pilot', policyVersion: 1 }),
       () => ({ ...investigationBudgetConfiguration(), domain: 't06-synthetic' }));
     const rca = new AlertRCAService(pilotBridge);
     const legacy = new LegacyAnalysisBridge(() => pool, authorization, bridge);
     const tools = new ToolRegistry();
-    tools.register({ name: 'get_instance_summary', description: 'Synthetic readonly resource', parameters: { type: 'object', properties: { instance_id: { type: 'number' } } },
+    if (!optionsInput.resourcePilot) tools.register({ name: 'get_instance_summary', description: 'Synthetic readonly resource', parameters: { type: 'object', properties: { instance_id: { type: 'number' } } },
       readOnly: true, concurrencySafe: true, exclusive: false,
       execute: async (_args: unknown, context: any) => {
         toolCalls++;
@@ -144,9 +152,20 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
         });
         return { success: true, qps: 7, summary: '合成只读指标' };
       } });
+    if (optionsInput.resourcePilot) tools.register({ name: 'get_resource_observations', description: 'Read frozen synthetic observations for the investigation resource. Missing value is unknown, never normal or down.',
+      parameters: { type:'object', properties:{ resourceType:{type:'string',enum:['instance','server','network_device']},resourceId:{type:'number'} },required:['resourceType','resourceId'],additionalProperties:false },
+      readOnly:true,concurrencySafe:true,exclusive:false,
+      execute:async (args:any) => { toolCalls++;
+        const [events]=await pool.query('SELECT tags,metric_name,metric_value FROM alerts WHERE target_type=? ORDER BY id DESC LIMIT 1',[args.resourceType]);
+        const row=events[0],tags=typeof row.tags==='string'?JSON.parse(row.tags):row.tags;
+        return {success:true,resource:{type:args.resourceType,id:args.resourceId},observedFrom:tags.observed_from,observedTo:tags.observed_to,
+          collectedAt:tags.observed_at,metrics:[{metricId:row.metric_name,value:row.metric_value==null?null:Number(row.metric_value),quality:tags.quality}],
+          summary:args.resourceType==='network_device'?'缺指标，不足以判断正常或设备宕机':'冻结 CPU 91%，根因待验证'};
+      }});
     const final = { content: '合成调查摘要：证据已保存，根因待验证。', finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false,
       usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
     const provider = () => {
+      if (optionsInput.realProvider) return optionsInput.realProvider;
       let call = 0;
       return { getDefaultModel: () => 'controlled-fixture', getModelCapabilities: () => ({ model: 'controlled-fixture', contextWindowTokens: 32768, preferredOutputTokens: 2048, source: 'configuration', version: 'fixture/v1' }),
         countPromptTokens: optionsInput.systemPilot ? (messages:any[]) => {promptObservations.push({bytes:Buffer.byteLength(JSON.stringify(messages.map(({messageParts:_parts,...m})=>m))),messages:messages.length,roles:messages.map(m=>m.role),fields:messages.map(m=>Object.fromEntries(Object.entries(m).filter(([k])=>k!=='messageParts').map(([k,v])=>[k,Buffer.byteLength(JSON.stringify(v)??'')])))});return undefined;} : undefined,
@@ -161,7 +180,7 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
             {id:randomUUID(),name:'get_platform_observations',arguments:{}},
             {id:randomUUID(),name:'get_deployment_manifest',arguments:{}},
             {id:randomUUID(),name:'read_source_region',arguments:{path:'src/system-fixture.ts',startLine:1,endLine:1}},
-          ] : [{ id: randomUUID(), name: 'get_instance_summary', arguments: { instance_id: 101 } }], hasToolCalls: true, shouldExecuteTools: true } : final; },
+          ] : optionsInput.resourcePilot ? [{id:randomUUID(),name:'get_resource_observations',arguments:{resourceType: JSON.stringify(messages).includes('network_device') ? 'network_device' : JSON.stringify(messages).includes('server:') || JSON.stringify(messages).includes('服务器') ? 'server' : 'instance',resourceId:101}}] : [{ id: randomUUID(), name: 'get_instance_summary', arguments: { instance_id: 101 } }], hasToolCalls: true, shouldExecuteTools: true } : final; },
         chatStream: async (_messages: unknown, _tools: unknown, callbacks: any, options: any) => { providerCalls++;
           if (holdChat) await new Promise<void>((done, reject) => { const signal = options?.signal; if (signal?.aborted) reject(signal.reason); else signal?.addEventListener('abort', () => reject(signal.reason), { once: true }); }); await callbacks.onContentDelta('普通对话合成回答'); return { ...final, content: '普通对话合成回答' }; },
       } as any;
@@ -221,10 +240,25 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     if (optionsInput.databaseAlertPilot) {
       app.get('/api/alerts', { preHandler: verify }, async (request: any) => {
         // Synthetic source rows, real SQL/HTTP. Tests never fake admission.
-        const [items] = await pool.query('SELECT *, level AS severity FROM alerts WHERE instance_id=101 ORDER BY id');
+        const [items] = await pool.query('SELECT *, level AS severity FROM alerts WHERE instance_id=101 OR server_id=101 OR network_device_id=101 ORDER BY id');
         return { items, total: items.length, critical: items.length, unread: items.length };
       });
       app.get('/api/ai/analysis', { preHandler: verify }, async () => []);
+    }
+    if (optionsInput.resourcePilot) {
+      // Formal network routes/storage/permission handlers. No SSH/SNMP target calls.
+      await registerNetworkDeviceRoutes(app,verify);
+      app.get('/api/servers/:id',{preHandler:[verify,requirePermission('servers:view')]},async(request:any,reply:any)=> {
+        const row=await serverDatabaseService.getServerById(Number(request.params.id));
+        if(!row)return reply.code(404).send({error:'NOT_FOUND'});
+        const {credential_encrypted:_credential,...publicRow}=row;return publicRow;
+      });
+      app.get('/api/servers/:id/instances',{preHandler:[verify,requirePermission('servers:view')]},async()=>({instances:[]}));
+      app.get('/api/database/instances/:id',{preHandler:verify},async(request:any,reply:any)=> {
+        if(!request.user.instanceScopes[Number(request.params.id)])return reply.code(404).send({error:'NOT_FOUND'});
+        const [rows]=await pool.query('SELECT id,name,host,port,db_type,status,environment FROM database_instances WHERE id=?',[request.params.id]);
+        return rows[0]??reply.code(404).send({error:'NOT_FOUND'});
+      });
     }
     await registerInvestigationProfileRoutes(app, verify);
     await registerInvestigationGovernanceRoutes(app, verify, new InvestigationGovernanceStore(() => governanceAvailable ? pool : null, investigationBudgetConfiguration, contexts));

@@ -33,11 +33,14 @@ function receipt(row: RowDataPacket, duplicate = false): EventReceipt {
  * Worker, model invocation or externally selectable actor/policy/grants. */
 export class MysqlOperationalEventIngest {
   private readonly binding: TriggerBinding;
+  private readonly admissionContext?: import('./store.js').InvestigationCreate['context'];
   constructor(private readonly poolProvider: () => Pool | null, binding: TriggerBinding,
     private readonly ledger: MysqlInvestigationBudgetLedger,
     private readonly authorization = new InvestigationAuthorization(),
-    private readonly bridge = new InvestigationSessionBridge(poolProvider, authorization)) {
+    private readonly bridge = new InvestigationSessionBridge(poolProvider, authorization),
+    admissionContext?: import('./store.js').InvestigationCreate['context']) {
     this.binding = freezeTriggerBinding(binding);
+    this.admissionContext = admissionContext && structuredClone(admissionContext);
   }
 
   async ingest(value: EventInput, reservedConnection?: TransactionConnection): Promise<EventReceipt> {
@@ -58,7 +61,7 @@ export class MysqlOperationalEventIngest {
           const event = normalizeEvent(input, this.binding, randomUUID(), now);
           const { scopeHash, fingerprint, policyHash } = triggerIdentity(event, this.binding);
           const triggerKey = fingerprint;
-          const commandHash = stableHash(input);
+          const commandHash = stableHash(this.admissionContext ? { input, context: this.admissionContext } : input);
           const { stableErrorCode, callsite, httpStatus, ...envelope } = event;
           const classification = { stableErrorCode, callsite, ...(httpStatus === undefined ? {} : { httpStatus }) };
           await connection.execute(`INSERT INTO operational_events
@@ -140,7 +143,7 @@ export class MysqlOperationalEventIngest {
             const created = await this.bridge.createOnConnection(p.actor, connection, append,
               { idempotencyKey: key, title: event.summary.slice(0, 200), goal: '只读调查持久事件，引用事实并说明证据缺口。',
                 profileId: p.profileId, profileVersion: p.profileVersion, resources: p.resources,
-                context: { subject: event.subject, from: event.occurredAt, to: now } },
+                context: this.admissionContext ?? { subject: event.subject, from: event.occurredAt, to: now } },
               { idempotencyKey: key, message: `事件 ${event.id}：${event.summary}`.slice(0, 2_000) });
             if (!created.acceptance) throw new EventIngestError('EVENT_STORE_UNAVAILABLE');
             const budget = await this.ledger.reserveExecutionInTransaction(connection,

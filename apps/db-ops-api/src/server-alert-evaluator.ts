@@ -164,7 +164,7 @@ class ServerAlertEvaluator {
                 }
                 continue;
               }
-              currentValue = semantic.value; selectedDimensions = semantic.dimensions; selectedRecordedAt = undefined;
+              currentValue = semantic.value; selectedDimensions = semantic.dimensions; selectedRecordedAt = semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : undefined;
             }
             if (currentValue === undefined) {
               continue; // Metric not collected for this server
@@ -219,6 +219,10 @@ class ServerAlertEvaluator {
                 auto_generated: true,
                 dimensions,
                 collected_at: collectedAt,
+                observed_from: semantic.handled ? semantic.observation?.from ?? null : collectedAt,
+                observed_to: semantic.handled ? semantic.observation?.to ?? null : collectedAt,
+                rule_window_seconds: rule.duration_seconds,
+                quality: semantic.handled ? semantic.observation?.quality ?? 'unknown' : collectedAt ? 'good' : 'unknown',
               },
             });
 

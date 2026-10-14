@@ -12,6 +12,9 @@ export interface NetworkDeviceAlertObservation {
   dimensions?: Record<string, string>;
   quality: ObservationQuality;
   observedAt: Date | null;
+  observedFrom?: Date | null;
+  observedTo?: Date | null;
+  aggregateQuality?: 'good' | 'partial';
   validUntil: Date | null;
   reason?: string;
   /** Synthetic status evidence is derived from the persisted device state. */
@@ -177,8 +180,11 @@ export class NetworkDeviceAlertEvaluator {
             const identity = alertIdentity(device.id, rule, semantic.dimensions ?? undefined);
             if (semantic.level && semantic.value !== null) {
               firingKeys.add(identity); triggered++;
-              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: 'good',
-                observedAt: this.clock(), validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
+              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: semantic.observation?.quality === 'good' ? 'good' : 'unknown',
+                aggregateQuality: semantic.observation?.quality,
+                observedAt: semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : null,
+                observedFrom: semantic.observation?.from ? new Date(semantic.observation.from) : null,
+                observedTo: semantic.observation?.to ? new Date(semantic.observation.to) : null, validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
                 semantic.value, compileAlertRule(rule, 'network_device', macroContext(rule.metric_name)));
             } else {
               const recovery = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule,
@@ -332,6 +338,11 @@ export class NetworkDeviceAlertEvaluator {
         rule_name: rule.name,
         target_type: 'network_device',
         auto_generated: true,
+        observed_at: observation.observedAt?.toISOString() ?? null,
+        observed_from: (observation.observedFrom ?? observation.observedAt)?.toISOString() ?? null,
+        observed_to: (observation.observedTo ?? observation.observedAt)?.toISOString() ?? null,
+        rule_window_seconds: rule.duration_seconds,
+        quality: observation.aggregateQuality ?? observation.quality,
         semantic_migration: observation.reason?.startsWith('{"version"') ? observation.reason : undefined,
         ...(dimensions ? { dimensions } : {}),
       },

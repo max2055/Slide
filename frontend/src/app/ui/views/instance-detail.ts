@@ -1,3 +1,4 @@
+import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
 import { returnToDashboard } from './dashboard-model.js';
@@ -339,7 +340,8 @@ export class InstanceDetailPage extends LitElement {
         </div>
 
 
-        <div class="tabs">
+        <resource-investigation-links resourceType="instance" .resourceId=${this.instanceId}></resource-investigation-links>
+      <div class="tabs">
           ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
             <button class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
               ${({ overview:"概览", collection:"采集配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}

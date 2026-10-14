@@ -19,8 +19,12 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then echo 'Isolated T08 MySQL unavailable' >&2; exit 1; fi
-T08_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/investigations/legacy-analysis-bridge.test.ts src/investigations/alert-bridge.test.ts src/investigations/alert-bridge-pool.test.ts src/network-devices/network-device-alert-evaluator.mysql.test.ts
-if [[ "${1:-}" == '--browser' ]]; then
+if [[ "${1:-}" != '--resources-browser' ]]; then
+T08_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/investigations/legacy-analysis-bridge.test.ts src/investigations/alert-bridge.test.ts src/investigations/alert-bridge-pool.test.ts src/investigations/resource-event-bridge.test.ts src/network-devices/network-device-alert-evaluator.mysql.test.ts
+fi
+if [[ "${1:-}" == '--resources' || "${1:-}" == '--resources-browser' ]]; then
+  T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts investigation-resource-links.spec.ts "${@:2}"
+elif [[ "${1:-}" == '--browser' ]]; then
   T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts investigation-bridges.spec.ts
 elif [[ "${1:-}" == '--browser-all' ]]; then
   T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts

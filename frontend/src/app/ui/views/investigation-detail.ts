@@ -1,3 +1,4 @@
+import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
 import { html, nothing } from 'lit';
 import { investigationMessages, type InvestigationsController } from '../controllers/investigations.ts';
 import { messagePartsRenderRows, messagePartsToolOutputs } from '../chat/message-normalizer.ts';
@@ -34,6 +35,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <div><dt>业务问题</dt><dd><app-badge>${problemLabels[detail.problemStatus]}</app-badge></dd></div>
       </dl>
       <p class="muted">${detail.profileId === 'system' ? 'System' : 'Ops'} · 只读调查 · ${detail.resources.map(r => `${r.type}:${r.id}`).join('、') || '平台'} · ${detail.sessionId}</p>
+      <p class="investigation-resource-links">${detail.resources.map(ref => html`<a href=${resourceDetailUrl(ref.type, ref.id)}>返回原资源 ${ref.type}:${ref.id}</a> `)}</p>
       ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
         <p class="muted">原结果不补跑；根因与恢复尚未验证。</p><pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre>` : nothing}
       <button class="btn evidence-toggle" @click=${options.onEvidence}>查看证据与成果</button>

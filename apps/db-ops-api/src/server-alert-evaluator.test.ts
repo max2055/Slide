@@ -69,6 +69,14 @@ describe('ServerAlertEvaluator rule contract', () => {
     expect(mocks.semantic.mock.calls.some(c => c[2] === 120)).toBe(true);
   });
 
+  it('preserves the semantic evidence window without synthesizing a sample timestamp',async()=>{
+    mocks.getAlertRules.mockResolvedValue([{id:2,name:'CPU',target_type:'server',metric_name:'cpu_usage',operator:'>',threshold:80,severity:'warning',duration_seconds:60,server_id:null}]);
+    const from='2026-10-14T05:00:00.000Z',to='2026-10-14T05:01:00.000Z';
+    mocks.semantic.mockResolvedValue({handled:true,level:'warning',value:91,dimensions:{},migration:{},observation:{from,to,observedAt:null,quality:'partial'}});
+    await serverAlertEvaluator.evaluateServerRules();
+    expect(mocks.createAlert).toHaveBeenCalledWith(expect.objectContaining({tags:expect.objectContaining({collected_at:null,observed_from:from,observed_to:to,quality:'partial'})}));
+  });
+
   it('uses only server rules and persists the multi-level result after duration is met', async () => {
     mocks.getAlertRules.mockResolvedValue([
       {
@@ -91,7 +99,7 @@ describe('ServerAlertEvaluator rule contract', () => {
       server_id: 7,
       metric_name: 'cpu_usage',
       level: 'error',
-      tags: expect.objectContaining({ rule_id: 2, target_type: 'server' }),
+      tags: expect.objectContaining({ rule_id: 2, target_type: 'server', quality: 'good', collected_at: expect.any(String), observed_from: expect.any(String), observed_to: expect.any(String) }),
     }));
   });
 

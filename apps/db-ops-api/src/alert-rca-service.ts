@@ -18,6 +18,8 @@ interface AlertDetails {
   id: number;
   instance_id: number | null;
   server_id: number | null;
+  network_device_id: number | null;
+  tags?: unknown;
   alert_type: string;
   level: string;
   title: string;
@@ -57,11 +59,12 @@ class AlertRCAService {
     // c. An RCA subject is exactly one managed resource.
     const instanceId = alert.instance_id ?? undefined;
     const serverId = alert.server_id ?? undefined;
-    if ((instanceId ? 1 : 0) + (serverId ? 1 : 0) !== 1) {
+    const networkDeviceId = alert.network_device_id ?? undefined;
+    if ([instanceId, serverId, networkDeviceId].filter(Boolean).length !== 1) {
       return { success: false, error: '告警无有效资源主体，无法分析' };
     }
-    const subjectType = serverId ? 'server' : 'instance';
-    const subjectId = serverId ?? instanceId!;
+    const subjectType = networkDeviceId ? 'network_device' : serverId ? 'server' : 'instance';
+    const subjectId = networkDeviceId ?? serverId ?? instanceId!;
     if (trigger === 'manual' && (!actor || !canReadResource(actor, { type: subjectType, id: subjectId })))
       return { success: false, error: 'INVESTIGATION_NOT_FOUND' };
 
@@ -69,7 +72,7 @@ class AlertRCAService {
     const legacy = async (connection?: PoolConnection): Promise<AlertBridgeResponse> => {
     const result = await dispatchOrReuse({
         type: 'alert_rca', cacheKey: `alert:${alertId}:${subjectType}:${subjectId}`,
-        instanceId, serverId, sessionKey: `rca-${subjectType}-${alertId}`,
+        instanceId, serverId, networkDeviceId, sessionKey: `rca-${subjectType}-${alertId}`,
         triggerType: trigger, actor, retryOf, relatedId: alertId,
         userMessage: `对告警 ${alertId} 进行根因分析。
 
@@ -89,7 +92,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
       ...(result.status === 'unknown' ? { error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' } : {}),
     };
     };
-    return instanceId ? this.investigationBridge.dispatch(alert, trigger, actor, legacy, retryOf) : legacy();
+    return this.investigationBridge.dispatch(alert, trigger, actor, legacy, retryOf);
   }
 
   /**
@@ -153,7 +156,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
 
     try {
       const [rows] = await pool.execute(
-        `SELECT id, instance_id, server_id, alert_type, level, title, message,
+        `SELECT id, instance_id, server_id, network_device_id, tags, alert_type, level, title, message,
                 metric_name, metric_value, threshold_value, created_at
          FROM alerts WHERE id = ?`,
         [alertId]
@@ -165,6 +168,8 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
         id: row.id,
         instance_id: row.instance_id,
         server_id: row.server_id,
+        network_device_id: row.network_device_id,
+        tags: row.tags,
         alert_type: row.alert_type,
         level: row.level,
         title: row.title,

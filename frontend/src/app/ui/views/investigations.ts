@@ -32,7 +32,7 @@ export class InvestigationsPage extends LitElement {
   @state() private query = '';
   @state() private lifecycle = '';
   @state() private profile = '';
-  @state() private resource = '';
+  @state() private resource = new URL(location.href).searchParams.get('resource') ?? '';
   @state() private draft = '';
   controller = new InvestigationsController(() => this.refreshControllerView(), null);
   private refreshControllerView() {
