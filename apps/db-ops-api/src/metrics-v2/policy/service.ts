@@ -28,7 +28,9 @@ export class PolicyService {
   private async resolve(tx: PolicyTransaction, binding: Binding, group: Group | null, previous: Published | null, at: string): Promise<Published> {
     const changedPackage = !previous || stable(previous.binding.package) !== stable(binding.package);
     const resource = await this.resources.inventory(binding.resource) ?? { type: binding.resource.type, id: String(binding.resource.id), attributes: {} };
-    const resolved = resolvePolicy(this.registry, binding, group, resource, changedPackage ? [] : await tx.capabilities(binding.resource), at);
+    // Inventory may be stamped during the asynchronous read. Evaluate after it,
+    // retaining the operation timestamp for publication and its atomic audit.
+    const resolved = resolvePolicy(this.registry, binding, group, resource, changedPackage ? [] : await tx.capabilities(binding.resource), this.clock());
     return { binding, resolved, published_at: at, application: {
       applied_revision: previous?.application.applied_revision ?? null, reported_at: previous?.application.reported_at ?? null, status: 'pending', error_code: null,
     } };
