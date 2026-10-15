@@ -1,3 +1,4 @@
+import { alertLevelLabel, alertLevelVariant } from '../alert-levels.js';
 /**
  * Alert detail modal showing alert info, timeline, AI analysis section, and analysis history.
  * Wraps content in <app-dialog size="lg">.
@@ -25,7 +26,7 @@ interface Alert {
   network_device_id?: number | null;
   network_device_name?: string;
   alert_type: string;
-  severity: "critical" | "warning" | "info";
+  severity: string;
   title: string;
   message: string;
   status: 'unread' | 'read' | 'acknowledged' | 'resolved' | 'closed';
@@ -67,7 +68,7 @@ export class AlertDetailModal extends LitElement {
         <div style="margin-bottom:var(--space-lg);">
           <div style="display:flex;align-items:center;gap:var(--space-sm);flex-wrap:wrap;">
             <span style="font-size:var(--text-xs);color:var(--muted);">#${a.id}</span>
-            <app-badge variant=${a.severity === 'critical' ? 'danger' : a.severity === 'warning' ? 'warn' : 'info'}>${this._severityLabel(a.severity)}</app-badge>
+            <app-badge variant=${alertLevelVariant(a.severity)}>${alertLevelLabel(a.severity)}</app-badge>
             <span class="type-badge" style="display:inline-flex;align-items:center;padding:var(--space-xs) var(--space-sm);background:rgba(59,130,246,0.12);color:var(--info);border-radius:var(--radius-sm);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">${this._typeLabel(a.alert_type)}</span>
           </div>
           <div style="font-size:var(--text-lg);font-weight:600;margin-top:var(--space-xs);">${this._cleanTitle(a.title)}</div>
@@ -171,7 +172,6 @@ export class AlertDetailModal extends LitElement {
     `;
   }
 
-  private _severityLabel(s: string): string { return ({ critical: '严重', warning: '警告', info: '提示' } as Record<string, string>)[s] || s; }
   private _cleanTitle(t: string): string { return t.replace(/^\[(CRITICAL|WARNING|INFO|ERROR)\]\s*/i, ''); }
   private _typeLabel(t: string): string {
     return ({ health_check_failed: '健康检查', slow_query: '慢查询', connection_pool_exhausted: '连接池', replication_lag: '复制延迟', disk_space_low: '磁盘空间', cpu_high: 'CPU', memory_high: '内存' } as Record<string, string>)[t] || t;
