@@ -11,7 +11,7 @@ function page(tab = 'topsql') {
   return el;
 }
 async function text(el: any) {
-  const root = document.createElement('div'); roots.push(root);
+  const root = document.createElement('div'); roots.push(root); document.body.append(root);
   render(el.activeTab === 'sessions' ? el._renderSessions() : el._renderTopSQL(), root);
   await Promise.all(Array.from(root.querySelectorAll('app-empty-state'), (e: any) => e.updateComplete));
   return root.textContent ?? '';

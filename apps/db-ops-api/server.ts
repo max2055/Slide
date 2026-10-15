@@ -2307,11 +2307,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const { limit = 10 } = request.query as any;
-      const queries = await databaseService.getSlowQueries(Number(id), Number(limit));
+      let source = 'unknown';
+      const queries = await databaseService.getSlowQueries(Number(id), Number(limit), value => { source = value; });
       if (!queries) {
         return reply.code(404).send({ error: '无法获取慢查询，实例可能未连接' });
       }
-      reply.send(queries);
+      reply.header('x-slide-query-source', source).send(queries);
     } catch (error: any) {
       reply.code(500).send({ error: '获取慢查询失败：' + error.message });
     }
