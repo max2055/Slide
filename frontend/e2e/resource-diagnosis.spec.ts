@@ -225,6 +225,82 @@ async function diagnosisFixture(page: Page, options: { permissions?: string[]; s
   return state;
 }
 
+for (const width of [1280, 390]) {
+  test(`MAX-157 invalidation: displayed evaluation and nested readers are removed on revocation at ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 950 }); await diagnosisFixture(page);
+    await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&diagnosisTab=evaluation');
+    const view = page.locator('resource-diagnosis-page');
+    await expect(view.locator('resource-evaluation')).toContainText('CPU 使用率上限');
+    await view.getByText('规则配置、人工判断与恢复核验', { exact: true }).click();
+    await expect(view.locator('resource-invariants').getByRole('button', { name: '重新加载规则' })).toBeVisible();
+    let release!: () => void;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    let requested = false;
+    await page.route('**/api/resources/instance/1/invariants', async route => {
+      requested = true; await delayed;
+      await route.fulfill({ json: { version: 8, rules: [{ id: 'private-late-rule', metricId: 'cpu', version: 1, max: 80 }] } });
+    });
+    await view.getByRole('button', { name: '重新加载规则' }).click(); await expect.poll(() => requested).toBe(true);
+    await page.route('**/api/resources', route => route.fulfill({ status: 403, json: {} }));
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } })));
+    await expect(view.locator('resource-evaluation')).toHaveCount(0);
+    release(); await expect(view.getByRole('alert')).toContainText('无资源浏览权限');
+    await expect(view.locator('resource-invariants, resource-decisions, resource-recovery')).toHaveCount(0);
+    await expect(view).not.toContainText('private-late-rule');
+    await page.screenshot({ path: testInfo.outputPath(`revoked-evaluation-${width}.png`), fullPage: true });
+  });
+  test(`MAX-157 invalidation: delayed evaluation cannot return after revocation at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 950 }); await diagnosisFixture(page);
+    let release!: () => void; const delayed = new Promise<void>(resolve => { release = resolve; }); let requested = false;
+    await page.route('**/api/resources/instance/1/evaluation', async route => {
+      requested = true; await delayed;
+      await route.fulfill({ json: { generatedAt: new Date().toISOString(), rulesVersion: 1, invariants: [{ ruleId: 'private-delayed-evaluation', status: 'fail', evidenceRefs: [] }], expectations: [], gaps: [] } });
+    });
+    await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&diagnosisTab=evaluation');
+    await expect.poll(() => requested).toBe(true);
+    await page.route('**/api/resources', route => route.fulfill({ status: 403, json: {} }));
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } })));
+    await expect(page.locator('resource-evaluation')).toHaveCount(0); release();
+    await expect(page.locator('resource-diagnosis-page')).not.toContainText('private-delayed-evaluation');
+  });
+  for (const failure of [403, 503, 'network']) for (const tab of ['evidence', 'evaluation', 'relations', 'result']) {
+    test(`MAX-157 invalidation: ${tab} refresh ${failure} clears facts and retains task at ${width}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 950 }); const state = await diagnosisFixture(page);
+      state.status = 'unknown';
+      await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&analysisId=42&diagnosisTab=' + tab);
+      const view = page.locator('resource-diagnosis-page');
+      await expect(view.locator('[data-diagnosis-overview]')).toContainText('订单数据库');
+      if (tab === 'evaluation') await expect(view.locator('resource-evaluation')).toContainText('CPU 使用率上限');
+      if (tab === 'evidence') {
+        const detail = view.getByRole('button', { name: /^查看证据/ }); await detail.click();
+        await expect(view.getByRole('dialog', { name: '证据详情' })).toBeVisible();
+        await page.keyboard.press('Escape'); await expect(detail).toBeFocused();
+      }
+      if (tab === 'relations') {
+        await page.route('**/api/resources/instance/1/diagnose', route => route.fulfill({ json: { relations: [], relatedEvidence: [{ resource: { resource: { type: 'server', id: 2 }, label: 'private-related-resource' } }], gaps: [], truncated: false } }));
+        await view.getByRole('button', { name: '获取关联证据' }).click();
+        await expect(view).toContainText('private-related-resource');
+      }
+      let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; }); let requested = false;
+      await page.route('**/api/resources', async route => {
+        requested = true; await pending;
+        if (failure === 'network') await route.abort('failed'); else await route.fulfill({ status: failure as number, json: {} });
+      });
+      await view.getByRole('button', { name: '刷新', exact: true }).click();
+      await expect.poll(() => requested).toBe(true);
+      await expect(view.locator('[data-diagnosis-overview]')).not.toContainText('订单数据库');
+      await expect(view.locator('resource-evaluation')).toHaveCount(0);
+      release(); await expect(view.getByRole('alert')).toBeVisible();
+      await expect(view).not.toContainText('private-related-resource');
+      await expect(view.locator('[data-evidence-id]')).toHaveCount(0);
+      await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
+      await expect(page).toHaveURL(/analysisId=42/); expect(state.posts).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (tab === 'evidence' && failure === 403) await page.screenshot({ path: testInfo.outputPath(`refresh-forbidden-${width}.png`), fullPage: true });
+    });
+  }
+}
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {
   test(`business diagnosis, keyboard and accessible task states at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
