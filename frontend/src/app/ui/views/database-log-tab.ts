@@ -264,6 +264,10 @@ export class DatabaseLogTab extends LitElement {
     }
 
     .raw-content {
+      position: sticky;
+      left: var(--space-sm);
+      box-sizing: border-box;
+      max-width: calc(100vw - 64px);
       font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
       font-size: 12px;
       white-space: pre-wrap;

@@ -165,3 +165,50 @@ test('controlled overview states supplement real service and preserve investigat
   await expect(page.locator('instance-detail-page .overview-grid')).toHaveCount(0);
   await page.screenshot({path:`${output}/controlled-permission-invalidation.png`,fullPage:true});
 });
+
+test('controlled metrics interactions and log context isolation',async({page})=>{
+  test.setTimeout(100_000);
+  await page.addInitScript(({token,permissions})=>{
+    localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));
+  },{token,permissions});
+  const data={profile:{columns:[]},window:{from:'2026-10-15T00:00:00Z',to:'2026-10-15T01:00:00Z'},metrics:[
+    {definition:{id:'db.uptime_seconds',category:'canonical',unit:'s',meaning:'受控交互证据，不代表目标采集'},state:'available',series:[{dimensions:{node:'controlled'},buckets:[1,2,3].map((value,index)=>({value:{encoding:'float64',value},unit:'s',coverage:1,quality:{status:'good',reason:'controlled'},freshness:index===1?'stale':'fresh',accuracy:'exact',observed_at:'2026-10-15T00:30:00Z',sources:[{id:'controlled-fixture'}],window:{from:`2026-10-15T00:0${index}:00Z`,to:`2026-10-15T00:0${index+1}:00Z`}}))}]},
+    {definition:{id:'db.connections.active',category:'extension',unit:'count',meaning:'受控扩展'},state:'temporary_failure',series:[]}
+  ]};
+  let metricStatus=200;
+  await page.route('**/api/metrics-v2/query',route=>route.fulfill({status:metricStatus,json:metricStatus===200?data:{error:'controlled'}}));
+  for(const width of [1440,768,390]) for(const theme of ['light','dark']) {
+    await page.setViewportSize({width,height:1000});await page.goto(`${base}/instance-detail?id=${instanceId}`);
+    await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
+    await page.locator('instance-detail-page').getByRole('tab',{name:'指标与趋势',exact:true}).click();
+    const metrics=page.locator('semantic-metrics');
+    await expect(metrics.locator('.current')).toHaveCount(2);
+    await expect(metrics.locator('.trend-grid metric-chart')).toHaveCount(1);
+    expect(await metrics.locator('.trend-grid metric-chart').evaluate((el:any)=>el.series[0].data)).toEqual([1,null,3]);
+    await metrics.getByLabel('指标',{exact:true}).selectOption('db.uptime_seconds');await expect(metrics.locator('.current')).toHaveCount(1);
+    const raw=metrics.locator('summary').filter({hasText:'查看原始时间桶'}).first();await raw.focus();await page.keyboard.press('Enter');
+    await expect(metrics.locator('app-data-table').first()).toBeVisible();
+    await metrics.getByText('指标定义',{exact:true}).first().focus();await page.keyboard.press('Enter');
+    await expect(metrics.getByText('受控交互证据，不代表目标采集',{exact:true})).toBeVisible();
+    for(const control of [metrics.getByLabel('时间范围',{exact:true}),metrics.getByLabel('指标',{exact:true}),metrics.getByRole('button',{name:'刷新标准指标'})]) {
+      const box=await control.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);
+    }
+    await page.screenshot({path:`${output}/controlled-metrics-${width}-${theme}.png`,fullPage:true});
+  }
+  const metrics=page.locator('semantic-metrics');metricStatus=503;await metrics.getByRole('button',{name:'刷新标准指标'}).click();await expect(metrics.getByRole('alert')).toContainText('不能据此判断健康');
+  metricStatus=403;await metrics.getByRole('button',{name:'刷新标准指标'}).click();await expect(metrics.locator('.current')).toHaveCount(0);
+  await expect(metrics.getByRole('alert')).toContainText('权限');
+  await page.locator('instance-detail-page').getByRole('tab',{name:'日志',exact:true}).click();
+  const logs=page.locator('database-log-tab');await expect(logs.locator('.message-cell')).toHaveCount(50);
+  let release!:()=>void;
+  await page.route('**/api/logs?**',async route=>{
+    await new Promise<void>(resolve=>release=resolve);
+    await route.fulfill({json:{logs:[{id:99999,message:'LATE-OLD-RESOURCE',collected_at:new Date().toISOString(),log_level:'info',source:'other'}],total:1}});
+  });
+  await logs.getByRole('button',{name:'下一页',exact:true}).click();
+  await expect(logs.getByRole('status')).toContainText('加载');
+  await logs.evaluate((el:any)=>el.instanceId=999999);await expect(logs.locator('.message-cell')).toHaveCount(0);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-session-expired')));release?.();
+  await expect(page.locator('body')).not.toContainText('LATE-OLD-RESOURCE');
+  await writeFile(`${output}/controlled-interactions.json`,JSON.stringify({source:'Explicit route interception, separate from normal-service evidence',coverage:['metrics filter/keyboard/details/chart gap','metrics failure/403','log pending + object change + session invalidation'],head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()},null,2));
+});
