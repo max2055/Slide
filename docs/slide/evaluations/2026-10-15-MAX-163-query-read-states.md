@@ -1,6 +1,6 @@
 # MAX-163：慢查询与会话读取状态验收
 
-基线：main `3ca5c6fb9357b8e2eb1adb9aed9e266db825839c`。分支：`codex/MAX-163-read-states`。仅修改实例详情慢查询、会话及直接读取路径，不调整指标、日志布局。
+基线：main `3ca5c6fb9357b8e2eb1adb9aed9e266db825839c`。分支：`codex/MAX-163-read-states`。已合入 main `cbec4bab133d26743fcabe014c42c0d2a30e55a3`，最终可执行集成检查对应 `61ac1ddacfcfd68d661db8d18f173716430a0c7d`；后续仅补验收记录。仅修改实例详情慢查询、会话及直接读取路径，不调整指标、日志布局。
 
 ## 实现与兼容
 
@@ -17,8 +17,8 @@
 | 层级 | 结果 | 证据 |
 | --- | --- | --- |
 | RED 复现 | 前端 11 项、后端 7 项因原错误语义失败 | 提交 `6298ae70` |
-| 后端全量（单进程） | 354 文件、3436 项通过；43 文件/633 项跳过 | `vitest run --maxWorkers=1`；`frontend/test-results/max163-backend-serial.log`。跳过项不宣称验收通过。 |
-| 前端完整单测 | 105 文件、867 项通过，含 16 项读取状态/兼容/竞态用例 | `frontend/test-results/max163-unit.log` |
+| 后端最终全量 | 355 文件、3441 项通过；43 文件/634 项跳过 | 合入最新 main 后 `vitest run --maxWorkers=2`；`frontend/test-results/max163-backend-integrated.log`。跳过项不宣称验收通过。 |
+| 前端完整单测 | 106 文件、900 项通过，含 16 项读取状态/兼容/竞态用例 | `frontend/test-results/max163-unit-integrated.log` |
 | 后端定向回归 | 8 文件、73 项通过 | 适配器、路由、实例权限、EXPLAIN 安全边界、达梦连接与指标；`frontend/test-results/max163-backend.log` |
 | 兼容回归 | 3 文件、47 项通过 | 达梦缺失连接语义、指标路由源码边界及文档目录规范 |
 | Lint | 0 errors、270 warnings | `pnpm lint`；本题新增文件无诊断 |
@@ -39,11 +39,11 @@
 
 ### 受控状态与视觉/键盘
 
-Playwright 控制特殊响应，不作为数据库业务成功证据。慢查询、会话各覆盖 1280×900 深色与 390×900 浅色：加载、成功空、500、403、404、格式异常、网络失败及过期。焦点 + Enter 激活标签；无页面级异常及横向页面溢出。已检查主题、文案、焦点及窄屏截图。
+Playwright 控制特殊响应，不作为数据库业务成功证据。慢查询、会话各覆盖 1280×900 深色与 390×900 浅色：加载、成功空、500、403、404、格式异常、网络失败及过期。焦点 + Enter 激活标签；无页面级异常及横向页面溢出。已检查主题、文案、焦点及窄屏截图。浏览器对应 `f83807dd`，合入 main 后本题页面、DatabaseService、生产查询路由和浏览器用例均未变化（git diff 核验），复用有效证据。
 
 截图目录 `frontend/test-results/instance-query-acceptance/`：`real-*` 为真实服务流程，`controlled-*` 为受控状态。评论附代表截图；本地路径本身不是跨机器交付链接。
 
-默认并发全量尝试曾导致多个 MySQL 容器同时启动，本次专用容器经 Docker inspect 确认 OOMKilled=true、exit 137。已停止该批测试并降低并发重跑，上表是最终串行结果，不将 OOM 失败计为通过。
+默认并发全量尝试曾导致多个 MySQL 容器同时启动，本次专用容器经 Docker inspect 确认 OOMKilled=true、exit 137。已停止该批测试并降低并发重跑，先以单进程获得 3436 项通过结果，再合入 main，以最多 2 个进程完成上表最终集成检查，不将 OOM 失败计为通过。
 
 ## 重跑与边界
 
