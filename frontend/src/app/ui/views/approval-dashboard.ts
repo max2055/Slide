@@ -57,6 +57,10 @@ export function approvalExecution(record: { status: string; execution_result?: u
     return hasResult ? 'conflict' : 'none';
   }
   if (agent) return record.status === 'consumed' ? 'unknown' : 'none';
+  // A failed SQL/audit acknowledgement can follow a commit; it is not a known failure.
+  if (result?.executionState === 'unknown') {
+    return record.status === 'executed' || record.status === 'execution_failed' || result?.success === true ? 'conflict' : 'unknown';
+  }
   if (result?.success === false || result?.error || record.status === 'execution_failed') {
     return record.status === 'executed' || result?.success === true ? 'conflict' : 'failed';
   }
@@ -801,6 +805,8 @@ export class ApprovalDashboard extends LitElement {
       ${this.detailLoading ? html`<p role="status">正在读取完整证据…</p>` : this.detailError ? html`<div role="alert" class="error-box">${this.detailError}</div><button class="btn" @click=${() => this._loadDetail(this.selectedRequest!.id)}>重试</button>` : html`
         <p class="caption">${this.historyTarget(item)} · ${new Date(record.created_at).toLocaleString('zh-CN')}</p>
         <div class="evidence-meta">${this._riskBadge(record.risk_level || 'unknown')}<app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge>${this.executionBadge(item)}</div>
+        ${item.kind === 'sql' && approvalValue(item.record.execution_result)?.executionState === 'unknown'
+          ? html`<p class="history-notice" role="status">后端执行结果未知：SQL 可能已提交。请勿重试；先核对持久化执行意图与目标数据库，完成对账。</p>` : nothing}
         ${this.evidenceWarning ? html`<p class="history-notice" role="status">${this.evidenceWarning}</p>` : nothing}
         ${item.kind === 'sql' ? html`
           ${this.evidenceSection('完整 SQL', item.record.sql_text)}

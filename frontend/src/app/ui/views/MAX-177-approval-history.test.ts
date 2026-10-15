@@ -4,6 +4,8 @@ vi.mock('../../../api/index.js', () => ({ authFetch }));
 import { ApprovalDashboard, approvalDecision, approvalExecution } from './approval-dashboard.ts';
 const response = (body: unknown, status = 200) => ({ ok: status === 200, status, json: async () => body });
 const row = (id: number, status = 'approved', execution_result: unknown = null) => ({ id, kind: 'sql', instance_id: 7, sql_text: `SELECT ${id}`, risk_level: 'high', status, execution_result, created_at: '2026-10-15T00:00:00Z' });
+const reconciliation = { success: false, executionState: 'unknown', retryable: false,
+  error: 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
 const flush = async (subject: ApprovalDashboard) => { await new Promise(resolve => setTimeout(resolve, 0)); await subject.updateComplete; };
 beforeEach(() => { document.body.replaceChildren(); sessionStorage.clear(); authFetch.mockReset(); });
 async function history(items: unknown[]) {
@@ -13,6 +15,31 @@ async function history(items: unknown[]) {
   (subject as any).switchFilter('processed'); await flush(subject); return subject;
 }
 describe('MAX-177 result evidence', () => {
+  it.each([reconciliation, JSON.stringify(reconciliation)])('preserves formal unknown receipt %j through filtering and complete evidence', async (receipt) => {
+    const source = row(1, 'executing', receipt);
+    expect(approvalExecution(source)).toBe('unknown');
+    const subject = await history([source, row(2, 'execution_failed', { success: false, error: 'definite failure' }), row(3), row(4, 'executed', { success: true })]);
+    (subject as any).changeHistoryFilter('executionFilter', 'failed'); await flush(subject);
+    expect(subject.shadowRoot!.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(subject.shadowRoot!.querySelector('tbody')!.textContent).toContain('SELECT 2');
+    (subject as any).changeHistoryFilter('executionFilter', 'unknown'); await flush(subject);
+    expect(subject.shadowRoot!.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(subject.shadowRoot!.querySelector('tbody')!.textContent).toContain('结果未知');
+    authFetch.mockImplementation(async (url: string) => response(url.endsWith('/events') ? [] : source));
+    (subject as any).openDetail(source); await flush(subject);
+    const dialog = subject.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.querySelector('.evidence-meta')!.textContent).toContain('结果未知');
+    expect(dialog.textContent).toContain('SQL 可能已提交');
+    expect(dialog.textContent).toContain('请勿重试');
+    expect(dialog.textContent).toContain('对账');
+    expect(dialog.textContent).toContain(reconciliation.error);
+    expect(dialog.textContent).toContain('"retryable":' + (typeof receipt === 'string' ? 'false' : ' false'));
+    expect(dialog.textContent).not.toContain('执行失败');
+    expect([...dialog.querySelectorAll('button')].some(button => button.textContent?.includes('重试'))).toBe(false);
+  });
+  it.each(['executed', 'execution_failed', 'rejected'])('retains conflict for unknown evidence versus terminal %s', (status) => {
+    expect(approvalExecution({ status, execution_result: reconciliation })).toBe('conflict');
+  });
   it.each([
     ['approved', null, 'none'], ['rejected', null, 'none'], ['execution_failed', null, 'failed'],
     ['approved', '{"success":false,"error":"timeout"}', 'failed'], ['approved', '{}', 'unknown'],
