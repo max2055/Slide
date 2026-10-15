@@ -210,7 +210,7 @@ export class ServerDetailPage extends LitElement {
         if (version === this.contextVersion) { this.server = server; this.lastUpdated = new Date(); }
       }
       else {
-        if (version === this.contextVersion) this.error = "获取服务器详情失败";
+        if (version === this.contextVersion) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
       }
     } catch (err: any) {
       if (version === this.contextVersion) this.error = err.message;
@@ -507,7 +507,7 @@ export class ServerDetailPage extends LitElement {
             </div>
           </div>
           <div class="status-item">
-            <div class="status-label">上次采集</div>
+            <div class="status-label">最近状态检查（含失败尝试）</div>
             <div class="status-value">${this._formatLastCheck()}</div>
           </div>
         </div>
@@ -623,7 +623,7 @@ export class ServerDetailPage extends LitElement {
             <div class="config-value">${this.server.collection_enabled ? "已启用" : "已禁用"}</div>
           </div>
           <div class="config-item" style="grid-column:1/-1;">
-            <div class="config-label">上次采集时间</div>
+            <div class="config-label">最近状态检查时间（含失败尝试）</div>
             <div class="config-value">${this._formatLastCheck()}</div>
           </div>
         </div>
@@ -632,7 +632,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _formatLastCheck(): string {
-    if (!this.server || !this.server.last_check_at) return "从未采集";
+    if (!this.server || !this.server.last_check_at) return "尚无检查记录";
     const d = new Date(this.server.last_check_at);
     return d.toLocaleString("zh-CN");
   }

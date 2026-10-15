@@ -103,7 +103,11 @@ async function seed(kind: 'instance' | 'server', at: string, reset = false) {
 }
 async function capture(page: Page, name: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, animations: 'disabled' });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' });
+  // Keep the actual observation readable even when earlier empty buckets make the table long.
+  const observed = page.locator('semantic-metrics time').last();
+  if (await observed.count()) await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
 }
 for (const kind of ['instance', 'server'] as const) for (const [width, theme] of [[1280, 'dark'], [390, 'light']] as const) test(`${kind} observation and read states ${width} ${theme}`, async ({ page }) => {
   await seed(kind, sampledAt, true);

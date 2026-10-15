@@ -168,7 +168,7 @@ export class InstanceDetailPage extends LitElement {
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
       if (instanceId !== this.instanceId) return;
-      if (!res.ok) throw new Error("获取实例详情失败");
+      if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? '无权读取实例详情' : '获取实例详情失败');
       const instance = await res.json();
       if (instanceId !== this.instanceId) return;
       this.instance = instance;
