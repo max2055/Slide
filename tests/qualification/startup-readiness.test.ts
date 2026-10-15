@@ -81,6 +81,11 @@ try {
   const leaderPort = await freePort(), standbyPort = await freePort();
   const leader = start({ ...env, PORT: String(leaderPort), AGENT_WS_PORT: String(await freePort()) });
   await waitFor(async () => (await probe(leaderPort, '/api/health')).code === 200, 'leader liveness');
+  // The listener opens before WorkerStartup acquires its lease.
+  await waitFor(async () => {
+    const [leases] = await pool!.query<any[]>("SELECT owner_id FROM worker_leases WHERE lease_name = 'slide-singleton-workers' AND expires_at > NOW()");
+    return leases.length === 1;
+  }, 'leader lease acquisition');
   assert.deepEqual(await probe(leaderPort), { code: 503, body: { ready: false } });
   const [first] = await pool.query<any[]>('SELECT owner_id, expires_at FROM worker_leases');
   assert.equal(first.length, 1); const owner = first[0].owner_id;
