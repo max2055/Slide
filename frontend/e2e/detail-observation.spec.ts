@@ -79,7 +79,7 @@ test.beforeAll(async () => {
   app.get('/api/servers/:id/instances', { preHandler: verify }, async () => ({ instances: [] }));
   app.setNotFoundHandler(async (_request, reply) => reply.send({ items: [], records: [] }));
   const api = await app.listen({ host: '127.0.0.1', port: 0 });
-  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: api } } } });
+  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: api }, '/__slide': { target: api } } } });
   await vite.listen(); url = `http://127.0.0.1:${(vite.httpServer!.address() as any).port}`;
   await mkdir(output, { recursive: true });
 });
@@ -154,7 +154,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, theme] of
   await refresh.click(); await expect(view).toContainText('无权读取'); await expect(view.locator('semantic-metrics')).toHaveCount(0);
   await capture(page, `${kind}-detail-forbidden-${width}-${theme}`);
   expect(errors).toEqual([]);
-  await writeFile(`${output}/${kind}-${width}-fields.json`, JSON.stringify({ kind, width, theme, sampledAt, evaluatedAt, freshAt, firstRead, successfulRead,
+  await writeFile(`${output}/${kind}-${width}-fields.json`, JSON.stringify({ kind, width, theme, sampledAt, evaluatedAt: serviceClock(), browserClockAt: evaluatedAt, freshAt, firstRead, successfulRead,
     source: kind === 'instance' ? 'live isolated MySQL SHOW GLOBAL STATUS Uptime; controlled evaluation clock' : 'controlled filesystem normalized observation; no SSH',
     path: 'JWT -> live SQL actor -> production metric consumer -> MySQL policy + formal publication store -> production reducer -> detail component',
   }, null, 2));
