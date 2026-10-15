@@ -1,9 +1,23 @@
+import { authFetch } from '../../../api/index.ts';
 import { createMessageProjection, reduceMessageProjection, projectionMessageParts } from '../../../../../packages/agent-core/src/message-projection.ts';
 import type { InvestigationStreamEvent } from '../../../api/generated/public-api.ts';
 import type { DirectGatewayClient } from '../direct-gateway.ts';
 import { investigationApi, InvestigationApiError, investigationErrorText, factMessages, type InvestigationMessage,
   type InvestigationRecord, type InvestigationList, type InvestigationSnapshot, type FactPage,
   type InvestigationAccepted, type InvestigationCreateRequest, type InvestigationEvidence, type InvestigationResultPage } from './investigation-api.ts';
+
+export type WorkspaceResourceType = 'instance' | 'server' | 'network_device';
+export const workspaceResourceLabels: Record<WorkspaceResourceType, string> = { instance: '数据库实例', server: '服务器', network_device: '网络设备' };
+export interface WorkspaceResource { resource: { type: WorkspaceResourceType; id: number }; label: string; status: string; }
+export interface WorkspaceInventory { items: WorkspaceResource[]; truncated?: boolean; unavailableTypes?: WorkspaceResourceType[]; dataQuality: 'complete' | 'partial' | 'empty'; }
+export const workspaceResourceKey = (item: WorkspaceResource['resource']) => `${item.type}:${item.id}`;
+export async function loadWorkspaceResources(): Promise<WorkspaceInventory> {
+  const response = await authFetch('/api/resources', { cache: 'no-store' });
+  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? '资源访问受限，请重新确认权限。' : '资源列表读取失败，请重试。');
+  const value = await response.json() as WorkspaceInventory;
+  if (!Array.isArray(value.items)) throw new Error('资源列表返回无效，请重试。');
+  return value;
+}
 
 /** Server-owned facts only. Missing ordinals require a new authorized snapshot. */
 export function applyInvestigationEvent(snapshot: InvestigationSnapshot, event: InvestigationStreamEvent): InvestigationSnapshot {
@@ -82,6 +96,11 @@ export class InvestigationsController {
   private pending?: { signature: string; key: string; path: string; body: unknown };
   get acceptanceUnknown() { return !!this.pending && !this.busy; }
   private filters = '';
+  private resourceFilters: string[] = [];
+  private resourceCursors = new Map<string, string | null>();
+  listLoaded = false;
+  listError = '';
+  get multiResourceFilter() { return this.resourceFilters.length > 1; }
   private id = '';
   constructor(private update: () => void, private client: DirectGatewayClient | null) {}
 
@@ -94,22 +113,41 @@ export class InvestigationsController {
     this.generation++; this.contentEpoch++; this.listGeneration++; this.detail = null; this.snapshot = null; this.history = [];
     this.results = { items: [], nextBefore: null }; this.evidence = [];
     this.list = { items: [], authorizedCounts: { total: 0 }, nextCursor: null };
+    this.listLoaded = false; this.listError = ''; this.resourceCursors.clear();
     this.forbidden = true; this.loading = false; this.detailLoading = false; this.online = false; this.busy = false; this.cancelRequested = false; this.pending = undefined; this.submission = undefined;
     this.historyBefore = null; this.unsubscribe?.(); this.unsubscribe = undefined;
   }
   dispose() { this.disposed = true; this.clearSensitive(); }
-  async loadList(filters = this.filters, more = false) {
+  async loadList(filters = this.filters, more = false, resources = this.resourceFilters) {
     const generation = ++this.listGeneration;
-    this.filters = filters; this.loading = true; this.error = ''; this.update();
+    this.filters = filters; this.resourceFilters = [...new Set(resources)];
+    this.loading = true; this.listError = ''; this.error = ''; this.update();
     try {
-      const query = new URLSearchParams(filters);
-      query.set('limit', '20');
-      if (more && this.list.nextCursor) query.set('cursor', this.list.nextCursor);
-      const list = await investigationApi<InvestigationList>(`?${query}`);
+      const scopes = this.resourceFilters.length ? this.resourceFilters : [''];
+      const cursors = new Map(this.resourceCursors);
+      const pages = await Promise.all(scopes.filter(ref => !more || !cursors.has(ref) || cursors.get(ref)).map(async ref => {
+        const query = new URLSearchParams(filters); query.set('limit', '20');
+        if (ref) query.set('resource', ref);
+        if (more && cursors.get(ref)) query.set('cursor', cursors.get(ref)!);
+        return { ref, page: await investigationApi<InvestigationList>(`?${query}`) };
+      }));
       if (generation !== this.listGeneration || this.disposed) return;
-      this.list = more ? { ...list, items: [...this.list.items, ...list.items] } : list;
-    } catch (error) { if (generation === this.listGeneration) this.fail(error); }
+      if (!more) this.resourceCursors.clear();
+      for (const { ref, page } of pages) this.resourceCursors.set(ref, page.nextCursor);
+      const items = [...new Map([...(more ? this.list.items : []), ...pages.flatMap(({ page }) => page.items)].map(row => [row.id, row])).values()]
+        .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || b.id.localeCompare(a.id));
+      // Multi-scope totals overlap. Show the distinct loaded count, never a fabricated global total.
+      this.list = { items, authorizedCounts: { total: scopes.length > 1 ? items.length : pages[0]?.page.authorizedCounts.total ?? items.length },
+        nextCursor: [...this.resourceCursors.values()].find(Boolean) ?? null };
+      this.listLoaded = true;
+    } catch (error) { if (generation === this.listGeneration) { this.fail(error); this.listError = investigationErrorText(error); } }
     finally { if (generation === this.listGeneration) { this.loading = false; this.update(); } }
+  }
+  deselect() {
+    this.generation++; this.contentEpoch++; this.id = ''; this.unsubscribe?.(); this.unsubscribe = undefined;
+    this.detail = null; this.snapshot = null; this.history = []; this.evidence = []; this.historyBefore = null;
+    this.results = { items: [], nextBefore: null }; this.detailLoading = false; this.online = false; this.cancelRequested = false;
+    this.update();
   }
   async select(id: string) {
     this.unsubscribe?.(); this.unsubscribe = undefined;
