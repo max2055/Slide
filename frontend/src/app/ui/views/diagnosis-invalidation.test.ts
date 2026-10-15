@@ -74,3 +74,30 @@ it('retains read-only evaluation after permissions change without ai:manage', as
   await vi.waitFor(() => expect(view.shadowRoot.querySelector('resource-evaluation')?.shadowRoot.textContent).toContain('private-rule'));
   expect(view.shadowRoot.textContent).toContain('无只读诊断权限');
 });
+it('keeps an in-flight model receipt through failed refresh without restoring its result', async () => {
+  const view = await mount();
+  const pending = deferred<any>();
+  authFetch.mockImplementation((url: string) => url.endsWith('/diagnose-agent') ? pending.promise : Promise.resolve(response({}, 503)));
+  const submission = view.diagnose(true);
+  await view.load();
+  expect(view.taskActive()).toBe(true);
+  pending.resolve(response({ analysisId: 42, status: 'queued', result: 'private-late-result' }));
+  await submission; await view.updateComplete;
+  expect(location.search).toContain('analysisId=42');
+  expect(view.shadowRoot.textContent).not.toContain('private-late-result');
+  expect(view.taskActive()).toBe(true);
+  await view.diagnose(true);
+  expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+});
+it('does not leave a read-only relation request busy or block new analysis after refresh', async () => {
+  const view = await mount();
+  const pending = deferred<any>();
+  const original = authFetch.getMockImplementation()!;
+  authFetch.mockImplementation((url: string) => url.endsWith('/diagnose') ? pending.promise : original(url));
+  const read = view.diagnose();
+  await view.load();
+  pending.resolve(response({ relations: [], relatedEvidence: [], gaps: [], truncated: false }));
+  await read; await view.updateComplete;
+  expect(view.busy).toBe(false);
+  expect(view.taskActive()).toBe(false);
+});

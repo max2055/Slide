@@ -50,3 +50,15 @@ it.each([200, 403, 503])('closes old item details on revision change before mani
   await settle();
   expect(view.shadowRoot.textContent).not.toContain('private-old');
 });
+it.each(['revision', 'permissions', 'session', 'disconnect'])('rejects an old manifest response after %s invalidation', async invalidation => {
+  let release!: (value: Response) => void;
+  authFetch.mockImplementationOnce(() => new Promise<Response>(resolve => { release = resolve; }))
+    .mockResolvedValue(new Response(JSON.stringify({ releaseId: 'new-generation', files: [] })));
+  const view = document.createElement('source-manifest') as any; document.body.append(view); await settle();
+  if (invalidation === 'revision') { view.revision++; await view.updateComplete; await settle(); }
+  if (invalidation === 'permissions') window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
+  if (invalidation === 'session') window.dispatchEvent(new Event('slide-session-expired'));
+  if (invalidation === 'disconnect') view.remove();
+  release(new Response(JSON.stringify({ releaseId: 'private-old-response', files: [] }))); await settle();
+  expect(view.shadowRoot.textContent).not.toContain('private-old-response');
+});
