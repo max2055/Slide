@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MAX-173 表格组件验收（受控数据）</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css"><style>body{margin:24px;background:var(--bg);color:var(--text);font:14px system-ui}</style>
+<body><button id="before">表格前</button><app-data-table></app-data-table><button id="after">表格后</button>
+<script type="module">
+import '/src/app/ui/components/app-data-table.ts';
+import '/src/app/ui/components/app-empty-state.ts';
+const table = document.querySelector('app-data-table');
+table.columns = [{key:'name',label:'名称',sortable:true,help:'资源名称'}, {key:'size',label:'大小',sortable:true}, {key:'state',label:'状态'}];
+table.rows = [{name:'one',size:1,state:'ok'}];
+window.sorts = []; window.helps = [];
+table.addEventListener('app-table-sort', event => window.sorts.push(event.detail));
+table.addEventListener('app-table-column-help', event => window.helps.push(event.detail));
+</script></body></html>
