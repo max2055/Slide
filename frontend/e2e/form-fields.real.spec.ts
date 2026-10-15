@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 test('real JWT/SQL scoring save + reload and system audit filtering', async ({ page }, info) => {
   if (process.env.FORM_FIELDS_REAL_SERVICE !== '1') throw new Error('Run scripts/qualification/run-form-fields-ui.sh in disposable MySQL');
+  await page.setViewportSize({ width: 1280, height: 900 });
   const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: process.env.QUALIFICATION_ADMIN_PASSWORD } });
   expect(login.status()).toBe(200);
   const session = await login.json();
@@ -39,6 +41,7 @@ test('real JWT/SQL scoring save + reload and system audit filtering', async ({ p
   const tree = await cdp.send('Accessibility.getFullAXTree');
   for (const name of ['可用性', '性能', '容量', '安全性']) expect(tree.nodes.some(node => node.role?.value === 'slider' && node.name?.value === name)).toBe(true);
   await info.attach('scoring-real-accessibility-tree.json', { body: JSON.stringify(tree, null, 2), contentType: 'application/json' });
+  await writeFile(info.outputPath('scoring-real-accessibility-tree.json'), JSON.stringify(tree, null, 2));
 
   const auditRead = page.waitForResponse(r => r.url().includes('/api/audit/logs?'));
   await page.goto('/audit?view=system'); expect((await auditRead).status()).toBe(200);
@@ -48,14 +51,19 @@ test('real JWT/SQL scoring save + reload and system audit filtering', async ({ p
   await page.keyboard.press('Tab'); await expect(audit.getByRole('combobox', { name: '操作类型', exact: true })).toBeFocused();
   const auditTree = await cdp.send('Accessibility.getFullAXTree');
   expect(auditTree.nodes.some(node => node.role?.value === 'searchbox' && node.name?.value === '关键字')).toBe(true);
+  for (const name of ['操作类型', '开始时间', '结束时间']) expect(auditTree.nodes.some(node => node.name?.value === name && !node.ignored)).toBe(true);
   await info.attach('audit-real-accessibility-tree.json', { body: JSON.stringify(auditTree, null, 2), contentType: 'application/json' });
+  await writeFile(info.outputPath('audit-real-accessibility-tree.json'), JSON.stringify(auditTree, null, 2));
   await expect(audit.locator('tbody tr').first()).toBeVisible();
+  await audit.locator('h1').scrollIntoViewIfNeeded();
   await page.screenshot({ path: info.outputPath('audit-real-data.png'), fullPage: true });
   await keyword.fill('MAX167-no-such-audit-record');
   const empty = page.waitForResponse(r => r.url().includes('/api/audit/logs?') && r.url().includes('MAX167-no-such-audit-record'));
   await audit.getByRole('button', { name: '查询', exact: true }).click();
-  expect((await empty).status()).toBe(200);
-  await expect(audit.locator('tbody tr')).toHaveCount(0);
+  const emptyResponse = await empty;
+  expect(emptyResponse.status()).toBe(200);
+  expect(await emptyResponse.json()).toMatchObject({ items: [], total: 0 });
+  await expect(audit.getByText('暂无系统审计记录', { exact: true })).toBeVisible();
   await expect(keyword).toHaveAccessibleName('关键字');
   await page.screenshot({ path: info.outputPath('audit-real-empty.png'), fullPage: true });
   expect(errors).toEqual([]);

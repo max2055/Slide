@@ -197,7 +197,6 @@ export class AppFormField extends LitElement {
         <div class="form-control" part="control">
           <slot @slotchange=${this.syncControl}></slot>
         </div>
-        <span class="accessible-text"><slot name="accessible-text"></slot></span>
         ${this.hint && !this.error
           ? html`<div class="form-hint" part="hint">${this.hint}</div>`
           : ""}
@@ -207,6 +206,7 @@ export class AppFormField extends LitElement {
             </div>`
           : ""}
       </div>
+      <span class="accessible-text"><slot name="accessible-text"></slot></span>
     `;
   }
 }

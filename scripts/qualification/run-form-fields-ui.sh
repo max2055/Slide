@@ -19,6 +19,8 @@ if [[ "$ready" != 1 ]]; then echo 'MAX167 disposable MySQL unavailable' >&2; exi
 unset QUALIFICATION_DEEPSEEK_API_KEY
 export DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD=''
 export QUALIFICATION_API_PORT=3098 QUALIFICATION_WS_PORT=28998 QUALIFICATION_FRONTEND_PORT=5199
-export QUALIFICATION_CANCELLATION_E2E=0 FORM_FIELDS_REAL_SERVICE=1
+# The API requires an enabled provider at startup. Use the repository's local
+# fixture only; this scenario performs no inference or external model requests.
+export QUALIFICATION_CANCELLATION_E2E=1 QUALIFICATION_CANCELLABLE_LLM_PORT=28999 FORM_FIELDS_REAL_SERVICE=1
 export QUALIFICATION_ADMIN_PASSWORD="$(node --input-type=module -e 'import {randomBytes} from "node:crypto";process.stdout.write(randomBytes(24).toString("hex"))')"
 pnpm --filter slide-frontend exec playwright test --config playwright.form-fields.config.ts

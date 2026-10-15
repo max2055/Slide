@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 async function harness(page: import('@playwright/test').Page, body: string, modules = 'components/app-form-field') {
   await page.route('**/form-field-harness', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="/src/app/styles/tokens.css"></head><body>${body}<script type="module">import '/src/app/ui/${modules}.ts';</script></body></html>` }));
@@ -23,6 +24,7 @@ test('native accessible names, isolated labels, keyboard and changing error desc
   const input = tree.nodes.find(node => node.role?.value === 'textbox' && node.name?.value === '用户名' && node.description?.value === '用户名不能为空');
   expect(input?.properties).toContainEqual(expect.objectContaining({ name: 'invalid', value: expect.objectContaining({ value: 'true' }) }));
   await info.attach('browser-accessibility-tree.json', { body: JSON.stringify(tree, null, 2), contentType: 'application/json' });
+  await writeFile(info.outputPath('browser-accessibility-tree.json'), JSON.stringify(tree, null, 2));
   await page.screenshot({ path: info.outputPath('field-error.png') });
   await fields.nth(0).evaluate((field: any) => { field.error = ''; });
   await expect(first).not.toHaveAttribute('aria-invalid');
@@ -107,3 +109,25 @@ test('scoring sliders have names, native click focus and percentage values', asy
   await expect(slider).toHaveAttribute('aria-valuetext', '45%');
   await expect(slider).toHaveAccessibleDescription('实例在线时长与连接成功率');
 });
+
+test('same-name scoring forms remain isolated in their existing shadow roots', async ({ page }) => {
+  await page.route('**/api/scoring/config', route => route.fulfill({ json: { availability: .4, performance: .3, capacity: .2, security: .1 } }));
+  await harness(page, '<scoring-settings-page></scoring-settings-page><scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
+  const forms = page.locator('scoring-settings-page');
+  await forms.nth(1).locator('label').filter({ hasText: '可用性' }).click();
+  await expect(forms.nth(1).getByRole('slider', { name: '可用性', exact: true })).toBeFocused();
+  await expect(forms.nth(0).getByRole('slider', { name: '可用性', exact: true })).not.toBeFocused();
+});
+
+for (const mode of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }]) {
+  test(`existing field layout remains usable ${mode.theme} ${mode.width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: mode.width, height: 800 });
+    await harness(page, '<app-form-field label="资源名称" hint="保留现有名称" inline><input value="业务数据库"></app-form-field>');
+    await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, mode.theme);
+    const input = page.getByRole('textbox', { name: '资源名称' });
+    await expect(input).toBeVisible();
+    await page.locator('label.form-label').click(); await expect(input).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath('field-theme-viewport.png'), fullPage: true });
+  });
+}
