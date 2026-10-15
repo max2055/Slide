@@ -1,3 +1,4 @@
+import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -541,6 +542,7 @@ export class RoleManagementTab extends LitElement {
 
 @customElement("permission-management-tab")
 export class PermissionManagementTab extends LitElement {
+  private browser = new ListBrowser();
   @state() private permissions: Permission[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
@@ -556,7 +558,7 @@ export class PermissionManagementTab extends LitElement {
   @state() private saving = false;
   @state() private saveError: string | null = null;
 
-  static styles = RbacAdminPage.styles;
+  static styles = [...RbacAdminPage.styles, listBrowserStyles];
 
   override async firstUpdated() {
     await this._loadPermissions();
@@ -566,8 +568,11 @@ export class PermissionManagementTab extends LitElement {
   private async _loadPermissions() {
     this.loading = true;
     this.error = null;
+    this.permissions = [];
     try {
-      this.permissions = await apiClient.get<Permission[]>("/v1/rbac/permissions");
+      const permissions = await apiClient.get<Permission[]>("/v1/rbac/permissions");
+      if (!Array.isArray(permissions)) throw new Error("权限目录响应无效");
+      this.permissions = permissions;
     } catch (e: any) {
       this.error = `加载失败：${e.message}。请刷新页面重试。`;
     } finally {
@@ -663,14 +668,16 @@ export class PermissionManagementTab extends LitElement {
 
   override render() {
     if (this.loading) return html`<div class="loading">加载中...</div>`;
-    if (this.error) return html`<div class="error-msg">${this.error}</div>`;
+    if (this.error) return html`<div role="alert" class="error-msg">${this.error}</div>`;
 
+    const page = this.browser.select(this.permissions, row => `${row.code} ${row.name} ${row.resource} ${row.action} ${row.description || ''}`, row => `${row.code} ${row.id}`);
     return html`
       <app-card>
         <span slot="header">权限列表
           <button class="btn-primary" @click=${this._openCreateModal}>+ 新建权限</button>
         </span>
         ${this._renderModal()}
+        ${renderListBrowser(this.browser, page.total, this.permissions.length, "权限", () => this.requestUpdate())}
         ${this.permissions.length === 0
           ? html`<app-empty-state title="暂无权限数据" description="点击「新建权限」创建第一个权限。"></app-empty-state>`
           : html`
@@ -687,7 +694,7 @@ export class PermissionManagementTab extends LitElement {
                     </tr>
                   </thead>
                   <tbody>
-                    ${this.permissions.map(
+                    ${page.rows.map(
                       (perm) => html`
                         <tr>
                           <td><code style="font-size:12px;background:var(--bg-elevated);padding:2px 6px;border-radius:3px">${perm.code}</code></td>
@@ -707,7 +714,7 @@ export class PermissionManagementTab extends LitElement {
                 </table>
               </div>
             `}
-      </div>
+      </app-card>
     `;
   }
 

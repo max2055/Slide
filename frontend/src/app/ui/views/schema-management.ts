@@ -1,3 +1,4 @@
+import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
@@ -58,7 +59,7 @@ interface SchemaChange {
 
 @customElement("schema-management-page")
 export class SchemaManagementPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [listBrowserStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -295,9 +296,15 @@ export class SchemaManagementPage extends LitElement {
   @state() private collecting = false;
   @state() private detecting = false;
   @state() private snapshotTimes: SnapshotTime[] = [];
+  private tableBrowser = new ListBrowser();
+  @state() private tablesLoading = false;
+  @state() private tablesError: string | null = null;
+  private tableRequest = 0;
   @state() private tableList: TableListEntry[] = [];
   @state() private changes: SchemaChange[] = [];
   @state() private expandedTable: string | null = null;
+  @state() private detailError: string | null = null;
+  private detailRequest = 0;
   @state() private tableDetail: TableSchemaRow[] = [];
   @state() private snapshotDetail: TableSchemaRow[] = [];
   @state() private activeTab: "tables" | "changes" = "tables";
@@ -368,21 +375,24 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private async loadTableList() {
-    if (!this._activeInstanceId) return;
+    const id = this._activeInstanceId;
+    const request = ++this.tableRequest;
+    if (!id) { this.tableList = []; return; }
+    this.tablesLoading = true;
+    this.tablesError = null;
+    this.tableList = [];
+    this.expandedTable = null;
+    this.tableDetail = [];
     try {
-      const res = await authFetch(`/api/schema/snapshot/${this._activeInstanceId}`, {
-        headers: this._authHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.tables) {
-          this.tableList = data.tables;
-        }
-      } else {
-        this.tableList = [];
-      }
-    } catch (err) {
-      this.tableList = [];
+      const res = await authFetch(`/api/schema/snapshot/${id}`, { headers: this._authHeaders() });
+      if (!res.ok) throw new Error(res.status === 403 ? '无权限查看表结构' : `表结构加载失败 (HTTP ${res.status})`);
+      const data = await res.json();
+      if (!Array.isArray(data.tables)) throw new Error('表结构响应无效');
+      if (request === this.tableRequest) this.tableList = data.tables;
+    } catch (err: any) {
+      if (request === this.tableRequest) this.tablesError = err.message;
+    } finally {
+      if (request === this.tableRequest) this.tablesLoading = false;
     }
   }
 
@@ -394,11 +404,8 @@ export class SchemaManagementPage extends LitElement {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.changes) {
-          this.changes = data.changes;
-        } else {
-          this.changes = [];
-        }
+        this.changes = Array.isArray(data.changes) ? data.changes : [];
+        this.hint = data.hint || data.changes?.hint || null;
       } else {
         this.changes = [];
       }
@@ -466,30 +473,29 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private async handleTableClick(tableName: string) {
-    if (this.expandedTable === tableName) {
-      this.expandedTable = null;
-      this.tableDetail = [];
-      return;
-    }
+    const request = ++this.detailRequest;
+    const id = this._activeInstanceId;
+    this.tableDetail = []; this.detailError = null;
+    if (this.expandedTable === tableName) { this.expandedTable = null; return; }
     this.expandedTable = tableName;
-    if (!this._activeInstanceId) return;
+    if (!id) return;
     try {
-      const res = await authFetch(`/api/schema/table/${this._activeInstanceId}/${tableName}`, {
-        headers: this._authHeaders(),
-      });
-      if (res.ok) {
-        this.tableDetail = await res.json();
-      } else {
-        this.tableDetail = [];
-      }
-    } catch (err) {
-      this.tableDetail = [];
+      const res = await authFetch(`/api/schema/table/${id}/${encodeURIComponent(tableName)}`, { headers: this._authHeaders() });
+      if (!res.ok) throw new Error(`列信息加载失败 (HTTP ${res.status})`);
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('列信息响应无效');
+      if (request !== this.detailRequest || id !== this._activeInstanceId || this.expandedTable !== tableName) return;
+      this.tableDetail = data;
+      if (!data.length) this.detailError = '当前表暂无列信息';
+    } catch (err: any) {
+      if (request === this.detailRequest && id === this._activeInstanceId && this.expandedTable === tableName) this.detailError = err.message;
     }
   }
 
   private handleInstanceChange(e: Event) {
     const id = Number((e.target as HTMLSelectElement).value);
     this.selectedInstance = id;
+    this.tableBrowser.page = 1;
     const inst = this.instances.find(i => i.id === id);
     this.selectedInstanceName = inst?.name || "";
     this.expandedTable = null;
@@ -656,6 +662,9 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private _renderTables() {
+    if (this.tablesLoading) return html`<div role="status" class="loading">加载表结构...</div>`;
+    if (this.tablesError) return html`<div role="alert">${this.tablesError}<button class="btn" @click=${() => this.loadTableList()}>重试</button></div>`;
+    const page = this.tableBrowser.select(this.tableList, row => `${row.table_name} ${row.table_comment || ''}`, row => row.table_name);
     if (this.tableList.length === 0) {
       return html`
         <app-empty-state title="暂无表结构数据" description="点击「采集快照」从数据库实例采集表结构">
@@ -665,6 +674,7 @@ export class SchemaManagementPage extends LitElement {
     }
 
     return html`
+      ${renderListBrowser(this.tableBrowser, page.total, this.tableList.length, "表结构", () => this.requestUpdate())}
       <div class="table-container">
         <table class="table">
           <thead>
@@ -678,13 +688,11 @@ export class SchemaManagementPage extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.tableList.map(
+            ${page.rows.map(
               (table) => html`
                 <tr class="table-row" @click=${() => this.handleTableClick(table.table_name)}>
                   <td>
-                    <span class="expand-icon ${this.expandedTable === table.table_name ? "expanded" : ""}">
-                      &#9654;
-                    </span>
+                    <button class="btn" aria-label=${`展开表 ${table.table_name}`} aria-expanded=${this.expandedTable === table.table_name}>&#9654;</button>
                   </td>
                   <td>
                     <span class="instance-badge">${table.table_name}</span>
@@ -727,7 +735,7 @@ export class SchemaManagementPage extends LitElement {
                                   </tbody>
                                 </table>
                               `
-                            : html`<div class="loading" style="min-height: 60px;">加载列信息...</div>`
+                            : html`<div role="status" class="loading" style="min-height: 60px;">${this.detailError || "加载列信息..."}</div>`
                           }
                         </td>
                       </tr>

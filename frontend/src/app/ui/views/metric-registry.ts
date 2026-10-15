@@ -1,3 +1,4 @@
+import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Metric Registry Viewer — card-based metric definition browser + CRUD
@@ -27,6 +28,7 @@ const CATEGORY_ICONS: Record<string, string> = { performance: "⚡", capacity: "
 
 @customElement("metric-registry-viewer")
 export class MetricRegistryViewer extends LitElement {
+  private browser = new ListBrowser();
   @state() private metrics: MetricDefinition[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
@@ -39,18 +41,19 @@ export class MetricRegistryViewer extends LitElement {
   @state() private formMsg: string | null = null;
   @state() private saving = false;
   @state() private showDeleteConfirm: MetricDefinition | null = null;
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [listBrowserStyles, sharedFieldStyles, sharedBtnStyles, css`
 
     :host { display: block; }
     .page { padding: 0; }
-    .toolbar { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
+    .toolbar { flex-wrap:wrap; display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border); background: var(--bg-elevated); border-radius: var(--radius-md); }
     .toolbar .spacer { flex: 1; }
     .filter-select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--card); color: var(--text); }
     .count { font-size: var(--text-sm); color: var(--muted); }
 
     /* Table */
     .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
-    .table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .metric-table-scroll { overflow-x:auto; }
+    .table-wrap table { min-width:900px; width: 100%; border-collapse: collapse; font-size: 12px; }
     .table-wrap thead { background: var(--bg-elevated); }
     .table-wrap th { text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; border-bottom: 1px solid var(--border); }
     .table-wrap td { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; white-space: nowrap; }
@@ -101,7 +104,7 @@ export class MetricRegistryViewer extends LitElement {
   override connectedCallback() { super.connectedCallback(); this._load(); }
 
   private async _load() {
-    this.loading = true; this.error = null;
+    this.loading = true; this.error = null; this.metrics = [];
     try {
       const token = localStorage.getItem("token");
       const res = await authFetch(`${API_BASE}/metrics/registry`, {
@@ -109,7 +112,8 @@ export class MetricRegistryViewer extends LitElement {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      this.metrics = Array.isArray(data) ? data : [];
+      if (!Array.isArray(data)) throw new Error('指标目录响应无效');
+      this.metrics = data;
     } catch (e: any) { this.error = e.message; }
     finally { this.loading = false; }
   }
@@ -172,25 +176,27 @@ export class MetricRegistryViewer extends LitElement {
 
   override render() {
     if (this.loading) return html`<div style="padding:48px;text-align:center;color:var(--muted)">加载中...</div>`;
-    if (this.error) return html`<div style="padding:48px;text-align:center;color:var(--danger)">${this.error}</div>`;
+    if (this.error) return html`<div role="alert" style="padding:48px;text-align:center;color:var(--danger)">${this.error}</div>`;
 
     const filtered = this._filtered();
+    const page = this.browser.select(filtered, row => `${row.id} ${row.name} ${row.description || ''}`, row => `${row.name} ${this._metricKey(row)}`);
     return html`<div class="page">
       <div class="table-wrap">
         <div class="toolbar">
           <span class="count">${filtered.length} 个指标</span>
-          <select class="filter-select" @change=${(e: Event) => { this.filterTargetType = (e.target as HTMLSelectElement).value; }}>
+          <select class="filter-select" aria-label="资源类型" .value=${this.filterTargetType} @change=${(e: Event) => { this.filterTargetType = (e.target as HTMLSelectElement).value; this.browser.page = 1; }}>
             <option value="all">全部资源</option>
             ${Object.entries(TARGET_TYPE_LABELS).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
           </select>
-          <select class="filter-select" @change=${(e: Event) => { this.filterDbType = (e.target as HTMLSelectElement).value; }}>
+          <select class="filter-select" aria-label="数据库类型" .value=${this.filterDbType} @change=${(e: Event) => { this.filterDbType = (e.target as HTMLSelectElement).value; this.browser.page = 1; }}>
             <option value="all">全部类型</option>
             ${this._allDbTypes().map(t => html`<option value=${t}>${t.toUpperCase()}</option>`)}
           </select>
           <span class="spacer"></span>
           <button class="btn" @click=${this._openCreate}>+ 新建指标</button>
         </div>
-        <table>
+        ${renderListBrowser(this.browser, page.total, this.metrics.length, "指标", () => this.requestUpdate())}
+        <div class="metric-table-scroll"><table>
           <thead>
             <tr>
               <th class="col-id">指标 ID</th>
@@ -205,14 +211,14 @@ export class MetricRegistryViewer extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${filtered.map(m => html`
+            ${page.rows.map(m => html`
             <tr class="${this.expandedId === this._metricKey(m) ? 'row-expanded' : ''}" @click=${() => this.expandedId = this.expandedId === this._metricKey(m) ? null : this._metricKey(m)} style="cursor:pointer;">
               <td class="col-id"><code>${m.id}</code></td>
               <td class="col-name">
                 <div class="name-cell">${CATEGORY_ICONS[m.category || ''] || ''} ${m.name}</div>
                 ${m.description ? html`<small>${m.description}</small>` : ''}
               </td>
-              <td class="col-target">${TARGET_TYPE_LABELS[m.target_type || 'instance']}</td>
+              <td class="col-target">${TARGET_TYPE_LABELS[m.target_type || 'instance'] || m.target_type}</td>
               <td class="col-db">${m.db_types.length ? m.db_types.map(t => html`<span>${t}</span>`) : html`<span class="text-muted">—</span>`}</td>
               <td class="col-unit"><span class="text-muted">${m.unit || '-'}</span></td>
               <td class="col-agg"><span class="text-muted">${AGG_LABELS[m.aggregation] || m.aggregation}</span></td>
@@ -235,7 +241,7 @@ export class MetricRegistryViewer extends LitElement {
             ` : ''}
             `)}
           </tbody>
-        </table>
+        </table></div>
       </div>
       ${this.showModal ? this._renderModal() : nothing}
       ${this.showDeleteConfirm ? html`
