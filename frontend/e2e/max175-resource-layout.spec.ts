@@ -170,7 +170,7 @@ test('controlled overview states supplement real service and preserve investigat
     await page.screenshot({path:`${output}/controlled-overview-${scenario}-${width}-${theme}.png`,fullPage:true,animations:'disabled'});
     if(scenario==='loading') { release?.(); release=undefined; }
   }
-  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded')));
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}})));
   await expect(page.locator('instance-detail-page')).toContainText('权限或登录状态已变更');
   await expect(page.locator('instance-detail-page .overview-grid')).toHaveCount(0);
   await page.screenshot({path:`${output}/controlled-permission-invalidation.png`,fullPage:true});
@@ -261,7 +261,7 @@ test('server and network real service inventory, semantic tabs, interfaces and p
       await page.screenshot({path:`${output}/network-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
     }
   }
-  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded')));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}})));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
   expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]);expect(errors).toEqual([]);
   expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
   await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Collection disabled, no live SSH/SNMP target; diagnostic logs genuinely empty, semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors},null,2));
@@ -289,7 +289,7 @@ test('controlled log and interface exceptional states remain explicit',async({pa
       const view=page.locator(kind==='logs'?'instance-detail-page':'network-device-detail');
       await view.getByRole('tab',{name:kind==='logs'?'日志':'接口',exact:true}).click();
       const section=kind==='logs'?view.locator('database-log-tab'):view;
-      await expect(section).toContainText(state==='loading'?'读取接口'.replace('读取接口',kind==='logs'?'加载日志':'读取接口'):state==='empty'?(kind==='logs'?'当前范围没有日志':'尚未取得接口记录'):state==='forbidden'?(kind==='logs'?'权限或登录状态':'HTTP 403'):(kind==='logs'?'日志读取失败':'HTTP 503'));
+      await expect(section).toContainText(state==='loading'?(kind==='logs'?'加载日志':'读取接口'):state==='empty'?(kind==='logs'?'当前范围没有日志':'尚未取得接口记录'):state==='forbidden'?(kind==='logs'?'权限或登录状态':'没有访问此资源的权限'):(kind==='logs'?'日志读取失败':'接口读取失败'));
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${output}/controlled-${kind}-${state}-${width}-${theme}.png`,fullPage:true});
       if(state==='loading') {release?.();release=undefined;}

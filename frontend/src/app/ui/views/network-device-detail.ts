@@ -97,7 +97,7 @@ export class NetworkDeviceDetail extends LitElement {
   private async json<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await authFetch(url, init);
     const body = await bodyOf(response);
-    if (!response.ok) throw new Error(String(body.error || `HTTP ${response.status}`));
+    if (!response.ok) throw new Error(String(body.error || (response.status === 403 ? '没有访问此资源的权限' : response.status === 401 ? '登录已失效' : `HTTP ${response.status}`)));
     return body as T;
   }
 

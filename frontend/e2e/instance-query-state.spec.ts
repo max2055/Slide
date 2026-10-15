@@ -86,7 +86,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
     await expect(view.locator('tbody')).toContainText('max163_active_session'); await expect(view).toContainText('活跃会话快照');
     await capture(page, 'real-mysql-active-session');
   } finally { await running; await connection.end(); }
-  await view.getByRole('button', { name: /^慢查询/ }).click();
+  await view.getByRole('tab', { name: /^慢查询/ }).click();
 
   const deniedUser = `max163_denied_${randomUUID().replaceAll('-', '').slice(0, 8)}`;
   const deniedPassword = randomUUID();
@@ -94,7 +94,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   const deniedPool = mysql.createPool({ host: '127.0.0.1', port: Number(process.env.MAX163_TEST_MYSQL_PORT), user: deniedUser, password: deniedPassword });
   try {
     connections.get(991).pool = deniedPool;
-    await view.getByRole('button', { name: /^慢查询/ }).click();
+    await view.getByRole('tab', { name: /^慢查询/ }).click();
     await expect(view).toContainText('数据不可用'); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-mysql-query-denied');
   } finally { connections.get(991).pool = pool; await deniedPool.end(); await admin.query("DROP USER ?@'%'", [deniedUser]); }
@@ -102,7 +102,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   try {
     const denied = page.waitForResponse(r => r.url().endsWith('/api/database/instances/991/topsql') && r.status() === 403);
     // Refreshing the tab goes through the live JWT authorization check.
-    await view.getByRole('button', { name: /^慢查询/ }).click(); await denied;
+    await view.getByRole('tab', { name: /^慢查询/ }).click(); await denied;
     await expect(view.getByRole('alert')).toContainText('无权'); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-permission-revoked');
   } finally { await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (991,991,'read-only')"); }

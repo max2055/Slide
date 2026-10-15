@@ -607,6 +607,7 @@ export class DatabaseLogTab extends LitElement {
   }
 
   private _renderStats() {
+    if (this.accessInvalidated) return nothing;
     if (!this.stats) return html`<p class="scope-note">${this.statsError || '正在读取范围统计…'}</p>`;
     const s = this.stats;
     return html`<div class="stats-row" aria-label="范围日志统计">
