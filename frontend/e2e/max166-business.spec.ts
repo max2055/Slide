@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
 const mysql = require('mysql2/promise');
+test.skip(!process.env.MAX166_ISOLATED_MYSQL, 'Use scripts/qualification/run-max166-ui.sh');
 let instanceId: number;
 test.beforeAll(async () => {
   if (!process.env.MAX166_ISOLATED_MYSQL) throw new Error('Requires the MAX-166 isolated MySQL runner');
