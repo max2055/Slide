@@ -58,7 +58,7 @@ async function capture(page: Page, name: string, source = 'real service / isolat
   }));
   expect(geometry.overflowing).toEqual([]);
   await page.screenshot({ path: `${out}/${name}.png`, fullPage: true, animations: 'disabled' });
-  await writeFile(`${out}/${name}.json`, JSON.stringify({ viewport: page.viewportSize(), theme: await page.evaluate(() => document.documentElement.dataset.themeMode || 'light'), source, geometry, at: new Date().toISOString() }, null, 2));
+  await writeFile(`${out}/${name}.json`, JSON.stringify({ viewport: page.viewportSize(), theme: await page.evaluate(() => document.documentElement.dataset.themeMode || 'light'), source, geometry, at: new Date().toISOString(), commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), sourceSha256: createHash('sha256').update(await readFile('src/app/ui/views/llm-config.ts')).digest('hex') }, null, 2));
 }
 async function persisted() {
   const [[row]] = await pool.query('SELECT display_name,api_base_url,api_key_encrypted,models_supported,default_model,context_window,max_tokens FROM llm_providers WHERE id=?', [id]);
@@ -93,6 +93,7 @@ test('F1: real application shell keeps model summary readable and actions reacha
         };
       });
       const name = `F1-shell-${defaultId === longId ? 'long' : 'normal'}-${width}-${theme}`;
+      await toolbar.evaluate(el => el.closest('.config-section')!.scrollIntoView({ block: 'start' }));
       await capture(page, name);
       await writeFile(`${out}/${name}-readability.json`, JSON.stringify(readability, null, 2));
       expect(readability.summaryWidth).toBeGreaterThanOrEqual(Math.min(180, readability.toolbarWidth - 1));
