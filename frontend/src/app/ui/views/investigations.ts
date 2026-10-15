@@ -9,6 +9,8 @@ import { hasSlidePermission } from '../app-settings.ts';
 import '../components/app-card.ts';
 import '../components/app-form-field.ts';
 import '../components/app-dialog.ts';
+import '../components/app-data-table.ts';
+import '../components/app-empty-state.ts';
 import '../components/investigation-create.ts';
 
 // The existing compact nav is fixed at tablet widths; reserve its visible rail.
@@ -143,44 +145,56 @@ export class InvestigationsPage extends LitElement {
   }
 }
 
-interface AttentionItem { id: string; title: string; severity: string; status: string; updated_at: string; }
+interface AttentionItem { id: string | number; title: string; severity: string; status: string; updated_at: string; }
 export function sortAttentionItems(items: AttentionItem[]) {
   const severity: Record<string, number> = { critical: 0, warning: 1, info: 2 };
   return [...items].sort((a, b) => (severity[a.severity] ?? 3) - (severity[b.severity] ?? 3)
-    || b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
+    || b.updated_at.localeCompare(a.updated_at) || String(a.id).localeCompare(String(b.id)));
 }
 @customElement('attention-page')
 export class AttentionPage extends LitElement {
   @property({ attribute: false }) permissions: Set<string> | null = null;
   @state() private items: AttentionItem[] = [];
-  @state() private loading = false;
+  @state() private readState: 'idle' | 'loading' | 'success' | 'error' | 'expired' = 'idle';
   @state() private error = '';
+  private get loading() { return this.readState === 'loading'; }
   private generation = 0;
-  private expired = () => { this.generation++; this.items = []; this.loading = false; this.requestUpdate(); };
-  private permissionsChanged = (e: Event) => { this.expired(); this.permissions = new Set((e as CustomEvent<{ permissions: string[] }>).detail.permissions); };
+  private invalidate() { this.generation++; this.items = []; this.readState = 'idle'; this.error = ''; }
+  private expired = () => { this.invalidate(); this.readState = 'expired'; };
+  private permissionsChanged = (e: Event) => { this.invalidate(); this.permissions = new Set((e as CustomEvent<{ permissions: string[] }>).detail.permissions); };
   createRenderRoot() { return this; }
   connectedCallback() { super.connectedCallback(); window.addEventListener('slide-session-expired', this.expired); window.addEventListener('slide-permissions-loaded', this.permissionsChanged); }
-  disconnectedCallback() { this.expired(); window.removeEventListener('slide-session-expired', this.expired); window.removeEventListener('slide-permissions-loaded', this.permissionsChanged); super.disconnectedCallback(); }
-  protected updated(changed: Map<string, unknown>) { if (changed.has('permissions')) { this.expired(); if (hasSlidePermission(this.permissions, 'alert:view')) void this.load(); } }
+  disconnectedCallback() { this.invalidate(); window.removeEventListener('slide-session-expired', this.expired); window.removeEventListener('slide-permissions-loaded', this.permissionsChanged); super.disconnectedCallback(); }
+  protected updated(changed: Map<string, unknown>) { if (changed.has('permissions')) { this.invalidate(); if (hasSlidePermission(this.permissions, 'alert:view')) void this.load(); } }
   private async load() {
-    const generation = ++this.generation; this.loading = true; this.error = '';
+    if (!hasSlidePermission(this.permissions, 'alert:view') || this.readState === 'expired') return;
+    const generation = ++this.generation; this.readState = 'loading'; this.error = ''; this.items = [];
+    let failureMessage = '事项读取失败，请重试。';
     try {
       const response = await authFetch('/api/alerts/events?limit=20&offset=0&status=open,investigating,handled', { cache: 'no-store' });
-      if (!response.ok) throw new Error('事项读取失败，请重新确认权限或重试。');
+      if (generation !== this.generation) return;
+      if (response.status === 401) { this.readState = 'expired'; return; }
+      if (response.status === 403) failureMessage = '无权访问关注事项，请重新确认权限后重试。';
+      if (!response.ok) throw new Error(failureMessage);
       const data = await response.json();
-      if (generation === this.generation) this.items = sortAttentionItems(data.items ?? data);
-    } catch (e) { if (generation === this.generation) { this.items = []; this.error = (e as Error).message; } }
-    finally { if (generation === this.generation) this.loading = false; }
+      if (generation !== this.generation) return;
+      const items = Array.isArray(data) ? data : data?.items;
+      failureMessage = '事项返回格式异常，请重试。';
+      if (!Array.isArray(items) || !items.every(item => item
+        && (typeof item.id === 'string' || typeof item.id === 'number')
+        && ['title', 'severity', 'status', 'updated_at'].every(key => typeof item[key] === 'string'))) throw new Error(failureMessage);
+      this.items = sortAttentionItems(items); this.readState = 'success';
+    } catch { if (generation === this.generation) { this.items = []; this.error = failureMessage; this.readState = 'error'; } }
   }
   render() {
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); } attention-page app-data-table { display:block; overflow:auto; }</style>
         <app-card><span slot="header">关注事项</span>
           <p>最近 20 项待处理聚合事件，按严重度、更新时间与 ID 排序。</p>
-          ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
-          ${hasSlidePermission(this.permissions, 'alert:view') ? html`
-            <app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>
+          ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : hasSlidePermission(this.permissions, 'alert:view') ? html`
+            ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
+            ${this.loading || this.readState === 'success' ? html`<app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>` : nothing}
             <div class="attention-actions"><button class="btn" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
-          ` : html`<app-empty-state title="暂无可访问事项"></app-empty-state>`}
+          ` : html`<app-empty-state title="无访问权限" description="需要告警读取权限。"></app-empty-state>`}
         </app-card>`;
   }
 }

@@ -6,6 +6,8 @@ import { registerSourceRoutes } from '../../../apps/db-ops-api/src/platform/sour
 import { registerNetworkDeviceRoutes } from '../../../apps/db-ops-api/src/network-devices/network-device-routes.js';
 import { serverDatabaseService } from '../../../apps/db-ops-api/src/server-database-service.js';
 import { requirePermission } from '../../../apps/db-ops-api/src/auth/require-permission.js';
+import { getAccessibleInstanceIds } from '../../../apps/db-ops-api/src/auth/require-instance-access.js';
+import { alertEventService } from '../../../apps/db-ops-api/src/alert-event-service.js';
 import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -46,7 +48,7 @@ import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/sou
 import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; realProvider?: LLMProvider } = {}) {
+export async function startInvestigationServer(optionsInput: { attentionPilot?: boolean; databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; realProvider?: LLMProvider } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -234,6 +236,12 @@ export async function startInvestigationServer(optionsInput: { databaseAlertPilo
     const wsServer = (adapter as any).wsServer;
     if (!wsServer.address()) await new Promise<void>(r => wsServer.once('listening', r));
     const verify = createVerifyToken(secret, contexts);
+    if (optionsInput.attentionPilot) {
+      // Same live authorization and event service as the production list route.
+      // This harness only needs its unfiltered instance-scope branch.
+      app.get('/api/alerts/events', { preHandler: [verify, requirePermission('alert:view')] }, async (request: any) =>
+        alertEventService.getEvents({ ...request.query, allowed_instance_ids: getAccessibleInstanceIds(request.user) }));
+    }
     if (system) {
       await installPlatformObservation(app,verify);
       await registerSystemEventRoutes(app,verify,new SystemEventReader(() => pool,authorization));
