@@ -49,3 +49,7 @@
 键盘：刷新按钮 Enter 发起真实 GET；重新聚焦刷新后 Tab 移至事件中心按钮，Enter 导航到 `/events?tab=events`；失败后 Enter 重试恢复。正常路径未产生浏览器 pageerror。
 
 截图在最终 Multica 交付评论作为图片及完整证据 ZIP 附件提供，ZIP 内包含本报告。未部署或合并，等待 PR CI 与父任务审核。
+
+## CI 文档目录修正
+
+PR #173 的 `ed466f41` 后端 CI 仅 `tests/phase-94-docs-structure.test.ts` 失败：本报告新增的 `docs/reviews/` 不满足文档必须归入 `docs/slide/` 的结构要求。本地复现为 1 失败 / 10 通过，现将本报告迁至 `docs/slide/evaluations/` 并移除空目录，原检查 11/11 通过。未修改业务代码、测试断言或 CI 门禁；此前功能与浏览器证据仍对应同一生产实现。
