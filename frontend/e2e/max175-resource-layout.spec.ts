@@ -72,7 +72,7 @@ test.afterAll(async () => {
 
 test('database representative: real routes, reading times, metrics and log browsing', async ({ page }) => {
   test.setTimeout(100_000);
-  const reads: {path:string;status:number}[] = [], writes: string[] = [], errors: string[] = [];
+  const reads: {path:string;status:number}[] = [], writes: string[] = [], errors: string[] = [], batches: unknown[] = [];
   page.on('response', response => { if(new URL(response.url()).pathname.startsWith('/api/')) reads.push({path:new URL(response.url()).pathname,status:response.status()}); });
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (request.method()==='POST' && !request.url().includes('/metrics-v2/query') && !request.url().includes('/auth/')) writes.push(new URL(request.url()).pathname); });
@@ -110,10 +110,15 @@ test('database representative: real routes, reading times, metrics and log brows
         const logs=view.locator('database-log-tab');
         const firstBatch=await logs.locator('.message-cell').allTextContents();
         expect(firstBatch).toHaveLength(50);
+        const firstIds=await logs.evaluate((el:any)=>el.logs.map((row:any)=>row.id));
         await logs.getByRole('button',{name:'下一页',exact:true}).click();
         await expect(logs.locator('.message-cell')).toHaveCount(5);
         const secondBatch=await logs.locator('.message-cell').allTextContents();
         expect(secondBatch.every(message=>!firstBatch.includes(message))).toBe(true);
+        const secondIds=await logs.evaluate((el:any)=>el.logs.map((row:any)=>row.id));
+        expect(secondIds.every((id:number)=>!firstIds.includes(id))).toBe(true);
+        batches.push({width,theme,firstIds,secondIds,source:'real GET /api/logs offset 0 -> 50; persisted MySQL rows'});
+        await page.screenshot({path:`${output}/database-logs-second-batch-${width}-${theme}.png`,fullPage:true});
         await expect(logs.locator('.pagination-info')).toHaveText('51 - 55 / 55');
         await logs.getByLabel('日志级别',{exact:true}).selectOption('warning');
         await expect(logs.locator('.message-cell')).toHaveCount(19);
@@ -137,7 +142,7 @@ test('database representative: real routes, reading times, metrics and log brows
     }
   }
   expect(writes.filter(path => !['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]); expect(errors).toEqual([]);
-  await writeFile(`${output}/database-real-service.json`,JSON.stringify({baseCommit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),widths:[1440,768,390],themes:['light','dark'],database:'task-owned MySQL 8.4, migration ledger, formal full Fastify server',data:'Persisted fixture inventory and 55 logs; real unconfigured semantic metrics. No live target collection; no product model calls.',reads,writes,errors},null,2));
+  await writeFile(`${output}/database-real-service.json`,JSON.stringify({baseCommit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),widths:[1440,768,390],themes:['light','dark'],database:'task-owned MySQL 8.4, migration ledger, formal full Fastify server',data:'Persisted fixture inventory and 55 logs; real unconfigured semantic metrics. No live target collection; no product model calls.',reads,writes,errors,batches},null,2));
 });
 
 test('controlled overview states supplement real service and preserve investigation access',async({page})=>{
@@ -260,4 +265,34 @@ test('server and network real service inventory, semantic tabs, interfaces and p
   expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]);expect(errors).toEqual([]);
   expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
   await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Collection disabled, no live SSH/SNMP target; diagnostic logs genuinely empty, semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors},null,2));
+});
+
+test('controlled log and interface exceptional states remain explicit',async({page})=>{
+  test.setTimeout(120_000);
+  await page.addInitScript(({token,permissions})=>{
+    localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));
+  },{token,permissions});
+  let state='empty', release:(()=>void)|undefined;
+  await page.route('**/api/logs?**',async route=>{
+    if(state==='loading') await new Promise<void>(resolve=>release=resolve);
+    await route.fulfill({status:state==='failed'?503:state==='forbidden'?403:200,json:{logs:[],total:0}});
+  });
+  await page.route('**/api/network-devices/*/interfaces',async route=>{
+    if(state==='loading') await new Promise<void>(resolve=>release=resolve);
+    await route.fulfill({status:state==='failed'?503:state==='forbidden'?403:200,json:{interfaces:[]}});
+  });
+  for(const width of [1440,768,390]) for(const theme of ['light','dark']) for(state of ['empty','loading','failed','forbidden']) {
+    for(const kind of ['logs','interfaces']) {
+      await page.setViewportSize({width,height:1000});
+      await page.goto(kind==='logs'?`${base}/instance-detail?id=${instanceId}`:`${base}/network-device-detail?networkDeviceId=${networkId}`);
+      await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
+      const view=page.locator(kind==='logs'?'instance-detail-page':'network-device-detail');
+      await view.getByRole('tab',{name:kind==='logs'?'日志':'接口',exact:true}).click();
+      const section=kind==='logs'?view.locator('database-log-tab'):view;
+      await expect(section).toContainText(state==='loading'?'读取接口'.replace('读取接口',kind==='logs'?'加载日志':'读取接口'):state==='empty'?(kind==='logs'?'当前范围没有日志':'尚未取得接口记录'):state==='forbidden'?(kind==='logs'?'权限或登录状态':'HTTP 403'):(kind==='logs'?'日志读取失败':'HTTP 503'));
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${output}/controlled-${kind}-${state}-${width}-${theme}.png`,fullPage:true});
+      if(state==='loading') {release?.();release=undefined;}
+    }
+  }
 });
