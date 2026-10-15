@@ -1,3 +1,4 @@
+import { alertLevelLabel, alertLevelVariant, alertLevelOptions } from '../alert-levels.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -19,7 +20,7 @@ interface Alert {
   instance_id: number;
   instance_name?: string;
   alert_type: string;
-  severity: "critical" | "warning" | "info";
+  severity: string;
   title: string;
   message: string;
   status: 'unread' | 'read' | 'acknowledged' | 'resolved' | 'closed';
@@ -735,7 +736,12 @@ export class AlertsPage extends LitElement {
 
   // ==================== Alerts List (original functionality) ====================
 
+  private alertReadSequence = 0;
+
   private async loadAlerts() {
+    const sequence = ++this.alertReadSequence;
+    this.loading = true;
+    this.error = null;
     try {
       // Ensure servers list is loaded for server name mapping and filtering
       if (this.servers.length === 0) {
@@ -750,10 +756,12 @@ export class AlertsPage extends LitElement {
       const statusFilter = this.activeListTab === 'active'
         ? 'unread,read,acknowledged'
         : 'resolved,closed';
-      const res = await authFetch(`/api/alerts?limit=${this.pageSize}&offset=${offset}&status=${statusFilter}`);
-      if (!res.ok) throw new Error("Failed to load alerts");
+      const res = await authFetch(`/api/alerts?limit=${this.pageSize}&offset=${offset}&status=${statusFilter}${this.filterSeverity ? `&level=${encodeURIComponent(this.filterSeverity)}` : ''}`);
+      if (!res.ok) throw new Error(res.status === 403 ? '无权查看告警' : `加载告警失败（HTTP ${res.status}）`);
       const data = await res.json();
+      if (sequence !== this.alertReadSequence) return;
       this.alerts = data.items ?? data;
+      this._levelCounts = data.level_counts ?? null;
       this.total = data.total ?? 0;
       // Map server_name from servers list if available
       if (this.servers.length > 0) {
@@ -768,13 +776,14 @@ export class AlertsPage extends LitElement {
         this._statsUnread = data.unread ?? 0;
         this._statsCritical = data.critical ?? 0;
         this._statsWarning = data.warning ?? 0;
-        this._statsActiveTotal = data.total ?? 0;
+        this._statsActiveTotal = data.level_counts ? Object.values(data.level_counts as Record<string, number>).reduce((sum, count) => sum + count, 0) : data.total ?? 0;
       }
       this._statsResolved = data.resolved ?? 0; // 总是跨 tab 的
       this.loading = false;
       // Also load analyzed alert IDs for badges
       this._loadAnalyzedStatuses();
     } catch (err: any) {
+      if (sequence !== this.alertReadSequence) return;
       this.error = err.message;
       this.loading = false;
     }
@@ -833,6 +842,7 @@ export class AlertsPage extends LitElement {
     return result;
   }
 
+  @state() private _levelCounts: Record<string, number> | null = null;
   @state() private _statsUnread = 0;
   @state() private _statsCritical = 0;
   @state() private _statsWarning = 0;
@@ -854,7 +864,7 @@ export class AlertsPage extends LitElement {
       <alert-list .alerts=${this.filteredAlerts} .loading=${this.loading} .error=${this.error}
         .activeListTab=${this.activeListTab} .filterSeverity=${this.filterSeverity}
         .filterTargetType=${this.filterTargetType} .servers=${this.servers}
-        .searchText=${this.searchText} .stats=${this.stats}
+        .searchText=${this.searchText} .stats=${this.stats} .levelCounts=${this._levelCounts}
         .statsActiveTotal=${this._statsActiveTotal} .statsResolved=${this._statsResolved}
         .analyzedStatuses=${this.analyzedStatuses} .activeRCAAnalysis=${this.activeRCAAnalysis}
         .diagnosisStatus=${this.diagnosisStatus} .diagnosisResult=${this.diagnosisResult}
@@ -878,7 +888,7 @@ export class AlertsPage extends LitElement {
             this._openRuleModal();
           }
         }}
-        @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; }}
+        @alert-filter-severity=${(e: CustomEvent) => { this.filterSeverity = e.detail.value; this.page = 0; this.loadAlerts(); }}
         @alert-filter-target-type=${(e: CustomEvent) => { this.filterTargetType = e.detail.value; this.filterServerId = null; }}
         @alert-filter-server-id=${(e: CustomEvent) => { this.filterServerId = e.detail.value; }}
         @alert-search=${(e: CustomEvent) => { this.searchText = e.detail.value; }}
@@ -1051,10 +1061,6 @@ export class AlertsPage extends LitElement {
         this.requestUpdate();
       }
     } catch (e) { showToast('Failed to acknowledge alert', 'error'); }
-  }
-
-  private _severityLabel(s: string): string {
-    return ({ critical: "严重", warning: "警告", info: "提示" } as Record<string, string>)[s] || s;
   }
 
   @state() private detailAlert: Alert | null = null;
@@ -1396,7 +1402,7 @@ export class AlertsPage extends LitElement {
                           }
                         </td>
                         <td style="text-align:center;">
-                          <span style="font-size:11px;font-weight:600;color:${rule.severity==='critical'?'var(--danger)':rule.severity==='error'?'var(--warn)':rule.severity==='warning'?'var(--warn)':'var(--muted)'};">${this._severityLabel(rule.severity)}</span>
+                          <app-badge variant=${alertLevelVariant(rule.severity)}>${alertLevelLabel(rule.severity)}</app-badge>
                         </td>
                         <td style="font-size:11px;color:var(--muted);text-align:center;">${rule.silence_minutes ?? 5}m</td>
                         <td style="text-align:center;">
@@ -1534,8 +1540,6 @@ export class AlertsPage extends LitElement {
   private _renderEscalation() {
     if (this.escalationLoading) return html`<div class="loading">加载升级规则...</div>`;
 
-    const levelLabels: Record<string, string> = { info: '提示', warning: '警告', error: '错误', critical: '严重' };
-
     return html`
       <div class="card">
         <div class="card-header">
@@ -1563,15 +1567,11 @@ export class AlertsPage extends LitElement {
                     ${this.escalationRules.map(rule => html`
                       <tr>
                         <td style="text-align:center;">
-                          <span class="severity-badge ${rule.from_level === 'critical' ? 'red' : rule.from_level === 'warning' ? 'orange' : rule.from_level === 'error' ? 'red' : 'blue'}">
-                            ${levelLabels[rule.from_level] || rule.from_level}
-                          </span>
+                          <app-badge variant=${alertLevelVariant(rule.from_level)}>${alertLevelLabel(rule.from_level)}</app-badge>
                         </td>
                         <td style="color:var(--muted);font-size:18px;text-align:center;">&rarr;</td>
                         <td style="text-align:center;">
-                          <span class="severity-badge ${rule.to_level === 'critical' ? 'red' : rule.to_level === 'warning' ? 'orange' : rule.to_level === 'error' ? 'red' : 'blue'}">
-                            ${levelLabels[rule.to_level] || rule.to_level}
-                          </span>
+                          <app-badge variant=${alertLevelVariant(rule.to_level)}>${alertLevelLabel(rule.to_level)}</app-badge>
                         </td>
                         <td style="text-align:center;">${rule.trigger_value ?? rule.timeout_minutes}</td>
                         <td style="text-align:center;">
@@ -1609,8 +1609,7 @@ export class AlertsPage extends LitElement {
 
   private _renderEscalationFormModal() {
     const form = this.ruleForm;
-    const levels = ['info', 'warning', 'error', 'critical'];
-    const levelLabels: Record<string, string> = { info: '提示', warning: '警告', error: '错误', critical: '严重' };
+    const levels = alertLevelOptions([form.from_level, form.to_level].filter((level): level is string => typeof level === 'string'));
 
     return html`
       <app-dialog .open=${this.showEscalationModal} title="${this.editingEscalation ? '编辑升级规则' : '新建升级规则'}" @app-dialog-close=${() => this._closeEscalationModal()}>
@@ -1619,13 +1618,13 @@ export class AlertsPage extends LitElement {
 
           <app-form-field label="从等级">
             <select class="form-select" .value=${form.from_level || 'warning'} @change=${(e: any) => this._updateRuleForm('from_level', e.target.value)}>
-              ${levels.map(l => html`<option value="${l}">${levelLabels[l]}</option>`)}
+              ${levels.map(l => html`<option value="${l}">${alertLevelLabel(l)}</option>`)}
             </select>
           </app-form-field>
 
           <app-form-field label="到等级">
             <select class="form-select" .value=${form.to_level || 'error'} @change=${(e: any) => this._updateRuleForm('to_level', e.target.value)}>
-              ${levels.map(l => html`<option value="${l}">${levelLabels[l]}</option>`)}
+              ${levels.map(l => html`<option value="${l}">${alertLevelLabel(l)}</option>`)}
             </select>
           </app-form-field>
 

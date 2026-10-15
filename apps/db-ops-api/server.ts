@@ -942,6 +942,7 @@ async function start() {
         offset: q.offset ? parseInt(q.offset) : undefined,
         status: q.status || undefined,
         level: q.level || undefined,
+        strict: true,
       });
       reply.send(alerts);
     } catch (error: any) {
