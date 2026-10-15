@@ -1,3 +1,4 @@
+import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -51,7 +52,7 @@ interface ReportType {
 
 @customElement("reports-page")
 export class ReportsPage extends LitElement {
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [listBrowserStyles, sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -325,6 +326,10 @@ export class ReportsPage extends LitElement {
     .cfg-toggle__track.on .cfg-toggle__thumb { left: 18px; }
   `];
 
+  private historyBrowser = new ListBrowser();
+  private historyBatch = 0;
+  @state() private historyLoadingMore = false;
+  @state() private historyTotal: number | null = null;
   @state() private reports: Report[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
@@ -422,30 +427,37 @@ export class ReportsPage extends LitElement {
       const res = await authFetch('/api/reports/stats');
       if (res.ok) {
         this.stats = await res.json();
+        this.historyTotal = Number(this.stats.total);
       }
     } catch (err: any) {
       showToast('Failed to load statistics', 'error');
     }
   }
 
-  private async loadReports() {
+  private async loadReports(append = false) {
+    if (this.historyLoadingMore) return;
+    if (append) this.historyLoadingMore = true;
+    else { this.loading = true; this.error = null; this.historyBatch = 0; this.reports = []; }
+    const batch = this.historyBatch + 1;
     try {
-      const res = await authFetch('/api/reports', {
-        headers: this.headers,
-      });
-      if (res.ok) {
-        this.reports = await res.json();
-      }
-      this.loading = false;
+      const res = await authFetch(`/api/reports?page=${batch}&limit=100`, { headers: this.headers });
+      if (!res.ok) throw new Error(res.status === 403 ? '无权限查看报表历史' : `报表历史加载失败 (HTTP ${res.status})`);
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('报表历史响应无效');
+      this.reports = [...new Map([...this.reports, ...data].map(report => [report.id, report])).values()];
+      this.historyBatch = batch;
     } catch (err: any) {
+      this.reports = [];
+      this.historyBatch = 0;
       this.error = err.message;
-      this.loading = false;
+    } finally {
+      this.loading = false; this.historyLoadingMore = false;
     }
   }
 
   override render() {
     if (this.loading) {
-      return html`<div class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">
+      return html`<div role="status" class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">加载中...
           <div class="skeleton-block" style="width:100%;"></div>
           <div class="skeleton-block" style="width:100%;"></div>
           <div class="skeleton-block" style="width:100%;"></div>
@@ -455,9 +467,10 @@ export class ReportsPage extends LitElement {
     }
 
     if (this.error) {
-      return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
+      return html`<div role="alert" class="loading" style="color: var(--danger);">${this.error}<button class="btn" @click=${() => this.loadReports()}>重试</button></div>`;
     }
 
+    const historyPage = this.historyBrowser.select(this.reports, row => `${row.name || row.title || ''} ${row.instance_name || ''} ${row.server_name || ''} ${row.id}`, row => `${row.name || row.title || ''} ${row.id}`);
     return html`
       <div class="page">
         <!-- 生成报表卡片 -->
@@ -527,6 +540,12 @@ export class ReportsPage extends LitElement {
             ${icons['file-text']} 历史报告
           </div>
 
+          ${renderListBrowser(this.historyBrowser, historyPage.total, this.reports.length, "报表历史", () => this.requestUpdate(), "已载入（仅检索已载入历史）")}
+          <div class="list-browser">
+            <span>可见历史总数：${this.historyTotal === null ? '未知' : this.historyTotal} · 已读取 ${this.historyBatch} 批</span>
+            <button class="btn" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports()}>刷新历史</button>
+            ${this.historyTotal === null || this.reports.length < this.historyTotal ? html`<button class="btn" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports(true)}>${this.historyLoadingMore ? '读取中...' : '读取下一批历史'}</button>` : ''}
+          </div>
           ${this.reports.length > 0
             ? html`
                 <div class="table-container">
@@ -543,7 +562,7 @@ export class ReportsPage extends LitElement {
                       </tr>
                     </thead>
                     <tbody>
-                      ${this.reports.map((report) => html`
+                      ${historyPage.rows.map((report) => html`
                         <tr>
                           <td class="report-title">${report.name || report.title}</td>
                           <td style="text-align:center;"><span class="type-badge">${this._reportTypeLabel(report.type)}</span></td>
@@ -575,7 +594,7 @@ export class ReportsPage extends LitElement {
                 </div>
               `
             : html`
-                <app-empty-state title="暂无历史报告" description="选择上方的报表类型生成第一份报告">
+                <app-empty-state title=${this.historyTotal === 0 ? "暂无历史报告" : "已读取批次暂无可见报告"} description=${this.historyTotal === 0 ? "选择上方的报表类型生成第一份报告" : "可继续读取后续历史，检索仅覆盖已载入记录"}>
                   <div slot="icon">${icons['file-text']}</div>
                 </app-empty-state>
               `

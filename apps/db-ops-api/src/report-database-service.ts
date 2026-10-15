@@ -197,7 +197,7 @@ class ReportDatabaseService {
          LEFT JOIN database_instances i ON r.instance_id = i.id
          LEFT JOIN servers s ON r.server_id = s.id
          WHERE ${conditions.join(' AND ')}
-         ORDER BY r.created_at DESC
+         ORDER BY r.created_at DESC, r.id DESC
          LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       ) as any;
