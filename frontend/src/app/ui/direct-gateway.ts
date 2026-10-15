@@ -524,6 +524,13 @@ export class DirectGatewayClient {
     if (type === 'stream.snapshot' || type === 'stream.delta') {
       const event = readDisplayStreamEvent(data);
       if (!event || !this.partsStream || event.stream.subscriptionId !== this.streamSubscriptions.get(event.sessionKey)) return;
+      // A cold snapshot is a history reference, not an execution watermark.
+      // Admission may repeat it with a fresh epoch before the first run starts.
+      if (event.type === 'stream.snapshot' && event.recovery?.cold && event.stream.runId === 'cold') {
+        this.recoveringSessions.delete(event.sessionKey);
+        this.onEvent(event);
+        return;
+      }
       const key = `${event.sessionKey}:${event.stream.runId}`;
       const prior = this.streamStates.get(key) ?? { subscriptionId: event.stream.subscriptionId, recovering: true };
       const result = inspectDisplayWatermark(prior, event);
