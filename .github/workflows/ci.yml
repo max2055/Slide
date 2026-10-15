@@ -245,6 +245,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install browser for API suites with Chromium coverage
+        run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
       - name: Full API candidate against isolated MySQL
         run: T12_OUTPUT_DIR="$GITHUB_WORKSPACE/.qualification/t12/api-complete" bash scripts/qualification/run-investigation-rollout.sh --api
       - uses: actions/upload-artifact@v4
