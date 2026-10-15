@@ -99,7 +99,7 @@ export class SemanticMetrics extends LitElement {
   }
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
-    const trends = metrics.flatMap(metric => metric.series.map(series => ({ metric, series }))).filter(({series}) => series.buckets.length);
+    const trends = metrics.flatMap(metric => metric.series.map(series => ({ metric, series }))).filter(({series}) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1);
     return html`<style>${sharedBtnStyles}
       :host { display:block; min-width:0; color:var(--text); font-size:14px; }
       .actions { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-sm); margin-block:var(--space-md); }
