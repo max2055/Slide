@@ -81,8 +81,9 @@ export class SemanticMetrics extends LitElement {
     const current = () => generation === this.generation && resourceId === this.resourceId && resourceType === this.resourceType;
     this.busy = true; this.error = '';
     try {
+      const now = Date.now();
       const response = await authFetch('/api/metrics-v2/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resource: { type: this.resourceType, id: this.resourceId }, view: 'all', ...(this.from && this.to ? { from: this.from, to: this.to } : { from: new Date(Date.now() - this.hours * 3600000).toISOString(), to: new Date().toISOString(), bucket_ms: Math.max(60000, this.hours * 60000) }) }) });
+        body: JSON.stringify({ resource: { type: this.resourceType, id: this.resourceId }, view: 'all', ...(this.from && this.to ? { from: this.from, to: this.to } : { from: new Date(now - this.hours * 3600000).toISOString(), to: new Date(now).toISOString(), bucket_ms: Math.max(60000, this.hours * 60000) }) }) });
       if (!current()) return;
       if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
       const result = await response.json();

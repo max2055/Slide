@@ -6,7 +6,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 const result = { profile: { columns: [{ key: 'uptime', metric: { id: 'db.uptime_seconds' }, label: '运行时长' }] }, window: { from: 'start', to: 'end' }, metrics: [
   { definition: { id: 'db.uptime_seconds', category: 'canonical', meaning: 'Database uptime', unit: 's' }, state: 'available', series: [{ dimensions: {}, buckets: [{ value: { encoding: 'uint64', value: '9007199254740993' }, unit: 's', coverage: 1, quality: { status: 'good', reason: 'none' }, freshness: 'fresh', accuracy: 'exact', sources: [{ id: 'source' }], window: { from: 'start', to: 'end' } }] }] },
 ] };
-afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
+afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers(); vi.resetAllMocks(); });
 const mount = async () => { const el = new SemanticMetrics(); el.resourceId = 1; document.body.append(el); await settle(); return el; };
 it('uses standard API, renders exact integers and preserves quality metadata', async () => {
   authFetch.mockResolvedValue({ ok: true, json: async () => result }); const el = await mount();
@@ -16,6 +16,17 @@ it('uses standard API, renders exact integers and preserves quality metadata', a
   expect(table.rows[0].metric).toBeDefined(); expect(el.result).toEqual(result);
   expect(table.textContent).toContain('9007199254740993');
   expect(table.textContent).toContain('覆盖率 100%');
+});
+it('keeps a relative query window exactly divisible by its bucket when the clock advances', async () => {
+  authFetch.mockResolvedValue({ ok: true, json: async () => result });
+  const el = await mount();
+  let now = Date.parse('2026-10-15T11:00:00.000Z');
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
+  vi.spyOn(Date, 'now').mockImplementation(() => { const captured = now; vi.setSystemTime(++now); return captured; });
+  await el.load();
+  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  expect(Date.parse(query.to) - Date.parse(query.from)).toBe(3_600_000);
+  expect((Date.parse(query.to) - Date.parse(query.from)) % query.bucket_ms).toBe(0);
 });
 it('keeps metric cards on temporary failure, clears values on permission denial', async () => {
   authFetch.mockResolvedValue({ ok: true, json: async () => result }); const el = await mount();
