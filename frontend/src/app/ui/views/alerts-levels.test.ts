@@ -9,7 +9,7 @@ afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 const alert = (severity: string) => ({ id: 7, severity, title: '历史升级告警', message: 'test', status: 'acknowledged', created_at: '2026-10-15T00:00:00Z' });
 
 describe('persisted alert levels', () => {
-  it.each([['p0', '紧急（P0）', 'danger'], ['error', '错误', 'danger'], ['future', '未知等级（future）', 'muted']])('%s has consistent list/detail meaning', async (severity, label, variant) => {
+  it.each([['p0', '紧急（P0）', 'danger'], ['error', '错误', 'danger'], ['critical', '严重', 'danger'], ['warning', '警告', 'warn'], ['info', '提示', 'info'], ['future', '未知等级（future）', 'muted'], ['constructor', '未知等级（constructor）', 'muted']])('%s has consistent list/detail meaning', async (severity, label, variant) => {
     const list = document.createElement('alert-list') as any;
     list.alerts = [alert(severity)]; list.total = 1;
     const detail = document.createElement('alert-detail-modal') as any;
@@ -18,7 +18,7 @@ describe('persisted alert levels', () => {
     await list.updateComplete; await detail.updateComplete;
     for (const element of [list, detail]) {
       const badge = element.shadowRoot.querySelector('app-badge');
-      expect(badge.childNodes[1]?.textContent ?? badge.textContent).toContain(label);
+      expect(Array.from(badge.childNodes as NodeListOf<ChildNode>).filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim()).toBe(label);
       expect(badge.getAttribute('variant')).toBe(variant);
     }
   });

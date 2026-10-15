@@ -4,7 +4,7 @@ vi.mock('./db-connection', () => ({ dbConnection: { getPool: () => fixture } }))
 import { alertDatabaseService } from './alert-database-service.js';
 
 describe('alert level breakdown', () => {
-  beforeEach(() => fixture.query.mockReset());
+  beforeEach(() => { fixture.query.mockReset(); });
   it('counts all stored levels across pages while retaining access/status scope and exact filtering', async () => {
     fixture.query.mockImplementation(async (sql: string) => {
       if (sql.includes('GROUP BY')) return [[{ level: 'p0', total: 2 }, { level: 'error', total: 1 }, { level: 'future', total: 3 }]];
@@ -17,7 +17,7 @@ describe('alert level breakdown', () => {
     expect(sql).toContain('a.instance_id IN (?)');
     expect(sql).toContain('a.status = ?');
     expect(params).toEqual([23, 'acknowledged']);
-    const [, filterParams] = fixture.query.mock.calls[0];
+    const [, filterParams] = fixture.query.mock.calls.find(([sql]) => sql.includes('LEFT JOIN database_instances'))!;
     expect(filterParams).toEqual([23, 'acknowledged', 'p0', 1, 0]);
   });
   it('does not report zero counts when the breakdown query fails in strict mode', async () => {

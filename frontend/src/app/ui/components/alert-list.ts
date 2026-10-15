@@ -1,3 +1,4 @@
+import { alertLevelLabel, alertLevelVariant, alertLevelOptions } from '../alert-levels.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Alert list table with filtering, pagination, severity/status/app-badge rendering.
@@ -25,7 +26,7 @@ interface Alert {
   instance_id: number | null;
   instance_name?: string;
   alert_type: string;
-  severity: "critical" | "warning" | "info";
+  severity: string;
   title: string;
   message: string;
   status: 'unread' | 'read' | 'acknowledged' | 'resolved' | 'closed';
@@ -99,6 +100,7 @@ export class AlertList extends LitElement {
   @property() filterTargetType = '';
   @property({ type: Array }) servers: any[] = [];
   @property() searchText = '';
+  @property({ type: Object }) levelCounts: Record<string, number> | null = null;
   @property({ type: Object }) stats: Record<string, number> = {};
   @property({ type: Number }) statsActiveTotal = 0;
   @property({ type: Number }) statsResolved = 0;
@@ -117,7 +119,7 @@ export class AlertList extends LitElement {
 
   override render() {
     if (this.loading) return html`
-      <div style="padding:var(--space-lg);">
+      <div role="status" aria-label="加载告警" style="padding:var(--space-lg);">
         ${[1,2,3,4,5].map(() => html`
           <div style="display:flex;gap:var(--space-md);padding:var(--space-md);border-bottom:1px solid var(--border);">
             <div class="skeleton skeleton-line skeleton-line--short"></div>
@@ -127,9 +129,10 @@ export class AlertList extends LitElement {
           </div>
         `)}
       </div>`;
-    if (this.error) return html`<div class="loading" style="color:var(--danger);">${this.error}</div>`;
+    if (this.error) return html`<div class="loading" role="alert" style="color:var(--danger);gap:var(--space-md);">${this.error}<button class="btn" @click=${() => this._emit('alert-refresh')}>重试</button></div>`;
 
     const filtered = this.alerts;
+    const levels = alertLevelOptions([...Object.keys(this.levelCounts ?? {}), ...this.alerts.map(a => a.severity), ...(this.filterSeverity ? [this.filterSeverity] : [])]);
     const totalPages = Math.max(1, Math.ceil(this.total / this.pageSize));
 
     return html`
@@ -141,6 +144,12 @@ export class AlertList extends LitElement {
         <stat-card label="警告告警" .value="${this.stats.warning ?? 0}" variant="warn" .hint=${html`<span class="dot warn"></span>需关注`}></stat-card>
       </div>
 
+      <div aria-label="等级统计" style="display:flex;gap:var(--space-sm);flex-wrap:wrap;margin-bottom:var(--space-md);">
+        <span style="color:var(--muted);font-size:var(--text-sm);">${this.activeListTab === 'active' ? '活跃' : '已恢复'}告警等级：</span>
+        ${this.levelCounts === null ? html`<span>等级统计不可用</span>` : levels.map(level => html`
+          <app-badge variant=${alertLevelVariant(level)}>${alertLevelLabel(level)}：${this.levelCounts[level] ?? 0}</app-badge>
+        `)}
+      </div>
       <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
         <button class="tab ${this.activeListTab === 'active' ? 'active' : ''}" @click=${() => this._emit('alert-list-tab-change', { tab: 'active' })}>活跃告警<span class="tab-badge">${this.statsActiveTotal}</span></button>
         <button class="tab ${this.activeListTab === 'recovered' ? 'active' : ''}" @click=${() => this._emit('alert-list-tab-change', { tab: 'recovered' })}>已恢复<span class="tab-badge" style="background:var(--ok-subtle);color:var(--ok);">${this.statsResolved}</span></button>
@@ -148,11 +157,9 @@ export class AlertList extends LitElement {
 
       <div class="card" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
         <div class="toolbar">
-          <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-severity', { value: e.target.value })}>
+          <select aria-label="告警等级" class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-severity', { value: e.target.value })}>
             <option value="">全部级别</option>
-            <option value="critical" ?selected=${this.filterSeverity==='critical'}>严重</option>
-            <option value="warning" ?selected=${this.filterSeverity==='warning'}>警告</option>
-            <option value="info" ?selected=${this.filterSeverity==='info'}>提示</option>
+            ${levels.map(level => html`<option value=${level} ?selected=${this.filterSeverity === level}>${alertLevelLabel(level)}</option>`)}
           </select>
           <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-target-type', { value: e.target.value })}>
             <option value="">全部目标</option>
@@ -175,7 +182,7 @@ export class AlertList extends LitElement {
             <table class="table">
               <thead><tr>
                 <th style="width:45px;text-align:center;">编号</th>
-                <th style="width:55px;text-align:center;">级别</th>
+                <th style="width:100px;text-align:center;">级别</th>
                 <th>告警内容</th>
                 <th style="width:70px;text-align:center;">目标类型</th>
                 <th style="width:100px;text-align:center;">目标</th>
@@ -193,8 +200,8 @@ export class AlertList extends LitElement {
           <div class="empty" style="min-height:200px;">
             <div class="empty__content">
               <div class="empty__icon">${this.activeListTab === 'recovered' ? icons['check-circle'] : icons['party-popper']}</div>
-              <div class="empty__title">${this.activeListTab === 'recovered' ? '没有已恢复告警' : '暂无活跃告警'}</div>
-              <div class="empty__desc">${this.activeListTab === 'recovered' ? '已恢复的告警会出现在这里' : '系统运行正常'}</div>
+              <div class="empty__title">${this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '没有已恢复告警' : '暂无活跃告警'}</div>
+              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '已恢复的告警会出现在这里' : '系统运行正常'}</div>
             </div>
           </div>
         `}
@@ -205,10 +212,10 @@ export class AlertList extends LitElement {
   private _renderRow(alert: Alert) {
     const isActive = alert.status === 'unread' || alert.status === 'read' || alert.status === 'acknowledged';
     return html`
-      <tr class="${alert.severity}" style="white-space:nowrap;">
+      <tr class="${alert.severity === 'p0' ? 'critical' : alert.severity}" style="white-space:nowrap;">
         <td style="font-size:var(--text-xs);color:var(--muted);text-align:center;">${alert.id}</td>
         <td style="text-align:center;">
-          <app-badge variant=${alert.severity === 'critical' ? 'danger' : alert.severity === 'warning' ? 'warn' : 'info'}>${this._severityLabel(alert.severity)}</app-badge>
+          <app-badge variant=${alertLevelVariant(alert.severity)}>${alertLevelLabel(alert.severity)}</app-badge>
         </td>
         <td style="overflow:hidden;" title="${this._cleanTitle(alert.title)} — ${alert.message}">
           <div style="display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;">
@@ -289,7 +296,6 @@ export class AlertList extends LitElement {
       </div>`;
   }
 
-  private _severityLabel(s: string): string { return ({ critical: '严重', warning: '警告', info: '提示' } as Record<string, string>)[s] || s; }
   private _cleanTitle(t: string): string { return t.replace(/^\[(CRITICAL|WARNING|INFO|ERROR)\]\s*/i, ''); }
   private _typeLabel(t: string): string {
     return ({ health_check_failed: '健康检查', slow_query: '慢查询', connection_pool_exhausted: '连接池', replication_lag: '复制延迟', disk_space_low: '磁盘空间', cpu_high: 'CPU', memory_high: '内存' } as Record<string, string>)[t] || t;

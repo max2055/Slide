@@ -12,7 +12,7 @@ export interface Alert {
   network_device_id?: number | null;
   network_device_name?: string;
   alert_type: 'performance' | 'availability' | 'security' | 'backup' | 'replication' | 'capacity';
-  level: 'info' | 'warning' | 'error' | 'critical';
+  level: 'info' | 'warning' | 'error' | 'critical' | 'p0';
   title: string;
   message: string;
   description: string | null;
@@ -184,7 +184,7 @@ class AlertDatabaseService {
       const targetScopeEnabled = options?.allowed_server_ids !== undefined
         || options?.allowed_network_device_ids !== undefined;
 
-      const buildWhere = (includeStatusAndLevel = true): { clause: string; params: any[] } => {
+      const buildWhere = (includeStatusAndLevel = true, includeLevel = true): { clause: string; params: any[] } => {
         const whereParts: string[] = [];
         const whereParams: any[] = [];
 
@@ -259,7 +259,7 @@ class AlertDatabaseService {
           }
         }
 
-        if (includeStatusAndLevel && options?.level) {
+        if (includeStatusAndLevel && includeLevel && options?.level) {
           whereParts.push('a.level = ?');
           whereParams.push(options.level);
         }
@@ -301,17 +301,29 @@ class AlertDatabaseService {
       // Get total and breakdown counts for pagination
       let total = rows.length;
       let unread = 0, critical = 0, warning = 0, resolved = 0;
+      // Preserve raw values, including future/invalid persisted levels. Scope is
+      // the selected status/authorized targets, independent of page and level.
+      const levelWhere = buildWhere(true, false);
+      const [levelRows] = options?.limit === undefined && !options?.level
+        ? [rows.reduce((counts: any[], row: any) => {
+            const entry = counts.find(count => count.level === row.level);
+            if (entry) entry.total++; else counts.push({ level: row.level, total: 1 });
+            return counts;
+          }, [])]
+        : await pool.query(
+            `SELECT a.level, COUNT(*) AS total FROM alerts a WHERE ${levelWhere.clause} GROUP BY a.level`,
+            levelWhere.params,
+          ) as any;
+      const level_counts: Record<string, number> = Object.fromEntries(levelRows.map((row: any) => [row.level, Number(row.total)]));
+      critical = level_counts.critical ?? 0;
+      warning = level_counts.warning ?? 0;
       if (options?.limit !== undefined) {
         const whereClause = `WHERE ${baseWhere.clause}`;
         const countParams = baseWhere.params;
         const [[{ total: t }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause}`, countParams) as any;
         total = t ?? rows.length;
-        const [[{ total: ur }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.status NOT IN ('acknowledged','resolved','closed','read')`, countParams) as any;
+        const [[{ total: ur }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a WHERE ${levelWhere.clause} AND a.status NOT IN ('acknowledged','resolved','closed','read')`, levelWhere.params) as any;
         unread = ur ?? 0;
-        const [[{ total: cr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.level = 'critical'`, countParams) as any;
-        critical = cr ?? 0;
-        const [[{ total: wr }]] = await pool.query(`SELECT COUNT(*) AS total FROM alerts a ${whereClause} AND a.level = 'warning'`, countParams) as any;
-        warning = wr ?? 0;
         // Resolved count: always cross-tab (ignores status filter)
         const resolvedWhereData = buildWhere(false);
         const [[{ total: rv }]] = await pool.query(
@@ -352,11 +364,12 @@ class AlertDatabaseService {
       critical,
       warning,
       resolved,
+      level_counts,
       };
     } catch (error) {
       console.error('获取告警列表失败:', error);
       if (options?.strict) throw new Error('ALERTS_QUERY_FAILED', { cause: error });
-      return { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0 };
+      return { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0, level_counts: {} };
     }
   }
 
