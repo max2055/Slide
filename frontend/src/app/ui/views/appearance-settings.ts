@@ -4,14 +4,14 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  * Modifies CSS custom properties on <html> and dispatches settings changes.
  */
 import { LitElement, html, css, nothing } from "lit";
+import { live } from "lit/directives/live.js";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
-import { t } from "../../i18n/index.ts";
+import { i18n, isSupportedLocale, I18nController, t } from "../../i18n/index.ts";
 import { applyAccentColor, applyBorderRadius, applyNavWidth } from "../app-settings.ts";
 import { applyButtonPalette, DEFAULT_PALETTE, type ButtonPalette } from "../btn-palette.ts";
 import { applyDensity, type Density } from "../density.ts";
-import { DEFAULT_TAB_OPTIONS, TAB_GROUPS, UTILITY_TABS } from "../navigation.ts";
-import type { Locale } from "../../i18n/lib/types.ts";
+import { DEFAULT_TAB_OPTIONS, TAB_GROUPS, UTILITY_TABS, titleForTab } from "../navigation.ts";
 import "../components/app-card.js";
 
 const ALL_TABS = [...TAB_GROUPS.flatMap((g) => [...g.tabs]), ...UTILITY_TABS];
@@ -24,18 +24,18 @@ const TIMEZONES = [
 ];
 
 const ACCENT_PRESETS: { name: string; hex: string }[] = [
-  { name: "Default Blue", hex: "#409eff" },
-  { name: "Cyan", hex: "#22d3ee" },
-  { name: "Emerald", hex: "#34d399" },
-  { name: "Amber", hex: "#fbbf24" },
-  { name: "Rose", hex: "#f472b6" },
-  { name: "Sky", hex: "#60a5fa" },
-  { name: "Slate", hex: "#64748b" },
-  { name: "Indigo", hex: "#6366f1" },
-  { name: "Orange", hex: "#f97316" },
-  { name: "Purple", hex: "#a855f7" },
-  { name: "Pink", hex: "#ec4899" },
-  { name: "Teal", hex: "#14b8a6" },
+  { name: "defaultBlue", hex: "#409eff" },
+  { name: "cyan", hex: "#22d3ee" },
+  { name: "emerald", hex: "#34d399" },
+  { name: "amber", hex: "#fbbf24" },
+  { name: "rose", hex: "#f472b6" },
+  { name: "sky", hex: "#60a5fa" },
+  { name: "slate", hex: "#64748b" },
+  { name: "indigo", hex: "#6366f1" },
+  { name: "orange", hex: "#f97316" },
+  { name: "purple", hex: "#a855f7" },
+  { name: "pink", hex: "#ec4899" },
+  { name: "teal", hex: "#14b8a6" },
 ];
 
 const RADIUS_STOPS = [
@@ -97,7 +97,7 @@ export class AppearanceSettings extends LitElement {
   @state() private density: Density = "standard";
   @state() private sidebarPos: "left" | "right" = "left";
   @state() private reduceMotion: boolean = false;
-  @state() private locale: string = "en";
+  private readonly i18nController = new I18nController(this);
   @state() private defaultTab: string = "dashboard";
   @state() private navWidth: number = 258;
   @state() private visibleTabs: string[] = [];
@@ -209,9 +209,10 @@ export class AppearanceSettings extends LitElement {
     this.density = readSettingsField("fontDensity", "standard");
     this.sidebarPos = readSettingsField("sidebarPosition", "left");
     this.reduceMotion = readSettingsField("reduceAnimations", false);
-    this.locale = readSettingsField("locale", "en");
-    this.defaultTab = readSettingsField("defaultTab", "dashboard");
-    this.visibleTabs = readSettingsField("visibleTabs", []);
+    const defaultTab = readSettingsField<unknown>("defaultTab", "dashboard");
+    this.defaultTab = typeof defaultTab === "string" ? defaultTab : "dashboard";
+    const visibleTabs = readSettingsField<unknown>("visibleTabs", []);
+    this.visibleTabs = Array.isArray(visibleTabs) ? visibleTabs.filter((tab): tab is string => typeof tab === "string") : [];
     this.navWidth = readSettingsField("navWidth", 258);
     this.pageSize = readSettingsField("defaultPageSize", 50);
     this.dateFormat = readSettingsField("dateFormat", "absolute");
@@ -233,14 +234,13 @@ export class AppearanceSettings extends LitElement {
   }
 
   render() {
-    const accentOpts = ACCENT_PRESETS.map(c => ({ value: c.hex, label: c.name }));
     const radiusOpts = RADIUS_STOPS.map(r => ({ value: r.value, label: t(`appearance.${r.labelKey}`) }));
     const densityOpts = DENSITY_OPTIONS.map(d => ({ value: d.value, label: t(d.labelKey) }));
     const sidebarOpts = [
       { value: "left", label: t("appearance.left") },
       { value: "right", label: t("appearance.right") },
     ];
-    const pageSizeOpts = PAGE_SIZE_OPTIONS.map(n => ({ value: n, label: `${n} rows` }));
+    const pageSizeOpts = PAGE_SIZE_OPTIONS.map(n => ({ value: n, label: t("appearance.pageSizeRows", { count: String(n) }) }));
     const dateFormatOpts = [
       { value: "absolute", label: t("appearance.absolute") },
       { value: "relative", label: t("appearance.relative") },
@@ -251,12 +251,16 @@ export class AppearanceSettings extends LitElement {
     ];
     const refreshOpts = REFRESH_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }));
     const severityOpts = SEVERITY_OPTIONS.map(s => ({ value: s, label: t(SEVERITY_LABEL_KEYS[s]) }));
-    const defaultTabOpts = DEFAULT_TAB_OPTIONS.map(t => ({ value: t, label: t }));
+    const defaultTabOpts: { value: string; label: string }[] = DEFAULT_TAB_OPTIONS.map(tab => ({ value: tab, label: titleForTab(tab) }));
+    // Retain legacy values until the user explicitly chooses a replacement.
+    if (!DEFAULT_TAB_OPTIONS.some(tab => tab === this.defaultTab)) {
+      defaultTabOpts.unshift({ value: this.defaultTab, label: t("appearance.unavailablePage") });
+    }
 
     return html`
       <div class="page-header">
-        <h1>外观</h1>
-        <p>自定义界面主题、颜色、字体密度等视觉设置</p>
+        <h1>${t("tabs.appearance")}</h1>
+        <p>${t("appearance.description")}</p>
       </div>
 
       <!-- Accent Color -->
@@ -268,13 +272,13 @@ export class AppearanceSettings extends LitElement {
             <div
               class="color-swatch ${this.accent === c.hex ? "active" : ""}"
               style="background:${c.hex}"
-              title=${c.name}
+              title=${t(`appearance.colors.${c.name}`)}
               @click=${() => this._setAccent(c.hex)}
             ></div>
           `)}
         </div>
         <div class="custom-color-row">
-          <input class="color-input" type="color" .value=${this.accent} aria-label="自定义主题色" @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
+          <input class="color-input" type="color" .value=${this.accent} aria-label=${t("appearance.customColor")} @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
           <span class="hint">${t("appearance.customColor")}</span>
           <code>${this.accent}</code>
         </div>
@@ -318,7 +322,7 @@ export class AppearanceSettings extends LitElement {
         <div slot="header">${t("appearance.language")}</div>
         <p class="desc">${t("appearance.languageDesc")}</p>
         <app-select-field
-          .value=${this.locale}
+          .value=${live(i18n.getLocale())}
           .options=${LANG_OPTIONS.map(l => ({ value: l.value, label: l.label }))}
           @change=${(e: CustomEvent) => this._setLocale(e.detail as string)}
         ></app-select-field>
@@ -363,7 +367,7 @@ export class AppearanceSettings extends LitElement {
           <app-toggle
             .checked=${this._isTabVisible(tab)}
             @change=${() => this._toggleTab(tab)}
-          >${tab}</app-toggle>
+          >${titleForTab(tab)}</app-toggle>
         `)}
       </app-card>
 
@@ -435,47 +439,47 @@ export class AppearanceSettings extends LitElement {
 
       <!-- Button Colors -->
       <app-card>
-        <div slot="header">按钮颜色</div>
-        <p class="desc">按操作类型自定义按钮颜色。</p>
+        <div slot="header">${t("appearance.buttonColors")}</div>
+        <p class="desc">${t("appearance.buttonColorsDesc")}</p>
         <div class="field-group">
           <div class="color-setting-group">
-            <span class="field-hint">主要操作</span>
+            <span class="field-hint">${t("appearance.primaryAction")}</span>
             <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalPrimaryBg} aria-label="主要操作填充色" @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} />
-              <input class="color-input" type="color" .value=${this.btnPalPrimaryColor} aria-label="主要操作文字色" @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} />
-              <span class="hint">填充色 / 文字色</span>
+              <input class="color-input" type="color" .value=${this.btnPalPrimaryBg} aria-label=${t("appearance.primaryFill")} @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} />
+              <input class="color-input" type="color" .value=${this.btnPalPrimaryColor} aria-label=${t("appearance.primaryText")} @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} />
+              <span class="hint">${t("appearance.fillAndText")}</span>
               <code>${this.btnPalPrimaryBg}</code>
             </div>
           </div>
           <div class="color-setting-group">
-            <span class="field-hint">常规操作</span>
+            <span class="field-hint">${t("appearance.secondaryAction")}</span>
             <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalSecondaryBg} aria-label="常规操作背景色" @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} />
-              <span class="hint">背景色</span>
+              <input class="color-input" type="color" .value=${this.btnPalSecondaryBg} aria-label=${t("appearance.secondaryBackground")} @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} />
+              <span class="hint">${t("appearance.backgroundColor")}</span>
               <code>${this.btnPalSecondaryBg}</code>
             </div>
           </div>
           <div class="color-setting-group">
-            <span class="field-hint">行内操作</span>
+            <span class="field-hint">${t("appearance.inlineAction")}</span>
             <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalGhostColor} aria-label="行内操作文字色" @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} />
-              <span class="hint">文字色</span>
+              <input class="color-input" type="color" .value=${this.btnPalGhostColor} aria-label=${t("appearance.inlineText")} @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} />
+              <span class="hint">${t("appearance.textColor")}</span>
               <code>${this.btnPalGhostColor}</code>
             </div>
           </div>
           <div class="color-setting-group">
-            <span class="field-hint">危险操作</span>
+            <span class="field-hint">${t("appearance.dangerAction")}</span>
             <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalDangerBg} aria-label="危险操作背景色" @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} />
-              <span class="hint">背景色</span>
+              <input class="color-input" type="color" .value=${this.btnPalDangerBg} aria-label=${t("appearance.dangerBackground")} @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} />
+              <span class="hint">${t("appearance.backgroundColor")}</span>
               <code>${this.btnPalDangerBg}</code>
             </div>
           </div>
-          <div class="button-preview-row" aria-label="按钮样式预览">
-            <button class="btn-primary button-preview" type="button">主要</button>
-            <button class="btn button-preview" type="button">常规</button>
-            <button class="btn-ghost button-preview" type="button">行内</button>
-            <button class="btn-primary btn-danger button-preview" type="button">危险</button>
+          <div class="button-preview-row" aria-label=${t("appearance.buttonPreview")}>
+            <button class="btn-primary button-preview" type="button">${t("appearance.primary")}</button>
+            <button class="btn button-preview" type="button">${t("appearance.secondary")}</button>
+            <button class="btn-ghost button-preview" type="button">${t("appearance.inline")}</button>
+            <button class="btn-primary btn-danger button-preview" type="button">${t("appearance.danger")}</button>
           </div>
         </div>
       </app-card>
@@ -488,7 +492,7 @@ export class AppearanceSettings extends LitElement {
           class="text-input"
           .value=${this.defaultModel}
           @input=${(e: Event) => this._setDefaultModel((e.target as HTMLInputElement).value)}
-          placeholder="e.g. claude-sonnet-4-20250929" />
+          placeholder=${t("appearance.modelPlaceholder")} />
       </app-card>
     `;
   }
@@ -527,12 +531,12 @@ export class AppearanceSettings extends LitElement {
     dispatchSettingsChange({ reduceAnimations: on });
   }
 
-  private _setLocale(locale: string) {
-    this.locale = locale;
-    import("../../i18n/lib/translate.ts").then(({ i18n }) => {
-      i18n.setLocale(locale as Locale);
-    });
-    dispatchSettingsChange({ locale });
+  private async _setLocale(locale: string) {
+    if (!isSupportedLocale(locale)) return;
+    await i18n.setLocale(locale);
+    // A failed lazy translation load must not persist an unapplied locale.
+    if (i18n.getLocale() === locale) dispatchSettingsChange({ locale });
+    this.requestUpdate();
   }
 
   private _setDefaultTab(tab: string) {
