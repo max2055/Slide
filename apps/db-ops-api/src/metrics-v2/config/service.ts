@@ -1,3 +1,4 @@
+import { checkApplicability } from '../packages/applicability.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import type { ActorContext } from '../../auth/actor-context.js';
@@ -5,6 +6,7 @@ import type { CollectionAttempt } from '../../contracts/metrics-v2/index.js';
 import { canManageResource } from '../../resources/resource-service.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
+import { AdapterError } from '../packages/adapters.js';
 import { runPackage } from '../packages/runner.js';
 import type { PolicyService } from '../policy/service.js';
 import { type Ref, rule, refKey } from '../policy/model.js';
@@ -67,11 +69,12 @@ export class MetricConfigurationService {
       await access.assertCurrent?.();
       rule(result.observations.length <= s.max_series_per_resource, 'TRIAL_SERIES_LIMIT');
       return { trial: true, persisted: false, decision: result.decision, attempts: result.attempts,
-        capabilities: result.capabilities, lifecycle_evidence: access.evidence.counter || access.evidence.host_counter_epochs || access.evidence.snmp ? 'available' : 'unavailable',
+        capabilities: result.capabilities, applicability: checkApplicability(this.registry.get(next.binding.package).package, access.resource, new Date().toISOString()), lifecycle_evidence: access.evidence.counter || access.evidence.host_counter_epochs || access.evidence.snmp ? 'available' : 'unavailable',
         samples: result.observations.map(o => ({ metric: o.observation.metric,
           value: o.observation.value, quality: o.observation.quality, unit: o.observation.unit })) };
     } catch (error) {
       if (controller.signal.aborted) return { trial: true, persisted: false, decision: 'failed', error: 'timeout', attempts: [], capabilities: [], samples: [] };
+      if (error instanceof AdapterError) return { trial: true, persisted: false, decision: 'failed', error: error.code, attempts: [], capabilities: [], samples: [] };
       throw error;
     } finally {
       clearTimeout(timer);

@@ -39,6 +39,7 @@ export type Binding = { resource: Ref; package: z.infer<typeof SelectionSchema>[
 export type Origin = { layer: 'package' | 'platform' | 'group' | 'resource'; id: string; revision?: number };
 export type Settings = { enabled: boolean; interval_ms: number; timeout_ms: number; stale_after_ms: number; max_counter_gap_ms: number; max_rows: number; max_concurrency: number; max_series_per_resource: number };
 export type Resolved = {
+  applicability: import('../packages/applicability.js').ApplicabilityCheck[];
   plan: CollectionPlan;
   metric_templates: Array<{ metric: CollectionPlan['entries'][number]['binding']['metric']; source: CollectionPlan['entries'][number]['binding']['source'];
     enabled: boolean; required_dimensions: string[]; capability: CollectionPlan['entries'][number]['capability']; decision: CollectionPlan['entries'][number]['decision'] }>;

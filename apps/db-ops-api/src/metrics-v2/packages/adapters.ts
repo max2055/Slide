@@ -126,7 +126,7 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     const { collectDatabase } = await import('../database/collector.js');
     return collectDatabase(id, transport, evidence, timeoutMs);
   }
-  if (id === 'builtin:mysql.status.v1' && transport.method === 'sql') {
+  if (['builtin:mysql.status.v1', 'builtin:mysql.status.v2'].includes(id) && transport.method === 'sql') {
     const [response] = await read(() => transport.pool.query({ sql: MYSQL_STATUS_SQL, timeout: timeoutMs }));
     if (!Array.isArray(response) || response.length !== 2) throw new AdapterError('parse_error');
     const values = new Map<string, unknown>();
@@ -134,10 +134,11 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
       if (!item || typeof item !== 'object' || !['Queries', 'Uptime'].includes(item.Variable_name) || values.has(item.Variable_name)) throw new AdapterError('parse_error');
       values.set(item.Variable_name, item.Value);
     }
-    if (!evidence.counter || evidence.counter.bits !== '64') throw new AdapterError('parse_error');
     const up = uint(values.get('Uptime'))!;
     const seconds = Number((up as { value: string }).value);
     if (!Number.isSafeInteger(seconds)) throw new AdapterError('parse_error');
+    if (id === 'builtin:mysql.status.v2') return [{ dimensions: {}, fields: { Uptime: { encoding: 'float64', value: seconds } } }];
+    if (!evidence.counter || evidence.counter.bits !== '64') throw new AdapterError('parse_error');
     return [{ dimensions: {}, fields: { Uptime: { encoding: 'float64', value: seconds }, Queries: uint(values.get('Queries')) }, counter: evidence.counter }];
   }
   if (id === 'builtin:linux.basic.v1' && transport.method === 'ssh') {

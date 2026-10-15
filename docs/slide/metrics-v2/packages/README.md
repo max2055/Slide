@@ -17,6 +17,7 @@ MAX-67 基于 MAX-64 CollectorPackage 和 MAX-66 公共处理器。Monitoring Te
 | 包 | 适用条件 | 固定实现/发现 | 映射与处理 |
 | --- | --- | --- | --- |
 | mysql-basic@1.0.0 | MySQL 5.7、8.0、8.4；不宣称 MariaDB 或其他版本兼容 | 复用 MySQLProvider 的 `SHOW GLOBAL STATUS` Queries/Uptime 固定批量查询；只读单实例，无库枚举；需 SHOW GLOBAL STATUS 权限 | Uptime → Canonical db.uptime_seconds；Queries → Extension mysql.queries.total（精确 uint64）；公共 derive@1.0.0 的 rate → mysql.queries.per_second |
+| mysql-basic@2.0.0 | MySQL 9.6；仅已验证的 uptime，不自动迁移旧绑定 | 固定 SHOW GLOBAL STATUS；真实 9.6.0 USAGE 账户只读验证通过 | 仅 db.uptime_seconds；Queries/速率因缺少可信生命周期证据暂不开放，亦不含容量；见 [验证说明](../config-ui/mysql96-validation.md) |
 | linux-basic@1.0.0 | os.family=linux，具备 Linux procfs | 复用 ServerMetricProvider 的固定 uptime/load_1min 命令与解析；单资源，无输入路径；普通 SSH 登录与 procfs 读取权限 | linux.uptime.seconds / linux.load.one_minute；公共 normalize@1.0.0；load 不是 CPU 百分比 |
 | if-mib-basic@1.0.0 | SNMP v2/v3 标准 IF-MIB，各厂商 | 复用 SnmpClient 和现有标准 MIB catalog 的 ifTable；按 ifIndex 发现；需只读 IF-MIB 视图 | Canonical network.interface.oper_up；1→1，2→0，其他合法枚举→unknown/null；维度为 if_index/interface_epoch |
 | linux-host@1.0.0 | os.family=linux；驱动提供 boot/interface/device epoch | 复用 ServerMetricProvider 的固定 top/free/df/findmnt/procfs 命令和解析；无输入命令或路径 | Host CPU/内存 Extension、Canonical filesystem/network、Linux block Counter；公共 normalize/derive/Counter/query；完整口径见 [../host/README.md](../host/README.md) |

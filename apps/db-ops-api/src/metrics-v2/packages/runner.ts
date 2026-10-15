@@ -1,3 +1,4 @@
+import { checkApplicability } from './applicability.js';
 import { createHash } from 'node:crypto';
 import {
   CapabilitySchema, ResourceSchema, TimestampSchema, observationIdentity, seriesIdentity, validateAttempt, validateObservationBatch,
@@ -68,14 +69,11 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   if (!settings.enabled) return { ...result, decision: 'disabled' };
   let applicable: Capability['status'] = resource.type === p.resource_type ? 'supported' : 'unsupported';
   const basis: Capability['basis'] = [{ kind: 'resource', evidence: `resource_type:${resource.type};required:${p.resource_type}` }];
-  for (const condition of p.applicability) {
-    const value = resource.attributes[condition.attribute]?.value;
-    // Version family is an attribute, never part of metric identity or dimensions.
-    const normalized = condition.attribute === 'db.version' && typeof value === 'string' ? value.match(/^(\d+\.\d+)(?:\.|$)/)?.[1] : value === undefined ? undefined : String(value).toLowerCase();
-    const matched = normalized !== undefined && condition.values.includes(normalized);
-    basis.push({ kind: condition.attribute.includes('version') ? 'version' : 'resource', evidence: `${condition.attribute}:${value === undefined ? 'absent' : matched ? 'matched' : 'not_supported'};allowed:${condition.values.join(',')}` });
-    if (value !== undefined && !matched) applicable = 'unsupported';
-    else if (value === undefined && applicable !== 'unsupported') applicable = 'unknown';
+  for (const condition of checkApplicability(p, resource, at)) {
+    const value = condition.value;
+    basis.push({ kind: condition.attribute.includes('version') ? 'version' : 'resource', evidence: `${condition.attribute}:${value === null ? 'absent' : condition.status === 'supported' ? 'matched' : 'not_supported'};allowed:${condition.supported_values.join(',')}` });
+    if (condition.status === 'unsupported') applicable = 'unsupported';
+    else if (condition.status === 'unknown' && applicable !== 'unsupported') applicable = 'unknown';
   }
   const until = new Date(Date.parse(at) + settings.stale_after_ms).toISOString();
   const capability = (metric: Capability['metric'], method: Capability['method'], status: Capability['status'], evidence: Capability['basis']): Capability => CapabilitySchema.parse({

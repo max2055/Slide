@@ -7,7 +7,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 15));
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); });
 const catalog = { packages: [{ package: { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }, recommendations: { interval_ms: 60000 } }], metrics: [] };
 const mock = (manage = true) => authFetch.mockImplementation(async (url: string) => ({ ok: !(/resources\/instance\/\d+$/.test(url)), status: (/resources\/instance\/\d+$/.test(url)) ? 404 : 200,
-  json: async () => url.endsWith('/catalog') ? catalog : url.endsWith('/access') ? { can_manage: manage } : url.endsWith('/preview') ? { resources: [], affected_resources: 1 } : url.endsWith('/trial') ? { decision: 'attempted', attempts: [], samples: [] } : [] }));
+  json: async () => /policy\/resources\/instance\/\d+$/.test(url) ? { error: 'POLICY_NOT_FOUND' } : url.endsWith('/catalog') ? catalog : url.endsWith('/access') ? { can_manage: manage } : url.endsWith('/preview') ? { resources: [], affected_resources: 1 } : url.endsWith('/trial') ? { decision: 'attempted', attempts: [], samples: [] } : [] }));
 const mount = async () => { const el = document.createElement('metric-configuration') as any; el.resourceId = 1; document.body.append(el); await settle(); return el; };
 it('preserves legacy catalog route and canonical route', () => {
   expect(findSettingsRoute('/metric-registry')?.view).toBe('legacy');
@@ -30,7 +30,7 @@ it('editing invalidates previews and trial; sends full overrides without credent
 });
 it('409 clears prior proofs without retrying or overwriting revision', async () => {
   mock(); const el = await mount();
-  authFetch.mockResolvedValue({ ok: false, status: 409 });
+  authFetch.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'POLICY_REVISION_CONFLICT' }) });
   const before = authFetch.mock.calls.length; await el.execute('preview');
   expect(authFetch.mock.calls.length).toBe(before + 1);
   expect(el.preview).toBeNull(); expect(el.error).toContain('重新加载');
@@ -52,7 +52,7 @@ it('failed or empty trials cannot authorize publishing', async () => {
 });
 it('publishing a successful trial sends the current revision and reloads application state', async () => {
   mock(); const el = await mount(); await el.execute('preview');
-  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [] }) }));
+  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1000 }] }) }));
   await el.execute('trial'); await el.execute('publish');
   const call = authFetch.mock.calls.find((c: any[]) => c[0].endsWith('/publish'))!;
   expect(JSON.parse(call[1].body).expected_revision).toBe(0);
@@ -72,4 +72,41 @@ it('allows authoritative disabled trials without calling them successful collect
   el.trial = { decision: 'disabled', attempts: [], samples: [] };
   expect(el.publishReady()).toBe(true);
   el.preview.resources[0].resolved.settings.enabled = true; expect(el.publishReady()).toBe(false);
+});
+
+it.each(['POLICY_RESOURCE_NOT_FOUND', 'NOT_FOUND', undefined])('does not swallow binding 404 %s as an unbound resource', async code => {
+  mock(); const previous = authFetch.getMockImplementation()!;
+  authFetch.mockImplementation(async (url: string, options: any) => /policy\/resources\/instance\/1$/.test(url)
+    ? { ok: false, status: 404, json: async () => ({ error: code }) } : previous(url, options));
+  const el = await mount();
+  expect(el.shadowRoot.textContent).toContain('配置或资源不存在');
+  expect(el.canManage).toBe(false);
+  expect(el.shadowRoot.textContent).not.toContain('首次绑定');
+});
+it('first POLICY_NOT_FOUND loads and clearly describes first binding', async () => {
+  mock(); const el = await mount();
+  expect(el.shadowRoot.textContent).toContain('首次绑定');
+  await el.execute('preview'); expect(el.preview).not.toBeNull();
+});
+it('shows version mismatch in preview and trial, with advice and no publish', async () => {
+  mock(); const el = await mount();
+  const applicability = [{ attribute: 'db.version', value: '9.6.0', supported_values: ['5.7', '8.0', '8.4'], status: 'unsupported' }];
+  el.preview = { resources: [{ resolved: { applicability, settings: {}, sources: {}, metric_templates: [], metric_sources: {} } }] };
+  await el.updateComplete;
+  expect(el.shadowRoot.textContent).toContain('9.6.0'); expect(el.shadowRoot.textContent).toContain('5.7 / 8.0 / 8.4');
+  el.trial = { decision: 'unsupported', applicability, samples: [], attempts: [] }; await el.updateComplete;
+  expect(el.shadowRoot.textContent).toContain('版本不适用'); expect(el.shadowRoot.textContent).toContain('选择支持当前版本的采集包');
+  const before = authFetch.mock.calls.length; await el.execute('publish'); expect(authFetch.mock.calls.length).toBe(before);
+});
+it.each([
+  ['permission_denied', '目标数据库权限不足'], ['connection_error', '目标连接失败'], ['timeout', '超时'], ['parse_error', '数据格式或字段不符合采集包要求'],
+])('explains %s trial failure', async (error, text) => {
+  mock(); const el = await mount();
+  el.trial = { decision: 'attempted', attempts: [{ status: 'failed', error }], samples: [] }; await el.updateComplete;
+  expect(el.shadowRoot.textContent).toContain(text); expect(el.publishReady()).toBe(false);
+});
+it('does not publish a succeeded attempt returning zero samples', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [] }; await el.updateComplete;
+  expect(el.shadowRoot.textContent).toContain('未返回样本'); expect(el.publishReady()).toBe(false);
 });
