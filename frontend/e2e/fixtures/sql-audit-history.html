@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SQL 审核历史验收</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css">
+<style>body{margin:24px;background:var(--bg);color:var(--text);font:14px system-ui}*{box-sizing:border-box}</style>
+<script type="module">
+import '/src/app/ui/components/app-badge.ts';
+const params = new URLSearchParams(location.search);
+document.documentElement.dataset.themeMode = params.get('theme') ?? 'light';
+await import('/src/app/ui/views/sql-audit-tab.ts');
+const view = document.createElement('sql-audit-tab'); view.instanceId = Number(params.get('instance') ?? 101); document.body.append(view);
+</script><body></body></html>
