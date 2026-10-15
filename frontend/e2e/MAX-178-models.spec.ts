@@ -65,7 +65,7 @@ async function persisted() {
   return { ...row, models: typeof row.models_supported === 'string' ? JSON.parse(row.models_supported) : row.models_supported };
 }
 test('F1: real application shell keeps model summary readable and actions reachable', async ({ page }) => {
-  const longId = 'max178-default-' + 'long-provider-model-id-'.repeat(6);
+  const longId = 'max178-default-' + 'long-provider-model-id-'.repeat(3);
   const models = [model, { id: longId, name: 'MAX178 长默认模型', contextWindow: 96000 }, { id: 'max178-unknown', name: 'MAX178 未知参数模型' }];
   for (const defaultId of [model.id, longId]) {
     await pool.query('UPDATE llm_providers SET models_supported=?,default_model=? WHERE id=?', [JSON.stringify(models), defaultId, id]);

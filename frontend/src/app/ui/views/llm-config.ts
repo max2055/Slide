@@ -222,7 +222,10 @@ export class LLMConfigPage extends LitElement {
     .section-body .form-label, .section-body .form-input, .section-body .form-select { font-size: 14px; }
     .model-toolbar, .model-row, .dialog-actions, .provider-heading { display: flex; align-items: center; gap: var(--space-sm); }
     .model-toolbar, .provider-heading { flex-wrap: wrap; margin-bottom: var(--space-md); }
-    .model-toolbar .scope-hint, .provider-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .provider-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .model-toolbar .scope-hint { flex: 1 1 16rem; min-width: min(100%, 16rem); overflow-wrap: anywhere; }
+    .model-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); max-width: 100%; }
+    .model-toolbar-actions .btn { flex-shrink: 0; }
     .connection-card::part(header), .connection-card::part(footer) { display: none; }
     .model-row { justify-content: space-between; padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
     .model-row:last-child { border-bottom: 0; }
@@ -957,9 +960,11 @@ export class LLMConfigPage extends LitElement {
           <div class="section-intro"><h2>模型清单</h2><p>一次只编辑一个模型，价格与能力在编辑中查看。</p></div>
           <div class="section-body">
             <div class="model-toolbar"><span class="scope-hint">${this.form.models.length} 个模型 · 默认 ${this.form.default_model || '未选择'}</span>
+              <div class="model-toolbar-actions">
               <button class="btn" data-testid="load-models" .disabled=${this.modelsLoading || !this.form.name.trim() || !this.form.api_base_url.trim()}
                 @click=${this._fetchModels}>${this.modelsLoading ? '加载中…' : '加载模型'}</button>
               <button class="btn" @click=${this._addModel}>+ 添加模型</button>
+              </div>
             </div>
             <p class="scope-hint">加载与移除模型后需保存配置；弹窗保存仅提交当前模型。</p>
             ${this.modelsMessage ? html`<p class="form-hint" role="status" aria-live="polite">${this.modelsMessage}</p>` : ''}
