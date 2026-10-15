@@ -125,6 +125,7 @@ export class AppearanceSettings extends LitElement {
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .color-grid { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
     .color-swatch {
+      padding: 0;
       width: 36px; height: 36px;
       box-sizing: border-box;
       border-radius: 50%;
@@ -134,6 +135,7 @@ export class AppearanceSettings extends LitElement {
     }
     .color-swatch:hover { transform: scale(1.12); }
     .color-swatch.active { border-color: var(--text-strong); outline: 2px solid var(--card); outline-offset: -5px; }
+    .color-swatch:focus-visible { outline: 2px solid var(--text-strong); outline-offset: 3px; }
     .custom-color-row {
       display: flex; align-items: center; gap: 10px; margin-top: 10px;
     }
@@ -269,12 +271,14 @@ export class AppearanceSettings extends LitElement {
         <p class="desc">${t("appearance.accentColorDesc")}</p>
         <div class="color-grid">
           ${ACCENT_PRESETS.map((c) => html`
-            <div
+            <button type="button"
               class="color-swatch ${this.accent === c.hex ? "active" : ""}"
               style="background:${c.hex}"
               title=${t(`appearance.colors.${c.name}`)}
+              aria-label=${t(`appearance.colors.${c.name}`)}
+              aria-pressed=${this.accent === c.hex}
               @click=${() => this._setAccent(c.hex)}
-            ></div>
+            ></button>
           `)}
         </div>
         <div class="custom-color-row">
