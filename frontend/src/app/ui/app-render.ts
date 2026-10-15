@@ -10,6 +10,7 @@ import { t } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { shouldRenderLoginGate } from "./auth-gate.ts";
+import { canAccessSettingsItem, settingsItemById } from "./settings-navigation.ts";
 
 function runUpdate(_state: unknown) { /* noop */ }
 import { renderChatControls, renderChatMobileToggle, renderChatSessionSelect } from "./app-render.helpers.ts";
@@ -236,6 +237,9 @@ export function renderApp(state: AppViewState) {
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
   const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
   const basePath = normalizeBasePath(state.basePath ?? "");
+  const legacyUsage = state.tab === "llm-usage";
+  const legacyPermissions = state.userPermissions ?? loadPermissionsFromStorage();
+  const canViewUsage = canAccessSettingsItem(settingsItemById("usage")!, legacyPermissions);
   const resolveSelectedAgentId = () =>
     state.agentsSelectedId ??
     state.agentsList?.defaultId ??
@@ -525,9 +529,27 @@ export function renderApp(state: AppViewState) {
                   .active=${Boolean(state.chatRunId) || state.chatSending} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></chat-investigation-convert>
               </div>
             </section>`
-          : state.tab === "config"
-            ? nothing
-            : nothing}
+          : nothing}
+        ${state.tab === "config" || legacyUsage
+          ? html`<section data-legacy-route aria-label="旧入口说明">
+              <app-empty-state
+                icon="info"
+                title=${legacyUsage ? "旧版 LLM 用量页面已停用" : "旧版配置页面已停用"}
+                description=${legacyUsage
+                  ? "调查用量与成本已在设置中心提供，仅统计调查持久账本，不代表全部模型调用。"
+                  : "当前平台使用设置中心管理各项配置，请从设置中心选择需要的设置。"}
+              ></app-empty-state>
+              <div class="empty-state-actions">
+                ${!legacyUsage || canViewUsage
+                  ? html`<a class="btn" href=${`${basePath}${legacyUsage ? "/settings/ai/usage" : "/settings"}`}>
+                      ${legacyUsage ? "查看调查用量与成本" : "打开设置中心"}
+                    </a>`
+                  : html`<p class="muted" role="status">${legacyPermissions === null
+                      ? "正在确认访问权限，请稍后再试。"
+                      : "当前账号无权访问调查用量与成本，请联系管理员。"}</p>`}
+              </div>
+            </section>`
+          : nothing}
         ${state.tab === "overview"
           ? html`<app-empty-state
               title="暂不支持运行日志"

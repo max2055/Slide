@@ -50,12 +50,12 @@ for (const route of ['config', 'llm-usage']) {
     await page.goForward();
     await expect(page.locator('settings-shell')).toBeVisible();
     await page.goBack();
-    await page.screenshot({ path: info.outputPath(`${route}-desktop.png`), fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${route}-desktop.png`), fullPage: true, animations: 'disabled' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => { document.documentElement.dataset.themeMode = 'dark'; document.documentElement.dataset.theme = 'claw-dark'; });
     await expect(notice(page)).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`${route}-mobile-dark.png`), fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${route}-mobile-dark.png`), fullPage: true, animations: 'disabled' });
   });
 }
 
@@ -64,29 +64,34 @@ test('usage destination: real empty/data/unknown/failure, controlled loading, li
   await page.goto(`${env.url}/llm-usage`);
   await notice(page).getByRole('link').click();
   await expect(usage(page)).toContainText('暂无持久用量');
-  await page.screenshot({ path: info.outputPath('usage-real-empty.png'), fullPage: true });
+  await page.screenshot({ path: info.outputPath('usage-real-empty.png'), fullPage: true, animations: 'disabled' });
 
   const investigation = randomUUID(), request = randomUUID(), config = investigationBudgetConfiguration();
   await env.pool.query("INSERT INTO chat_sessions (session_id,user_id,title) VALUES (?,101,'legacy fixture')", [investigation]);
   await env.pool.query("INSERT INTO investigations (id,title,goal,profile_id,profile_version,session_id,owner_kind,owner_id,scope_version) VALUES (?,'legacy fixture','read only','ops',1,?,'user',101,?)", [investigation, investigation, 'a'.repeat(64)]);
+  await env.pool.query("INSERT INTO investigation_resources VALUES (?,'instance',101,'primary')", [investigation]);
   await env.pool.query("INSERT INTO investigation_requests (id,investigation_id,actor_kind,actor_id,idempotency_key,request_hash,request_snapshot,job_id,accepted_version) VALUES (?,?,'user',101,?,?,?,?,1)",
     [request, investigation, request, 'b'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1, authority: { profileHash: investigationProfileHash(INVESTIGATION_PROFILES.ops) } }), randomUUID()]);
   const ledger = new MysqlInvestigationBudgetLedger(() => env.pool, config.policy);
   const allocation = await ledger.reserve({ requestId: request, operationId: 'legacy-read-test', domain: config.domain, mode: 'manual', profile: INVESTIGATION_PROFILES.ops, reserveTokens: 1000, reserveCostMicros: 2000 });
   if (!allocation.accepted) throw new Error('Fixture reservation denied');
+  await usage(page).getByRole('button', { name: '刷新用量与成本' }).click();
+  await expect(usage(page).locator('[data-usage-group]')).toHaveCount(1);
+  await expect(usage(page)).toContainText('未发送保留');
+  await page.screenshot({ path: info.outputPath('usage-real-data.png'), fullPage: true, animations: 'disabled' });
   await ledger.markSent(allocation.reservation.id);
   await ledger.settle(allocation.reservation.id, null);
   await usage(page).getByRole('button', { name: '刷新用量与成本' }).click();
   await expect(usage(page)).toContainText('1 条用量未知');
   await expect(usage(page).locator('[data-usage-group]')).toHaveCount(1);
-  await page.screenshot({ path: info.outputPath('usage-real-unknown.png'), fullPage: true });
+  await page.screenshot({ path: info.outputPath('usage-real-unknown.png'), fullPage: true, animations: 'disabled' });
 
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/api/investigation-usage?**', async route => { await gate; await route.continue(); });
   await usage(page).getByRole('button', { name: '刷新用量与成本' }).click();
   await expect(usage(page).getByRole('status')).toContainText('正在加载');
-  await page.screenshot({ path: info.outputPath('usage-controlled-loading.png'), fullPage: true });
+  await page.screenshot({ path: info.outputPath('usage-controlled-loading.png'), fullPage: true, animations: 'disabled' });
   release();
   await expect(usage(page)).toContainText('1 条用量未知');
   await page.unroute('**/api/investigation-usage?**');
@@ -101,8 +106,11 @@ test('usage destination: real empty/data/unknown/failure, controlled loading, li
   await env.pool.query('DELETE FROM role_permissions WHERE role_id=103');
   await usage(page).getByRole('button', { name: '刷新用量与成本' }).click();
   await expect(usage(page).getByRole('alert')).toContainText('无权访问');
+  // Startup fetches live permissions when no cache exists. The preceding 403
+  // verifies server enforcement even while the old caller cache still grants access.
+  await page.addInitScript(() => localStorage.removeItem('permissions'));
   await page.goto(`${env.url}/llm-usage`);
   await expect(notice(page)).toContainText('当前账号无权访问调查用量与成本');
   await expect(notice(page).getByRole('link')).toHaveCount(0);
-  await page.screenshot({ path: info.outputPath('usage-real-denied.png'), fullPage: true });
+  await page.screenshot({ path: info.outputPath('usage-real-denied.png'), fullPage: true, animations: 'disabled' });
 });

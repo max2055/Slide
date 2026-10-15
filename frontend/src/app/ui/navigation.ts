@@ -303,7 +303,7 @@ export function iconForTab(tab: Tab): IconName {
 }
 
 export function titleForTab(tab: Tab) {
-  return t(`tabs.${tab}`);
+  return t(`tabs.${tab === "config" ? "settings" : tab}`);
 }
 
 export function subtitleForTab(tab: Tab) {
