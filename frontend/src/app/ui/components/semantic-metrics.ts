@@ -12,7 +12,7 @@ export interface MetricResult {
   definition: { id: string; category: string; meaning: string; unit: string }; state: string; capability: unknown;
   observed_at?: string;
   series: Array<{ dimensions: Record<string, string>; buckets: Array<{ value: { encoding: string; value?: number | string } | null;
-    unit: string; coverage: number; quality: { status: string; reason: string }; freshness: string; accuracy: string; sources: unknown[]; window: { from: string; to: string } }> }>;
+    unit: string; coverage: number; quality: { status: string; reason: string }; freshness: string; observed_at?: string | null; accuracy: string; sources: unknown[]; window: { from: string; to: string } }> }>;
 }
 export interface SemanticResult { profile: { columns: Array<{ key: string; metric: { id: string }; label: string }> }; window: { from: string; to: string }; metrics: MetricResult[] }
 const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '未配置', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
@@ -22,6 +22,8 @@ export function renderMetricValue(m: MetricResult) {
     ${Object.entries(s.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ')}
     ${s.buckets.map(b => html`<div >
       <strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}
+      <div>观测时间：${b.observed_at && Number.isFinite(Date.parse(b.observed_at))
+        ? html`<time datetime=${b.observed_at}>${new Date(b.observed_at).toLocaleString('zh-CN')}</time>` : '未知'}</div>
       <div class="quality-badges">${[b.quality.status, b.freshness, b.accuracy].map(label => html`<app-badge variant=${['good', 'fresh', 'exact'].includes(label) && m.state === 'available' ? 'muted' : 'warn'}>${qualityLabels[label] ?? label}</app-badge>`)}</div>
       <span>覆盖率 ${(b.coverage * 100).toFixed(0)}%</span><details><summary>时间、质量与来源</summary><p>采集窗口 ${b.window.from} — ${b.window.to}</p><p>质量原因：${b.quality.reason}</p><pre>${JSON.stringify(b.sources, null, 2)}</pre></details>
     </div>`)}
