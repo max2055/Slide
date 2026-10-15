@@ -35,6 +35,11 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, animations: 'disabled' });
   await writeFile(`${output}/${name}.json`, JSON.stringify({ commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), viewport: page.viewportSize(), theme: await page.evaluate(() => document.documentElement.dataset.themeMode), source: name.includes('controlled') ? 'controlled response/state' : real ? 'real JWT/SQL/HTTP/WS and deepseek-flash; synthetic resource/tool data' : 'real JWT/SQL/HTTP/WS; controlled provider and synthetic resource/tool data', page: new URL(page.url()).pathname + new URL(page.url()).search }, null, 2));
 }
+async function matrix(page: Page, name: string) {
+  for (const width of [1440, 768, 390]) for (const mode of ['light', 'dark']) {
+    await page.setViewportSize({ width, height: 950 }); await theme(page, mode); await capture(page, `${name}-${width}-${mode}`);
+  }
+}
 async function theme(page: Page, mode: string) { await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode); }
 async function observed(page: Page) { await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any)?.controller?.online)).toBe(true); }
 
@@ -52,7 +57,7 @@ test('representative: real inventory → mixed-resource create → refresh → c
   await page.getByLabel('搜索资源', { exact: true }).fill('订单');
   await page.getByRole('checkbox', { name: `${resourceName} · 数据库实例`, exact: true }).check();
   await page.getByRole('checkbox', { name: '订单应用节点 · 服务器', exact: true }).check();
-  await capture(page, 'resource-picker-1440-light-real-service');
+  await matrix(page, 'resource-picker-real-service');
   await page.setViewportSize({ width: 390, height: 950 }); await theme(page, 'dark'); await capture(page, 'resource-picker-390-dark-real-service');
   await page.keyboard.press('Escape'); await expect(trigger).toBeFocused(); await trigger.click();
   await page.getByRole('button', { name: '提交调查', exact: true }).click();
@@ -80,7 +85,7 @@ test('existing data, resource filtering, no-match, back/refresh, evidence focus 
   await expect(page.locator('.workspace-list-count')).toContainText('已加载 1 项');
   await page.getByLabel('搜索调查', { exact: true }).fill('没有这样的调查'); await page.getByRole('button', { name: '筛选', exact: true }).click();
   await expect(page.locator('investigations-page')).toContainText('暂无匹配调查');
-  await capture(page, 'no-match-1280-light-real-service'); await page.reload(); await expect(page.getByLabel('搜索调查', { exact: true })).toHaveValue('没有这样的调查');
+  await matrix(page, 'no-match-real-service'); await page.reload(); await expect(page.getByLabel('搜索调查', { exact: true })).toHaveValue('没有这样的调查');
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
   await page.getByRole('button', { name: /订单延迟：真实资源选择闭环/ }).click(); await observed(page);
   await page.goBack(); await expect(page.getByLabel('继续调查', { exact: true })).toHaveCount(0);
@@ -122,14 +127,15 @@ test('unknown receipt verifies the original accepted request without duplicate i
 test('controlled loading/failure/partial/permission states remain distinct and never create a fake success', async ({ page }) => {
   await login(page); await page.route('**/api/investigations?*', route => route.fulfill({ status: 503, json: { error: 'INVESTIGATION_QUEUE_UNAVAILABLE' } }));
   await page.goto(`${env.url}/investigations`); await expect(page.locator('.workspace-error')).toBeVisible(); await expect(page.getByText('让资源证据，汇成可追溯的调查。')).toHaveCount(0);
-  await capture(page, 'list-failed-controlled'); await page.unroute('**/api/investigations?*');
-  await page.route('**/api/resources', async route => { await new Promise(resolve => setTimeout(resolve, 600)); await route.fulfill({ status: 503, json: { error: 'UNAVAILABLE' } }); });
-  await page.getByRole('button', { name: '创建手动调查' }).click(); await expect(page.getByText('正在加载有权限的资源…')).toBeVisible(); await capture(page, 'resources-loading-controlled');
-  await expect(page.getByText('资源列表读取失败，请重试。')).toBeVisible(); await capture(page, 'resources-failed-controlled');
+  await matrix(page, 'list-failed-controlled'); await page.unroute('**/api/investigations?*');
+  let release!: () => void; const gate = new Promise<void>(resolve => release = resolve);
+  await page.route('**/api/resources', async route => { await gate; await route.fulfill({ status: 503, json: { error: 'UNAVAILABLE' } }); });
+  await page.getByRole('button', { name: '创建手动调查' }).click(); await expect(page.getByText('正在加载有权限的资源…')).toBeVisible(); try { await matrix(page, 'resources-loading-controlled'); } finally { release(); }
+  await expect(page.getByText('资源列表读取失败，请重试。')).toBeVisible(); await matrix(page, 'resources-failed-controlled');
   await page.unroute('**/api/resources'); await page.route('**/api/resources', route => route.fulfill({ json: { items: [], dataQuality: 'partial', truncated: true, unavailableTypes: ['server'] } }));
-  await page.getByRole('button', { name: '重试资源列表' }).click(); await expect(page.getByText(/仅检索已返回的前 500 项/)).toBeVisible(); await capture(page, 'resources-partial-controlled');
+  await page.getByRole('button', { name: '重试资源列表' }).click(); await expect(page.getByText(/仅检索已返回的前 500 项/)).toBeVisible(); await matrix(page, 'resources-partial-controlled');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } })));
-  await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.locator('investigations-page')).toContainText('无访问权限'); await capture(page, 'permissions-revoked-controlled');
+  await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.locator('investigations-page')).toContainText('无访问权限'); await matrix(page, 'permissions-revoked-controlled');
 });
 
 
