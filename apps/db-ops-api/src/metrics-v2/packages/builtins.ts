@@ -95,9 +95,18 @@ export const implementationSpecs: ImplementationSpec[] = [
     permissions: ['SNMP read IF-MIB ifTable'], discovery: 'standard IF-MIB ifTable index; requires driver-provided interface generation; reject duplicates/overflow; all vendors; no enterprise OIDs' },
 ];
 
+// A separate implementation and major package version deliberately omit counters:
+// the asset MySQL transport has no authoritative restart/reset evidence.
+implementationSpecs.push({ ...implementationSpecs[0], id: 'builtin:mysql.status.v2',
+  applicability: [{ attribute: 'db.engine', values: ['mysql'] }, { attribute: 'db.version', values: ['9.6'] }],
+  outputs: [implementationSpecs[0].outputs[0]],
+  discovery: 'MySQL 9.6 uptime only; Queries and rates withheld without authoritative counter lifecycle evidence; no capacity or schema enumeration',
+});
+
 export function builtinReleases(): PackageRelease[] {
   const collectorId = (spec: ImplementationSpec) => ({
     'builtin:mysql.status.v1': 'mysql-status',
+    'builtin:mysql.status.v2': 'mysql-status',
     'builtin:linux.basic.v1': 'linux-basic',
     'builtin:linux.host-gauges.v1': 'linux-host-gauges',
     'builtin:linux.filesystem.v1': 'linux-filesystem',
@@ -105,7 +114,7 @@ export function builtinReleases(): PackageRelease[] {
     'builtin:linux.block.v1': 'linux-block',
     'builtin:if_mib.status.v1': 'if-mib-status',
   }[spec.id]!);
-  const release = (packageId: string, specs: ImplementationSpec[], derived: DerivedMetric[] = [], extraExtensions: MetricDefinition[] = []) => {
+  const release = (packageId: string, specs: ImplementationSpec[], derived: DerivedMetric[] = [], extraExtensions: MetricDefinition[] = [], version = '1.0.0') => {
     const collectors = specs.map(spec => ({ id: collectorId(spec), implementation_ref: spec.id,
       method: spec.method, timeout_ms: 5000, estimated_cost: spec.id.includes('filesystem') ? 'medium' as const : 'low' as const,
       mappings: spec.outputs.map(o => ({ metric: { id: o.definition.id, semantic_version: o.definition.semantic_version }, raw_field: o.raw_field,
@@ -113,7 +122,7 @@ export function builtinReleases(): PackageRelease[] {
     const extensions = [...specs.flatMap(spec => spec.outputs.map(o => o.definition)), ...extraExtensions]
       .filter((d): d is Extract<MetricDefinition, { category: 'extension' }> => d.category === 'extension');
     return sealRelease({
-      package: { id: packageId, version: '1.0.0', contract_version: '1.0.0', digest: `sha256:${'0'.repeat(64)}`,
+      package: { id: packageId, version, contract_version: '1.0.0', digest: `sha256:${'0'.repeat(64)}`,
         resource_type: specs[0].resource_type, applicability: specs[0].applicability, collectors },
       extensions, derived,
       transforms: [{ id: 'normalize', version: '1.0.0' }, ...(derived.length ? [{ id: 'derive' as const, version: '1.0.0' }] : [])],
@@ -136,6 +145,7 @@ export function builtinReleases(): PackageRelease[] {
       transform_version: '1.0.0', inputs: [{ id: filesystemUsed.id, semantic_version: '1.0.0' }, { id: filesystemSize.id, semantic_version: '1.0.0' }],
       operation: 'ratio', join: 'same_resource_and_dimensions', max_skew_ms: 1000, on_missing: 'null', on_zero_denominator: 'null',
       quality_propagation: 'worst_input', accuracy_propagation: 'least_certain_input' }], [filesystemRatio]),
+    release('mysql-basic', implementationSpecs.filter(spec => spec.id === 'builtin:mysql.status.v2'), [], [], '2.0.0'),
   ];
 }
 export function createBuiltinRegistry(): PackageRegistry {

@@ -1,7 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
 import { resolve } from 'node:path';
 import { startFeedbackFixture } from '../../apps/db-ops-api/src/investigations/feedback-test-fixture.ts';
+
+async function localObservedTime(page: Page, value: string): Promise<string> {
+  return page.evaluate(value => {
+    const d = new Date(value);
+    // Chromium normalizes trailing fractional zeros and zero seconds. Fill
+    // requires this canonical value; retain the exact instant in browser time.
+    const input = document.createElement('input');
+    input.type = 'datetime-local';
+    input.value = new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
+    return input.value;
+  }, value);
+}
 
 let fixture: Awaited<ReturnType<typeof startFeedbackFixture>>, vite: ViteDevServer, url: string;
 test.beforeAll(async () => {
@@ -17,6 +29,21 @@ test.beforeAll(async () => {
   await vite.listen(); url = vite.resolvedUrls!.local[0];
 });
 test.afterAll(async () => { await vite?.close(); await fixture?.close(); });
+
+test('observed datetime-local inputs preserve exact milliseconds across browser timezones', async ({ browser }) => {
+  for (const timezoneId of ['UTC', 'Asia/Shanghai', 'America/New_York']) {
+    const context = await browser.newContext({ timezoneId });
+    try {
+      const page = await context.newPage();
+      await page.setContent('<input type="datetime-local" step="0.001" aria-label="观察开始时间">');
+      for (const suffix of ['00.000', '34.000', '34.100', '34.180', '34.001', '34.181', '34.999']) {
+        const observed = `2026-10-14T15:55:${suffix}Z`;
+        await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, observed));
+        expect(await page.locator('input').evaluate((input: HTMLInputElement) => new Date(input.value).toISOString())).toBe(observed);
+      }
+    } finally { await context.close(); }
+  }
+});
 
 test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read', async ({ page }) => {
   const seed = await fixture.seed();
@@ -38,9 +65,8 @@ test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read',
   await page.getByLabel('验证方法', { exact: true }).fill('核对有界合成指标');
   // Datetime-local intentionally includes milliseconds so it stays within the
   // exact synthetic observed window regardless of local browser timezone.
-  const local = (value: string) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1); };
-  await page.getByLabel('观察开始时间', { exact: true }).fill(local(seed.verification.from));
-  await page.getByLabel('观察结束时间', { exact: true }).fill(local(seed.verification.to));
+  await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, seed.verification.from));
+  await page.getByLabel('观察结束时间', { exact: true }).fill(await localObservedTime(page, seed.verification.to));
   await page.getByLabel('证据 ID（逗号分隔）', { exact: true }).fill(seed.proof.id);
   await page.getByRole('button', { name: '保存人工记录' }).click();
   await expect(page.getByRole('list', { name: '人工记录' })).toContainText('确认人 101');
@@ -51,8 +77,8 @@ test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read',
   await page.getByRole('button', { name: '保存人工记录' }).click();
   await expect(page.getByRole('alert')).toContainText('证据 ID');
   await page.getByLabel('验证方法', { exact: true }).fill('观察所有关联资源');
-  await page.getByLabel('观察开始时间', { exact: true }).fill(local(seed.verification.from));
-  await page.getByLabel('观察结束时间', { exact: true }).fill(local(seed.verification.to));
+  await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, seed.verification.from));
+  await page.getByLabel('观察结束时间', { exact: true }).fill(await localObservedTime(page, seed.verification.to));
   await page.getByLabel('证据 ID（逗号分隔）', { exact: true }).fill(seed.proof.id);
   await page.getByRole('button', { name: '保存人工记录' }).click();
   await expect(page.getByRole('list', { name: '人工记录' })).toContainText('关闭时业务状态：已验证恢复');
