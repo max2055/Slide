@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { authFetch } from '../../../api/index.ts';
 import { AttentionPage, sortAttentionItems } from './investigations.ts';
-import '../components/app-data-table.ts';
+import type { AppDataTable } from '../components/app-data-table.ts';
 import '../components/app-empty-state.ts';
 
 vi.mock('../../../api/index.ts', () => ({ authFetch: vi.fn() }));
@@ -41,7 +41,7 @@ it.each([{ items: [event(2), event(1)] }, [event(2), event(1)]])('renders numeri
   vi.mocked(authFetch).mockResolvedValue(response(data));
   const page = await view(); await settled(page);
   expect(page.querySelector('[role="alert"]')).toBeNull();
-  expect([...page.querySelectorAll('tbody tr')].map(row => row.textContent?.trim().replace(/\s+/g, ' '))).toEqual(['事项 1 严重 待处理', '事项 2 严重 待处理']);
+  expect([...page.querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent))).toEqual([['事项 1', '严重', '待处理'], ['事项 2', '严重', '待处理']]);
   expect(empty(page)).toBeNull();
 });
 
@@ -58,10 +58,17 @@ it.each([401, 403, 500])('HTTP %s never renders an empty list or stale rows and 
   if (status !== 401) { refresh(page); await settled(page); expect(empty(page)).not.toBeNull(); }
 });
 
-it.each([{}, null, { items: null }, { items: {} }])('rejects an unknown response shape instead of claiming there are no items', async data => {
+it.each([{}, null, { items: null }, { items: {} }, { items: [null] }, { items: [{}] }])('rejects an unknown response shape instead of claiming there are no items', async data => {
   vi.mocked(authFetch).mockResolvedValue(response(data));
   const page = await view(); await settled(page);
   expect(page.querySelector('[role="alert"]')).not.toBeNull(); expect(empty(page)).toBeNull();
+});
+
+it('retains unknown severity and lifecycle values without claiming an empty result', async () => {
+  vi.mocked(authFetch).mockResolvedValue(response({ items: [event(1, { severity: 'future-severity', status: 'future-status' })] }));
+  const page = await view(); await settled(page);
+  expect(page.querySelector('tbody')?.textContent).toContain('future-severity');
+  expect(page.querySelector('tbody')?.textContent).toContain('future-status'); expect(empty(page)).toBeNull();
 });
 
 it('network failure exposes an error without the empty state', async () => {
@@ -74,7 +81,7 @@ it('loading hides previous data and the empty state', async () => {
   let deliver!: (value: Response) => void;
   vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [event(1)] })).mockImplementationOnce(() => new Promise(resolve => deliver = resolve));
   const page = await view(); await settled(page); refresh(page); await flush(page);
-  expect(page.querySelector('app-data-table')?.loading).toBe(true); expect(empty(page)).toBeNull(); expect(page.textContent).not.toContain('事项 1');
+  expect(page.querySelector<AppDataTable>('app-data-table')?.loading).toBe(true); expect(empty(page)).toBeNull(); expect(page.textContent).not.toContain('事项 1');
   deliver(response({ items: [] })); await settled(page); expect(empty(page)).not.toBeNull();
 });
 

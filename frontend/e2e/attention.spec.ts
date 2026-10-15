@@ -43,8 +43,9 @@ test('real numeric event IDs with identical timestamps render in stable order, r
   }
   const refresh = view.getByRole('button', { name: '刷新事项' }); await refresh.focus();
   const refreshed = page.waitForResponse(r => r.url().includes('/api/alerts/events?'));
-  await page.keyboard.press('Enter'); expect((await refreshed).status()).toBe(200); await expect(refresh).toBeFocused();
-  await view.getByRole('button', { name: '打开事件中心' }).focus(); await page.keyboard.press('Enter'); await expect(page).toHaveURL(/\/events$/);
+  await page.keyboard.press('Enter'); expect((await refreshed).status()).toBe(200); await expect(refresh).toBeEnabled();
+  await refresh.focus(); await page.keyboard.press('Tab'); await expect(view.getByRole('button', { name: '打开事件中心' })).toBeFocused();
+  await page.keyboard.press('Enter'); await expect(page).toHaveURL(url => url.pathname === '/events');
   expect(errors).toEqual([]);
 });
 
@@ -77,7 +78,27 @@ test('controlled loading, server failure and malformed response never claim succ
 test('controlled expired session and late data cannot display an empty result or restored facts', async ({ page }) => {
   await page.goto(`${env.url}/attention`); const view = page.locator('attention-page');
   await expect(view.locator('app-empty-state[title="暂无关注事项"]')).toBeVisible();
-  await page.evaluate(() => window.dispatchEvent(new Event('slide-session-expired')));
-  await expect(view.getByRole('alert')).toContainText('登录已失效'); await noEmpty(page); await expect(view.locator('app-data-table')).toHaveCount(0);
-  await capture(page, 'expired-controlled');
+  let release!: () => void; const gate = new Promise<void>(resolve => release = resolve);
+  await page.route(eventsPath, async route => {
+    await gate; await route.fulfill({ json: { items: [{ id: 999, title: '迟到的敏感事项', severity: 'critical', status: 'open', updated_at: '2026-10-15' }] } });
+  });
+  try {
+    await view.getByRole('button', { name: '刷新事项' }).click();
+    await expect(view.getByRole('button', { name: '刷新事项' })).toBeDisabled();
+    await page.evaluate(() => window.dispatchEvent(new Event('slide-session-expired')));
+    // The full application removes the view and returns to login on this event.
+    await expect(page.getByRole('alert')).toContainText('登录已超时'); release();
+    await expect(view).toHaveCount(0); await noEmpty(page); await expect(page.getByText('迟到的敏感事项')).toHaveCount(0);
+    await capture(page, 'expired-controlled');
+  } finally { release(); }
+});
+
+test('controlled permission hydration and denial show explicit states', async ({ page }) => {
+  await page.goto(`${env.url}/attention`); const view = page.locator('attention-page');
+  await expect(view.locator('app-empty-state[title="暂无关注事项"]')).toBeVisible();
+  await view.evaluate((element: any) => { element.permissions = null; });
+  await expect(view.getByRole('status')).toContainText('正在确认访问权限'); await noEmpty(page);
+  await view.evaluate((element: any) => { element.permissions = new Set(); });
+  await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
+  await capture(page, 'permission-denied-controlled');
 });
