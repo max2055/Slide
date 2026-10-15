@@ -21,4 +21,4 @@ export DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD=''
 export QUALIFICATION_API_PORT=51888 QUALIFICATION_WS_PORT=51889 QUALIFICATION_FRONTEND_PORT=51887
 export QUALIFICATION_CANCELLATION_E2E=1 QUALIFICATION_CANCELLABLE_LLM_PORT=51890
 export QUALIFICATION_ADMIN_PASSWORD='max178-isolated-fixture' MAX178_ISOLATED_MYSQL=1
-pnpm --filter slide-frontend exec playwright test --config playwright.MAX-178.config.ts
+pnpm --filter slide-frontend exec playwright test --config playwright.MAX-178.config.ts "$@"

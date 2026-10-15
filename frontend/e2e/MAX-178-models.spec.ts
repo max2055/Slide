@@ -64,6 +64,51 @@ async function persisted() {
   const [[row]] = await pool.query('SELECT display_name,api_base_url,api_key_encrypted,models_supported,default_model,context_window,max_tokens FROM llm_providers WHERE id=?', [id]);
   return { ...row, models: typeof row.models_supported === 'string' ? JSON.parse(row.models_supported) : row.models_supported };
 }
+test('F1: real application shell keeps model summary readable and actions reachable', async ({ page }) => {
+  const longId = 'max178-default-' + 'long-provider-model-id-'.repeat(6);
+  const models = [model, { id: longId, name: 'MAX178 长默认模型', contextWindow: 96000 }, { id: 'max178-unknown', name: 'MAX178 未知参数模型' }];
+  for (const defaultId of [model.id, longId]) {
+    await pool.query('UPDATE llm_providers SET models_supported=?,default_model=? WHERE id=?', [JSON.stringify(models), defaultId, id]);
+    for (const width of [768, 390, 1440]) for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto('/settings/ai/models?view=providers');
+      await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme);
+      const view = page.locator('llm-config-page');
+      await view.locator('.sidebar-item').filter({ hasText: 'MAX178 隔离 Provider' }).click();
+      const toolbar = view.locator('.model-toolbar');
+      await toolbar.scrollIntoViewIfNeeded();
+      await expect(toolbar.locator('.scope-hint')).toHaveText(`3 个模型 · 默认 ${defaultId}`);
+      await expect(view.locator('.model-row')).toHaveCount(3);
+      const readability = await toolbar.evaluate(el => {
+        const hint = el.querySelector('.scope-hint') as HTMLElement;
+        const bounds = el.getBoundingClientRect();
+        const summary = hint.getBoundingClientRect();
+        return {
+          toolbarWidth: bounds.width, summaryWidth: summary.width,
+          lineCount: Math.round(summary.height / Number.parseFloat(getComputedStyle(hint).lineHeight)),
+          actions: Array.from(el.querySelectorAll('button')).map(button => {
+            const rect = button.getBoundingClientRect();
+            return { width: rect.width, inside: rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1, unwrapped: rect.height < 44 };
+          }),
+        };
+      });
+      const name = `F1-shell-${defaultId === longId ? 'long' : 'normal'}-${width}-${theme}`;
+      await capture(page, name);
+      await writeFile(`${out}/${name}-readability.json`, JSON.stringify(readability, null, 2));
+      expect(readability.summaryWidth).toBeGreaterThanOrEqual(Math.min(180, readability.toolbarWidth - 1));
+      expect(readability.lineCount).toBeLessThanOrEqual(defaultId === longId ? 8 : 3);
+      expect(readability.actions).toHaveLength(2);
+      for (const action of readability.actions) { expect(action.inside).toBe(true); expect(action.unwrapped).toBe(true); }
+      await view.getByRole('button', { name: '+ 添加模型', exact: true }).click();
+      const dialog = view.locator('app-dialog').first();
+      await expect(dialog.getByLabel('模型 ID', { exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(view.getByRole('button', { name: '+ 添加模型', exact: true })).toBeFocused();
+      await expect(toolbar.getByRole('button', { name: '加载模型', exact: true })).toBeEnabled();
+    }
+  }
+  await pool.query('UPDATE llm_providers SET models_supported=?,default_model=? WHERE id=?', [JSON.stringify([model]), model.id, id]);
+});
 test('representative first: real single model read/edit/save/refresh and credential-retaining connection probe', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.setViewportSize({ width: 1440, height: 1080 });
