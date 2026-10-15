@@ -1,0 +1,1454 @@
+{
+  "commit": "35b986e715e7a48fe554918faa976d514c7da41a",
+  "baseline": false,
+  "productSha256": "f3e94b3977037a029d31dfae24e53af173d2aca26123737a21820051c6187918",
+  "environment": {
+    "pid": 17499,
+    "apiPort": 50950,
+    "wsPort": 50951,
+    "cwd": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-181-350e7f147e61/worktree/.multica/MAX-181/repo/apps/db-ops-api",
+    "command": "node --import tsx server.ts",
+    "schema": "slide_max181_1792063946051_75b02846",
+    "log": "service.log"
+  },
+  "geometry": [
+    {
+      "name": "after-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 324,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "after-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 324,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "after-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 686,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 712,
+          "scrollWidth": 712,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 712,
+          "scrollWidth": 712,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "after-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 686,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 712,
+          "scrollWidth": 712,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 712,
+          "scrollWidth": 712,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "after-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 682,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 708,
+          "scrollWidth": 708,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 708,
+          "scrollWidth": 708,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 240,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "after-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 682,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 708,
+          "scrollWidth": 708,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 708,
+          "scrollWidth": 708,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 240,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "real-diagram-keyboard-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [
+        {
+          "name": "图形 1，可横向滚动",
+          "width": 324,
+          "scrollWidth": 720,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        },
+        {
+          "name": "代码 3，可横向滚动",
+          "width": 350,
+          "scrollWidth": 350,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "controlled-long-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 350,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 350,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 348,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-forbidden-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-content-empty-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-loading-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-empty-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-error-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-long-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 350,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 350,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 348,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-forbidden-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-content-empty-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-loading-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-empty-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-error-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 382,
+      "readable": 350,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-long-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 712,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 712,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 710,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-forbidden-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-content-empty-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-loading-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-empty-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-error-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-long-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 712,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 712,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 710,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 0,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-forbidden-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-content-empty-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-loading-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-empty-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-list-error-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 760,
+      "readable": 712,
+      "regions": [],
+      "sidebar": 0
+    },
+    {
+      "name": "controlled-long-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 708,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 708,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 706,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 240,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-forbidden-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-content-empty-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-loading-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-list-empty-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-list-error-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-long-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [
+        {
+          "name": "代码 1，可横向滚动",
+          "width": 708,
+          "scrollWidth": 7387,
+          "tabIndex": 0
+        },
+        {
+          "name": "表格 2，可横向滚动",
+          "width": 708,
+          "scrollWidth": 1508,
+          "tabIndex": 0
+        },
+        {
+          "name": "图形 3，可横向滚动",
+          "width": 706,
+          "scrollWidth": 752,
+          "tabIndex": 0
+        }
+      ],
+      "sidebar": 240,
+      "title": "受控长内容验收"
+    },
+    {
+      "name": "controlled-error-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-forbidden-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-content-empty-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-loading-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-list-empty-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    },
+    {
+      "name": "controlled-list-error-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 772,
+      "readable": 708,
+      "regions": [],
+      "sidebar": 240
+    }
+  ],
+  "network": [
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 light",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 390 dark",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 light",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 768 dark",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "docs real service 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "docs real service 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/PROJECT_STRUCTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/USER-GUIDE.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/OPERATIONS.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real documents: keyboard regions, selection/scroll context and resize without overlay",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 390 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 768 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 light",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 403
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 500
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled long content and explicit abnormal states 1280 dark",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "controlled out-of-order reads retain the final document and its anchors",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/list",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/README.html",
+      "status": 200
+    },
+    {
+      "test": "real topbar entry retains document selection through refresh and browser history",
+      "path": "/api/docs/files/ARCHITECTURE.html",
+      "status": 200
+    }
+  ],
+  "browserErrors": []
+}

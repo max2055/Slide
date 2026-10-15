@@ -1,0 +1,75 @@
+{
+  "commit": "4cb32b1d8596dc913a7fd2d2bbe0917e8f9520ea",
+  "baseline": true,
+  "environment": {
+    "pid": 11690,
+    "apiPort": 61514,
+    "wsPort": 61515,
+    "cwd": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-181-350e7f147e61/worktree/.multica/MAX-181/repo/apps/db-ops-api",
+    "command": "node --import tsx server.ts",
+    "schema": "slide_max181_1792063241106_c1d6b0cb",
+    "log": "service.log"
+  },
+  "geometry": [
+    {
+      "name": "before-390-light",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 141,
+      "readable": 45,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "before-390-dark",
+      "viewport": 390,
+      "pageWidth": 390,
+      "host": 382,
+      "content": 141,
+      "readable": 45,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "before-768-light",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 519,
+      "readable": 423,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "before-768-dark",
+      "viewport": 768,
+      "pageWidth": 768,
+      "host": 760,
+      "content": 519,
+      "readable": 423,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "before-1280-light",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 771,
+      "readable": 675,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    },
+    {
+      "name": "before-1280-dark",
+      "viewport": 1280,
+      "pageWidth": 1280,
+      "host": 1012,
+      "content": 771,
+      "readable": 675,
+      "sidebar": 241,
+      "title": "Slide 项目文档"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "productCommit": "35b986e715e7a48fe554918faa976d514c7da41a",
+  "productSha256": "f3e94b3977037a029d31dfae24e53af173d2aca26123737a21820051c6187918",
+  "base": "4cb32b1d8596dc913a7fd2d2bbe0917e8f9520ea",
+  "branch": "codex/MAX-181-docs-r11",
+  "checks": {
+    "playwright": {
+      "passed": 15
+    },
+    "frontendTypecheck": "passed",
+    "frontendBuild": "passed; CSP 2 scripts",
+    "frontendVitest": {
+      "files": 121,
+      "passed": 1068
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 253
+    }
+  },
+  "modelCalls": 0,
+  "dataSource": "production server.ts + formal docs HTML files + live JWT/SQL actor; abnormal states controlled via Playwright route",
+  "runtimeCleanup": "afterAll awaited full service close and isolated schema drop"
+}
