@@ -9,7 +9,7 @@ const response = (body: unknown, status = 200) => ({ ok: status < 400, status, j
 type Page = HTMLElement & { updateComplete: Promise<boolean>; _save(): Promise<void> };
 async function mount(body: unknown = defaults, status = 200) {
   authFetch.mockResolvedValue(response(body, status));
-  const page = document.createElement('scoring-settings-page') as Page;
+  const page = document.createElement('scoring-settings-page') as unknown as Page;
   document.body.append(page);
   await vi.waitFor(() => expect(page.shadowRoot?.querySelector('.loading')).toBeNull());
   await page.updateComplete;
@@ -50,7 +50,7 @@ describe('scoring percentages and validation', () => {
 
   it.each([{}, [], { ...defaults, security: null }, { ...defaults, security: '0.1' }, { ...defaults, security: NaN }, { ...defaults, security: Infinity }, { ...defaults, security: -1 }, { ...defaults, security: 2 }])('rejects unknown/invalid response %j instead of showing fake sliders', async body => {
     authFetch.mockResolvedValue(response(body));
-    const page = document.createElement('scoring-settings-page') as Page;
+    const page = document.createElement('scoring-settings-page') as unknown as Page;
     document.body.append(page);
     await vi.waitFor(() => expect(root(page).textContent).toContain('评分权重配置不完整或无效'));
     expect(root(page).querySelectorAll('input')).toHaveLength(0);
