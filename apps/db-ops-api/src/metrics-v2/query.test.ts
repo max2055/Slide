@@ -26,6 +26,14 @@ const query = (d: MetricDefinition, mode: SemanticQuery['mode'], from = 0, to = 
 const scalar = (bucket: ReturnType<typeof aggregate>[number]) => bucket.value && 'value' in bucket.value ? Number(bucket.value.value) : null;
 
 describe('semantic V2 reducer', () => {
+  it('returns the observation used for freshness, never the moving query window or read time', () => {
+    const rows = [point(gauge, 0, { encoding: 'float64', value: 2 })];
+    const first = aggregate(query(gauge, 'last', 0, 10), [rows])[0];
+    const refreshed = aggregate({ ...query(gauge, 'last', 0, 20), now: stamp(90) }, [rows])[0];
+    expect(first).toMatchObject({ observed_at: stamp(0), freshness: 'stale' });
+    expect(refreshed).toMatchObject({ observed_at: stamp(0), freshness: 'stale' });
+    expect(aggregate(query(gauge, 'last', 0, 10), [[]])[0]).toMatchObject({ observed_at: null, freshness: 'unknown' });
+  });
   it('separates sample mean and time-weighted gauge; window and downsample use identical rules', () => {
     const rows = fixture.gauge.seconds.map((s: number, i: number) => point(gauge, s, { encoding: 'float64', value: fixture.gauge.values[i] }));
     expect(scalar(aggregate(query(gauge, 'mean'), [rows])[0])).toBeCloseTo(fixture.gauge.sample_mean);
