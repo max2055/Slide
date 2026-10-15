@@ -37,3 +37,20 @@ it('fixed product core columns remain visible even if all resource queries fail'
   const columns = el.shadowRoot.querySelector('app-data-table').columns;
   expect(columns.map((c: any) => c.key)).toEqual(['resource', 'host.filesystem.used_bytes', 'host.filesystem.size_bytes', 'host.network.bytes_total', 'error']);
 });
+it.each(['fresh', 'stale', 'unknown'])('shows actual observation time alongside %s metadata, independently of the window', async freshness => {
+  const data = structuredClone(result);
+  const bucket = data.metrics[0].series[0].buckets[0] as any;
+  bucket.observed_at = '2026-10-14T01:02:03.000Z'; bucket.freshness = freshness;
+  authFetch.mockResolvedValue({ ok: true, json: async () => data }); const el = await mount();
+  const table = el.shadowRoot!.querySelector('app-data-table')!;
+  expect(table.textContent).toContain('观测时间');
+  expect(table.querySelector('time')?.getAttribute('datetime')).toBe(bucket.observed_at);
+  expect(table.textContent).toContain({ fresh: '新鲜', stale: '过期', unknown: '未知' }[freshness]);
+  await el.load(); await settle();
+  expect(table.querySelector('time')?.getAttribute('datetime')).toBe(bucket.observed_at);
+});
+it('old backends without observation timestamps remain unknown instead of using window.to', async () => {
+  authFetch.mockResolvedValue({ ok: true, json: async () => result }); const el = await mount();
+  expect(el.shadowRoot!.querySelector('app-data-table')!.textContent).toContain('观测时间：未知');
+  expect(el.shadowRoot!.querySelector('time')).toBeNull();
+});

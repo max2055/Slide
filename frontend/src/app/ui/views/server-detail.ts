@@ -138,6 +138,7 @@ export class ServerDetailPage extends LitElement {
   @state() private error: string | null = null;
   @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('server:') ? 'metrics' : 'overview' ;
   @state() private lastUpdated: Date | null = null;
+  @state() private detailReadError = '';
   @state() private isRefreshing = false;
   @state() private hostedInstances: HostedInstance[] = [];
   @state() private hostedInstancesLoading = false;
@@ -191,12 +192,12 @@ export class ServerDetailPage extends LitElement {
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
     this.server = null;
+    this.lastUpdated = null; this.detailReadError = '';
     this.error = null;
     this.loading = true;
     void this.loadHostedInstances(id, version);
     await this.loadServer(id, version);
     if (version === this.contextVersion) {
-      this.lastUpdated = new Date();
       this.loading = false;
     }
   }
@@ -206,10 +207,10 @@ export class ServerDetailPage extends LitElement {
       const res = await authFetch(`/api/servers/${id}`);
       if (res.ok) {
         const server = await res.json();
-        if (version === this.contextVersion) this.server = server;
+        if (version === this.contextVersion) { this.server = server; this.lastUpdated = new Date(); }
       }
       else {
-        if (version === this.contextVersion) this.error = "获取服务器详情失败";
+        if (version === this.contextVersion) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
       }
     } catch (err: any) {
       if (version === this.contextVersion) this.error = err.message;
@@ -282,16 +283,27 @@ export class ServerDetailPage extends LitElement {
   private async refreshCurrentTab() {
     if (!this.serverId || this.isRefreshing) return;
     this.isRefreshing = true;
+    this.detailReadError = '';
     const serverId = this.serverId;
-    const hostedRefresh = this.loadHostedInstances(serverId);
+    const version = this.contextVersion;
+    const current = () => version === this.contextVersion && serverId === this.serverId;
+    const hostedRefresh = this.loadHostedInstances(serverId, version);
     try {
       const serverRes = await authFetch(`/api/servers/${serverId}`);
-      if (serverRes.ok) this.server = await serverRes.json();
+      if (!current()) return;
+      if (!serverRes.ok) {
+        this.detailReadError = serverRes.status === 401 || serverRes.status === 403 ? '无权读取服务器详情' : '服务器详情读取失败';
+        if (serverRes.status === 401 || serverRes.status === 403) this.error = this.detailReadError;
+        return;
+      }
+      const server = await serverRes.json();
+      if (!current()) return;
+      this.server = server;
       this.lastUpdated = new Date();
-      if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId);
-    } catch (err: any) {
-      console.warn('[server-detail] refresh failed:', err);
-      showToast(err.message || '刷新失败', 'error');
+      if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId, version);
+      if (current()) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
+    } catch {
+      if (current()) this.detailReadError = '服务器详情读取失败';
     }
     finally {
       await hostedRefresh;
@@ -346,11 +358,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _formatTimeAgo(date: Date | null): string {
-    if (!date) return "从未更新";
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (seconds < 60) return "刚刚更新";
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-    return `${Math.floor(seconds / 3600)} 小时前`;
+    return date ? date.toLocaleString('zh-CN') : '尚未成功读取';
   }
 
   private _statusBadgeVariant(status: string) {
@@ -402,7 +410,8 @@ export class ServerDetailPage extends LitElement {
             </app-badge>
           </div>
           <div class="header-right">
-            <span class="last-updated">${this._formatTimeAgo(this.lastUpdated)}</span>
+            <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
+            ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" @click=${() => this._oneClickInspection()} .disabled=${this.isRefreshing}>${icons['clipboard']} 一键巡检</button>
             <button class="btn-primary" @click=${this.refreshCurrentTab} .disabled=${this.isRefreshing}>
               ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
@@ -498,7 +507,7 @@ export class ServerDetailPage extends LitElement {
             </div>
           </div>
           <div class="status-item">
-            <div class="status-label">上次采集</div>
+            <div class="status-label">最近状态检查（含失败尝试）</div>
             <div class="status-value">${this._formatLastCheck()}</div>
           </div>
         </div>
@@ -614,7 +623,7 @@ export class ServerDetailPage extends LitElement {
             <div class="config-value">${this.server.collection_enabled ? "已启用" : "已禁用"}</div>
           </div>
           <div class="config-item" style="grid-column:1/-1;">
-            <div class="config-label">上次采集时间</div>
+            <div class="config-label">最近状态检查时间（含失败尝试）</div>
             <div class="config-value">${this._formatLastCheck()}</div>
           </div>
         </div>
@@ -623,7 +632,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _formatLastCheck(): string {
-    if (!this.server || !this.server.last_check_at) return "从未采集";
+    if (!this.server || !this.server.last_check_at) return "尚无检查记录";
     const d = new Date(this.server.last_check_at);
     return d.toLocaleString("zh-CN");
   }

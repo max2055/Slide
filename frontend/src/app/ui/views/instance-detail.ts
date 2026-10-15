@@ -112,6 +112,7 @@ export class InstanceDetailPage extends LitElement {
   @state() private capacity: CapacityInfo | null = null;
   @state() private capHistory: { time: string[]; size: number[] } = { time: [], size: [] };
   @state() private lastUpdated: Date | null = null;
+  @state() private detailReadError = '';
   @state() private autoRefresh = true;
   @state() private isRefreshing = false;
   @state() private queryReads: Record<'topsql' | 'sessions', QueryRead> = {
@@ -161,38 +162,44 @@ export class InstanceDetailPage extends LitElement {
   private async loadData() {
     if (!this.instanceId) return;
     this.loading = true; this.error = null;
+    this.lastUpdated = null; this.detailReadError = '';
     this._resetQueryReads();
     const instanceId = this.instanceId;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
       if (instanceId !== this.instanceId) return;
-      if (!res.ok) throw new Error("获取实例详情失败");
+      if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? '无权读取实例详情' : '获取实例详情失败');
       const instance = await res.json();
       if (instanceId !== this.instanceId) return;
       this.instance = instance;
+      this.lastUpdated = new Date();
       this.loadDiagnosisHistory();
       await this.loadTabData();
     } catch (err: any) { if (instanceId === this.instanceId) this.error = err.message; }
-    finally { if (instanceId === this.instanceId) { this.loading = false; this.lastUpdated = new Date(); } }
+    finally { if (instanceId === this.instanceId) this.loading = false; }
   }
 
   private async refreshCurrentTab() {
     if (!this.instanceId || this.isRefreshing) return;
     this.isRefreshing = true;
+    this.detailReadError = '';
     const instanceId = this.instanceId;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
       if (instanceId !== this.instanceId) return;
       if (!res.ok) {
         this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
+        this.detailReadError = res.status === 401 || res.status === 403 ? '无权读取实例详情' : '实例详情读取失败';
+        if (res.status === 401 || res.status === 403) this.error = this.detailReadError;
         return;
       }
       const instance = await res.json();
       if (instanceId !== this.instanceId) return;
       this.instance = instance;
-      await this.loadTabData();
       this.lastUpdated = new Date();
-    } catch { if (instanceId === this.instanceId) this._invalidateQueryReads('error'); }
+      await this.loadTabData();
+      if (instanceId === this.instanceId) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
+    } catch { if (instanceId === this.instanceId) { this._invalidateQueryReads('error'); this.detailReadError = '实例详情读取失败'; } }
     finally { this.isRefreshing = false; }
   }
 
@@ -378,11 +385,7 @@ export class InstanceDetailPage extends LitElement {
     }));
   }
   private _formatTimeAgo(date: Date | null): string {
-    if (!date) return "从未更新";
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (seconds < 60) return "刚刚更新";
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-    return `${Math.floor(seconds / 3600)} 小时前`;
+    return date ? date.toLocaleString('zh-CN') : '尚未成功读取';
   }
 
   private _healthBadge() {
@@ -407,7 +410,8 @@ export class InstanceDetailPage extends LitElement {
             ${this._healthBadge()}
           </div>
           <div class="header-right">
-            <span class="last-updated">${this._formatTimeAgo(this.lastUpdated)}</span>
+            <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
+            ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="refresh-btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
               style="${this.diagnosisStatus === "running" ? "border-color:var(--warn);color:var(--warn);" : ""}">
               ${this.diagnosisStatus === "running" ? html`${icons['loader']} 诊断中...` : html`${icons['activity']} 一键诊断`}

@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>详情观测时间验收</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css">
+<style>body{margin:24px;background:var(--bg);color:var(--text);font:14px system-ui}*{box-sizing:border-box}</style>
+<script type="module">
+import '/src/app/ui/views/instance-detail.ts';
+import '/src/app/ui/views/server-detail.ts';
+const params = new URLSearchParams(location.search);
+document.body.append(document.createElement(params.get('kind') === 'server' ? 'server-detail' : 'instance-detail-page'));
+</script><body></body></html>

@@ -45,7 +45,7 @@ test.beforeAll(async () => {
   app.setNotFoundHandler(async (_request, reply) => reply.send({ items: [], records: [] }));
   const apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   connections.set(991, { id: 991, connected: true, db_type: 'mysql', pool });
-  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, strictPort: false, proxy: { '/api': { target: apiUrl } } } });
+  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, strictPort: false, proxy: { '/api': { target: apiUrl }, '/__slide': { target: apiUrl } } } });
   await vite.listen(); url = `http://127.0.0.1:${(vite.httpServer!.address() as any).port}`;
   await mkdir(output, { recursive: true });
 });

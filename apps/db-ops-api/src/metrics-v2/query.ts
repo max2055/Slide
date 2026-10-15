@@ -43,6 +43,8 @@ export interface SemanticBucket {
   accuracy: Point['accuracy'];
   coverage: number;
   freshness: 'fresh' | 'stale' | 'unknown';
+  /** Latest valid input used to evaluate freshness; independent of the query window. */
+  observed_at?: string | null;
   sample_count: number;
   sources: { id: string; source: Point['source']; versions: Point['versions'] }[];
 }
@@ -316,6 +318,7 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
       dimensions: q.space === 'none' ? { ...q.series[0].dimensions } : null,
       window: { from: new Date(from).toISOString(), to: new Date(to).toISOString() }, value, quality, accuracy, coverage,
       freshness: Number.isFinite(latest) ? freshness(new Date(latest).toISOString(), q.now, q.stale_after_ms) : 'unknown',
+      observed_at: Number.isFinite(latest) ? new Date(latest).toISOString() : null,
       sample_count: new Set(group.points.filter(p => time(p) >= from && time(p) < to).map(p => p.id)).size, sources });
   }
   return result;
