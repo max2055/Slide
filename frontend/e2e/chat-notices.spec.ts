@@ -88,7 +88,8 @@ for (const width of [1440, 390]) {
       await page.locator('input[autocomplete="current-password"]').fill('fixture-password');
       await page.route('**/api/auth/login', route => route.fulfill({ status: 503, json: {} }));
       await page.locator('.login-gate__connect').click();
-      await expect(page.locator('app-notice')).toContainText('无法连接服务器');
+      await expect(page.locator('app-notice')).toContainText(/无法完成登录请求|Unable to complete the login request/);
+      await expect(page.locator('app-notice')).toContainText(new URL('/api/auth/login', page.url()).href);
       await expect(page.locator('app-notice')).toHaveCount(1);
       await expect(page.locator('app-toast')).toHaveCount(0);
       await page.route('**/api/auth/login', route => route.fulfill({ json: { token: 'fixture-relogin' } }));

@@ -61,3 +61,19 @@ PLAYWRIGHT_BASE_URL=<owned-vite-url> pnpm --filter slide-frontend exec playwrigh
 - PR/current head、CI 状态及 checks wakeup 以最终任务评论与平台回读为准；本地通过不表示已合并或共享线上通过。
 - 零权限用户直达服务器页时，既有页面显示通用加载失败 toast 和空列表，添加按钮仍可见；实际 API 为 403。本题只验证登录不越权，不修改该资源页已有的权限/空态表达，交由父任务记录后续范围。
 - 未测浏览器性能指标或屏幕阅读器，不以截图推断这些指标。未发起模型推理，产品测试预算没有扣减项。
+
+## CI 补正（2026-10-15）
+
+首轮 CI 的 browser job 有两个旧断言仍要求“无法连接服务器”，而当前登录错误已按语言显示新文案与实际 URL；已同步双语错误断言并增加当前同源 `/api/auth/login` 地址核对，保留单条表单提示、无 toast 和重新登录成功验证。backend job 仅文档结构检查失败，因本报告原在 `docs/reviews`；现迁至 `docs/slide/reviews`，不放宽门禁。未修改产品代码，以上真实业务截图与受控异常来源仍适用。
+
+补正验证命令：
+
+定向浏览器 2/2、文档目录 11/11、完整 browser 172/172、流式阶段专项 1/1 均通过；变更测试 lint 0 warnings / 0 errors。测试服务由 Playwright 启停，本轮无产品模型调用。
+
+```sh
+pnpm --filter slide-frontend exec playwright test chat-notices.spec.ts --config playwright.audit.config.ts --grep 'session expiry'
+pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts
+pnpm --filter slide-frontend test:browser
+pnpm --filter slide-frontend exec playwright test streaming-render.spec.ts --config playwright.streaming.config.ts --grep 'real phases'
+pnpm exec oxlint frontend/e2e/chat-notices.spec.ts
+```
