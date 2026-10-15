@@ -1,3 +1,4 @@
+import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
@@ -42,7 +43,7 @@ interface RedundancyReportRow {
 
 @customElement("index-management-page")
 export class IndexManagementPage extends LitElement {
-  static styles = [sharedBtnStyles, css`
+  static styles = [listBrowserStyles, sharedBtnStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -377,6 +378,11 @@ export class IndexManagementPage extends LitElement {
   @state() private redundancyReport: RedundancyReportRow[] = [];
   @state() private unusedIndexes: IndexRow[] = [];
   @state() private selectedTable = "";
+  private indexBrowser = new ListBrowser();
+  private unusedBrowser = new ListBrowser();
+  private redundancyBrowser = new ListBrowser();
+  private indexRequest = 0;
+  @state() private indexError: string | null = null;
   @state() private loading = false;
   @state() private collecting = false;
   @state() private message = "";
@@ -404,6 +410,7 @@ export class IndexManagementPage extends LitElement {
       const res = await authFetch("/api/database/instances", {
         headers: this.authHeaders(),
       });
+      if (!res.ok) throw new Error(`实例列表加载失败 (HTTP ${res.status})`);
       if (res.ok) {
         this.instances = await res.json();
         if (this.instances.length > 0) {
@@ -412,56 +419,34 @@ export class IndexManagementPage extends LitElement {
         }
       }
     } catch (e) {
-      showToast('Failed to load instance list', 'error');
+      this.indexError = '实例列表加载失败或无权限';
     }
   }
 
   private async loadIndexes() {
-    if (!this.selectedInstanceId) return;
+    const id = this.selectedInstanceId;
+    const request = ++this.indexRequest;
+    this.indexes = []; this.unusedIndexes = []; this.redundancyReport = []; this.tables = [];
+    this.expandedIndex = null; this.indexError = null;
+    if (!id) return;
     this.loading = true;
-    this.requestUpdate();
-
     try {
-      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}`, {
-        headers: this.authHeaders(),
-      });
-      if (res.ok) {
-        this.indexes = await res.json();
-        this.tables = [...new Set(this.indexes.map((i) => i.table_name))].sort();
-        if (this.selectedTable && !this.tables.includes(this.selectedTable)) {
-          this.selectedTable = "";
-        }
-      }
-    } catch (e) {
-      showToast('Failed to load index data', 'error');
+      const results = await Promise.all(['', '/redundancy', '/unused'].map(async suffix => {
+        const res = await authFetch(`/api/indexes/${id}${suffix}`, { headers: this.authHeaders() });
+        if (!res.ok) throw new Error(res.status === 403 ? '无权限查看索引' : `索引加载失败 (HTTP ${res.status})`);
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error('索引响应无效');
+        return data;
+      }));
+      if (request !== this.indexRequest) return;
+      [this.indexes, this.redundancyReport, this.unusedIndexes] = results;
+      this.tables = [...new Set(this.indexes.map(i => i.table_name))].sort();
+      if (this.selectedTable && !this.tables.includes(this.selectedTable)) this.selectedTable = '';
+    } catch (error: any) {
+      if (request === this.indexRequest) this.indexError = error.message;
+    } finally {
+      if (request === this.indexRequest) this.loading = false;
     }
-
-    // 加载冗余报告
-    try {
-      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}/redundancy`, {
-        headers: this.authHeaders(),
-      });
-      if (res.ok) {
-        this.redundancyReport = await res.json();
-      }
-    } catch (e) {
-      showToast('Failed to load redundancy report', 'error');
-    }
-
-    // 加载未使用索引
-    try {
-      const res = await authFetch(`/api/indexes/${this.selectedInstanceId}/unused`, {
-        headers: this.authHeaders(),
-      });
-      if (res.ok) {
-        this.unusedIndexes = await res.json();
-      }
-    } catch (e) {
-      showToast('Failed to load unused indexes', 'error');
-    }
-
-    this.loading = false;
-    this.requestUpdate();
   }
 
   private async collectIndexes() {
@@ -539,11 +524,11 @@ export class IndexManagementPage extends LitElement {
     const grouped = new Map<string, IndexRow[]>();
     const filtered = this.getFilteredIndexes();
     for (const row of filtered) {
-      if (!grouped.has(row.index_name)) {
-        grouped.set(row.index_name, []);
-      }
-      grouped.get(row.index_name)!.push(row);
+      const key = JSON.stringify([row.table_name, row.index_name]);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(row);
     }
+    for (const rows of grouped.values()) rows.sort((a, b) => a.seq_in_index - b.seq_in_index);
     return grouped;
   }
 
@@ -572,6 +557,10 @@ export class IndexManagementPage extends LitElement {
     const filteredIndexes = this.getFilteredIndexes();
     const groupedIndexes = this.getGroupedIndexes();
     const unusedSet = this.getUnusedSet();
+    const indexCount = new Set(this.indexes.map(row => JSON.stringify([row.table_name, row.index_name]))).size;
+    const indexPage = this.indexBrowser.select([...groupedIndexes.entries()], ([, rows]) => `${rows[0].table_name} ${rows[0].index_name} ${this.formatColumns(rows)}`, ([, rows]) => `${rows[0].table_name}.${rows[0].index_name}`);
+    const unusedPage = this.unusedBrowser.select(this.unusedIndexes, row => `${row.table_name} ${row.index_name}`, row => `${row.table_name}.${row.index_name}`);
+    const redundancyPage = this.redundancyBrowser.select(this.redundancyReport, row => `${row.table_name} ${row.redundant_index} ${row.covered_by_index}`, row => `${row.table_name}.${row.redundant_index}`);
 
     return html`
       <div class="page">
@@ -587,6 +576,7 @@ export class IndexManagementPage extends LitElement {
                 @change="${(e: Event) => {
                   this.selectedInstanceId = Number((e.target as HTMLSelectElement).value);
                   this.selectedTable = "";
+                  this.indexBrowser.page = this.unusedBrowser.page = this.redundancyBrowser.page = 1;
                   this.indexes = [];
                   this.redundancyReport = [];
                   this.unusedIndexes = [];
@@ -622,7 +612,7 @@ export class IndexManagementPage extends LitElement {
 
           <div class="stats-row">
             <div class="stat-item">
-              <span>${new Set(this.indexes.map((i) => i.index_name)).size}</span> 索引
+              <span>${indexCount}</span> 索引
             </div>
             <div class="stat-item">
               <span>${this.tables.length}</span> 表
@@ -645,8 +635,9 @@ export class IndexManagementPage extends LitElement {
                     冗余索引警告 (${this.redundancyReport.length})
                   </span>
                 </div>
+                ${renderListBrowser(this.redundancyBrowser, redundancyPage.total, this.redundancyReport.length, "冗余索引", () => this.requestUpdate())}
                 <div style="padding: var(--space-md) var(--space-lg);">
-                  ${this.redundancyReport.map(
+                  ${redundancyPage.rows.map(
                     (r) => html`
                       <div class="redundant-card">
                         <div class="redundant-card__title">
@@ -676,6 +667,7 @@ export class IndexManagementPage extends LitElement {
                     未使用索引 (${this.unusedIndexes.length})
                   </span>
                 </div>
+                ${renderListBrowser(this.unusedBrowser, unusedPage.total, this.unusedIndexes.length, "未使用索引", () => this.requestUpdate())}
                 <div class="table-container">
                   <table class="table">
                     <thead>
@@ -687,7 +679,7 @@ export class IndexManagementPage extends LitElement {
                       </tr>
                     </thead>
                     <tbody>
-                      ${this.unusedIndexes.map(
+                      ${unusedPage.rows.map(
                         (u) => html`
                           <tr>
                             <td>${u.table_name}</td>
@@ -711,10 +703,11 @@ export class IndexManagementPage extends LitElement {
                 <div class="toolbar">
                   <label style="font-size: var(--text-sm); color: var(--muted);">筛选表：</label>
                   <select
-                    class="select"
+                    class="select" aria-label="筛选表"
                     .value="${this.selectedTable}"
                     @change="${(e: Event) => {
                       this.selectedTable = (e.target as HTMLSelectElement).value;
+                      this.indexBrowser.page = 1;
                       this.expandedIndex = null;
                       this.requestUpdate();
                     }}"
@@ -742,8 +735,9 @@ export class IndexManagementPage extends LitElement {
             </span>
           </div>
 
-          ${this.loading
-            ? html`<div class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">
+          ${!this.loading && !this.indexError ? renderListBrowser(this.indexBrowser, indexPage.total, indexCount, "索引", () => this.requestUpdate()) : ''}
+          ${this.indexError ? html`<div role="alert">${this.indexError}<button class="btn" @click=${() => this.loadIndexes()}>重试</button></div>` : this.loading
+            ? html`<div role="status" class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">加载中...
                 <div class="skeleton-line skeleton-line--long"></div>
                 <div class="skeleton-line skeleton-line--long"></div>
                 <div class="skeleton-line skeleton-line--long"></div>
@@ -775,19 +769,20 @@ export class IndexManagementPage extends LitElement {
                         </tr>
                       </thead>
                       <tbody>
-                        ${Array.from(groupedIndexes.entries()).map(
-                          ([indexName, rows]) => {
-                            const isExpanded = this.expandedIndex === indexName;
+                        ${indexPage.rows.map(
+                          ([indexKey, rows]) => {
+                            const indexName = rows[0].index_name;
+                            const isExpanded = this.expandedIndex === indexKey;
                             const isUnused = unusedSet.has(
                               `${rows[0].table_name}.${indexName}`,
                             );
                             return html`
                               <tr>
                                 <td style="text-align:center;">
-                                  <span
-                                    class="expand-icon ${isExpanded ? "expanded" : ""}"
-                                    @click="${() => this.toggleExpand(indexName)}"
-                                  >&#9654;</span>
+                                  <button aria-label=${`展开索引 ${rows[0].table_name}.${indexName}`} aria-expanded=${isExpanded}
+                                    class="btn expand-icon ${isExpanded ? "expanded" : ""}"
+                                    @click="${() => this.toggleExpand(indexKey)}"
+                                  >&#9654;</button>
                                 </td>
                                 <td>${rows[0].table_name}</td>
                                 <td>
