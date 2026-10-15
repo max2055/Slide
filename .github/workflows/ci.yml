@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '23 18 * * *' # Daily 02:23 Asia/Shanghai
+
+permissions:
+  contents: read
 
 # Superseded PR commits share a group; main and manual runs remain independent.
 concurrency:
@@ -13,8 +18,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      selection: ${{ steps.select.outputs.selection }}
+      api: ${{ steps.select.outputs.api }}
+      browser: ${{ steps.select.outputs.browser }}
+      integration: ${{ steps.select.outputs.integration }}
+      recovery: ${{ steps.select.outputs.recovery }}
+      sandbox: ${{ steps.select.outputs.sandbox }}
+      rollout: ${{ steps.select.outputs.rollout }}
+      artifact: ${{ steps.select.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Test selection and failure propagation
+        run: node --test scripts/ci/*.test.mjs
+      - name: Select required qualification
+        id: select
+        run: node scripts/ci/plan.mjs
+
+  security:
+    runs-on: ubuntu-latest
+    needs: plan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Reject production dependency vulnerabilities
+        run: pnpm security:audit
+      - name: Scan production source for committed secrets
+        run: pnpm security:scan
+
   backend:
     runs-on: ubuntu-latest
+    needs: plan
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -30,15 +78,13 @@ jobs:
       - run: pnpm --filter slide-api typecheck
       - name: Verify qualification coverage
         run: pnpm qualification:matrix
-      - name: Run tests
+      - name: Run tests when not covered by the full MySQL candidate
+        if: needs.plan.outputs.api != 'true'
         run: pnpm --filter slide-api test
-      - name: Reject High or Critical production dependency vulnerabilities
-        run: pnpm security:audit
-      - name: Scan production source for committed secrets
-        run: pnpm security:scan
 
   frontend:
     runs-on: ubuntu-latest
+    needs: plan
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -60,6 +106,7 @@ jobs:
 
   agent-core:
     runs-on: ubuntu-latest
+    needs: plan
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -77,6 +124,7 @@ jobs:
 
   sandbox-controller:
     runs-on: ubuntu-latest
+    needs: plan
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -92,6 +140,8 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.browser == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -109,6 +159,8 @@ jobs:
 
   browser-qualification:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.integration == 'true'
     services:
       mysql:
         image: mysql:8.4
@@ -146,7 +198,7 @@ jobs:
           --workers=1
 
       - name: Runtime MySQL transaction and WebSocket qualification
-        run: bash scripts/qualification/run-agent-runtime.sh --mode mysql
+        run: bash scripts/qualification/run-agent-runtime.sh --mode mysql --runtime-only
       - name: Cron browser, real authenticated routes and durable completion
         run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
@@ -163,7 +215,7 @@ jobs:
           MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
           MAX163_TEST_MYSQL_PASSWORD: ${{ env.DB_PASSWORD }}
         run: pnpm --filter slide-frontend exec playwright test --config playwright.instance-query.config.ts
-      - name: Feedback formal SQL transactions and workspace HTTP/WS acceptance
+      - name: Feedback evaluation and runtime qualification
         env:
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
@@ -171,15 +223,12 @@ jobs:
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
         run: |
           pnpm --filter slide-api exec tsx --test ../../tests/qualification/investigation-eval.test.ts ../../tests/qualification/investigation-real-eval.test.ts ../../tests/qualification/investigation-quality.test.ts ../../tests/qualification/investigation-runtime.mysql.test.ts
-          pnpm --filter slide-api exec vitest run src/investigations/feedback.mysql.test.ts src/investigations/feedback.production.mysql.test.ts
-          pnpm --filter slide-frontend exec playwright test --config playwright.feedback.config.ts
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: feedback-qualification-${{ github.sha }}
-          path: frontend/test-results-feedback/
-          include-hidden-files: true
-          retention-days: 30
+      - name: Feedback SQL when not covered by the full MySQL candidate
+        if: needs.plan.outputs.api != 'true'
+        env:
+          T11_TEST_MYSQL_PORT: '3306'
+          T11_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-api exec vitest run src/investigations/feedback.mysql.test.ts src/investigations/feedback.production.mysql.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -199,6 +248,8 @@ jobs:
 
   recovery-qualification:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.recovery == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -240,6 +291,8 @@ jobs:
   # from the unit jobs. Keep serial test workers within each isolated server.
   investigation-api-qualification:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.api == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -264,6 +317,8 @@ jobs:
 
   investigation-rollout-qualification:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.rollout == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -274,23 +329,20 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install browser
-        run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
-      - name: Investigation V1 rollout, 10k duplicates, capacity, formal SQL and recovery browser
-        run: bash scripts/qualification/run-investigation-rollout.sh --integration
+      - name: Investigation rollout, 10k duplicates and capacity
+        run: bash scripts/qualification/run-investigation-rollout.sh --rollout
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: investigation-rollout-${{ github.sha }}
-          path: |
-            .qualification/t12/
-            frontend/test-results-investigation/
-            frontend/test-results-feedback/
+          path: .qualification/t12/
           include-hidden-files: true
           retention-days: 30
 
   rootless-sandbox-qualification:
     runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.sandbox == 'true'
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -302,8 +354,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Real rootless controller, nonce MySQL and complete release security gate
-        run: bash scripts/qualification/run-rootless-sandbox.sh
+      - name: Real rootless controller, nonce MySQL and runtime security gate
+        run: bash scripts/qualification/run-rootless-sandbox.sh --runtime-only
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -315,7 +367,8 @@ jobs:
 
   release-artifact:
     runs-on: ubuntu-latest
-    needs: [backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification]
+    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification]
+    if: always()
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -325,12 +378,21 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Require all selected checks before packaging
+        env:
+          CI_SELECTION: ${{ needs.plan.outputs.selection }}
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci/check-gate.mjs --checks-only
+      - if: needs.plan.outputs.artifact == 'true'
+        run: pnpm install --frozen-lockfile
       - name: Build traceable release artifact
+        if: needs.plan.outputs.artifact == 'true'
         run: pnpm release:artifact
       - name: Exercise atomic rollback
+        if: needs.plan.outputs.artifact == 'true'
         run: pnpm release:rollback-drill "$(find .artifacts -name 'slide-*.tar.gz' -type f | head -1)"
       - uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.artifact == 'true'
         with:
           name: slide-${{ github.sha }}
           path: |
@@ -339,3 +401,18 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 30
+
+  ci-gate:
+    runs-on: ubuntu-latest
+    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification, release-artifact]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Validate selected checks and release result
+        env:
+          CI_SELECTION: ${{ needs.plan.outputs.selection }}
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci/check-gate.mjs

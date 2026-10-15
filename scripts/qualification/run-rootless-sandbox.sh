@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Only for a disposable GitHub-hosted Linux runner, never a deployment host.
 set -euo pipefail
+# Standalone runs retain the complete gate. CI supplies source scans separately.
+security_commands=(release:security-gate)
+if [[ "${1:-}" == --runtime-only && "$#" == 1 ]]; then
+  security_commands=(security:test security:deployment security:sandbox)
+elif [[ "$#" != 0 ]]; then
+  echo 'Use no arguments or --runtime-only' >&2; exit 64
+fi
 cd "$(dirname "$0")/../.."
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -s)" == Linux ]] || {
   echo 'Requires a disposable GitHub-hosted Linux runner' >&2; exit 1;
@@ -117,4 +124,6 @@ for _ in $(seq 1 30); do
 done
 [[ "$ready" == 1 ]] || { echo 'Isolated controller unavailable' >&2; exit 1; }
 export SANDBOX_QUALIFICATION_OUTPUT="$out/qualification.json"
-pnpm release:security-gate 2>&1 | tee "$out/release-security.log"
+for security_command in "${security_commands[@]}"; do
+  pnpm "$security_command" 2>&1 | tee -a "$out/release-security.log"
+done
