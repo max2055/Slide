@@ -71,7 +71,7 @@ it('never requests diagnostics on entry, all diagnostic tabs, refresh or resourc
     el._applyTab(tab); await settle(); await el.refreshCurrentTab();
   }
   el.serverId = 2; await settle(); await el.updateComplete;
-  expect(el.diagnostics).toBeNull(); expect(el.shadowRoot.textContent).toContain('尚未采集诊断证据');
+  expect(el.diagnostics).toBeNull(); expect(el.shadowRoot.textContent).toContain('当前页面尚未取得诊断证据');
   expect(authFetch.mock.calls.filter(([url]) => /diagnostics/.test(url))).toEqual([]);
 });
 
@@ -103,3 +103,21 @@ it('preserves collection denial and never falls back to a view-permission GET', 
   expect(authFetch).toHaveBeenCalledOnce(); expect(el.diagnostics).toBeNull();
   expect(showToast).toHaveBeenCalledWith('PERMISSION_DENIED', 'error');
 });
+
+for (const kind of ['server', 'instances']) {
+  it.each(['switch', 'revoke', 'disconnect'])(`rejects a delayed ${kind} body after %s`, async action => {
+    const el = await mountServer(); const body = deferred(); const json = vi.fn(() => body.promise);
+    authFetch.mockResolvedValue({ ok: true, status: 200, json });
+    const pending = kind === 'server' ? el.loadServer(1) : el.loadHostedInstances(1);
+    await settle(); expect(json).toHaveBeenCalledOnce();
+    // Other requests for the replacement resource may finish normally.
+    authFetch.mockResolvedValue(ok(kind === 'server' ? { id: 2 } : { instances: [] }));
+    if (action === 'switch') { el.serverId = 2; await settle(); }
+    if (action === 'revoke') window.dispatchEvent(new CustomEvent('slide-permissions-loaded'));
+    if (action === 'disconnect') el.remove();
+    const before = kind === 'server' ? el.server : el.hostedInstances;
+    body.resolve(kind === 'server' ? { id: 1, host: 'OLD' } : { instances: [{ instanceId: 999 }] });
+    await pending;
+    expect(kind === 'server' ? el.server : el.hostedInstances).toBe(before);
+  });
+}

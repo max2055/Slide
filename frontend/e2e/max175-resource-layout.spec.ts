@@ -254,10 +254,10 @@ test('server and network real service inventory, semantic tabs, interfaces and p
       await server.getByRole('tab',{name:tab,exact:true}).click();
       if(tab==='指标与趋势') await expect(server.locator('semantic-metrics .window')).toBeVisible();
       if(tab==='日志') {
-        await expect(server).toContainText('尚未采集诊断证据');
+        await expect(server).toContainText('当前页面尚未取得诊断证据');
         await server.getByRole('button',{name:'刷新',exact:true}).click();
         await expect(server.getByRole('button',{name:'刷新',exact:true})).toBeEnabled();
-        await expect(server).toContainText('尚未采集诊断证据');
+        await expect(server).toContainText('当前页面尚未取得诊断证据');
         expect(diagnosticRequests).toEqual([]);
       }
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
@@ -265,11 +265,11 @@ test('server and network real service inventory, semantic tabs, interfaces and p
     }
     for (const tab of ['诊断','网络','进程','服务','日志']) {
       await server.getByRole('tab',{name:tab,exact:true}).click();
-      await expect(server).toContainText('尚未采集诊断证据');
+      await expect(server).toContainText('当前页面尚未取得诊断证据');
     }
     await server.evaluate((el:any,id)=>el.serverId=id,serverSwitchId);
     await expect(server.locator('.server-title')).toContainText('MAX-175 切换服务器');
-    await expect(server).toContainText('尚未采集诊断证据');
+    await expect(server).toContainText('当前页面尚未取得诊断证据');
     expect(diagnosticRequests).toEqual([]);
     await page.goto(`${base}/network-device-detail?networkDeviceId=${networkId}`);await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
     const network=page.locator('network-device-detail');await expect(network.getByText('当前需要关注',{exact:true})).toBeVisible();await expect(network.locator('semantic-metrics')).toHaveCount(0);

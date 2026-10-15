@@ -492,7 +492,7 @@ export class ServerDetailPage extends LitElement {
     return html`
       <app-card>
         <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
-        ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">尚未采集诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将通过 SSH 采集，需要服务器管理权限。</p>` : nothing}
+        ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">当前页面尚未取得诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将从服务器采集，需要服务器管理权限。</p>` : nothing}
         <server-diagnostic-panel
           .evidence=${this.diagnostics}
           .loading=${this.diagnosticsCollecting}
