@@ -11,7 +11,7 @@ import { mkdir, writeFile, open } from 'node:fs/promises';
 const require = createRequire(resolve('../apps/db-ops-api/package.json'));
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
-const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175';
+const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175-R2';
 const apiPort = 3175, frontendPort = 5195;
 const base = `http://127.0.0.1:${frontendPort}`;
 test.skip(process.env.MAX175_ISOLATED_MYSQL !== '1', 'Requires MAX-175 task-owned MySQL and exclusive task ports');
@@ -93,10 +93,38 @@ test('database representative: real routes, reading times, metrics and log brows
       if(tab==='指标与趋势') {
         await expect(view.locator('semantic-metrics').getByLabel('时间范围',{exact:true})).toBeVisible();
         await expect(view.locator('semantic-metrics')).toContainText('标准指标与能力');
+        await expect(view.locator('semantic-metrics .window')).toBeVisible();
+        for (const control of [view.locator('semantic-metrics').getByLabel('时间范围',{exact:true}), view.locator('semantic-metrics').getByLabel('指标',{exact:true}), view.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'})]) {
+          const box=await control.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x+box!.width).toBeLessThanOrEqual(width);
+        }
+        await view.locator('semantic-metrics').getByLabel('时间范围',{exact:true}).selectOption('6');
+        await expect(view.locator('semantic-metrics .window')).toBeVisible();
       }
       if(tab==='日志') {
         await expect(view.locator('database-log-tab .message-cell').first()).toBeVisible();
-        await view.locator('database-log-tab .message-cell').first().click();
+        const logs=view.locator('database-log-tab');
+        const firstBatch=await logs.locator('.message-cell').allTextContents();
+        expect(firstBatch).toHaveLength(50);
+        await logs.getByRole('button',{name:'下一页',exact:true}).click();
+        await expect(logs.locator('.message-cell')).toHaveCount(5);
+        const secondBatch=await logs.locator('.message-cell').allTextContents();
+        expect(secondBatch.every(message=>!firstBatch.includes(message))).toBe(true);
+        await expect(logs.locator('.pagination-info')).toHaveText('51 - 55 / 55');
+        await logs.getByLabel('日志级别',{exact:true}).selectOption('warning');
+        await expect(logs.locator('.message-cell')).toHaveCount(19);
+        await expect(logs.getByRole('button',{name:'上一页',exact:true})).toHaveCount(0);
+        await logs.getByLabel('日志级别',{exact:true}).selectOption('all');
+        await expect(logs.locator('.message-cell')).toHaveCount(50);
+        await logs.getByRole('button',{name:'下一页',exact:true}).click();
+        await expect(logs.locator('.message-cell')).toHaveCount(5);
+        await logs.getByLabel('日志时间范围',{exact:true}).selectOption('6h');
+        await expect(logs.locator('.message-cell')).toHaveCount(50);
+        await expect(logs.locator('.pagination-info')).toHaveText('1 - 50 / 55');
+        await logs.getByLabel('本批日志关键字').fill('no-match');
+        await expect(logs.getByRole('button',{name:'下一页',exact:true})).toBeVisible();
+        await logs.getByLabel('本批日志关键字').fill('');
+        await view.locator('database-log-tab .message-cell').first().focus();
+        await page.keyboard.press('Enter');
         await expect(view.locator('database-log-tab .raw-content')).toContainText('END-OF-LOG');
       }
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
