@@ -32,11 +32,11 @@ describe('resource pages use the formal Metrics V2 source', () => {
     expect(text).not.toContain('旧版趋势');
   });
 
-  it('uses semantic metrics for network overview and interface metrics', () => {
+  it('uses semantic metrics for trends and the interface inventory API for interfaces', () => {
     const text = source('network-device-detail.ts');
     expect(text).toContain('<semantic-metrics resourceType="network_device"');
     expect(text).not.toContain('概览来自兼容采集');
     expect(text).not.toContain('`/api/network-devices/${id}/metrics`');
-    expect(text).not.toContain('`/api/network-devices/${id}/interfaces`');
+    expect(text).toContain('`/api/network-devices/${id}/interfaces`');
   });
 });

@@ -107,7 +107,10 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' });
   // Keep the actual observation readable even when earlier empty buckets make the table long.
   const observed = page.locator('semantic-metrics time').last();
-  if (await observed.count()) await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
+  if (await observed.count()) {
+    if (!(await observed.isVisible())) await page.locator('semantic-metrics summary').filter({hasText:'查看原始时间桶'}).first().click();
+    await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
+  }
 }
 for (const kind of ['instance', 'server'] as const) for (const [width, theme] of [[1280, 'dark'], [390, 'light']] as const) test(`${kind} observation and read states ${width} ${theme}`, async ({ page }) => {
   await seed(kind, sampledAt, true);
@@ -119,6 +122,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, theme] of
   await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
   const view = page.locator(kind === 'server' ? 'server-detail' : 'instance-detail-page');
   if (kind === 'instance') await view.evaluate((el: any) => { el.autoRefresh = false; el.stopAutoRefresh(); });
+  await view.getByRole('tab', { name: '指标与趋势', exact: true }).click();
   const metrics = view.locator('semantic-metrics'), header = view.locator('.last-updated');
   const times = metrics.locator('time');
   await expect(times.first()).toHaveAttribute('datetime', sampledAt);

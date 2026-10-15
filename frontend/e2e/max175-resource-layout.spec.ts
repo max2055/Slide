@@ -136,7 +136,7 @@ test('database representative: real routes, reading times, metrics and log brows
       await page.screenshot({path:`${output}/database-${tab}-${width}-${theme}-real-service.png`,fullPage:true,animations:'disabled'});
     }
   }
-  expect(writes.filter(path => !['/api/platform/frontend-events','/api/device/register','/api/device/challenge'].includes(path))).toEqual([]); expect(errors).toEqual([]);
+  expect(writes.filter(path => !['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]); expect(errors).toEqual([]);
   await writeFile(`${output}/database-real-service.json`,JSON.stringify({baseCommit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),widths:[1440,768,390],themes:['light','dark'],database:'task-owned MySQL 8.4, migration ledger, formal full Fastify server',data:'Persisted fixture inventory and 55 logs; real unconfigured semantic metrics. No live target collection; no product model calls.',reads,writes,errors},null,2));
 });
 
@@ -257,7 +257,7 @@ test('server and network real service inventory, semantic tabs, interfaces and p
     }
   }
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded')));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
-  expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge'].includes(path))).toEqual([]);expect(errors).toEqual([]);
+  expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]);expect(errors).toEqual([]);
   expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
   await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Collection disabled, no live SSH/SNMP target; diagnostic logs genuinely empty, semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors},null,2));
 });
