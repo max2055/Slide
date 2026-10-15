@@ -37,7 +37,7 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
   let ledger: MysqlInvestigationBudgetLedger; let bridge: MysqlSystemEventBridge;
   let app: FastifyInstance; let address: string; let publisher: SystemFailurePublisher; let uninstall: () => void;
   let target: string;
-  const from = new Date(Date.now() - 60_000).toISOString(), to = new Date(Date.now() + 60_000).toISOString();
+  let from: string, to: string;
   const quota: BudgetPolicy = { currency: 'USD', maxConcurrent: 20, manualReserved: 1, maxPerResourceConcurrent: 20,
     maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay: 100_000, maxTotalTokensPerDay: 200_000, maxCostMicrosPerDay: 100_000 };
   const binding = (component = 'api'): TriggerBinding => ({ source: `slide.system.${component}`, verified: true,
@@ -101,6 +101,10 @@ describe('T09 System durable facts, real MySQL/JWT/HTTP', () => {
     actor = { ...await contexts.loadInvestigationActorFrom(pool as never, serviceId, 'service', 1),
       resourceBoundary: { instanceIds: [], serverIds: [], networkDeviceIds: [] } };
     bridge = build(); publisher = new SystemFailurePublisher(f => bridge.record(f)); uninstall = installSystemFailurePublisher(publisher);
+    // Keep the same bounded window, anchored to this case rather than module
+    // import: Docker startup and preceding recovery cases can take over a minute.
+    const now = Date.now();
+    from = new Date(now - 60_000).toISOString(); to = new Date(now + 60_000).toISOString();
   });
   afterAll(async () => {
     try { if (publisher) { await publisher.drain(); uninstall(); } await app?.close(); await pool?.end();
