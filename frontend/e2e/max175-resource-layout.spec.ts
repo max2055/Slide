@@ -14,6 +14,7 @@ const bcrypt = require('bcrypt');
 const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175';
 const apiPort = 3175, frontendPort = 5195;
 const base = `http://127.0.0.1:${frontendPort}`;
+test.skip(process.env.MAX175_ISOLATED_MYSQL !== '1', 'Requires MAX-175 task-owned MySQL and exclusive task ports');
 const processes: ChildProcess[] = [];
 let pool: any, token: string, permissions: string[], password = randomBytes(24).toString('hex');
 let instanceId: number;
