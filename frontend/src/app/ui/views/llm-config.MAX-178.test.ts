@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const { get, put } = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
-vi.mock('../../../api/index.js', () => ({ apiClient: { get, put, post: vi.fn() } }));
+const { get, put, post } = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
+vi.mock('../../../api/index.js', () => ({ apiClient: { get, put, post } }));
 import './llm-config.js';
 const first = { id: 'first', name: 'First', contextWindow: 64000, maxTokens: 8192, cost: { input: 0 }, opaque: { retained: true } };
 const second = { id: 'unknown', parameterSource: 'unknown', opaque: { second: true } };
 const provider = { id: 178, name: 'max178', display_name: 'MAX178', default_model: 'first', api_base_url: 'http://fixture.invalid/v1', enabled: true, max_tokens: 2048, context_window: 64000, models_supported: [first, second] };
 let view: any;
 beforeEach(async () => {
-  get.mockReset(); put.mockReset();
+  get.mockReset(); put.mockReset(); post.mockReset();
   get.mockImplementation(async (url: string) => url === '/llm/configs' ? [structuredClone(provider)] : []);
   put.mockResolvedValue({ success: true });
   view = document.createElement('llm-config-page'); document.body.append(view);
@@ -66,6 +66,13 @@ describe('MAX-178 model editing boundary', () => {
     expect(view.viewMode).toBe('form'); expect(view.discardOpen).toBe(true);
     const discard = Array.from(view.shadowRoot.querySelectorAll('app-dialog button')).find((el: any) => el.textContent.includes('放弃并离开')) as HTMLButtonElement;
     discard.click(); expect(view.viewMode).toBe('picker'); expect(view.testResult).toBeNull();
+  });
+  it('does not label an immediate enable toggle as an unsaved connection edit', async () => {
+    const fresh = { ...provider, enabled: false };
+    post.mockResolvedValue({ success: true });
+    get.mockImplementation(async (url: string) => url === '/llm/configs' ? [structuredClone(fresh)] : []);
+    await view._toggle(provider);
+    expect(view.form.enabled).toBe(false); expect(view.connectionDirty).toBe(false);
   });
   it('prevents duplicate writes while saving and keeps the error when API returns success false', async () => {
     let finish!: (data: any) => void; put.mockReturnValue(new Promise(resolve => { finish = resolve; }));

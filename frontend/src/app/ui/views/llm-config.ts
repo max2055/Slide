@@ -342,6 +342,10 @@ export class LLMConfigPage extends LitElement {
         if (fresh) {
           this.editing = fresh;
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
+          if (this.savedForm) {
+            const saved = JSON.parse(this.savedForm) as FormData;
+            this.savedForm = JSON.stringify({ ...saved, enabled: fresh.enabled, is_default: fresh.is_default });
+          }
         } else {
           this.editing = null;
         }
