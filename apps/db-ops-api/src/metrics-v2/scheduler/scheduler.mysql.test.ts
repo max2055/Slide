@@ -16,6 +16,8 @@ import { compilePlan } from './compiler.js';
 import { MysqlScheduleStore, GLOBAL_CONCURRENCY } from './store.js';
 import { MetricScheduler, type CollectorAccess } from './service.js';
 import { RolloutControl } from '../rollout/control.js';
+import { configurationInventory } from '../config/inventory.js';
+import { dbConnection } from '../../db-connection.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../../../docs/slide/metrics-v2/scheduler/fixtures.json', import.meta.url), 'utf8'));
 const port = Number(process.env.METRICS_V2_TEST_MYSQL_PORT);
@@ -64,6 +66,39 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
   const outputs = () => rows("SELECT payload FROM metric_v2_observations WHERE stage = 'normalized'");
   const expire = () => pool.query("UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 5 SECOND), available_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE state = 'running'");
   const ready = () => pool.query("UPDATE workflow_jobs SET available_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE state IN ('queued','retry')");
+
+  it('collects real SQL uptime when fallback inventory is produced after the fenced job starts', async () => {
+    const poolLookup = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    let sqlReads = 0;
+    try {
+      await pool.query('DELETE FROM metric_v2_inventory');
+      await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted,db_type,db_version,status) VALUES (1,'clock fixture','127.0.0.1',?,'root','unused','mysql','9.6.0','active')", [port]);
+      const p = packages.list().find(r => r.package.id === 'mysql-basic' && r.package.version === '2.0.0')!.package;
+      await policies.changeBinding(admin, ref, { expected_revision: 0, package: { id: p.id, version: p.version, digest: p.digest } }, true);
+      const delayed: CollectorAccess = { resolve: async r => {
+        // The real fallback stamps attributes during its asynchronous SQL read.
+        const value = await configurationInventory(r);
+        expect(Date.parse(value.attributes['db.version'].observed_at)).toBeGreaterThan(now);
+        now = Date.now();
+        return { resource: value, credential_ref: 'credential:clock-fixture', evidence: {},
+          resolve: async () => ({ method: 'sql', pool: { query: async options => { sqlReads++; return root.query(options); } } }) };
+      } };
+      const scheduler = new MetricScheduler(store, packages, delayed, () => now);
+      const registry = new JobRegistry(); scheduler.register(registry);
+      await enqueue(scheduler);
+      const worker = new WorkerRuntime(queue, 'clock-fixture', 30);
+      expect(await worker.runOnce((job, ctx) => registry.execute(job, ctx), now)).toBe('completed');
+      expect(sqlReads).toBe(1);
+      const values = (await outputs()).map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload);
+      expect(values).toHaveLength(1);
+      expect(values[0]).toMatchObject({ metric: { id: 'db.uptime_seconds' }, quality: { status: 'good' }, versions: { config_revision: 1 } });
+      expect(await rows('SELECT logical_reads FROM metric_v2_schedule_events')).toEqual([{ logical_reads: 1 }]);
+      expect((await policies.binding(admin, ref)).application).toMatchObject({ status: 'applied', applied_revision: 1 });
+    } finally {
+      poolLookup.mockRestore();
+      await pool.query('DELETE FROM database_instances WHERE id=1');
+    }
+  });
 
   it('deduplicates scans, one query yields multiple metrics and restart preserves cadence/counter state', async () => {
     await create(); const s = setup(); expect(await enqueue(s.scheduler)).toBe(1);
