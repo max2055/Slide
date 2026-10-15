@@ -182,7 +182,7 @@ test('controlled metrics interactions and log context isolation',async({page})=>
     localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));
   },{token,permissions});
   const data={profile:{columns:[]},window:{from:'2026-10-15T00:00:00Z',to:'2026-10-15T01:00:00Z'},metrics:[
-    {definition:{id:'db.uptime_seconds',category:'canonical',unit:'s',meaning:'受控交互证据，不代表目标采集'},state:'available',series:[{dimensions:{node:'controlled'},buckets:[1,2,3].map((value,index)=>({value:{encoding:'float64',value},unit:'s',coverage:1,quality:{status:'good',reason:'controlled'},freshness:index===1?'stale':'fresh',accuracy:'exact',observed_at:'2026-10-15T00:30:00Z',sources:[{id:'controlled-fixture'}],window:{from:`2026-10-15T00:0${index}:00Z`,to:`2026-10-15T00:0${index+1}:00Z`}}))}]},
+    {definition:{id:'db.uptime_seconds',category:'canonical',unit:'s',meaning:'受控交互证据，不代表目标采集'},state:'available',series:[{dimensions:{node:'controlled'},buckets:[1,2,3,2,4].map((value,index)=>({value:{encoding:'float64',value},unit:'s',coverage:1,quality:{status:'good',reason:'controlled'},freshness:index===2?'stale':'fresh',accuracy:'exact',observed_at:'2026-10-15T00:30:00Z',sources:[{id:'controlled-fixture'}],window:{from:`2026-10-15T00:0${index}:00Z`,to:`2026-10-15T00:0${index+1}:00Z`}}))}]},
     {definition:{id:'db.connections.active',category:'extension',unit:'count',meaning:'受控扩展'},state:'temporary_failure',series:[]}
   ]};
   let metricStatus=200;
@@ -194,7 +194,8 @@ test('controlled metrics interactions and log context isolation',async({page})=>
     const metrics=page.locator('semantic-metrics');
     await expect(metrics.locator('.current')).toHaveCount(2);
     await expect(metrics.locator('.trend-grid metric-chart')).toHaveCount(1);
-    expect(await metrics.locator('.trend-grid metric-chart').evaluate((el:any)=>el.series[0].data)).toEqual([1,null,3]);
+    expect(await metrics.locator('.trend-grid metric-chart').evaluate((el:any)=>el.series[0].data)).toEqual([1,2,null,2,4]);
+    await page.screenshot({path:`${output}/controlled-metrics-summary-${width}-${theme}.png`,fullPage:true});
     await metrics.getByLabel('指标',{exact:true}).selectOption('db.uptime_seconds');await expect(metrics.locator('.current')).toHaveCount(1);
     const raw=metrics.locator('summary').filter({hasText:'查看原始时间桶'}).first();await raw.focus();await page.keyboard.press('Enter');
     await expect(metrics.locator('app-data-table').first()).toBeVisible();
@@ -255,6 +256,10 @@ test('server and network real service inventory, semantic tabs, interfaces and p
         await network.getByLabel('接口运行状态',{exact:true}).selectOption('down');await expect(network.getByText('GigabitEthernet0/0/1',{exact:true})).toHaveCount(0);await expect(network.getByText('GigabitEthernet0/0/2',{exact:true})).toBeVisible();
         await network.getByLabel('接口运行状态',{exact:true}).selectOption('');await network.getByLabel('接口名称或别名',{exact:true}).fill('0/0/1');await expect(network.getByText('GigabitEthernet0/0/2',{exact:true})).toHaveCount(0);
         await network.getByLabel('接口名称或别名',{exact:true}).fill('');
+        if(width===390) {
+          const region=network.getByRole('region',{name:'接口列表，可横向滚动'});await region.focus();await page.keyboard.press('ArrowRight');await expect.poll(()=>region.evaluate(el=>el.scrollLeft)).toBeGreaterThan(0);
+          await region.evaluate(el=>el.scrollLeft=0);
+        }
       }
       if(tab==='配置备份') await expect(network.getByText('尚未配置 SSH 凭据',{exact:false})).toBeVisible();
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
