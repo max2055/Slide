@@ -10,7 +10,14 @@ it('shows release identity and explicit process-local log gaps', async () => {
   await new Promise(resolve => setTimeout(resolve, 10));
   await element.updateComplete;
   expect(authFetch).toHaveBeenCalledWith('/api/platform/observations');
-  expect(element.shadowRoot?.textContent).toContain('release-test');
-  expect(element.shadowRoot?.textContent).toContain('NO_LOGS');
-  expect(element.shadowRoot?.textContent).toContain('process-local');
+  const buttons = Array.from(element.shadowRoot!.querySelectorAll<HTMLButtonElement>('button'));
+  buttons.find(button => button.textContent?.trim() === '查看缺口')!.click();
+  await element.updateComplete;
+  expect(element.shadowRoot?.querySelector('pre')?.textContent).toContain('release-test');
+  element.shadowRoot!.querySelector('app-dialog')!.dispatchEvent(new CustomEvent('app-dialog-close'));
+  await element.updateComplete;
+  Array.from(element.shadowRoot!.querySelectorAll<HTMLButtonElement>('tbody button'))[0].click();
+  await element.updateComplete;
+  expect(element.shadowRoot?.querySelector('pre')?.textContent).toContain('NO_LOGS');
+  expect(element.shadowRoot?.querySelector('pre')?.textContent).toContain('process-local');
 });
