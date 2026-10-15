@@ -31,7 +31,7 @@ interface ConsistencyCheck {
 interface ReadinessItem {
   key: string;
   label: string;
-  status: boolean;
+  status: boolean | undefined;
   severity: 'critical' | 'major' | 'minor';
   suggestion: string;
   actionLabel?: string;
@@ -39,10 +39,10 @@ interface ReadinessItem {
 }
 
 interface HealthOverview {
-  timestamp: string;
-  summary: { pass: number; warn: number; fail: number; deferred: number; total: number; };
+  timestamp?: string;
+  summary?: { pass: number; warn: number; fail: number; deferred: number; total: number; };
   checks: ConsistencyCheck[];
-  readiness: {
+  readiness?: {
     db_connected: boolean;
     db_reachable: boolean;
     llm_provider: boolean;
@@ -74,16 +74,25 @@ export class HealthCenterPage extends LitElement {
   @state() private truth: HealthTruth | null = null;
   @state() private expandedChecks = new Set<string>();
   @state() private showNormalChecks = false;
+  @state() private readAt: string | null = null;
+  @state() private denied = false;
+  private requestId = 0;
+  private permissionsChanged = (event: Event) => {
+    const permissions = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
+    if (!Array.isArray(permissions) || !permissions.some(p => ['*', 'config:*', 'config:view', '*:view'].includes(p))) this.invalidate('权限已撤回，自检证据已清理。');
+    else if (this.denied) { this.denied = false; void this._load(); }
+  };
+  private expired = () => this.invalidate('会话已失效，自检证据已清理。');
 
   static styles = [
     sharedBtnStyles,
     css`
-      :host { display: block; max-width: 800px; min-width: 0; }
+      :host { display: block; max-width: 1200px; min-width: 0; }
 
       /* ── Page header ─────────────────────────────── */
-      .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
-      .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
-      .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
+      .page-header { gap:var(--space-md); display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: var(--space-xl); }
+      .page-header h1 { font-size: 24px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
+      .page-header p { font-size: 12px; line-height:1.7; color: var(--muted); margin: 0; }
       .refresh-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); color: var(--text); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
       .refresh-btn:hover { background: var(--hover); }
       .refresh-btn:active { background: var(--active); }
@@ -118,6 +127,7 @@ export class HealthCenterPage extends LitElement {
       .readiness-inline .ri-item .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
       .readiness-inline .ri-item .dot.ok { background: var(--ok, #22c55e); }
       .readiness-inline .ri-item .dot.fail { background: var(--danger, #ef4444); }
+      .readiness-inline .ri-item .dot.unknown { background:var(--muted); }
       .readiness-inline .ri-item .dot.degraded { background: var(--warn, #f59e0b); }
       .truth-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-sm); margin-bottom: var(--space-lg); }
       .truth-header { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-sm); color: var(--text-strong); font-size: var(--text-sm); font-weight: 600; }
@@ -184,32 +194,81 @@ export class HealthCenterPage extends LitElement {
       .rec-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-text); cursor: pointer; background: none; border: none; padding: 0; margin-top: 4px; }
       .rec-link:hover { text-decoration: underline; }
 
+      .scope-note { border-left:3px solid var(--border); background:var(--bg-accent); padding:var(--space-md) var(--space-lg); font-size:12px; color:var(--muted); line-height:1.7; margin-bottom:var(--space-lg); }
+      .scope-note strong { display:block; color:var(--text-strong); font-size:14px; }
+      .page-header p, .issue-card, .check-table td { overflow-wrap:anywhere; }
+      .check-table { min-width:650px; }
+      .ic-detail { overflow:auto; max-width:100%; }
+      .ic-header { flex-wrap:wrap; }
+      .truth-grid { gap:var(--space-md); }
+      .truth-dimension { border:0; border-right:1px solid var(--border); background:transparent; }
+      .truth-dimension:last-child { border-right:0; }
+      .truth-reason { font-size:12px; }
+      .truth-header, .check-section-header h2 { font-size:16px; }
+      @media(max-width:850px) {
+        .truth-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        .health-bar { flex-wrap:wrap; gap:var(--space-md); }
+        .health-bar .hs-stats { margin-left:0; flex-wrap:wrap; }
+      }
+      @media(max-width:600px) {
+        .page-header { flex-wrap:wrap; }
+        .page-header h1 { font-size:22px; }
+        .truth-grid { grid-template-columns:minmax(0,1fr); }
+        .truth-dimension { border-right:0; border-bottom:1px solid var(--border); }
+        .check-section-header { flex-wrap:wrap; gap:var(--space-sm); }
+      }
       .loading, .error-state { padding: 48px; text-align: center; color: var(--muted); }
     `,
   ];
 
-  override connectedCallback() { super.connectedCallback(); this._load(); }
-
-  private async _load() {
-    this.loading = true; this.error = null; this.expandedChecks = new Set(); this.showNormalChecks = false;
-    try {
-      const res = await authFetch("/api/health/overview");
-      if (!res.ok) throw new Error(`加载失败 (${res.status})`);
-      this.data = await res.json();
-      this.truth = this.data?.truth ?? null;
-    } catch (e: any) { this.error = e.message; }
-    finally { this.loading = false; }
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.permissionsChanged);
+    window.addEventListener('slide-session-expired', this.expired);
+    void this._load();
   }
-
-  private async _refresh() {
-    this.refreshing = true;
+  override disconnectedCallback() {
+    this.requestId++; this.data = null; this.truth = null; this.readAt = null;
+    window.removeEventListener('slide-permissions-loaded', this.permissionsChanged);
+    window.removeEventListener('slide-session-expired', this.expired);
+    super.disconnectedCallback();
+  }
+  private invalidate(message: string) {
+    this.requestId++; this.data = null; this.truth = null; this.readAt = null;
+    this.expandedChecks = new Set(); this.showNormalChecks = false;
+    this.denied = true; this.loading = false; this.refreshing = false; this.error = message;
+  }
+  private _load() { return this.read(false); }
+  private _refresh() { return this.read(true); }
+  private async read(refresh: boolean) {
+    if (this.denied) return;
+    const id = ++this.requestId;
+    this.loading = true; this.refreshing = refresh; this.error = null;
+    this.data = null; this.truth = null; this.readAt = null;
+    this.expandedChecks = new Set(); this.showNormalChecks = false;
     try {
-      const res = await authFetch("/api/health/overview?refresh=true");
-      if (!res.ok) throw new Error(`加载失败 (${res.status})`);
-      this.data = await res.json(); this.truth = this.data?.truth ?? null; this.error = null;
-      this.expandedChecks = new Set();
-    } catch (e: any) { console.warn('Health check refresh failed:', e.message); }
-    finally { this.refreshing = false; }
+      const response = await authFetch(refresh ? '/api/health/overview?refresh=true' : '/api/health/overview');
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          if (id === this.requestId) this.invalidate('无权读取平台自检，证据已清理。');
+          return;
+        }
+        throw new Error(`自检读取失败（HTTP ${response.status}）`);
+      }
+      const data: HealthOverview = await response.json();
+      if (!data || !Array.isArray(data.checks)) throw new Error('自检响应不完整，无法判断当前状态。');
+      if (id !== this.requestId) return;
+      this.data = data; this.truth = data.truth ?? null; this.readAt = new Date().toISOString();
+    } catch (error) {
+      if (id === this.requestId) this.error = error instanceof Error ? error.message : '自检读取失败，请重试。';
+    } finally { if (id === this.requestId) { this.loading = false; this.refreshing = false; } }
+  }
+  private formatTime(value?: string | null) {
+    return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN') : '未知';
+  }
+  private renderHeader() {
+    return html`<div class="page-header"><div><h1>系统自检</h1><p>平台数据一致性检查；通过不等于运行观测健康。</p><p>自检时间 ${this.formatTime(this.data?.timestamp)} · 页面读取 ${this.formatTime(this.readAt)}</p></div>
+      <button class="btn refresh-btn" @click=${this._refresh} ?disabled=${this.loading || this.refreshing || this.denied}><span>${icons['refresh-cw']}</span>${this.loading || this.refreshing ? '检查中…' : '刷新'}</button></div>`;
   }
 
   private _sv(status: string) { return { pass:'ok',warn:'warn',fail:'danger',deferred:'muted' }[status] || 'muted'; }
@@ -233,7 +292,7 @@ export class HealthCenterPage extends LitElement {
 
   private _readinessItems(): ReadinessItem[] {
     if (!this.data) return [];
-    const r = this.data.readiness;
+    const r: Partial<NonNullable<HealthOverview['readiness']>> = this.data.readiness ?? {};
     return [
       { key:'db_connected',label:'主数据库连接',status:r.db_connected,severity:'critical', suggestion:'检查 .env 中 DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME 配置，以及 MySQL 服务是否运行' },
       { key:'db_reachable',label:'纳管实例可达',status:r.db_reachable,severity:'major', suggestion:'添加至少一个数据库实例并确保测试连接通过' },
@@ -245,16 +304,16 @@ export class HealthCenterPage extends LitElement {
 
   private _allReady(): boolean {
     if (!this.data) return false;
-    const r = this.data.readiness;
-    return r.db_connected && r.db_reachable && r.llm_provider && r.cron_running && r.agent_engine;
+    const r: Partial<NonNullable<HealthOverview['readiness']>> = this.data.readiness ?? {};
+    return [r.db_connected,r.db_reachable,r.llm_provider,r.cron_running,r.agent_engine].every(value => value === true);
   }
 
-  private _healthPct(): number {
-    if (!this.data) return 0;
-    const s = this.data.summary;
+  private _healthPct(): number | null {
+    const s = this.data?.summary;
+    if (!s || ![s.pass,s.warn,s.fail,s.deferred,s.total].every(n => Number.isInteger(n) && n >= 0)
+      || s.total !== s.pass + s.warn + s.fail + s.deferred) return null;
     const actionable = s.total - s.deferred;
-    if (actionable === 0) return 100;
-    return Math.round((s.pass / actionable) * 100);
+    return actionable > 0 ? Math.round((s.pass / actionable) * 100) : null;
   }
 
   private _healthClass(pct: number): string {
@@ -283,7 +342,7 @@ export class HealthCenterPage extends LitElement {
   }
 
   private _healthStatusLabel(status: HealthStatus): string {
-    return { healthy: '健康', degraded: '降级', critical: '严重', unknown: '未知' }[status];
+    return { healthy: '健康', degraded: '降级', critical: '严重', unknown: '未知' }[status] ?? '未知';
   }
 
   private _healthStatusVariant(status: HealthStatus): 'ok' | 'warn' | 'danger' | 'muted' {
@@ -291,19 +350,19 @@ export class HealthCenterPage extends LitElement {
   }
 
   private _renderTruth() {
-    if (!this.truth) return nothing;
+    if (!this.truth) return html`<p class="scope-note">资源健康未知：当前响应未提供资源健康证据。</p>`;
     const dimensions = ['controlPlane', 'managedAvailability', 'dataFreshness', 'workflow'] as const;
     return html`<div class="truth-header">
       <span>资源总体健康</span>
       <app-badge variant=${this._healthStatusVariant(this.truth.overall)}>${this._healthStatusLabel(this.truth.overall)}</app-badge>
     </div><div class="truth-grid" aria-label="资源健康真相">
       ${dimensions.map((key) => {
-        const dimension = this.truth![key];
+        const dimension = this.truth![key] ?? { status:'unknown' as const, numerator:NaN, denominator:NaN, reason:'当前响应未提供该维度证据' };
         const refs = dimension.failedRefs ?? [];
-        const detail = [dimension.reason, dimension.observedAt ? new Date(dimension.observedAt).toLocaleString() : undefined].filter(Boolean).join(' · ');
+        const detail = [dimension.reason, dimension.observedAt ? this.formatTime(dimension.observedAt) : undefined].filter(Boolean).join(' · ');
         return html`<div class="truth-dimension ${dimension.status}">
           <span class="truth-label">${this._truthLabel(key)}</span>
-          <span class="truth-value">${this._healthStatusLabel(dimension.status)} · ${dimension.numerator}/${dimension.denominator}</span>
+          <span class="truth-value">${this._healthStatusLabel(dimension.status)} · ${Number.isFinite(dimension.numerator) ? dimension.numerator : '未知'}/${Number.isFinite(dimension.denominator) ? dimension.denominator : '未知'}</span>
           ${refs.length ? html`<span class="truth-refs">${refs.map((ref) => this._renderResourceRef(ref))}</span>` : nothing}
           ${detail ? html`<span class="truth-reason">${detail}</span>` : nothing}
         </div>`;
@@ -368,8 +427,8 @@ export class HealthCenterPage extends LitElement {
   }
 
   override render() {
-    if (this.loading) return html`<div class="loading">加载中...</div>`;
-    if (this.error) return html`<div class="error-state"><p>${this.error}</p><button class="btn btn-primary" @click=${this._load}>重试</button></div>`;
+    if (this.loading) return html`${this.renderHeader()}<div class="loading" role="status">正在读取自检…</div>`;
+    if (this.error) return html`${this.renderHeader()}<div class="error-state" role="alert"><p>${this.error}</p>${this.denied ? html`<p>请重新登录或联系管理员核对权限。</p>` : html`<button class="btn" @click=${this._load}>重试</button>`}</div>`;
     if (!this.data) return html`<div class="loading">无数据</div>`;
 
     const d = this.data;
@@ -377,36 +436,28 @@ export class HealthCenterPage extends LitElement {
     const allReady = this._allReady();
     const healthPct = this._healthPct();
     const s = d.summary;
+    const countsKnown = s && [s.pass,s.warn,s.fail,s.deferred,s.total].every(n => Number.isInteger(n) && n >= 0);
 
     // Separate checks: issues (warn/fail) vs normal (pass/deferred)
     const issueChecks = d.checks.filter(c => c.status === 'warn' || c.status === 'fail');
     const normalChecks = d.checks.filter(c => c.status === 'pass' || c.status === 'deferred');
 
     return html`
-      <!-- Page header -->
-      <div class="page-header">
-        <div>
-          <h1>系统自检</h1>
-          <p>系统数据一致性与运行状态检查 · ${new Date(d.timestamp).toLocaleString()}</p>
-        </div>
-        <button class="btn refresh-btn" @click=${this._refresh} ?disabled=${this.refreshing}>
-          <span class=${this.refreshing ? 'spinning' : ''}>${icons['refresh-cw']}</span>
-          ${this.refreshing ? '检查中…' : '刷新'}
-        </button>
-      </div>
+      ${this.renderHeader()}
+      <div class="scope-note"><strong>自检与平台观测分开判断</strong>下方通过率只描述本次有效一致性检查。运行日志、信号覆盖和版本部署缺口请在平台观测核对；资源健康沿用接口给出的独立维度。</div>
 
       <!-- Unified health bar: score + stats in one row -->
       <div class="health-bar">
         <div class="hs-left">
           <span class="hs-label">一致性通过率</span>
-          <span class="hs-pct ${this._healthClass(healthPct)}">${healthPct}%</span>
+          <span class="hs-pct ${healthPct === null ? 'muted' : this._healthClass(healthPct)}">${healthPct === null ? '尚无有效检查' : `${healthPct}%`}</span>
         </div>
-        <div class="hs-track"><div class="hs-fill" style="${this._healthFill(healthPct)}"></div></div>
+        ${healthPct === null ? nothing : html`<div class="hs-track"><div class="hs-fill" style="${this._healthFill(healthPct)}"></div></div>`}
         <div class="hs-stats">
-          <span class="hs-stat"><span class="dot ok"></span>${s.pass} 通过</span>
-          <span class="hs-stat"><span class="dot warn"></span>${s.warn} 警告</span>
-          <span class="hs-stat"><span class="dot danger"></span>${s.fail} 失败</span>
-          ${s.deferred > 0 ? html`<span class="hs-stat"><span class="dot muted"></span>${s.deferred} 推迟</span>` : ''}
+          ${countsKnown ? html`<span class="hs-stat"><span class="dot ok"></span>${s?.pass ?? '未知'} 通过</span>
+          <span class="hs-stat"><span class="dot warn"></span>${s?.warn ?? '未知'} 警告</span>
+          <span class="hs-stat"><span class="dot danger"></span>${s?.fail ?? '未知'} 失败</span>
+          ${(s?.deferred ?? 0) > 0 ? html`<span class="hs-stat"><span class="dot muted"></span>${s?.deferred} 推迟</span>` : ''}` : html`<span>检查计数未知</span>`}
         </div>
       </div>
 
@@ -423,8 +474,8 @@ export class HealthCenterPage extends LitElement {
         <div class="ri-items">
           ${items.map(item => html`
             <span class="ri-item">
-              <span class="dot ${item.status ? 'ok' : (item.severity === 'critical' ? 'fail' : 'degraded')}"></span>
-              ${item.label}
+              <span class="dot ${item.status === undefined ? 'unknown' : item.status ? 'ok' : (item.severity === 'critical' ? 'fail' : 'degraded')}"></span>
+              ${item.label} · ${item.status === undefined ? '未知' : item.status ? '就绪' : '未就绪'}
             </span>
           `)}
         </div>
@@ -461,13 +512,13 @@ export class HealthCenterPage extends LitElement {
 
       <!-- Normal checks stay collapsed so anomalies remain the primary focus. -->
       <div class="check-section-header">
-        <h2>正常检查项</h2>
-        <button class="btn btn-ghost normal-toggle" @click=${() => { this.showNormalChecks = !this.showNormalChecks; }}>
+        <h2>通过与推迟的检查项</h2>
+        <button class="btn-ghost normal-toggle" @click=${() => { this.showNormalChecks = !this.showNormalChecks; }}>
           ${this.showNormalChecks ? icons['chevron-up'] : icons['chevron-down']}
           ${this.showNormalChecks ? '收起正常检查' : `显示正常检查（${normalChecks.length}）`}
         </button>
       </div>
-      ${this.showNormalChecks ? html`<div class="check-table-scroll"><table class="check-table">
+      ${this.showNormalChecks ? html`<div class="check-table-scroll" tabindex="0" role="region" aria-label="自检明细，可横向滚动"><table class="check-table">
         <thead>
           <tr>
             <th class="col-num">#</th>
