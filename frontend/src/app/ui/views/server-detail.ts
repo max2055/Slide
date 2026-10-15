@@ -345,7 +345,8 @@ export class ServerDetailPage extends LitElement {
       if (!current()) return;
       this.server = server;
       this.lastUpdated = new Date();
-      if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId, version);
+      // The legacy diagnostics GET collects on cache miss/expiry. A page refresh
+      // must retain its original evidence/time instead of triggering collection.
       if (current()) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
     } catch {
       if (current()) this.detailReadError = '服务器详情读取失败';

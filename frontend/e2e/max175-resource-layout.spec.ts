@@ -242,7 +242,16 @@ test('server and network real service inventory, semantic tabs, interfaces and p
     for(const tab of ['概览','指标与趋势','日志']) {
       await server.getByRole('tab',{name:tab,exact:true}).click();
       if(tab==='指标与趋势') await expect(server.locator('semantic-metrics .window')).toBeVisible();
-      if(tab==='日志') {await expect(server.locator('server-diagnostic-panel')).toBeVisible();await expect(server.locator('semantic-metrics')).toHaveCount(0);}
+      if(tab==='日志') {
+        await expect(server.locator('server-diagnostic-panel')).toContainText('服务器诊断证据加载失败');
+        await expect(server.locator('semantic-metrics')).toHaveCount(0);
+        const diagnosticReads=reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`).length;
+        expect(reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`).at(-1)?.status).toBe(422);
+        await server.getByRole('button',{name:'刷新',exact:true}).click();
+        await expect(server.getByRole('button',{name:'刷新',exact:true})).toBeEnabled();
+        expect(reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`)).toHaveLength(diagnosticReads);
+        await expect(server.locator('server-diagnostic-panel')).toContainText('服务器诊断证据加载失败');
+      }
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${output}/server-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
     }
@@ -272,7 +281,7 @@ test('server and network real service inventory, semantic tabs, interfaces and p
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}})));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
   expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]);expect(errors).toEqual([]);
   expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
-  await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Collection disabled, no live SSH/SNMP target; diagnostic logs genuinely empty, semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors},null,2));
+  await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Scheduled collection disabled, no live SSH/SNMP target; diagnostics unavailable: HTTP 422 HOST_OS_UNSUPPORTED for the Linux fixture before SSH, semantic metrics unconfigured. Diagnostic GET can collect on cache miss/expiry; no POST does not prove read-only. Not live target acceptance.',reads,writes,errors},null,2));
 });
 
 test('controlled log and interface exceptional states remain explicit',async({page})=>{
