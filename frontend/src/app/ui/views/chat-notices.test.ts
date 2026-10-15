@@ -3,6 +3,7 @@ import { render } from 'lit';
 import { renderChat, type ChatProps } from './chat.ts';
 import { renderLoginGate } from './login-gate.ts';
 import { apiClient } from '../../../api/index.ts';
+import { t } from '../../i18n/index.ts';
 import * as toast from '../components/app-toast-container.ts';
 
 vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
@@ -39,7 +40,9 @@ describe('single actionable notice', () => {
     const root = document.createElement('div'); document.body.append(root);
     render(renderLoginGate(state as any), root);
     root.querySelector<HTMLButtonElement>('.login-gate__connect')!.click();
-    await vi.waitFor(() => expect(state.lastError).toContain('无法连接服务器'));
+    await vi.waitFor(() => expect(state.lastError).toBe(t('login.serverUnavailable', {
+      address: new URL('/api/auth/login', window.location.origin).href,
+    })));
     render(renderLoginGate(state as any), root);
     expect(root.textContent?.split(state.lastError!).length).toBe(2);
     expect(notify).not.toHaveBeenCalled();

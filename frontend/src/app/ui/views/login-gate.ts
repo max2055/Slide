@@ -4,34 +4,45 @@ import type { AppViewState } from "../app-view-state.ts";
 import { icons } from "../../../icons.js";
 import { normalizeBasePath } from "../navigation.ts";
 import { agentLogoUrl } from "./agents-utils.ts";
-import { renderConnectCommand } from "./connect-command.ts";
 import "../components/app-notice.ts";
+
+const pendingLogins = new WeakSet<AppViewState>();
 
 export function renderLoginGate(state: AppViewState) {
   const basePath = normalizeBasePath(state.basePath ?? "");
   const faviconSrc = agentLogoUrl(basePath);
+  const pending = pendingLogins.has(state);
+  const requestUpdate = () => (state as AppViewState & { requestUpdate?: () => void }).requestUpdate?.();
 
   // Shared login handler — validates credentials via REST API before connecting.
   // Used by both the Login button and the Enter key to prevent bypass.
   const doLogin = async () => {
+    if (pendingLogins.has(state)) return;
     const u = state.settings.username?.trim();
-    const p = state.password?.trim();
+    const p = state.password;
     if (!u || !p) {
-      state.lastError = '请输入用户名和密码';
+      state.lastError = t("login.requiredCredentials");
       return;
     }
+    pendingLogins.add(state);
     state.lastError = null;
+    requestUpdate();
     let token: string | null;
     try {
       const { apiClient } = await import("../../../api/index.js");
       token = await apiClient.directLogin(u, p);
-    } catch (err) {
+    } catch {
       // Network or server error — backend unreachable, not a credential issue
-      state.lastError = '无法连接服务器。请确认后端服务已启动（http://localhost:3000），然后刷新页面重试。';
+      state.lastError = t("login.serverUnavailable", {
+        address: new URL('/api/auth/login', window.location.origin).href,
+      });
       return;
+    } finally {
+      pendingLogins.delete(state);
+      requestUpdate();
     }
     if (!token) {
-      state.lastError = '用户名或密码错误，请重试。';
+      state.lastError = t("login.invalidCredentials");
       return;
     }
     fetch('/api/auth/permissions', {
@@ -51,12 +62,14 @@ export function renderLoginGate(state: AppViewState) {
           <div class="login-gate__title">Slide</div>
           <div class="login-gate__sub">${t("login.subtitle")}</div>
         </div>
-        <div class="login-gate__form">
+        <form class="login-gate__form" novalidate aria-busy=${pending}
+          @submit=${(e: SubmitEvent) => { e.preventDefault(); void doLogin(); }}>
           <label class="field">
             <span>${t("login.username")}</span>
             <input
               type="text"
               autocomplete="username"
+              required
               spellcheck="false"
               .value=${state.settings.username}
               @input=${(e: Event) => {
@@ -64,11 +77,6 @@ export function renderLoginGate(state: AppViewState) {
                 state.applySettings({ ...state.settings, username: v });
               }}
               placeholder="${t("login.usernamePlaceholder")}"
-              @keydown=${(e: KeyboardEvent) => {
-                if (e.key === "Enter") {
-                  doLogin();
-                }
-              }}
             />
           </label>
           <label class="field">
@@ -77,6 +85,7 @@ export function renderLoginGate(state: AppViewState) {
               <input
                 type=${state.loginShowGatewayPassword ? "text" : "password"}
                 autocomplete="current-password"
+                required
                 spellcheck="false"
                 .value=${state.password}
                 @input=${(e: Event) => {
@@ -84,17 +93,12 @@ export function renderLoginGate(state: AppViewState) {
                   state.setPassword?.(v);
                 }}
                 placeholder="${t("login.passwordPlaceholder")}"
-                @keydown=${(e: KeyboardEvent) => {
-                  if (e.key === "Enter") {
-                    doLogin();
-                  }
-                }}
               />
               <button
                 type="button"
                 class="btn btn--icon ${state.loginShowGatewayPassword ? "active" : ""}"
-                title=${state.loginShowGatewayPassword ? "Hide password" : "Show password"}
-                aria-label="Toggle password visibility"
+                title=${t(state.loginShowGatewayPassword ? "login.hidePassword" : "login.showPassword")}
+                aria-label=${t(state.loginShowGatewayPassword ? "login.hidePassword" : "login.showPassword")}
                 aria-pressed=${state.loginShowGatewayPassword}
                 @click=${() => {
                   state.loginShowGatewayPassword = !state.loginShowGatewayPassword;
@@ -104,10 +108,10 @@ export function renderLoginGate(state: AppViewState) {
               </button>
             </div>
           </label>
-          <button class="btn-primary login-gate__connect" @click=${doLogin}>
-            ${t("common.connect")}
+          <button type="submit" class="btn-primary login-gate__connect" ?disabled=${pending}>
+            ${t(pending ? "login.submitting" : "login.submit")}
           </button>
-        </div>
+        </form>
         ${state.lastError
           ? html`<app-notice severity="error" role="alert">${state.lastError}</app-notice>`
           : ""}
