@@ -532,7 +532,14 @@ export const en: TranslationMap = {
     username: "Username",
     password: "Password",
     usernamePlaceholder: "Username",
-    passwordPlaceholder: "optional",
+    passwordPlaceholder: "Enter password (required)",
+    submit: "Log in",
+    submitting: "Logging in…",
+    requiredCredentials: "Enter your username and password.",
+    invalidCredentials: "Incorrect username or password. Please try again.",
+    serverUnavailable: "Unable to complete the login request ({address}). Check your network or contact your administrator to confirm the service is available, then try again.",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
   },
   overview: {
     palette: {

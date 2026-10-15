@@ -544,7 +544,14 @@ export const zh_CN: TranslationMap = {
     username: "用户名",
     password: "密码",
     usernamePlaceholder: "用户名",
-    passwordPlaceholder: "可选",
+    passwordPlaceholder: "请输入密码（必填）",
+    submit: "登录",
+    submitting: "正在登录…",
+    requiredCredentials: "请输入用户名和密码。",
+    invalidCredentials: "用户名或密码错误，请重试。",
+    serverUnavailable: "无法完成登录请求（{address}）。请检查网络或联系管理员确认服务可用，然后重试。",
+    showPassword: "显示密码",
+    hidePassword: "隐藏密码",
   },
   overview: {
     palette: {
