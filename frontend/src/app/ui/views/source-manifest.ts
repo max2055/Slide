@@ -4,6 +4,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { sourceError, readSourceResponse, renderSourceError, type SourceError } from './source-errors.js';
 import { tabKeydown, workspaceStyles, fmt, badge, table, pairs } from './workspace-ui.js';
 import { authFetch } from '../../../api/index.js';
+import { permissionMatches } from '../settings-navigation.js';
 
 interface Manifest {
   releaseId: string; commitSha: string; treeDigest: string; files: Array<{ path: string; digest: string; bytes: number }>; signature: string;
@@ -36,8 +37,20 @@ export class SourceManifestView extends LitElement {
   @state() private selectedItem: { path: string; digest?: string; bytes?: number; reason?: string } | null = null;
   private summaryScroll = 0;
   private popState = () => this.readUrl();
+  private readonly onExpired = () => { this.invalidate(); this.loading = false; this.error = sourceError('SOURCE_SESSION_REQUIRED'); };
+  private readonly onPermissions = (event: Event) => {
+    this.invalidate();
+    const codes = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
+    if (permissionMatches(new Set(Array.isArray(codes) ? codes : []), 'config:view')) void this.load();
+    else { this.loading = false; this.error = sourceError('SOURCE_READ_FORBIDDEN'); }
+  };
   static styles = [sharedBtnStyles, workspaceStyles];
-  override connectedCallback() { super.connectedCallback(); this.readUrl(); window.addEventListener('popstate', this.popState); }
+  override connectedCallback() {
+    super.connectedCallback(); this.readUrl(); window.addEventListener('popstate', this.popState);
+    window.addEventListener('slide-session-expired', this.onExpired);
+    window.addEventListener('slide-permissions-loaded', this.onPermissions);
+    if (this.hasUpdated) void this.load();
+  }
   private readUrl() {
     const params = new URL(location.href).searchParams;
     this.detailsView = params.get('sourceView') === 'details';
@@ -77,13 +90,22 @@ export class SourceManifestView extends LitElement {
     this.renderRoot.querySelector<HTMLButtonElement>('[data-browse]')?.focus();
     const parent = this.scrollParent(); if (parent) parent.scrollTop = this.summaryScroll;
   }
-  protected override willUpdate(changed: Map<string, unknown>) { if (changed.has('revision')) { this.manifest = null; void this.load(); } }
-  override disconnectedCallback() { this.requestVersion++; window.removeEventListener('popstate', this.popState); super.disconnectedCallback(); }
+  private invalidate() {
+    this.requestVersion++; this.manifest = null; this.dialog = ''; this.selectedItem = null;
+  }
+  protected override willUpdate(changed: Map<string, unknown>) { if (changed.has('revision')) void this.load(); }
+  override disconnectedCallback() {
+    this.invalidate(); window.removeEventListener('popstate', this.popState);
+    window.removeEventListener('slide-session-expired', this.onExpired);
+    window.removeEventListener('slide-permissions-loaded', this.onPermissions);
+    super.disconnectedCallback();
+  }
   private async load() {
-    const version = ++this.requestVersion; this.loading = true; this.error = null;
+    this.invalidate();
+    const version = this.requestVersion; this.loading = true; this.error = null;
     try {
       const body = await readSourceResponse(await authFetch('/api/platform/source/manifest'));
-      if (version === this.requestVersion) this.manifest = body;
+      if (version === this.requestVersion && this.isConnected) this.manifest = body;
     } catch (error) { if (version === this.requestVersion) this.error = sourceError(error instanceof TypeError ? 'SOURCE_NETWORK_ERROR' : error); }
     finally { if (version === this.requestVersion) this.loading = false; }
   }
@@ -115,9 +137,9 @@ export class SourceManifestView extends LitElement {
         <div class="snapshot-counts">${[[m.files.length,'已纳入文件'],[m.skippedFiles?.length ?? 0,'已跳过'],[m.warnings?.length ?? 0,'保留提示']].map(([count,label]) => html`<div><span class="number">${fmt(Number(count))}</span><span class="caption">${label}</span></div>`)}</div>
         <div class="details-line"><span class="caption">列表按页浏览；跳过项与提示分开展示。</span><button class="link small" @click=${() => { this.dialog = 'metadata'; }}>查看版本元数据</button></div></app-card>
         <div class="section-head"><h2>同步结果</h2></div><app-card .compact=${true}>${table([{key:'type',label:'分类',width:'22%'},{key:'meaning',label:'处理结果',width:'55%'},{key:'action',label:'操作',width:'23%'}],[{type:html`${badge('已跳过','warn')} ${fmt(m.skippedFiles?.length ?? 0)}`,meaning:'未纳入快照，可按跳过原因筛选。',action:html`<button class="link" @click=${() => this.browse('skipped')}>查看跳过项 →</button>`},{type:html`${badge('提示','info')} ${fmt(m.warnings?.length ?? 0)}`,meaning:'文件已保留，读取时需留意提示。',action:html`<button class="link" @click=${() => this.browse('warnings')}>查看提示 →</button>`}])}</app-card>` : nothing}
-      <app-dialog .open=${!!this.dialog} size="xl" title=${this.dialog === 'metadata' ? '源码快照 · 版本元数据' : '快照条目详情'} @app-dialog-close=${() => { this.dialog = ''; }}>
+      <app-dialog .open=${!!m && !!this.dialog} size="xl" title=${this.dialog === 'metadata' ? '源码快照 · 版本元数据' : '快照条目详情'} @app-dialog-close=${() => { this.dialog = ''; this.selectedItem = null; }}>
         ${this.dialog === 'metadata' && m ? html`${pairs([['快照',m.releaseId],['分支或引用',m.repository?.ref ?? '未知'],['完整性',m.completeness === 'partial' ? '部分同步' : '同步完成'],['部署一致性',m.verification?.status === 'deployment-verified' ? '已验证' : '未验证']])}<dl class="metadata"><dt>Commit</dt><dd>${m.commitSha}</dd><dt>Tree digest</dt><dd>${m.treeDigest}</dd><dt>签名</dt><dd>${m.signature}</dd><dt>仓库来源</dt><dd>${m.repository?.origin ?? '未知'}</dd><dt>部署验证提示</dt><dd>${m.verification?.reason ?? '无'}</dd></dl>` : this.selectedItem ? html`<p class="mono">${this.selectedItem.path}</p>${pairs([['处理结果',this.kind === 'skipped' ? '未纳入快照' : '文件已保留'],['原因',this.selectedItem.reason ? reasons[this.selectedItem.reason] ?? this.selectedItem.reason : '已纳入快照']])}${this.kind !== 'skipped' ? html`${pairs([['大小',this.selectedItem.bytes !== undefined ? `${fmt(this.selectedItem.bytes)} B` : '清单未提供']])}<dl class="metadata"><dt>文件摘要</dt><dd>${this.selectedItem.digest ?? m?.files.find(file => file.path === this.selectedItem?.path)?.digest ?? '清单未提供'}</dd></dl>` : nothing}` : nothing}
-        <div slot="footer"><button class="btn" @click=${() => { this.dialog = ''; }}>关闭</button></div>
+        <div slot="footer"><button class="btn" @click=${() => { this.dialog = ''; this.selectedItem = null; }}>关闭</button></div>
       </app-dialog>`;
   }
 }

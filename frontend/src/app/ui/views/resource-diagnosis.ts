@@ -1,6 +1,7 @@
 import { tabKeydown, workspaceStyles, badge, table, pairs } from './workspace-ui.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 import { customElement, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { safeDashboardReturn } from './dashboard-model.js';
@@ -55,11 +56,22 @@ export class ResourceDiagnosisPage extends LitElement {
   @state() private search = '';
   @state() private permissions: Set<string> = new Set();
   private requestVersion = 0;
+  private submissionVersion = 0;
+  @state() private contextReady = false;
   private readonly onPopState = () => { this.readSelection(); void this.loadEvidence(); };
   private listVersion = 0;
+  // Facts belong to a successful list/permission generation. Task receipts have a
+  // separate lifetime: invalidating facts must never permit a duplicate paid call.
+  private invalidateFacts() {
+    this.requestVersion++; this.stopStatus(); this.contextReady = false;
+    this.resources = []; this.evidence = null; this.pack = null;
+    this.dialog = ''; this.selectedEvidence = null; this.retryDialogOpen = false;
+    if (this.agentResult) this.agentResult = { analysisId: this.agentResult.analysisId, status: this.agentResult.status };
+    this.statusUnconfirmed = this.agentResult !== null || this.busy;
+    this.taskMessage = this.statusUnconfirmed ? '任务状态待确认，请先查询原任务' : '';
+  }
   private clearSensitive() {
-    this.requestVersion++; this.listVersion++; this.stopStatus(); this.resources = []; this.evidence = null; this.pack = null; this.agentResult = null;
-    this.dialog = ''; this.selectedEvidence = null; this.retryDialogOpen = false; this.statusUnconfirmed = false; this.taskMessage = ''; this.error = ''; this.busy = false; this.loading = false;
+    this.invalidateFacts(); this.listVersion++; this.error = ''; this.loading = false;
   }
   private readonly onExpired = () => { this.permissions = new Set(); this.clearSensitive(); };
   private readonly onPermissions = (event: Event) => {
@@ -83,7 +95,7 @@ export class ResourceDiagnosisPage extends LitElement {
     void this.load();
   }
   override disconnectedCallback() {
-    this.requestVersion++; this.listVersion++; this.stopStatus();
+    this.requestVersion++; this.submissionVersion++; this.listVersion++; this.stopStatus();
     window.removeEventListener('popstate', this.onPopState); window.removeEventListener('slide-session-expired', this.onExpired);
     window.removeEventListener('slide-permissions-loaded', this.onPermissions);
     super.disconnectedCallback();
@@ -101,19 +113,20 @@ export class ResourceDiagnosisPage extends LitElement {
   }
   private async load() {
     const generation = ++this.listVersion;
-    this.loading = true; this.error = '';
+    this.invalidateFacts(); this.loading = true; this.error = '';
     try {
       const response = await authFetch('/api/resources');
       if (!response.ok) throw new Error(response.status === 403 ? '无资源浏览权限，请联系管理员授权' : `资源列表加载失败 (${response.status})，请刷新或检查服务连接`);
       const body = await response.json(); if (generation !== this.listVersion || !this.isConnected) return;
-      this.resources = body.items;
-      await this.loadEvidence();
+      this.resources = body.items; this.contextReady = true;
+      await this.loadEvidence(true);
     } catch (error) { if (generation === this.listVersion) this.error = String(error); } finally { if (generation === this.listVersion) this.loading = false; }
   }
-  private async loadEvidence() {
+  private async loadEvidence(preserveTask = false) {
     const version = ++this.requestVersion;
-    this.stopStatus(); this.taskMessage = ''; this.retryDialogOpen = false; this.statusUnconfirmed = false;
-    this.dialog = ''; this.selectedEvidence = null; this.evidence = null; this.pack = null; this.agentResult = null; this.error = ''; this.busy = false;
+    this.stopStatus(); this.retryDialogOpen = false;
+    if (!preserveTask) { this.submissionVersion++; this.taskMessage = ''; this.statusUnconfirmed = false; this.agentResult = null; this.busy = false; }
+    this.dialog = ''; this.selectedEvidence = null; this.evidence = null; this.pack = null; this.error = '';
     if (!this.selected) { this.loading = false; return; }
     this.loading = true;
     const id = Number(new URL(location.href).searchParams.get('analysisId'));
@@ -137,25 +150,30 @@ export class ResourceDiagnosisPage extends LitElement {
   private async diagnose(agent = false, retryOf?: number) {
     if (agent && !permissionMatches(this.permissions, 'ai:manage')) return;
     if (!this.selected || this.busy || (agent && this.taskActive() && retryOf === undefined)) return;
-    const version = this.requestVersion;
+    const version = agent ? this.submissionVersion : this.requestVersion;
+    const isCurrent = () => version === (agent ? this.submissionVersion : this.requestVersion);
     this.busy = true; this.error = ''; this.switchTab(agent ? 'result' : 'relations');
     try {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST', ...(retryOf !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ retryOf, confirmUnknownRetry: true }) } : {}) });
       const result = await response.json();
       if (!response.ok) {
-        if (agent && Number.isSafeInteger(result.analysisId) && result.analysisId > 0 && version === this.requestVersion) { this.agentResult = { analysisId: result.analysisId, status: result.status === 'unknown' ? 'unknown' : 'unconfirmed' }; this.persistAnalysisId(result.analysisId); this.startStatus(); }
+        if (agent && Number.isSafeInteger(result.analysisId) && result.analysisId > 0 && isCurrent()) { this.agentResult = { analysisId: result.analysisId, status: result.status === 'unknown' ? 'unknown' : 'unconfirmed' }; this.persistAnalysisId(result.analysisId); this.followReceipt(); }
         throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无诊断权限，资源与证据浏览仍可用' : response.status === 503 ? 'Agent 或模型暂不可用，请检查配置；已创建的任务可查询状态' : `诊断请求失败 (${response.status})`);
       }
-      if (version !== this.requestVersion) return;
+      if (!isCurrent()) return;
       if (agent) {
         if (!Number.isSafeInteger(result.analysisId) || result.analysisId <= 0) throw new Error('未取得有效任务 ID，请检查服务状态');
         this.agentResult = { analysisId: result.analysisId, status: 'pending' };
         this.persistAnalysisId(result.analysisId);
         this.taskMessage = result.status === 'cached' ? '已复用任务，正在查询真实状态' : '已受理，正在查询真实状态';
-        this.startStatus();
+        this.followReceipt();
       } else this.pack = result;
-    } catch (error) { if (version === this.requestVersion) this.error = String(error); }
-    finally { if (version === this.requestVersion) this.busy = false; }
+    } catch (error) { if (isCurrent()) this.error = String(error); }
+    finally { if (isCurrent()) this.busy = false; }
+  }
+  private followReceipt() {
+    if (this.contextReady) this.startStatus();
+    else { this.statusUnconfirmed = true; this.taskMessage = '任务状态待确认，请先刷新资源后查询原任务'; }
   }
   private taskActive() { return this.statusUnconfirmed || (this.agentResult !== null && !['completed', 'failed'].includes(this.agentResult.status)); }
   private persistAnalysisId(id: number) { const url = new URL(location.href); url.searchParams.set('analysisId', String(id)); history.replaceState(history.state, '', url); }
@@ -165,7 +183,7 @@ export class ResourceDiagnosisPage extends LitElement {
   }
   private startStatus() { this.stopStatus(); this.statusDeadline = Date.now() + 120_000; void this.checkStatus(); }
   private async checkStatus() {
-    if (!this.selected || !this.agentResult) return;
+    if (!this.selected || !this.agentResult || !this.contextReady) return;
     if (Date.now() >= this.statusDeadline) { this.statusUnconfirmed = true; this.taskMessage = '等待超时，任务状态待确认'; this.stopStatus(); return; }
     const version = this.requestVersion;
     const analysisId = this.agentResult.analysisId;
@@ -228,7 +246,7 @@ export class ResourceDiagnosisPage extends LitElement {
     if (!this.selected) return nothing;
     const evidence = this.evidence;
     const fresh = evidence?.facts.filter(item => item.quality === 'good' && evidenceFreshness(item) === '新鲜').length ?? 0;
-    return html`<div class="diagnosis-context" data-diagnosis-overview><div><div class="row"><h2>${this.resourceName(this.selected)}</h2>${badge(resourceLabels[this.selected.type])}${badge(!evidence || !fresh ? '当前证据不可用' : evidence.gaps.length || evidence.truncated ? '存在待补充证据' : '已读取当前观测',!evidence || !fresh || evidence.gaps.length || evidence.truncated ? 'warn' : 'muted')}</div><p class="caption">证据读取时间 ${displayTime(evidence?.generatedAt)}（不是观测时间） · 配置状态不代表健康结论</p></div><div class="actions"><button class="btn" .disabled=${this.busy || this.loading} @click=${() => this.diagnose()}>获取关联证据</button>${permissionMatches(this.permissions,'ai:manage') ? html`<button class="btn-primary" .disabled=${this.busy || this.loading || this.taskActive()} @click=${() => this.diagnose(true)}>开始只读诊断</button>` : nothing}</div></div>
+    return html`<div class="diagnosis-context" data-diagnosis-overview><div><div class="row"><h2>${this.resourceName(this.selected)}</h2>${badge(resourceLabels[this.selected.type])}${badge(!evidence || !fresh ? '当前证据不可用' : evidence.gaps.length || evidence.truncated ? '存在待补充证据' : '已读取当前观测',!evidence || !fresh || evidence.gaps.length || evidence.truncated ? 'warn' : 'muted')}</div><p class="caption">证据读取时间 ${displayTime(evidence?.generatedAt)}（不是观测时间） · 配置状态不代表健康结论</p></div><div class="actions"><button class="btn" .disabled=${this.busy || this.loading || !this.contextReady} @click=${() => this.diagnose()}>获取关联证据</button>${permissionMatches(this.permissions,'ai:manage') ? html`<button class="btn-primary" .disabled=${this.busy || this.loading || !this.contextReady || this.taskActive()} @click=${() => this.diagnose(true)}>开始只读诊断</button>` : nothing}</div></div>
       <p class="diagnosis-intro">${this.loading ? '正在读取证据，尚不能判断异常。' : !evidence || !fresh ? '缺少有效的当前事实，不能据此判断当前正常或异常。' : '已读取当前观测；异常需结合规则评估与业务场景人工确认。'} <span class="caption">刷新、关联证据与状态查询不调用模型；只读诊断可能产生费用，具体金额取决于模型和用量，目前无法估算。</span></p>
       ${!permissionMatches(this.permissions,'ai:manage') ? html`<div class="notice neutral"><div><strong>当前仅有浏览权限</strong>无只读诊断权限，需要 ai:manage；可继续查看资源证据。</div></div>` : nothing}
       ${this.agentResult ? html`<p class="caption" role="status">任务 #${this.agentResult.analysisId} · ${this.statusUnconfirmed ? '任务状态待确认' : this.taskMessage || this.agentResult.status} <button class="link" @click=${() => this.switchTab('result')}>查看分析结果 →</button></p>` : nothing}`;
@@ -280,7 +298,7 @@ export class ResourceDiagnosisPage extends LitElement {
       ${this.evidence?.truncated || this.pack?.truncated ? html`<div class="notice" role="status"><div><strong>返回证据已截断</strong>当前列表不代表完整证据，请核对缺口与采集范围。</div></div>` : nothing}
       ${!this.selected ? this.loading ? html`<div class="skeleton" role="status" aria-label="加载证据"></div>` : html`<app-empty-state title="选择诊断资源" icon="search"></app-empty-state>` : html`
       <div class="diagnosis-workspace"><section class="diagnosis-main"><div class="tabs" role="tablist" @keydown=${tabKeydown} aria-label="诊断工作区">${(['evidence','evaluation','relations','result'] as const).map((tab,index) => html`<button class="tab" role="tab" id=${`diagnosis-tab-${tab}`} aria-controls="diagnosis-panel" tabindex=${this.tab === tab ? 0 : -1} aria-selected=${this.tab === tab} @click=${() => this.switchTab(tab)}>${['当前证据','规则评估','关联资源','分析结果'][index]}${tab === 'result' && this.agentResult ? html`<span>${this.statusUnconfirmed ? '待确认' : this.agentResult.status === 'unknown' ? '未知' : this.agentResult.status === 'completed' ? '已完成' : '待核对'}</span>` : nothing}</button>`)}</div>
-        <div id="diagnosis-panel" role="tabpanel" aria-labelledby=${`diagnosis-tab-${this.tab}`}>${this.tab === 'evidence' ? this.renderEvidence() : this.tab === 'evaluation' ? html`<resource-evaluation .resourceType=${this.selected.type} .resourceId=${this.selected.id}></resource-evaluation>` : this.tab === 'relations' ? this.renderRelations() : this.agentResult ? html`<app-card>${this.renderAgentResult()}</app-card>` : html`<app-card><app-empty-state title="尚无诊断任务" description="按需开始只读诊断，可能产生模型费用。"></app-empty-state></app-card>`}
+        <div id="diagnosis-panel" role="tabpanel" aria-labelledby=${`diagnosis-tab-${this.tab}`}>${this.tab === 'evidence' ? this.renderEvidence() : this.tab === 'evaluation' ? this.contextReady ? keyed(this.requestVersion, html`<resource-evaluation .resourceType=${this.selected.type} .resourceId=${this.selected.id}></resource-evaluation>`) : html`<p role="status">当前评估不可用，请先刷新资源并确认读取权限。</p>` : this.tab === 'relations' ? this.renderRelations() : this.agentResult ? html`<app-card>${this.renderAgentResult()}</app-card>` : html`<app-card><app-empty-state title="尚无诊断任务" description="按需开始只读诊断，可能产生模型费用。"></app-empty-state></app-card>`}
       </div></section>${this.renderAside()}</div>`}${this.renderDialog()}`;
   }
 }
