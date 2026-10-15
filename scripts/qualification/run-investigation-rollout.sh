@@ -3,7 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 mode="${1:---full}"
-case "$mode" in --full|--integration|--api) ;; *) echo 'Use --full, --integration or --api' >&2; exit 64 ;; esac
+case "$mode" in --full|--integration|--api|--rollout) ;; *) echo 'Use --full, --integration, --api or --rollout' >&2; exit 64 ;; esac
 container="slide-t12-$$-$RANDOM"
 cleanup() { docker stop --time 10 "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -52,6 +52,8 @@ if [[ "$mode" == --api ]]; then
   exit 0
 fi
 run_gate rollout pnpm --filter slide-api exec tsx ../../tests/qualification/investigation-rollout.ts
+# CI owns SQL and browser coverage in separate jobs; standalone modes retain it.
+if [[ "$mode" == --rollout ]]; then exit 0; fi
 if [[ "$mode" == --full ]]; then
   run_gate agent-core pnpm --filter @slide/agent-core test
   run_gate api pnpm --filter slide-api test --maxWorkers=1
