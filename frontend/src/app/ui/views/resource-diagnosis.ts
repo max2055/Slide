@@ -57,6 +57,7 @@ export class ResourceDiagnosisPage extends LitElement {
   @state() private permissions: Set<string> = new Set();
   private requestVersion = 0;
   private submissionVersion = 0;
+  private submitting = false;
   @state() private contextReady = false;
   private readonly onPopState = () => { this.readSelection(); void this.loadEvidence(); };
   private listVersion = 0;
@@ -67,7 +68,8 @@ export class ResourceDiagnosisPage extends LitElement {
     this.resources = []; this.evidence = null; this.pack = null;
     this.dialog = ''; this.selectedEvidence = null; this.retryDialogOpen = false;
     if (this.agentResult) this.agentResult = { analysisId: this.agentResult.analysisId, status: this.agentResult.status };
-    this.statusUnconfirmed = this.agentResult !== null || this.busy;
+    this.busy = this.submitting;
+    this.statusUnconfirmed = this.agentResult !== null || this.submitting;
     this.taskMessage = this.statusUnconfirmed ? '任务状态待确认，请先查询原任务' : '';
   }
   private clearSensitive() {
@@ -125,7 +127,7 @@ export class ResourceDiagnosisPage extends LitElement {
   private async loadEvidence(preserveTask = false) {
     const version = ++this.requestVersion;
     this.stopStatus(); this.retryDialogOpen = false;
-    if (!preserveTask) { this.submissionVersion++; this.taskMessage = ''; this.statusUnconfirmed = false; this.agentResult = null; this.busy = false; }
+    if (!preserveTask) { this.submissionVersion++; this.taskMessage = ''; this.statusUnconfirmed = false; this.agentResult = null; this.submitting = false; this.busy = false; }
     this.dialog = ''; this.selectedEvidence = null; this.evidence = null; this.pack = null; this.error = '';
     if (!this.selected) { this.loading = false; return; }
     this.loading = true;
@@ -152,7 +154,7 @@ export class ResourceDiagnosisPage extends LitElement {
     if (!this.selected || this.busy || (agent && this.taskActive() && retryOf === undefined)) return;
     const version = agent ? this.submissionVersion : this.requestVersion;
     const isCurrent = () => version === (agent ? this.submissionVersion : this.requestVersion);
-    this.busy = true; this.error = ''; this.switchTab(agent ? 'result' : 'relations');
+    this.busy = true; this.submitting = agent; this.error = ''; this.switchTab(agent ? 'result' : 'relations');
     try {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST', ...(retryOf !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ retryOf, confirmUnknownRetry: true }) } : {}) });
       const result = await response.json();
@@ -169,7 +171,7 @@ export class ResourceDiagnosisPage extends LitElement {
         this.followReceipt();
       } else this.pack = result;
     } catch (error) { if (isCurrent()) this.error = String(error); }
-    finally { if (isCurrent()) this.busy = false; }
+    finally { if (isCurrent()) { this.busy = false; if (agent) this.submitting = false; } }
   }
   private followReceipt() {
     if (this.contextReady) this.startStatus();
