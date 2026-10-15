@@ -785,6 +785,49 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
+  it('keeps the first runtime phase when admission repeats a cold history reference', async () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    client.watchSession('A');
+    const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+    const cold = (streamEpoch: string) => ({ type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch, runId: 'cold', turnId: 'cold', subscriptionId, fromSeq: 0, toSeq: 0 },
+      snapshot: { version: 1, runId: 'cold', sequence: 0, attempt: 0, phase: 'preparing', parts: [] },
+      recovery: { cold: true, truncated: false, omittedParts: 0,
+        detailRef: { kind: 'authorized-history', sessionKey: 'A', runId: 'cold' } } });
+    socket.receive(cold('initial-watch'));
+    // Admission subscribes before and after saving the user message. Each cold
+    // reference has a fresh epoch, but none denotes an execution to recover.
+    socket.receive(cold('admission'));
+    socket.receive(cold('message-saved'));
+    const waiting = { type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch: 'run-epoch', runId: 'run-A', turnId: 'turn-A', subscriptionId, fromSeq: 0, toSeq: 0 },
+      snapshot: { version: 1, runId: 'run-A', sequence: 1, attempt: 1, phase: 'waiting_model', parts: [] } };
+    socket.receive(waiting);
+    expect(onEvent).toHaveBeenLastCalledWith(waiting);
+    expect(onEvent).toHaveBeenCalledTimes(4);
+    expect(socket.frames.filter(f => f.type === 'chat.watch')).toHaveLength(1);
+    client.disconnect();
+  });
+
+  it('still recovers an execution snapshot when its epoch changes', () => {
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect(); socket.receive({ type: 'auth_ok', capabilities: ['parts-stream-v1'] });
+    client.watchSession('A');
+    const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+    const snapshot = (streamEpoch: string) => ({ type: 'stream.snapshot', sessionKey: 'A',
+      stream: { version: 1, streamEpoch, runId: 'run-A', turnId: 'turn-A', subscriptionId, fromSeq: 0, toSeq: 0 },
+      snapshot: { version: 1, runId: 'run-A', sequence: 1, attempt: 1, phase: 'waiting_model', parts: [] } });
+    socket.receive(snapshot('initial-epoch'));
+    socket.receive(snapshot('replacement-epoch'));
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(socket.frames.filter(f => f.type === 'chat.watch')).toHaveLength(2);
+    expect(socket.frames.at(-1)!.subscriptionId).not.toBe(subscriptionId);
+    client.disconnect();
+  });
+
   it('keeps a newer recovery subscription when an older send is admitted', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
