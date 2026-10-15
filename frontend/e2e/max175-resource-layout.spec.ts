@@ -17,7 +17,7 @@ const base = `http://127.0.0.1:${frontendPort}`;
 test.skip(process.env.MAX175_ISOLATED_MYSQL !== '1', 'Requires MAX-175 task-owned MySQL and exclusive task ports');
 const processes: ChildProcess[] = [];
 let pool: any, token: string, permissions: string[], password = randomBytes(24).toString('hex');
-let instanceId: number, serverId: number, networkId: number;
+let instanceId: number, serverId: number, serverSwitchId: number, networkId: number;
 async function ready(url: string, child: ChildProcess) {
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
@@ -48,8 +48,10 @@ test.beforeAll(async () => {
   const [insert] = await pool.query("INSERT INTO database_instances(name,db_type,host,port,username,password_encrypted,environment,status,health_status) VALUES ('MAX-175 订单数据库 · 隔离服务测试资源','mysql','127.0.0.1',33175,'root',?,'testing','inactive','unknown')", [encryptData('unused-isolated-target',env.ENCRYPTION_KEY)]);
   instanceId = insert.insertId;
   for (let i=0;i<55;i++) await pool.query("INSERT INTO database_logs(instance_id,log_level,source,message,raw_content,collected_at) VALUES (?,?,'mysql_error',?,?,DATE_SUB(NOW(),INTERVAL ? SECOND))", [instanceId,i%3?'info':'warning',`事件 ${i+1} · 持久化日志测试记录`,`完整事件 ${i+1}\n${'Long_SQL_context_'.repeat(24)}\nEND-OF-LOG-${i+1}`,i]);
-  const [server] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max175-no-target.invalid',22,'MAX-175 隔离服务器','Linux','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
+  const [server] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max175-no-target.invalid',22,'MAX-175 隔离服务器','rhel','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
   serverId = server.insertId;
+  const [serverSwitch] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max175-second-no-target.invalid',22,'MAX-175 切换服务器','rhel','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
+  serverSwitchId = serverSwitch.insertId;
   const [network] = await pool.query("INSERT INTO network_devices(name,label,host,vendor,collection_enabled,status) VALUES ('max175-network','MAX-175 隔离网络设备','max175-network.invalid','huawei',0,'unknown')");
   networkId = network.insertId;
   for(const [index,status] of [[1,'up'],[2,'down']] as const) await pool.query("INSERT INTO network_device_interfaces(device_id,if_index,if_name,if_alias,speed_bps,admin_status,oper_status,last_seen_at) VALUES (?,?,?,?,1000000000,'up',?,DATE_SUB(NOW(),INTERVAL 1 HOUR))",[networkId,index,`GigabitEthernet0/0/${index}`,'MAX-175 持久化接口记录 · '+ '长别名'.repeat(12),status]);
@@ -231,6 +233,15 @@ test('server and network real service inventory, semantic tabs, interfaces and p
     localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));
   },{token,permissions});
   const reads:{path:string;status:number}[]=[], writes:string[]=[], errors:string[]=[];
+  const diagnosticRequests: string[] = [];
+  // A fresh API process has no diagnostic cache. Block any regression before SSH,
+  // and fail on the request itself; no unsupported-OS response is used as proof.
+  await page.route('**/api/servers/*/diagnostics**', route => {
+    diagnosticRequests.push(route.request().url()); return route.abort();
+  });
+  await page.route('**/api/servers/*/collect-diagnostics', route => {
+    diagnosticRequests.push(route.request().url()); return route.abort();
+  });
   page.on('response',r=>{const path=new URL(r.url()).pathname;if(path.startsWith('/api/')) reads.push({path,status:r.status()});});
   page.on('request',r=>{if(['POST','PUT','DELETE'].includes(r.method())&&!r.url().includes('/metrics-v2/query')) writes.push(new URL(r.url()).pathname);});
   page.on('pageerror',e=>errors.push(e.message));
@@ -243,18 +254,23 @@ test('server and network real service inventory, semantic tabs, interfaces and p
       await server.getByRole('tab',{name:tab,exact:true}).click();
       if(tab==='指标与趋势') await expect(server.locator('semantic-metrics .window')).toBeVisible();
       if(tab==='日志') {
-        await expect(server.locator('server-diagnostic-panel')).toContainText('服务器诊断证据加载失败');
-        await expect(server.locator('semantic-metrics')).toHaveCount(0);
-        const diagnosticReads=reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`).length;
-        expect(reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`).at(-1)?.status).toBe(422);
+        await expect(server).toContainText('尚未采集诊断证据');
         await server.getByRole('button',{name:'刷新',exact:true}).click();
         await expect(server.getByRole('button',{name:'刷新',exact:true})).toBeEnabled();
-        expect(reads.filter(row=>row.path===`/api/servers/${serverId}/diagnostics`)).toHaveLength(diagnosticReads);
-        await expect(server.locator('server-diagnostic-panel')).toContainText('服务器诊断证据加载失败');
+        await expect(server).toContainText('尚未采集诊断证据');
+        expect(diagnosticRequests).toEqual([]);
       }
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${output}/server-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
     }
+    for (const tab of ['诊断','网络','进程','服务','日志']) {
+      await server.getByRole('tab',{name:tab,exact:true}).click();
+      await expect(server).toContainText('尚未采集诊断证据');
+    }
+    await server.evaluate((el:any,id)=>el.serverId=id,serverSwitchId);
+    await expect(server.locator('.server-title')).toContainText('MAX-175 切换服务器');
+    await expect(server).toContainText('尚未采集诊断证据');
+    expect(diagnosticRequests).toEqual([]);
     await page.goto(`${base}/network-device-detail?networkDeviceId=${networkId}`);await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
     const network=page.locator('network-device-detail');await expect(network.getByText('当前需要关注',{exact:true})).toBeVisible();await expect(network.locator('semantic-metrics')).toHaveCount(0);
     for(const tab of ['概览','指标与趋势','接口','配置备份']) {
@@ -281,7 +297,7 @@ test('server and network real service inventory, semantic tabs, interfaces and p
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}})));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
   expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge','/api/user/preferences'].includes(path))).toEqual([]);expect(errors).toEqual([]);
   expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
-  await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Scheduled collection disabled, no live SSH/SNMP target; diagnostics unavailable: HTTP 422 HOST_OS_UNSUPPORTED for the Linux fixture before SSH, semantic metrics unconfigured. Diagnostic GET can collect on cache miss/expiry; no POST does not prove read-only. Not live target acceptance.',reads,writes,errors},null,2));
+  await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Scheduled collection disabled, no live SSH/SNMP target; supported rhel OS, fresh API process with no diagnostics cache, zero diagnostic GET or collection POST across entry/tabs/refresh/object switch; request trap blocks a regression before SSH. Semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors,diagnosticRequests},null,2));
 });
 
 test('controlled log and interface exceptional states remain explicit',async({page})=>{

@@ -153,7 +153,6 @@ export class ServerDetailPage extends LitElement {
   @state() private hostedInstancesLoading = false;
   @state() private hostedInstancesError: string | null = null;
   @state() private diagnostics: ServerDiagnosticEvidence | null = null;
-  @state() private diagnosticsLoading = false;
   @state() private diagnosticsError: string | null = null;
   @state() private diagnosticsCollecting = false;
   private _navHandler: ((e: any) => void) | null = null;
@@ -165,7 +164,7 @@ export class ServerDetailPage extends LitElement {
   private onPermissionsChanged = () => {
     ++this.contextVersion; ++this.overviewRequest;
     this.server = null; this.overview = null; this.hostedInstances = []; this.diagnostics = null;
-    this.loading = false; this.isRefreshing = false;
+    this.loading = false; this.isRefreshing = false; this.diagnosticsCollecting = false; this.diagnosticsError = null;
     this.error = '权限或登录状态已变更，请重新打开资源。';
   };
   private async loadOverview(id: number, version = this.contextVersion) {
@@ -231,13 +230,12 @@ export class ServerDetailPage extends LitElement {
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
     this.server = null; this.diagnostics = null; this.diagnosticsError = null;
-    this.diagnosticsLoading = false; this.diagnosticsCollecting = false; this.isRefreshing = false;
+    this.diagnosticsCollecting = false; this.isRefreshing = false;
     void this.loadOverview(id, version);
     this.lastUpdated = null; this.detailReadError = '';
     this.error = null;
     this.loading = true;
     void this.loadHostedInstances(id, version);
-    if (['diagnostics','network','processes','services','logs'].includes(this.activeTab)) void this.loadDiagnostics(id,version);
     await this.loadServer(id, version);
     if (version === this.contextVersion) {
       this.loading = false;
@@ -245,83 +243,72 @@ export class ServerDetailPage extends LitElement {
   }
 
   private async loadServer(id: number, version = this.contextVersion) {
+    const current = () => version === this.contextVersion && id === this.serverId;
     try {
       const res = await authFetch(`/api/servers/${id}`);
+      if (!current()) return;
       if (res.ok) {
         const server = await res.json();
-        if (version === this.contextVersion) { this.server = server; this.lastUpdated = new Date(); }
+        if (current()) { this.server = server; this.lastUpdated = new Date(); }
       }
       else {
-        if (version === this.contextVersion) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
+        if (current()) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
       }
     } catch (err: any) {
-      if (version === this.contextVersion) this.error = err.message;
+      if (current()) this.error = err.message;
     }
   }
 
   private async loadHostedInstances(id: number, version = this.contextVersion): Promise<void> {
+    const current = () => version === this.contextVersion && id === this.serverId;
     this.hostedInstances = [];
     this.hostedInstancesLoading = true;
     this.hostedInstancesError = null;
     try {
       const response = await authFetch(`/api/servers/${id}/instances`);
+      if (!current()) return;
       if (!response.ok) {
         throw new Error(response.status === 401 || response.status === 403
           ? "没有权限查看该服务器托管的数据库实例"
           : "托管数据库实例加载失败");
       }
       const data = await response.json() as HostedInstancesResponse;
-      if (version === this.contextVersion) this.hostedInstances = data.instances;
+      if (current()) this.hostedInstances = data.instances;
     } catch (error) {
-      if (version === this.contextVersion) {
+      if (current()) {
         this.hostedInstancesError = error instanceof Error ? error.message : "托管数据库实例加载失败";
       }
     } finally {
-      if (version === this.contextVersion) this.hostedInstancesLoading = false;
-    }
-  }
-
-  private async loadDiagnostics(id: number, version = this.contextVersion): Promise<void> {
-    this.diagnosticsLoading = true;
-    this.diagnosticsError = null;
-    try {
-      const response = await authFetch(`/api/servers/${id}/diagnostics`);
-      if (response.status === 404) {
-        // Older backends may not expose the optional evidence route yet.
-        if (version === this.contextVersion) this.diagnostics = null;
-        return;
-      }
-      if (!response.ok) throw new Error("服务器诊断证据加载失败");
-      const payload = await response.json();
-      const evidence = payload?.evidence ?? payload;
-      if (version === this.contextVersion) this.diagnostics = evidence as ServerDiagnosticEvidence;
-    } catch (error) {
-      if (version === this.contextVersion) {
-        this.diagnosticsError = error instanceof Error ? error.message : "服务器诊断证据加载失败";
-      }
-    } finally {
-      if (version === this.contextVersion) this.diagnosticsLoading = false;
+      if (current()) this.hostedInstancesLoading = false;
     }
   }
 
   private async collectDiagnostics() {
     if (!this.serverId || this.diagnosticsCollecting) return;
     const id = this.serverId, version = this.contextVersion;
+    const current = () => version === this.contextVersion && id === this.serverId;
     this.diagnosticsCollecting = true;
+    this.diagnosticsError = null;
     try {
       const response = await authFetch(`/api/servers/${id}/collect-diagnostics`, { method: "POST" });
-      if (version !== this.contextVersion || id !== this.serverId) return;
+      if (!current()) return;
+      const body = await response.json().catch(() => ({}));
+      if (!current()) return;
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "诊断采集失败");
       }
-      await this.loadDiagnostics(id, version);
-      if (version !== this.contextVersion) return;
+      // POST already returns the collected evidence. The legacy GET may collect
+      // again on a cache miss, so neither navigation nor this action calls it.
+      if (body.success !== true || !body.diagnostics || body.diagnostics.serverId !== id) throw new Error("诊断采集返回格式异常");
+      this.diagnostics = body.diagnostics as ServerDiagnosticEvidence;
       showToast("诊断证据已更新", "success");
     } catch (error) {
-      if (version === this.contextVersion) showToast(error instanceof Error ? error.message : "诊断采集失败", "error");
+      if (current()) {
+        this.diagnosticsError = error instanceof Error ? error.message : "诊断采集失败";
+        showToast(this.diagnosticsError, "error");
+      }
     } finally {
-      if (version === this.contextVersion) this.diagnosticsCollecting = false;
+      if (current()) this.diagnosticsCollecting = false;
     }
   }
 
@@ -398,9 +385,6 @@ export class ServerDetailPage extends LitElement {
   }
   private _applyTab(tab: string) {
     this.activeTab = tab;
-    if (["diagnostics", "network", "processes", "services", "logs"].includes(tab) && this.serverId && !this.diagnostics) {
-      this.loadDiagnostics(this.serverId);
-    }
   }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -508,9 +492,10 @@ export class ServerDetailPage extends LitElement {
     return html`
       <app-card>
         <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
+        ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">尚未采集诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将通过 SSH 采集，需要服务器管理权限。</p>` : nothing}
         <server-diagnostic-panel
           .evidence=${this.diagnostics}
-          .loading=${this.diagnosticsLoading}
+          .loading=${this.diagnosticsCollecting}
           .error=${this.diagnosticsError}
           .sectionFilter=${section}
         ></server-diagnostic-panel>

@@ -294,14 +294,22 @@ export class InstanceDetailPage extends LitElement {
           break;
         }
         case "capacity": {
-          const version = this.contextVersion;
+          const version = this.contextVersion, instanceId = this.instanceId;
+          const current = () => version === this.contextVersion && instanceId === this.instanceId;
           const [cr, chr] = await Promise.all([
-            authFetch(`/api/database/instances/${this.instanceId}/capacity`),
-            authFetch(`/api/database/instances/${this.instanceId}/capacity/history?hours=168`),
+            authFetch(`/api/database/instances/${instanceId}/capacity`),
+            authFetch(`/api/database/instances/${instanceId}/capacity/history?hours=168`),
           ]);
-          if (version !== this.contextVersion) return;
-          if (cr.ok) this.capacity = await cr.json();
-          if (chr.ok) { const h = await chr.json(); if (h.history) { this.capHistory = { time: h.history.map((x: any) => x.recorded_at?.substring(0, 16)||""), size: h.history.map((x: any) => x.total_size_gb||0) }; } }
+          if (!current()) return;
+          const capacity = cr.ok ? await cr.json() : null;
+          if (!current()) return;
+          const history = chr.ok ? await chr.json() : null;
+          if (!current()) return;
+          if (cr.ok) this.capacity = capacity;
+          if (history?.history) this.capHistory = {
+            time: history.history.map((x: any) => x.recorded_at?.substring(0, 16) || ""),
+            size: history.history.map((x: any) => x.total_size_gb || 0),
+          };
           break;
         }
         case "diagnosis":
