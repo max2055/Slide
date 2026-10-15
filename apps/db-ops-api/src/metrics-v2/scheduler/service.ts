@@ -76,7 +76,8 @@ export class MetricScheduler {
           overrides: { enabled: settings.enabled, interval_ms: settings.interval_ms, timeout_ms: settings.timeout_ms,
             stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms, max_rows: settings.max_rows } }, {
           ...access, resource: access.resource, binding_id: refKey(ref), attempt_id: `${job.id}:${job.fencingToken}`,
-          config_revision: revision, observed_at: new Date(started).toISOString(), clock: () => new Date(this.clock()).toISOString(),
+          // Metadata can be observed after job start; started still anchors elapsed time and cancellation.
+          config_revision: revision, observed_at: new Date(this.clock()).toISOString(), clock: () => new Date(this.clock()).toISOString(),
           signal, collector_ids: plan.collectorIds, metric_keys: plan.metricKeys, states: snapshot.states,
           previous_capabilities: published.resolved.metric_templates.map(t => t.capability), before_request: check,
           collect: async (...args) => {
