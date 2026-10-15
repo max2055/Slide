@@ -13,6 +13,7 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175-R2';
 const apiPort = 3175, frontendPort = 5195;
+const taskSchema = `db_ops_ai_qualification_max175_${process.pid}`;
 const base = `http://127.0.0.1:${frontendPort}`;
 test.skip(process.env.MAX175_ISOLATED_MYSQL !== '1', 'Requires MAX-175 task-owned MySQL and exclusive task ports');
 const processes: ChildProcess[] = [];
@@ -36,10 +37,10 @@ test.beforeAll(async () => {
   test.setTimeout(120_000);
   if (process.env.MAX175_ISOLATED_MYSQL !== '1') throw new Error('Requires task-owned MySQL at 127.0.0.1:33175; never point at shared DB');
   await mkdir(output, { recursive: true });
-  const env = { ...process.env, DB_HOST:'127.0.0.1', DB_PORT:'33175', DB_USER:'root', DB_PASSWORD:'', DB_NAME:`db_ops_ai_qualification_max175_${process.pid}`,
+  const env = { ...process.env, DB_HOST:'127.0.0.1', DB_PORT:'33175', DB_USER:'root', DB_PASSWORD:'', DB_NAME:taskSchema,
     JWT_SECRET_KEY:randomBytes(32).toString('hex'), ENCRYPTION_KEY:randomBytes(32).toString('hex'),
-    PORT:String(apiPort), AGENT_WS_PORT:'29775', SLIDE_MEMORY_PIPELINE_ENABLED:'false' };
-  const migration = execFileSync(process.execPath, ['--import','tsx','init-db.ts'], { cwd:resolve('../apps/db-ops-api'), env, encoding:'utf8' });
+    PORT:String(apiPort), AGENT_WS_PORT:'29775', SLIDE_MEMORY_PIPELINE_ENABLED:'false', METRICS_V2_COLLECTION_ENABLED:'false' };
+  const migration = execFileSync(process.execPath, ['--import','tsx','init-db.ts'], { cwd:resolve('../apps/db-ops-api'), env, encoding:'utf8', timeout:90_000 });
   await writeFile(`${output}/migration.log`, migration);
   pool = mysql.createPool({ host:env.DB_HOST, port:Number(env.DB_PORT), user:env.DB_USER, password:env.DB_PASSWORD, database:env.DB_NAME, timezone:'Z' });
   await pool.query('UPDATE llm_providers SET enabled=0');
@@ -70,6 +71,16 @@ test.afterAll(async () => {
     if (child.exitCode === null) { child.kill('SIGTERM'); await new Promise<void>(resolve => { child.once('exit', () => resolve()); setTimeout(() => { if(child.exitCode===null) child.kill('SIGKILL'); resolve(); },5000).unref(); }); }
   }
   await pool?.end();
+  if (process.env.MAX175_ISOLATED_MYSQL === '1') {
+    const cleanup = await mysql.createConnection({host:'127.0.0.1',port:33175,user:'root',connectTimeout:5000});
+    try {
+      await cleanup.query(`DROP DATABASE IF EXISTS \`${taskSchema}\``);
+      const [remaining] = await cleanup.query('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?',[taskSchema]);
+      expect(remaining).toHaveLength(0);
+      await writeFile(`${output}/cleanup-fixture.json`,JSON.stringify({schema:taskSchema,remaining,processes:processes.map(child=>({pid:child.pid,exitCode:child.exitCode,signal:child.signalCode}))},null,2));
+    }
+    finally { await cleanup.end(); }
+  }
 });
 
 test('database representative: real routes, reading times, metrics and log browsing', async ({ page }) => {
@@ -328,4 +339,116 @@ test('controlled log and interface exceptional states remain explicit',async({pa
       if(state==='loading') {release?.();release=undefined;}
     }
   }
+});
+
+// Optional measurement run, using the same isolated formal API fixture above.
+// No HTTP interception, live-target collection, model calls or shared environment.
+test('MAX-175 performance: cold and warm authenticated resource journeys', async ({ browser }) => {
+  test.skip(process.env.MAX175_PERFORMANCE !== '1', 'Explicit performance run only');
+  test.setTimeout(240_000);
+  const { cpus, totalmem, platform, release, arch } = await import('node:os');
+  const samples: Array<{ mode: string; kind: string; iteration: number; operation: string; ms: number }> = [];
+  const responses: Array<{ path: string; status: number }> = [], errors: string[] = [];
+  const dimensions: Record<string, unknown> = {};
+  const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], {encoding:'utf8'}).trim();
+  const journeys = [
+    {kind:'database',path:`/instance-detail?id=${instanceId}`,tag:'instance-detail-page'},
+    {kind:'server',path:`/server-detail?id=${serverId}`,tag:'server-detail'},
+    {kind:'network',path:`/network-device-detail?networkDeviceId=${networkId}`,tag:'network-device-detail'},
+  ];
+  for (const mode of ['cold-browser', 'warm-browser']) for (const journey of journeys) {
+    let context: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+    try {
+      for (let iteration=0; iteration<(mode==='cold-browser'?5:10); iteration++) {
+        if (!context || mode==='cold-browser') {
+          await context?.close();
+          context = await browser.newContext({viewport:{width:1440,height:1000},locale:'zh-CN',colorScheme:'light'});
+          await context.addInitScript(({token,permissions})=>{
+            localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);
+            localStorage.setItem('permissions',JSON.stringify(permissions));localStorage.setItem('slide.i18n.locale','zh-CN');
+          },{token,permissions});
+        }
+        const page = await context.newPage();
+        page.on('pageerror',error=>errors.push(error.message));
+        page.on('response',response=>{
+          const path=new URL(response.url()).pathname;
+          if (path.startsWith('/api/')) responses.push({path,status:response.status()});
+        });
+        const cdp=await context.newCDPSession(page);
+        await cdp.send('Network.enable');
+        await cdp.send('Network.setCacheDisabled',{cacheDisabled:mode==='cold-browser'});
+        const view=page.locator(journey.tag);
+        const painted=()=>page.evaluate(()=>new Promise<void>(done=>requestAnimationFrame(()=>requestAnimationFrame(()=>done()))));
+        const measure=async(operation:string,action:()=>Promise<unknown>)=>{
+          const start=performance.now(); await action(); await painted();
+          samples.push({mode,kind:journey.kind,iteration,operation,ms:performance.now()-start});
+        };
+        await measure('page-load',async()=>{
+          await page.goto(`${base}${journey.path}`,{waitUntil:'domcontentloaded'});
+          await view.getByText('当前需要关注',{exact:true}).waitFor();
+        });
+        await measure('tab-to-metrics',async()=>{
+          await view.getByRole('tab',{name:'指标与趋势',exact:true}).click();
+          await view.locator('semantic-metrics .window').waitFor();
+        });
+        const metrics=view.locator('semantic-metrics');
+        dimensions[journey.kind]=await metrics.evaluate((el:any)=>({metrics:el.result.metrics.length,series:el.result.metrics.reduce((n:number,m:any)=>n+m.series.length,0),states:[...new Set(el.result.metrics.map((m:any)=>m.state))]}));
+        for (const hours of ['6','1']) await measure('metric-range-filter',async()=>{
+          const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/metrics-v2/query' && r.request().method()==='POST');
+          await metrics.getByLabel('时间范围',{exact:true}).selectOption(hours);
+          expect((await response).status()).toBe(200);
+          await page.waitForFunction(()=>{
+            const el:any=document.querySelector('app-root')?.shadowRoot?.querySelector('semantic-metrics');
+            // Lit views and app shell use varying light/shadow boundaries. Search below instead.
+            const find=(root:Document|ShadowRoot|Element):any=>{
+              for(const node of root.querySelectorAll('*')) {
+                if(node.localName==='semantic-metrics') return node;
+                if(node.shadowRoot) {const found=find(node.shadowRoot);if(found) return found;}
+              }
+            };
+            const target=el??find(document);return target?.result && !target.busy;
+          },{},{polling:'raf'});
+        });
+        const raw=metrics.locator('summary').filter({hasText:'查看原始时间桶'}).first();
+        await measure('metric-details',async()=>{await raw.click();await metrics.locator('app-data-table').first().waitFor();});
+        if (iteration===0 && mode==='warm-browser') await writeFile(`${output}/ax-${journey.kind}-metrics.yml`,await view.ariaSnapshot());
+        if(journey.kind==='database') {
+          const logs=view.locator('database-log-tab');
+          await measure('tab-to-logs',async()=>{await view.getByRole('tab',{name:'日志',exact:true}).click();await logs.locator('.message-cell').first().waitFor();});
+          await expect(logs.locator('.message-cell')).toHaveCount(50);
+          const ids=await logs.evaluate((el:any)=>el.logs.map((row:any)=>row.id));
+          await measure('logs-next-page',async()=>{await logs.getByRole('button',{name:'下一页',exact:true}).click();await page.waitForFunction(()=>{
+            const find=(root:Document|ShadowRoot|Element):any=>{for(const node of root.querySelectorAll('*')) {if(node.localName==='database-log-tab')return node;if(node.shadowRoot){const found=find(node.shadowRoot);if(found)return found;}}};
+            return find(document)?.logs.length===5;
+          },{},{polling:'raf'});});
+          const nextIds=await logs.evaluate((el:any)=>el.logs.map((row:any)=>row.id));
+          expect(nextIds.every((id:number)=>!ids.includes(id))).toBe(true);
+          await measure('logs-level-filter',async()=>{await logs.getByLabel('日志级别',{exact:true}).selectOption('warning');await expect(logs.locator('.message-cell')).toHaveCount(19);});
+          await measure('logs-text-filter',async()=>{await logs.getByLabel('本批日志关键字').fill('事件 1 ·');await expect(logs.locator('.message-cell')).toHaveCount(1);});
+          await measure('logs-fulltext',async()=>{await logs.locator('.message-cell').first().press('Enter');await logs.locator('.raw-content').waitFor();});
+          await expect(logs.locator('.message-cell').first()).toBeFocused();
+          if(iteration===0 && mode==='warm-browser') await writeFile(`${output}/ax-database-logs.yml`,await view.ariaSnapshot());
+        } else if(journey.kind==='network') {
+          await measure('tab-to-interfaces',async()=>{await view.getByRole('tab',{name:'接口',exact:true}).click();await view.getByText('GigabitEthernet0/0/1',{exact:true}).waitFor();});
+          await measure('interface-status-filter',async()=>{await view.getByLabel('接口运行状态',{exact:true}).selectOption('down');await expect(view.getByText('GigabitEthernet0/0/1',{exact:true})).toHaveCount(0);});
+          await view.getByLabel('接口运行状态',{exact:true}).selectOption('');
+          await measure('interface-name-filter',async()=>{await view.getByLabel('接口名称或别名',{exact:true}).fill('0/0/1');await expect(view.getByText('GigabitEthernet0/0/2',{exact:true})).toHaveCount(0);});
+          if(iteration===0 && mode==='warm-browser') await writeFile(`${output}/ax-network-interfaces.yml`,await view.ariaSnapshot());
+        } else {
+          await measure('tab-to-server-logs',async()=>{await view.getByRole('tab',{name:'日志',exact:true}).click();await view.getByText('当前页面尚未取得诊断证据',{exact:false}).waitFor();});
+        }
+        await measure('tab-to-overview',async()=>{await view.getByRole('tab',{name:'概览',exact:true}).click();await view.getByText('当前需要关注',{exact:true}).waitFor();});
+        await page.close();
+      }
+    } finally { await context?.close(); }
+  }
+  const groups=[...new Set(samples.map(s=>`${s.mode}/${s.kind}/${s.operation}`))].map(key=>{
+    const values=samples.filter(s=>`${s.mode}/${s.kind}/${s.operation}`===key).map(s=>s.ms).sort((a,b)=>a-b);
+    const percentile=(p:number)=>values[Math.max(0,Math.ceil(values.length*p)-1)];
+    return {key,n:values.length,min:values[0],p50:percentile(.5),p95:percentile(.95),max:values.at(-1)};
+  });
+  await writeFile(`${output}/performance.json`,JSON.stringify({sourceHead,browser:browser.version(),environment:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpuCount:cpus().length,memoryBytes:totalmem(),viewport:'1440x1000',server:'Vite development + complete formal Fastify/JWT/MySQL 8.4, loopback, no CPU/network throttling'},method:'Sequential single-user browser journeys. Cold = new context + browser HTTP cache disabled; backend/DB/OS remain warm. Warm = reused context per resource, first iteration retained. Times include Playwright actionability/polling and two requestAnimationFrame callbacks; not INP, Web Vitals, load capacity or production SLA. No before/after baseline or acceptance threshold.',data:{logs:55,logBatchSize:50,warningLogs:19,interfaces:2,dimensions,source:'Task-owned persisted inventory/log fixtures via real APIs; metrics unconfigured; server diagnostics absent. No live collection, response interception or product model.'},samples,groups,responses,errors},null,2));
+  expect(errors).toEqual([]);
+  expect(responses.filter(r=>/\/diagnostics|\/collect-diagnostics/.test(r.path))).toEqual([]);
+  expect(responses.filter(r=>r.path==='/api/metrics-v2/query' || r.path==='/api/logs' || r.path.endsWith('/interfaces')).every(r=>r.status===200)).toBe(true);
 });
