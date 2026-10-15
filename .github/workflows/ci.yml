@@ -158,6 +158,11 @@ jobs:
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
+      - name: Instance query states with live MySQL and permissions
+        env:
+          MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
+          MAX163_TEST_MYSQL_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.instance-query.config.ts
       - name: Feedback formal SQL transactions and workspace HTTP/WS acceptance
         env:
           T11_TEST_MYSQL_PORT: '3306'

@@ -8,6 +8,7 @@ import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
 import "../components/app-badge.js";
 import "../components/app-card.js";
+import "../components/app-empty-state.js";
 import "../components/instance-diagnosis-modal.js";
 import "./ai-analysis-result.js";
 import "./schema-management.ts";
@@ -21,6 +22,8 @@ import { authFetch } from "../../../api/index.js";
 interface InstanceDetail { id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
 interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
+type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
+interface QueryRead { status: ReadStatus; instanceId: number | null; readAt?: number; source?: string; }
 interface CapacityInfo { total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
 
 @customElement("instance-detail-page")
@@ -111,7 +114,12 @@ export class InstanceDetailPage extends LitElement {
   @state() private lastUpdated: Date | null = null;
   @state() private autoRefresh = true;
   @state() private isRefreshing = false;
-  @state() private topsqlLoading = false;
+  @state() private queryReads: Record<'topsql' | 'sessions', QueryRead> = {
+    topsql: { status: 'idle', instanceId: null }, sessions: { status: 'idle', instanceId: null },
+  };
+  private queryRequests = { topsql: 0, sessions: 0 };
+  private queryExpiryTimers: Partial<Record<'topsql' | 'sessions', ReturnType<typeof setTimeout>>> = {};
+  private readonly QUERY_MAX_AGE = 60_000;
   @state() private diagnosisStatus: "idle"|"running"|"completed"|"failed"|"unknown" = "idle";
   @state() private diagnosisResult: any = null;
   @state() private diagnosisError: string | null = null;
@@ -136,7 +144,7 @@ export class InstanceDetailPage extends LitElement {
     window.addEventListener("popstate", () => this.loadFromUrl());
     this.startAutoRefresh();
   }
-  override disconnectedCallback() { super.disconnectedCallback(); this.stopAutoRefresh(); this._stopDiagnosisPolling(); }
+  override disconnectedCallback() { super.disconnectedCallback(); this.stopAutoRefresh(); this._stopDiagnosisPolling(); this._resetQueryReads(); }
 
   private loadFromUrl() {
     const id = new URLSearchParams(window.location.search).get("id");
@@ -153,45 +161,53 @@ export class InstanceDetailPage extends LitElement {
   private async loadData() {
     if (!this.instanceId) return;
     this.loading = true; this.error = null;
+    this._resetQueryReads();
+    const instanceId = this.instanceId;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
+      if (instanceId !== this.instanceId) return;
       if (!res.ok) throw new Error("获取实例详情失败");
-      this.instance = await res.json();
+      const instance = await res.json();
+      if (instanceId !== this.instanceId) return;
+      this.instance = instance;
       this.loadDiagnosisHistory();
       await this.loadTabData();
-    } catch (err: any) { this.error = err.message; }
-    finally { this.loading = false; this.lastUpdated = new Date(); }
+    } catch (err: any) { if (instanceId === this.instanceId) this.error = err.message; }
+    finally { if (instanceId === this.instanceId) { this.loading = false; this.lastUpdated = new Date(); } }
   }
 
   private async refreshCurrentTab() {
     if (!this.instanceId || this.isRefreshing) return;
     this.isRefreshing = true;
+    const instanceId = this.instanceId;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
-      if (res.ok) this.instance = await res.json();
+      if (instanceId !== this.instanceId) return;
+      if (!res.ok) {
+        this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
+        return;
+      }
+      const instance = await res.json();
+      if (instanceId !== this.instanceId) return;
+      this.instance = instance;
       await this.loadTabData();
       this.lastUpdated = new Date();
-    } catch { /* ignore refresh errors */ }
+    } catch { if (instanceId === this.instanceId) this._invalidateQueryReads('error'); }
     finally { this.isRefreshing = false; }
   }
 
   private async loadTabData() {
     if (!this.instanceId) return;
     try {
-      this._loadTopSqlData().catch(() => {});
+
       switch (this.activeTab) {
         case "overview":
         case "metrics": {
           break;
         }
-        case "topsql": {
-          const tr = await authFetch(`/api/database/instances/${this.instanceId}/topsql`);
-          if (tr.ok) this.slowQueries = await tr.json();
-          break;
-        }
+        case "topsql":
         case "sessions": {
-          const sr = await authFetch(`/api/database/instances/${this.instanceId}/sessions`);
-          if (sr.ok) this.sessions = await sr.json();
+          await this._loadQueryData(this.activeTab);
           break;
         }
         case "capacity": {
@@ -219,12 +235,75 @@ export class InstanceDetailPage extends LitElement {
   private _applyTab(tab: string) { this.activeTab = tab; this.loadTabData(); }
   private _toggleAutoRefresh() { this.autoRefresh = !this.autoRefresh; this.startAutoRefresh(); }
   private async _manualRefresh() { await this.refreshCurrentTab(); }
-  private async _loadTopSqlData() {
-    if (!this.instanceId) return;
-    this.topsqlLoading = true;
-    try { const r = await authFetch(`/api/database/instances/${this.instanceId}/topsql`); if (r.ok) this.slowQueries = await r.json(); }
-    catch { /* ignore */ }
-    finally { this.topsqlLoading = false; }
+  private _resetQueryReads() {
+    for (const kind of ['topsql', 'sessions'] as const) {
+      this.queryRequests[kind]++;
+      clearTimeout(this.queryExpiryTimers[kind]);
+    }
+    this.slowQueries = []; this.sessions = [];
+    this.queryReads = { topsql: { status: 'idle', instanceId: null }, sessions: { status: 'idle', instanceId: null } };
+  }
+  private _invalidateQueryReads(status: ReadStatus) {
+    this._resetQueryReads();
+    this.queryReads = { topsql: { status, instanceId: this.instanceId }, sessions: { status, instanceId: this.instanceId } };
+  }
+  private async _loadQueryData(kind: 'topsql' | 'sessions') {
+    const instanceId = this.instanceId;
+    if (!instanceId) return;
+    const request = ++this.queryRequests[kind];
+    clearTimeout(this.queryExpiryTimers[kind]);
+    this.queryReads = { ...this.queryReads, [kind]: { status: 'loading', instanceId } };
+    if (kind === 'topsql') this.slowQueries = []; else this.sessions = [];
+    const current = () => this.instanceId === instanceId && this.queryRequests[kind] === request;
+    try {
+      const res = await authFetch(`/api/database/instances/${instanceId}/${kind}`);
+      if (!current()) return;
+      if (!res.ok) {
+        const status = res.status === 401 || res.status === 403 ? 'forbidden' : res.status === 404 ? 'unavailable' : 'error';
+        this.queryReads = { ...this.queryReads, [kind]: { status, instanceId } };
+        return;
+      }
+      const rows: unknown = await res.json();
+      if (!current()) return;
+      // Keep the existing array contract; null/error envelopes and malformed rows are not empty success.
+      if (!Array.isArray(rows) || !rows.every(row => row && typeof row === 'object' &&
+        (kind === 'topsql' ? typeof row.sql_text === 'string' : row.id != null && (row.query == null || typeof row.query === 'string')))) throw new Error('INVALID_QUERY_RESPONSE');
+      if (kind === 'topsql') this.slowQueries = rows; else this.sessions = rows;
+      this.queryReads = { ...this.queryReads, [kind]: { status: 'success', instanceId, readAt: Date.now(), source: res.headers.get('x-slide-query-source') ?? 'unknown' } };
+      this.queryExpiryTimers[kind] = setTimeout(() => this.requestUpdate(), this.QUERY_MAX_AGE);
+    } catch {
+      if (current()) this.queryReads = { ...this.queryReads, [kind]: { status: 'error', instanceId } };
+    }
+  }
+  private _queryState(kind: 'topsql' | 'sessions') {
+    const read = this.queryReads[kind];
+    if (read.instanceId !== this.instanceId) return 'idle';
+    if (read.status === 'success' && Date.now() - read.readAt! >= this.QUERY_MAX_AGE) return 'expired';
+    return read.status;
+  }
+  private _renderQueryState(kind: 'topsql' | 'sessions') {
+    const state = this._queryState(kind);
+    if (state === 'success') return nothing;
+    const label = kind === 'topsql' ? '慢查询' : '会话';
+    const titles = { idle: `尚未读取${label}`, loading: `加载${label}数据…`, error: `${label}读取失败`, forbidden: `无权读取${label}`, unavailable: `${label}数据不可用`, expired: `${label}数据已过期` };
+    const descriptions = {
+      idle: '尚无读取结果，无法判断是否存在记录。', loading: '正在读取，请稍候。',
+      error: '请求失败或返回格式异常，请刷新重试。', forbidden: '请确认当前账号的实例访问权限。',
+      unavailable: '实例未连接、采集来源未就绪或数据库不支持此查询，请检查连接和采集配置。',
+      expired: '距上次成功读取已超过 1 分钟，请刷新后查看。',
+    };
+    return html`<app-card><div role=${state === 'error' || state === 'forbidden' ? 'alert' : 'status'}>
+      <app-empty-state .title=${titles[state]} .description=${descriptions[state]}></app-empty-state>
+    </div></app-card>`;
+  }
+  private _renderQueryProvenance(kind: 'topsql' | 'sessions') {
+    const read = this.queryReads[kind];
+    const sources: Record<string, string> = { 'mysql-performance-schema': 'MySQL performance_schema', 'mysql-slow-log': 'MySQL mysql.slow_log', 'pg-stat-statements': 'PostgreSQL pg_stat_statements', 'oracle-sqlarea': 'Oracle V$SQLAREA', 'dameng-sql-history': '达梦 V$SQL_HISTORY' };
+    const sessionSources: Record<string, string> = { mysql: 'MySQL PROCESSLIST', postgresql: 'PostgreSQL pg_stat_activity', oracle: 'Oracle V$SESSION', dameng: '达梦 V$SESSIONS' };
+    const source = kind === 'topsql' ? sources[read.source!] : sessionSources[this.instance?.db_type ?? ''];
+    return html`<p class="empty-desc">来源：${source ?? '实例查询接口（未提供具体采集来源）'} ·
+      时间范围：${kind === 'sessions' ? '本次读取时的活跃会话快照（最多 50 条）' : '数据库当前保留的记录（统计起止时间未知，Top 10）'} ·
+      读取时间：${new Date(read.readAt!).toLocaleString('zh-CN')}（非最近采集时间）</p>`;
   }
 
   // ---- Diagnosis ----
@@ -345,8 +424,8 @@ export class InstanceDetailPage extends LitElement {
           ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
             <button class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
               ${({ overview:"概览", collection:"采集配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
-              ${t === "topsql" && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
-              ${t === "sessions" && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
+              ${t === "topsql" && this._queryState('topsql') === 'success' && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
+              ${t === "sessions" && this._queryState('sessions') === 'success' && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
             </button>
           `)}
         </div>
@@ -414,11 +493,12 @@ export class InstanceDetailPage extends LitElement {
     }
   }
   private _renderTopSQL() {
-    if (this.topsqlLoading) return html`<app-card><div class="loading loading-pulse" style="min-height:200px;">加载慢查询数据...</div></app-card>`;
-    if (this.slowQueries.length === 0) return html`<app-card><div class="empty-state"><div class="empty-title">暂无慢查询</div><div class="empty-desc">数据库运行良好，未发现慢查询</div></div></app-card>`;
+    if (this._queryState('topsql') !== 'success') return this._renderQueryState('topsql');
+    if (this.slowQueries.length === 0) return html`<app-card><app-empty-state title="本次查询未返回慢查询记录" description="空结果不能确认采集是否完整，也不能据此判断数据库健康。"></app-empty-state>${this._renderQueryProvenance('topsql')}</app-card>`;
     return html`
       <app-card>
         <span slot="header">慢查询列表（Top ${this.slowQueries.length}）</span>
+        ${this._renderQueryProvenance('topsql')}
         <div class="table-container">
           <table class="table">
             <thead><tr><th>SQL 语句</th><th style="width:100px;text-align:center;">平均耗时</th><th style="width:100px;text-align:center;">最大耗时</th><th style="width:90px;text-align:center;">执行次数</th><th style="width:140px;text-align:center;">最后出现</th></tr></thead>
@@ -435,10 +515,12 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderSessions() {
-    if (this.sessions.length === 0) return html`<app-card><div class="empty-state"><div class="empty-title">无活跃会话</div><div class="empty-desc">当前没有活跃的数据库会话</div></div></app-card>`;
+    if (this._queryState('sessions') !== 'success') return this._renderQueryState('sessions');
+    if (this.sessions.length === 0) return html`<app-card><app-empty-state title="本次查询未返回活跃会话" description="仅表示本次快照未返回会话，不代表数据库健康。"></app-empty-state>${this._renderQueryProvenance('sessions')}</app-card>`;
     return html`
       <app-card>
         <span slot="header">活跃会话 (${this.sessions.length})</span>
+        ${this._renderQueryProvenance('sessions')}
         <div class="table-container">
           <table class="table">
             <thead><tr><th style="width:70px;text-align:center;">ID</th><th>用户</th><th>来源</th><th>数据库</th><th style="width:90px;text-align:center;">命令</th><th style="width:80px;text-align:center;">时间</th><th>当前查询</th></tr></thead>

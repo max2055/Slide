@@ -1246,16 +1246,16 @@ class DatabaseService {
   /**
    * 获取慢查询列表
    */
-  async getSlowQueries(id: number, limit: number = 10): Promise<SlowQuery[] | null> {
+  async getSlowQueries(id: number, limit: number = 10, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
     return this._withAutoReconnect(id, async (conn) => {
       if (conn.db_type === 'postgresql' && conn.pgClient) {
-        return this.getPostgreSQLSlowQueries(conn, limit);
+        return this.getPostgreSQLSlowQueries(conn, limit, onSource);
       } else if (conn.db_type === 'mysql' && conn.pool) {
-        return this.getMySQLSlowQueries(conn, limit);
+        return this.getMySQLSlowQueries(conn, limit, onSource);
       } else if (conn.db_type === 'oracle' && conn.oraclePool) {
-        return this.getOracleSlowQueries(conn, limit);
+        return this.getOracleSlowQueries(conn, limit, onSource);
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        return this.getDamengSlowQueries(conn, limit);
+        return this.getDamengSlowQueries(conn, limit, onSource);
       }
       return null;
     }, 'getSlowQueries');
@@ -1264,7 +1264,7 @@ class DatabaseService {
   /**
    * 获取 MySQL 慢查询
    */
-  private async getMySQLSlowQueries(conn: DatabaseConnection, limit: number): Promise<SlowQuery[] | null> {
+  private async getMySQLSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
     if (!conn.pool) return null;
 
     try {
@@ -1284,6 +1284,7 @@ class DatabaseService {
         LIMIT ?
       `, [limit]);
 
+      onSource?.('mysql-performance-schema');
       return result.map((row: any) => ({
         id: `sq-${row.sql_text.substring(0, 10)}`,
         sql_text: row.sql_text,
@@ -1301,6 +1302,7 @@ class DatabaseService {
           'SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?',
           [limit]
         );
+        onSource?.('mysql-slow-log');
         return result.map((row: any) => ({
           id: `sq-${row.sql_text?.substring(0, 10) || 'unknown'}`,
           sql_text: row.sql_text || '',
@@ -1311,7 +1313,7 @@ class DatabaseService {
           last_seen: row.start_time,
         }));
       } catch (e) {
-        return [];
+        return null;
       }
     }
   }
@@ -1319,7 +1321,7 @@ class DatabaseService {
   /**
    * 获取 PostgreSQL 慢查询
    */
-  private async getPostgreSQLSlowQueries(conn: DatabaseConnection, limit: number): Promise<SlowQuery[] | null> {
+  private async getPostgreSQLSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
     if (!conn.pgClient) return null;
 
     try {
@@ -1330,7 +1332,7 @@ class DatabaseService {
 
       if (extResult.rows.length === 0) {
         console.warn(`⚠️  实例 ${conn.id} 未安装 pg_stat_statements 扩展，无法获取慢查询`);
-        return [];
+        return null;
       }
 
       // 检测可用列
@@ -1350,7 +1352,7 @@ class DatabaseService {
 
       if (!timeCol) {
         console.warn(`⚠️  pg_stat_statements 缺少时间列，无法获取慢查询`);
-        return [];
+        return null;
       }
 
       const result = await conn.pgClient.query(`
@@ -1370,6 +1372,7 @@ class DatabaseService {
         LIMIT $1
       `, [limit]);
 
+      onSource?.('pg-stat-statements');
       return result.rows.map((row: any) => ({
         id: `sq-${row.queryid || 'unknown'}`,
         sql_text: row.sql_text,
@@ -1383,14 +1386,14 @@ class DatabaseService {
       }));
     } catch (error) {
       console.error(`获取 PostgreSQL 慢查询失败：${conn.id}`, error);
-      return [];
+      return null;
     }
   }
 
   /**
    * 获取 Oracle 慢查询
    */
-  private async getOracleSlowQueries(conn: DatabaseConnection, limit: number): Promise<SlowQuery[] | null> {
+  private async getOracleSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
     if (!conn.oracleConnection) return null;
 
     try {
@@ -1412,6 +1415,7 @@ class DatabaseService {
         ) WHERE ROWNUM <= :limit
       `, { limit });
 
+      onSource?.('oracle-sqlarea');
       return result.rows.map((row: any) => ({
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
@@ -1423,14 +1427,14 @@ class DatabaseService {
       }));
     } catch (error) {
       console.error(`获取 Oracle 慢查询失败：${conn.id}`, error);
-      return [];
+      return null;
     }
   }
 
   /**
    * 获取达梦数据库慢查询
    */
-  private async getDamengSlowQueries(conn: DatabaseConnection, limit: number): Promise<SlowQuery[] | null> {
+  private async getDamengSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
     if (!conn.dmConnection) return null;
 
     try {
@@ -1450,6 +1454,7 @@ class DatabaseService {
         FETCH FIRST :limit ROWS ONLY
       `, { limit });
 
+      onSource?.('dameng-sql-history');
       return result.rows.map((row: any) => ({
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
@@ -1461,7 +1466,7 @@ class DatabaseService {
       }));
     } catch (error) {
       console.error(`获取达梦慢查询失败：${conn.id}`, error);
-      return [];
+      return null;
     }
   }
 
@@ -2709,7 +2714,7 @@ class DatabaseService {
         } else if (conn.db_type === 'dameng' && conn.dmConnection) {
           return await this.getDamengActiveSessions(conn);
         }
-        return [];
+        return null;
       } catch (error) {
         console.error(`获取活动会话失败：${id}`, error);
         return null;
@@ -2720,8 +2725,8 @@ class DatabaseService {
   /**
    * 获取 MySQL 活动会话
    */
-  private async getMySQLActiveSessions(conn: DatabaseConnection): Promise<any[]> {
-    if (!conn.pool) return [];
+  private async getMySQLActiveSessions(conn: DatabaseConnection): Promise<any[] | null> {
+    if (!conn.pool) return null;
 
     const [rows] = await conn.pool.execute<RowDataPacket[]>(`
       SELECT
@@ -2755,8 +2760,8 @@ class DatabaseService {
   /**
    * 获取 PostgreSQL 活动会话
    */
-  private async getPostgreSQLActiveSessions(conn: DatabaseConnection): Promise<any[]> {
-    if (!conn.pgClient) return [];
+  private async getPostgreSQLActiveSessions(conn: DatabaseConnection): Promise<any[] | null> {
+    if (!conn.pgClient) return null;
 
     const result = await conn.pgClient.query(`
       SELECT
@@ -2789,8 +2794,8 @@ class DatabaseService {
   /**
    * 获取 Oracle/Dameng 活动会话
    */
-  private async getOracleActiveSessions(conn: DatabaseConnection): Promise<any[]> {
-    if (!conn.oracleConnection) return [];
+  private async getOracleActiveSessions(conn: DatabaseConnection): Promise<any[] | null> {
+    if (!conn.oracleConnection) return null;
 
     let result;
     try {
@@ -2813,7 +2818,7 @@ class DatabaseService {
         ) WHERE ROWNUM <= 50
       `);
     } catch {
-      return [];
+      return null;
     }
 
     return (result.rows || []).map((row: any) => ({
@@ -2832,8 +2837,8 @@ class DatabaseService {
   /**
    * 获取达梦活动会话 - 使用 conn.dmConnection 查询 V$SESSIONS
    */
-  private async getDamengActiveSessions(conn: DatabaseConnection): Promise<any[]> {
-    if (!conn.dmConnection) return [];
+  private async getDamengActiveSessions(conn: DatabaseConnection): Promise<any[] | null> {
+    if (!conn.dmConnection) return null;
 
     const result = await conn.dmConnection.execute(`
       SELECT

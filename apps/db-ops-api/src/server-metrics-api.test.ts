@@ -29,7 +29,7 @@ const instanceLatestRoute = routeSource(
 );
 const instanceHistoryRoute = routeSource(
   "fastify.get('/api/database/instances/:id/metrics/history'",
-  '// 获取慢查询 (TopSQL)',
+  '// 查询性能分析（QAN）',
 );
 
 describe('server metrics API dimension contract', () => {

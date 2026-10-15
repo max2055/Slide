@@ -45,6 +45,7 @@ import { RbacService } from './src/auth/rbac-service.js';
 import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
 import { registerInstanceListRoutes } from './src/instance-list-routes.js';
+import { registerInstanceQueryRoutes } from './src/instance-query-routes.js';
 import { registerFeedbackRoutes } from './src/feedback-routes.js';
 import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
@@ -758,6 +759,7 @@ async function start() {
   });
 
   await registerInstanceListRoutes(fastify, verifyToken);
+  await registerInstanceQueryRoutes(fastify, verifyToken);
 
   await registerLLMSceneRoutes(fastify, verifyToken, requirePermission('llm:manage'));
   await registerModelDiscoveryRoutes(fastify, verifyToken, requirePermission('llm:manage'), llmDatabaseService);
@@ -2302,21 +2304,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // 获取慢查询 (TopSQL)
-  fastify.get('/api/database/instances/:id/topsql', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const { limit = 10 } = request.query as any;
-      const queries = await databaseService.getSlowQueries(Number(id), Number(limit));
-      if (!queries) {
-        return reply.code(404).send({ error: '无法获取慢查询，实例可能未连接' });
-      }
-      reply.send(queries);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取慢查询失败：' + error.message });
-    }
-  });
-
   // 查询性能分析（QAN）
   fastify.get('/api/database/instances/:id/qan', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     try {
@@ -2426,20 +2413,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
     } catch (error: any) {
       reply.code(500).send({ error: '获取查询历史失败：' + error.message });
-    }
-  });
-
-  // 获取会话列表
-  fastify.get('/api/database/instances/:id/sessions', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const sessions = await databaseService.getActiveSessions(Number(id));
-      if (!sessions) {
-        return reply.code(404).send({ error: '无法获取会话，实例可能未连接' });
-      }
-      reply.send(sessions);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取会话失败：' + error.message });
     }
   });
 

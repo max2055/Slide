@@ -90,8 +90,8 @@ describe('getDamengActiveSessions', () => {
     expect(source).toContain('getDamengActiveSessions(conn: DatabaseConnection)');
   });
 
-  it('getDamengActiveSessions 守卫应检查 conn.dmConnection', () => {
-    expect(source).toMatch(/getDamengActiveSessions[\s\S]*?!conn\.dmConnection\) return \[\]/);
+  it('getDamengActiveSessions 缺少连接时返回不可用', () => {
+    expect(source).toMatch(/getDamengActiveSessions[\s\S]*?!conn\.dmConnection\) return null/);
   });
 
   it('getDamengActiveSessions 查询 V$SESSIONS', () => {
