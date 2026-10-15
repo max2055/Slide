@@ -8,7 +8,7 @@
  *
  * Emits 'app-table-sort' CustomEvent when sortable column header is clicked.
  */
-import { LitElement, html } from "lit";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 export interface Column {
@@ -98,6 +98,20 @@ export class AppDataTable extends LitElement {
         .data-table th.sortable:hover {
           color: var(--accent-text);
         }
+        app-data-table .table-sort {
+          background: none;
+          border: 0;
+          padding: 0;
+          color: inherit;
+          font: inherit;
+          text-align: inherit;
+          cursor: pointer;
+        }
+        app-data-table .table-sort:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 3px;
+          border-radius: var(--radius-sm);
+        }
         .data-table th .sort-indicator {
           display: inline-block;
           margin-left: 4px;
@@ -137,21 +151,22 @@ export class AppDataTable extends LitElement {
                   class=${col.sortable ? "sortable" : ""}
                   style=${(col.width || col.textAlign) ? `${col.width ? `width: ${col.width};` : ""}${col.textAlign ? `text-align: ${col.textAlign};` : ""}` : ""}
                   @click=${col.sortable ? () => this._handleSort(col.key) : undefined}
-                  role=${col.sortable ? "columnheader button" : "columnheader"}
-                  tabindex=${col.sortable ? "0" : undefined}
-                  aria-sort=${this._sortKey === col.key
+                  scope="col"
+                  aria-sort=${col.sortable && this._sortKey === col.key
                     ? this._sortDir === "asc"
                       ? "ascending"
                       : "descending"
-                    : "none"}
+                    : nothing}
                 >
-                  ${col.label}
-                  ${col.help ? html`<button type="button" class="column-help" title=${col.help} aria-label=${`${col.label}说明`} @click=${(event: Event) => { event.stopPropagation(); this.dispatchEvent(new CustomEvent("app-table-column-help", { detail: { key: col.key }, bubbles: true, composed: true })); }}>ⓘ</button>` : ""}
-                  ${col.sortable && this._sortKey === col.key
-                    ? html`<span class="sort-indicator"
+                  ${col.sortable ? html`<button type="button" class="table-sort">
+                    ${col.label}
+                    ${this._sortKey === col.key
+                    ? html`<span class="sort-indicator" aria-hidden="true"
                         >${this._sortDir === "asc" ? "▲" : "▼"}</span
                       >`
                     : ""}
+                  </button>` : col.label}
+                  ${col.help ? html`<button type="button" class="column-help" title=${col.help} aria-label=${`${col.label}说明`} @click=${(event: Event) => { event.stopPropagation(); this.dispatchEvent(new CustomEvent("app-table-column-help", { detail: { key: col.key }, bubbles: true, composed: true })); }}>ⓘ</button>` : ""}
                 </th>
               `,
             )}
