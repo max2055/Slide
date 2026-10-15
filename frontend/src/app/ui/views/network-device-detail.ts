@@ -308,11 +308,15 @@ export class NetworkDeviceDetail extends LitElement {
       network-device-detail .interface-filters label { display:grid;gap:var(--space-xs);max-width:100%;font-size:12px; }
       network-device-detail .interface-filters input, network-device-detail .interface-filters select { min-width:0;max-width:100%;box-sizing:border-box;background:var(--card);color:var(--text);padding:var(--space-sm);border:1px solid var(--border);border-radius:var(--radius-sm); }
       @media(max-width:800px) {network-device-detail .overview-grid { grid-template-columns:minmax(0,1fr); } }
-      network-device-detail .page { display:grid; gap:var(--space-lg); min-width:0; }
+      network-device-detail .page { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--space-lg); min-width:0; width:100%; }
+      network-device-detail .page > * { min-width:0; max-width:100%; }
+      network-device-detail .header-actions { box-sizing:border-box; }
+      network-device-detail .header-actions svg, network-device-detail .title .btn-ghost svg { width:16px; height:16px; flex-shrink:0; }
+      network-device-detail app-data-table { overflow-wrap:anywhere; }
       network-device-detail .header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-md); flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:var(--space-md); }
       network-device-detail .title { min-width:0; }
       network-device-detail .title h1 { margin:0; font-size:24px; color:var(--text-strong); overflow-wrap:anywhere; }
-      network-device-detail .meta { margin-top:var(--space-xs); color:var(--muted); overflow-wrap:anywhere; }
+      network-device-detail .meta { font-size:12px; white-space:normal; margin-top:var(--space-xs); color:var(--muted); overflow-wrap:anywhere; }
       network-device-detail .header-actions { display:flex; flex-wrap:wrap; gap:var(--space-sm); align-items:center; }
       network-device-detail .tabs { display:flex; gap:var(--space-xs); overflow-x:auto; border-bottom:1px solid var(--border); }
       network-device-detail .tab { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted); padding:var(--space-sm) var(--space-md); cursor:pointer; white-space:nowrap; }

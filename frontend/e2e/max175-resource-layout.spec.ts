@@ -258,6 +258,9 @@ test('server and network real service inventory, semantic tabs, interfaces and p
       }
       if(tab==='配置备份') await expect(network.getByText('尚未配置 SSH 凭据',{exact:false})).toBeVisible();
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      for(const control of [network.getByRole('button',{name:'立即备份',exact:true}),network.getByRole('button',{name:'刷新',exact:true}),network.locator('.page > app-card').first()].filter(Boolean)) {
+        if(await control.count()) {const box=await control.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);}
+      }
       await page.screenshot({path:`${output}/network-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
     }
   }
