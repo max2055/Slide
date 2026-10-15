@@ -50,7 +50,7 @@ test.beforeAll(async () => {
   expect(docker(['inspect', 'slide-max175-mysql', '--format', '{{.Id}}']).trim()).toBe(mysqlId);
   expect(docker(['inspect', mysqlId, '--format', '{{.State.Status}}']).trim()).toBe('exited');
   docker(['start', mysqlId]); mysqlStarted = true;
-  await expect.poll(async () => { try { const c = await mysql.createConnection({host:'127.0.0.1',port:33175,user:'root'}); await c.end(); return true; } catch { return false; } }, {timeout:30_000}).toBe(true);
+  await expect.poll(async () => { try { const c = await mysql.createConnection({host:'127.0.0.1',port:33175,user:'root',connectTimeout:2_000}); await c.end(); return true; } catch { return false; } }, {timeout:60_000}).toBe(true);
   const env = {...process.env, DB_HOST:'127.0.0.1',DB_PORT:'33175',DB_USER:'root',DB_PASSWORD:'',DB_NAME:schema,
     JWT_SECRET_KEY:secret,ENCRYPTION_KEY:encryption,PORT:'3175',AGENT_WS_PORT:'29775',
     SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_V2_COLLECTION_ENABLED:'false'};
