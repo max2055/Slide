@@ -88,7 +88,7 @@ export class InvestigationCreate extends LitElement {
       investigation-create .create-footer { display:flex; gap:var(--space-sm); flex-wrap:wrap; }
       investigation-create [role=alert] { color:var(--danger); overflow-wrap:anywhere; }
     </style>
-    <app-dialog .open=${this.open} .closeOnOverlay=${!this.controller.busy} .closable=${!this.controller.busy} title=${this.sessionId ? '将普通对话转为调查' : '创建手动调查'} @app-dialog-close=${this.close}>
+    <app-dialog .open=${this.open} .closeOnOverlay=${!this.controller.busy} .closable=${!this.controller.busy} title=${this.sessionId ? '将对话转为调查' : '创建手动调查'} @app-dialog-close=${this.close}>
       <p>调查只读取所选边界内的数据。${this.sessionId ? '关联原 Session，不复制历史消息。' : ''}</p>
       ${field('调查标题', this.investigationTitle, v => this.investigationTitle = v)}
       <app-form-field label="调查目标" .required=${true}><textarea aria-label="调查目标" maxlength="2000" rows="3" .value=${this.goal} @input=${(e: Event) => this.goal = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field>

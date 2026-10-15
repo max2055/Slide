@@ -104,7 +104,6 @@ const lazyAgents = createLazy(() => import("./views/agents.ts"));
 const lazySessions = createLazy(() => import("./views/sessions.ts"));
 const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknown>>> = {
   dashboard: () => import("./views/dashboard.ts"),
-  attention: () => import("./views/dashboard.ts"),
   "server-detail": () => import("./views/server-detail.ts"),
   "network-device-detail": () => import("./views/network-device-detail.ts"),
   "instance-detail": () => import("./views/instance-detail.ts"),

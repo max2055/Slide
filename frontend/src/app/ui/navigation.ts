@@ -10,7 +10,7 @@ export const TAB_GROUPS = [
   },
   {
     label: "resources",
-    tabs: ["instances-db", "servers", "network-devices"],
+    tabs: ["dashboard", "network-devices", "servers", "instances-db"],
   },
   {
     label: "operations",

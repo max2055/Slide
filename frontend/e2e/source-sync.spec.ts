@@ -1,5 +1,42 @@
 import { expect, test } from '@playwright/test';
 
+for (const width of [1280, 390]) for (const status of [200, 403, 503]) {
+  test(`MAX-157 invalidation: sync with old details open then manifest ${status} at ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 950 });
+    await page.addInitScript(() => localStorage.setItem('permissions', '["admin:*"]'));
+    const old = { releaseId: 'old-snapshot', commitSha: 'a'.repeat(40), files: [{ path: 'src/private-old.ts', digest: 'private-old-digest', bytes: 20 }], repository: { ref: 'main' } };
+    let synced = false, requested = false, release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/platform/source/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/config')) return route.fulfill({ json: { config: { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'group/repo', allowedPaths: [], allowModelContent: false } } });
+      if (path.endsWith('/sync')) { requested = true; await pending; synced = true; return route.fulfill({ json: { releaseId: 'new' } }); }
+      return route.fulfill(synced ? { status, json: status === 200 ? { ...old, releaseId: 'new-snapshot', files: [{ path: 'src/new.ts', digest: 'new-digest', bytes: 21 }] } : { error: status === 403 ? 'SOURCE_READ_FORBIDDEN' : 'SOURCE_STORAGE_UNAVAILABLE' } } : { json: old });
+    });
+    await page.route('**/invalidation-source-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
+    await page.goto('/invalidation-source-fixture');
+    await page.getByText('仓库配置与同步', { exact: true }).click();
+    await page.getByLabel('同步令牌', { exact: true }).fill('controlled-single-use');
+    await page.getByRole('button', { name: '同步源码', exact: true }).click(); await expect.poll(() => requested).toBe(true);
+    await page.getByRole('button', { name: '浏览快照 →' }).click();
+    await page.getByRole('button', { name: '查看', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '快照条目详情' })).toBeVisible();
+    await expect(page.locator('source-manifest')).toContainText('private-old-digest');
+    release();
+    await expect(page.getByRole('dialog', { name: '快照条目详情' })).toHaveCount(0);
+    await expect(page.locator('source-manifest')).not.toContainText('private-old');
+    await expect(page.locator('source-manifest')).toBeFocused();
+    if (status === 200) {
+      await expect(page.locator('source-manifest')).toContainText('new-snapshot');
+      const detail = page.getByRole('button', { name: '查看', exact: true }); await detail.click();
+      await expect(page.locator('source-manifest')).toContainText('new-digest');
+      await page.keyboard.press('Escape'); await expect(detail).toBeFocused();
+    } else await expect(page.locator('source-manifest').getByRole('alert')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`sync-details-${status}-${width}.png`), fullPage: true });
+  });
+}
+
 for (const width of [390, 1280]) test(`HTTP repository sync retains warned files and clears credentials at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   const errors: string[] = [];
@@ -28,7 +65,7 @@ for (const width of [390, 1280]) test(`HTTP repository sync retains warned files
     <source-settings></source-settings>
     <script type="module">import '/src/app/styles.css'; import '/src/app/ui/views/source-settings.ts';</script>
     </body></html>` }));
-  await page.goto('/source-sync-fixture');
+  await page.goto('/source-sync-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   await expect(page.getByLabel('GitLab URL')).toHaveValue('http://gitlab.internal');
   await page.getByLabel('分支、标签或 Commit').fill('release');
   await page.getByRole('button', { name: '保存配置' }).click();
@@ -39,11 +76,13 @@ for (const width of [390, 1280]) test(`HTTP repository sync retains warned files
   await expect(page.locator('source-manifest')).toContainText('未验证部署一致性');
   await expect(page.locator('source-manifest')).toContainText('同步完成');
   await expect(page.locator('source-manifest')).not.toContainText('部分同步');
-  await expect(page.locator('source-manifest')).toContainText('提示（文件已保留，2 项）');
+  await expect(page.locator('source-manifest')).toContainText('文件已保留');
+  await page.getByRole('button', { name: '查看提示 →' }).click();
   await expect(page.locator('source-manifest')).toContainText('src/private.json');
   await expect(page.locator('source-manifest')).toContainText('含疑似敏感信息');
   await expect(page.locator('source-manifest')).toContainText('较大文件，已保留');
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('single-use-fixture');
+  await page.getByRole('button', { name: '返回源码仓库' }).click();
   await page.getByLabel('分支、标签或 Commit').fill('main');
   await page.getByRole('button', { name: '保存配置' }).click();
   await expect(page.locator('source-manifest')).toContainText('当前仓库和分支尚未同步');
@@ -79,14 +118,14 @@ for (const provider of ['gitlab', 'github']) for (const width of [390, 1440]) te
     return route.fulfill(synced ? { json: manifest } : { status: 409, json: { error: 'SOURCE_NOT_SYNCED' } });
   });
   await page.route('**/saved-source-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
-  await page.goto('/saved-source-fixture');
+  await page.goto('/saved-source-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   const sync = page.getByRole('button', { name: '同步源码', exact: true });
   await expect(sync).toBeDisabled();
   await page.getByLabel('同步令牌', { exact: true }).fill('saved-fixture');
   await page.getByLabel('保留同步令牌', { exact: true }).check();
   await sync.click(); await expect(page.getByLabel('同步令牌', { exact: true })).toHaveValue('');
   await expect(page.locator('source-settings')).toContainText('当前仓库已保存令牌'); expect(saved).toBe('saved-fixture');
-  await page.reload(); await expect(sync).toBeEnabled();
+  await page.reload(); await page.getByText('仓库配置与同步', { exact: true }).click(); await expect(sync).toBeEnabled();
   await expect(page.getByLabel('保留同步令牌', { exact: true })).not.toBeChecked();
   await sync.click(); await expect(page.locator('source-settings')).toContainText('源码同步完成');
   await page.getByLabel('同步令牌', { exact: true }).fill('override-fixture'); await sync.click();
@@ -127,7 +166,7 @@ for (const code of ['SOURCE_SIGNING_KEY_INVALID', 'SOURCE_CREDENTIAL_INVALID', '
     return route.fulfill({ json: fail ? manifest : { ...manifest, releaseId: 'fresh-snapshot' } });
   });
   await page.route('**/source-error-fixture', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><source-settings></source-settings><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/source-settings.ts";</script></body></html>' }));
-  await page.goto('/source-error-fixture');
+  await page.goto('/source-error-fixture'); await page.getByText('仓库配置与同步', { exact: true }).click();
   const sync = page.getByRole('button', { name: '同步源码', exact: true });
   await expect(sync).toBeEnabled(); await sync.click();
   // Locators pierce Lit shadow roots; scope the form alert to exclude the snapshot alert.

@@ -3,7 +3,7 @@ import { SETTINGS_GROUPS, canAccessSettingsItem } from '../settings-navigation.j
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './source-settings.js';
-afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); localStorage.clear(); });
+afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); localStorage.clear(); history.replaceState({}, '', '/'); });
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 10)); };
 it('registers source within platform settings', () => {
   expect(SETTINGS_GROUPS.find(group => group.id === 'platform')?.items.some(item => item.id === 'source')).toBe(true);
@@ -65,7 +65,9 @@ it('saves a ref and shows incomplete unbound HTTP snapshots without implying dep
   view.shadowRoot!.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
   expect(authFetch).toHaveBeenCalledWith('/api/platform/source/config', expect.objectContaining({ body: JSON.stringify({ ...config, ref: 'main' }) }));
   const text = view.shadowRoot!.querySelector('source-manifest')!.shadowRoot!.textContent;
-  expect(text).toContain('未验证部署一致性'); expect(text).toContain('部分同步'); expect(text).toContain('src/config.json');
+  expect(text).toContain('未验证部署一致性'); expect(text).toContain('部分同步'); expect(text).not.toContain('src/config.json');
+  const manifestView = view.shadowRoot!.querySelector('source-manifest') as any; await manifestView.browse('skipped'); await settle();
+  expect(manifestView.shadowRoot.textContent).toContain('src/config.json');
 });
 it('shows advisory files as retained without marking a complete snapshot partial', async () => {
   authFetch.mockImplementation(async (url: string) => ({ ok: true, text: async () => JSON.stringify(url.endsWith('/config') ? { config: null } : {
@@ -75,11 +77,13 @@ it('shows advisory files as retained without marking a complete snapshot partial
   }) }));
   const view = document.createElement('source-settings'); document.body.append(view); await settle();
   const text = view.shadowRoot!.querySelector('source-manifest')!.shadowRoot!.textContent;
-  expect(text).toContain('提示（文件已保留，1 项）');
-  expect(text).toContain('含疑似敏感信息');
+  expect(text).toContain('文件已保留');
+  const manifestView = view.shadowRoot!.querySelector('source-manifest') as any; await manifestView.browse('warnings'); await settle();
+  expect(manifestView.shadowRoot.textContent).toContain('src/config.json');
+  expect(manifestView.shadowRoot.textContent).toContain('含疑似敏感信息');
   expect(text).toContain('同步完成');
   expect(text).not.toContain('部分同步');
-  expect(text).not.toContain('已跳过');
+  expect(text).toContain('已跳过');
 });
 
 it('uses saved credentials after reentry and supports explicit replacement/deletion without client persistence', async () => {

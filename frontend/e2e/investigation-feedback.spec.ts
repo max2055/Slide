@@ -36,7 +36,7 @@ test('observed datetime-local inputs preserve exact milliseconds across browser 
     try {
       const page = await context.newPage();
       await page.setContent('<input type="datetime-local" step="0.001" aria-label="观察开始时间">');
-      for (const suffix of ['00.000', '34.000', '34.100', '34.180', '34.001', '34.181', '34.999']) {
+      for (const suffix of ['00.000', '00.570', '34.000', '34.100', '34.180', '34.001', '34.007', '34.181', '34.570', '34.999']) {
         const observed = `2026-10-14T15:55:${suffix}Z`;
         await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, observed));
         expect(await page.locator('input').evaluate((input: HTMLInputElement) => new Date(input.value).toISOString())).toBe(observed);

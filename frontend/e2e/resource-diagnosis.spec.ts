@@ -85,13 +85,19 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     const view = page.locator('resource-diagnosis-page');
     await expect(view.getByRole('heading', { name: '跨资源诊断' })).toBeVisible();
     await expect(view.getByRole('combobox', { name: '资源', exact: true })).toHaveValue('instance:1');
+    await view.getByRole('tab', { name: '规则评估', exact: true }).click();
     await expect(view.locator('resource-evaluation')).toContainText('cpu-bounds');
     await expect(view.locator('resource-evaluation')).toContainText('规则集 3');
     await expect(view.locator('resource-evaluation')).toContainText('BASELINE_SHORT');
-    await expect(view.locator('source-manifest')).toContainText('release-e2e');
-    await view.locator(`[data-evidence-id="${evidenceId}"] summary`).click();
-    await expect(view.locator(`[data-evidence-id="${evidenceId}"]`)).toContainText('corr-1');
-    await expect(view.locator(`[data-evidence-id="${evidenceId}"]`)).toContainText('新鲜');
+    await expect(view.getByRole('link', { name: '按需查看源码快照 →' })).toBeVisible();
+    await view.getByRole('tab', { name: '当前证据', exact: true }).click();
+    await view.getByRole('button', { name: `查看证据 ${evidenceId}` }).click();
+    await view.getByText('原始字段与来源', { exact: true }).click();
+    await expect(view.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: '证据详情' }) })).toContainText('corr-1');
+    await expect(view.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: '证据详情' }) })).toContainText('新鲜');
+    await page.keyboard.press('Escape');
+    await view.getByRole('tab', { name: '规则评估', exact: true }).click();
+    await view.getByText('规则配置、人工判断与恢复核验', { exact: true }).click();
     const ruleEditor = view.locator('resource-invariants');
     await ruleEditor.getByLabel('规则 ID', { exact: true }).fill('cpu-limit');
     await ruleEditor.getByLabel('指标 ID', { exact: true }).fill('cpu');
@@ -139,9 +145,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
     await expect.poll(() => diagnosed).toBe(true);
     await view.getByRole('button', { name: '获取关联证据' }).click();
-    await view.getByRole('link', { name: '网络设备 · Edge switch' }).click();
+    await view.getByRole('link', { name: '切换诊断 →' }).click();
     await expect(page).toHaveURL(/resourceType=network_device.*returnResource=instance%3A1/);
-    await expect(view).toContainText('OBSERVATIONS_EMPTY');
+    await expect(view).toContainText('缺少观测数据');
     await expect(view.getByRole('combobox', { name: '资源', exact: true })).toHaveValue('network_device:3');
     await expect(view.locator('[data-kind="facts"] app-empty-state')).toBeVisible();
     await expect(view.locator('[data-evidence-id]')).toHaveCount(0);
@@ -153,6 +159,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     await expect(page).toHaveURL(/resourceType=server&resourceId=2/);
     await page.goto('/settings/platform/source');
     const source = page.locator('source-settings');
+    await source.getByText('仓库配置与同步', { exact: true }).click();
     await expect(source.getByRole('heading', { name: '源码仓库', exact: true })).toBeVisible();
     if (viewport.width < 640) await expect(page.getByRole('combobox', { name: '选择设置页面' })).toHaveValue('source');
     await expect(source.getByRole('checkbox', { name: '允许模型读取源码内容' })).not.toBeChecked();
@@ -218,6 +225,82 @@ async function diagnosisFixture(page: Page, options: { permissions?: string[]; s
   return state;
 }
 
+for (const width of [1280, 390]) {
+  test(`MAX-157 invalidation: displayed evaluation and nested readers are removed on revocation at ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 950 }); await diagnosisFixture(page);
+    await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&diagnosisTab=evaluation');
+    const view = page.locator('resource-diagnosis-page');
+    await expect(view.locator('resource-evaluation')).toContainText('CPU 使用率上限');
+    await view.getByText('规则配置、人工判断与恢复核验', { exact: true }).click();
+    await expect(view.locator('resource-invariants').getByRole('button', { name: '重新加载规则' })).toBeVisible();
+    let release!: () => void;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    let requested = false;
+    await page.route('**/api/resources/instance/1/invariants', async route => {
+      requested = true; await delayed;
+      await route.fulfill({ json: { version: 8, rules: [{ id: 'private-late-rule', metricId: 'cpu', version: 1, max: 80 }] } });
+    });
+    await view.getByRole('button', { name: '重新加载规则' }).click(); await expect.poll(() => requested).toBe(true);
+    await page.route('**/api/resources', route => route.fulfill({ status: 403, json: {} }));
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } })));
+    await expect(view.locator('resource-evaluation')).toHaveCount(0);
+    release(); await expect(view.getByRole('alert')).toContainText('无资源浏览权限');
+    await expect(view.locator('resource-invariants, resource-decisions, resource-recovery')).toHaveCount(0);
+    await expect(view).not.toContainText('private-late-rule');
+    await page.screenshot({ path: testInfo.outputPath(`revoked-evaluation-${width}.png`), fullPage: true });
+  });
+  test(`MAX-157 invalidation: delayed evaluation cannot return after revocation at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 950 }); await diagnosisFixture(page);
+    let release!: () => void; const delayed = new Promise<void>(resolve => { release = resolve; }); let requested = false;
+    await page.route('**/api/resources/instance/1/evaluation', async route => {
+      requested = true; await delayed;
+      await route.fulfill({ json: { generatedAt: new Date().toISOString(), rulesVersion: 1, invariants: [{ ruleId: 'private-delayed-evaluation', status: 'fail', evidenceRefs: [] }], expectations: [], gaps: [] } });
+    });
+    await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&diagnosisTab=evaluation');
+    await expect.poll(() => requested).toBe(true);
+    await page.route('**/api/resources', route => route.fulfill({ status: 403, json: {} }));
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } })));
+    await expect(page.locator('resource-evaluation')).toHaveCount(0); release();
+    await expect(page.locator('resource-diagnosis-page')).not.toContainText('private-delayed-evaluation');
+  });
+  for (const failure of [403, 503, 'network']) for (const tab of ['evidence', 'evaluation', 'relations', 'result']) {
+    test(`MAX-157 invalidation: ${tab} refresh ${failure} clears facts and retains task at ${width}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 950 }); const state = await diagnosisFixture(page);
+      state.status = 'unknown';
+      await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1&analysisId=42&diagnosisTab=' + tab);
+      const view = page.locator('resource-diagnosis-page');
+      await expect(view.locator('[data-diagnosis-overview]')).toContainText('订单数据库');
+      if (tab === 'evaluation') await expect(view.locator('resource-evaluation')).toContainText('CPU 使用率上限');
+      if (tab === 'evidence') {
+        const detail = view.getByRole('button', { name: /^查看证据/ }); await detail.click();
+        await expect(view.getByRole('dialog', { name: '证据详情' })).toBeVisible();
+        await page.keyboard.press('Escape'); await expect(detail).toBeFocused();
+      }
+      if (tab === 'relations') {
+        await page.route('**/api/resources/instance/1/diagnose', route => route.fulfill({ json: { relations: [], relatedEvidence: [{ resource: { resource: { type: 'server', id: 2 }, label: 'private-related-resource' } }], gaps: [], truncated: false } }));
+        await view.getByRole('button', { name: '获取关联证据' }).click();
+        await expect(view).toContainText('private-related-resource');
+      }
+      let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; }); let requested = false;
+      await page.route('**/api/resources', async route => {
+        requested = true; await pending;
+        if (failure === 'network') await route.abort('failed'); else await route.fulfill({ status: failure as number, json: {} });
+      });
+      await view.getByRole('button', { name: '刷新', exact: true }).click();
+      await expect.poll(() => requested).toBe(true);
+      await expect(view.locator('[data-diagnosis-overview]')).not.toContainText('订单数据库');
+      await expect(view.locator('resource-evaluation')).toHaveCount(0);
+      release(); await expect(view.getByRole('alert')).toBeVisible();
+      await expect(view).not.toContainText('private-related-resource');
+      await expect(view.locator('[data-evidence-id]')).toHaveCount(0);
+      await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
+      await expect(page).toHaveURL(/analysisId=42/); expect(state.posts).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (tab === 'evidence' && failure === 403) await page.screenshot({ path: testInfo.outputPath(`refresh-forbidden-${width}.png`), fullPage: true });
+    });
+  }
+}
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {
   test(`business diagnosis, keyboard and accessible task states at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -225,18 +308,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     const state = await diagnosisFixture(page);
     await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
     const view = page.locator('resource-diagnosis-page');
-    await expect(view.locator('[data-diagnosis-overview]')).toContainText('分析对象：订单数据库');
-    await expect(view.getByRole('region', { name: '异常评估结论' })).toContainText('发现观测值超出配置范围');
+    await expect(view.locator('[data-diagnosis-overview]')).toContainText('订单数据库');
+    await view.getByRole('tab', { name: '规则评估', exact: true }).click();
+    await expect(view.locator('resource-evaluation')).toContainText('发现观测值超出配置范围');
+    await view.getByRole('tab', { name: '当前证据', exact: true }).click();
     await view.getByRole('heading', { name: '跨资源诊断', exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`diagnosis-overview-${viewport.width}.png`), fullPage: true });
     const search = view.getByRole('searchbox', { name: '搜索资源', exact: true });
     await search.focus(); await page.keyboard.press('Tab');
     await expect(view.getByRole('combobox', { name: '资源', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');
-    const technical = view.locator('[data-diagnosis-overview] summary');
-    await expect(technical).toBeFocused(); await page.keyboard.press('Enter');
-    await expect(view.locator('[data-diagnosis-overview] details')).toHaveAttribute('open', '');
-    await page.keyboard.press('Tab'); await expect(view.getByRole('button', { name: '获取关联证据' })).toBeFocused();
+    await expect(view.getByRole('button', { name: '获取关联证据' })).toBeFocused();
     await page.keyboard.press('Tab'); await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(view.locator('[data-task-status]')).toContainText('排队中'); expect(state.posts).toHaveLength(1);
@@ -249,7 +331,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     await retry.focus(); await page.keyboard.press('Enter');
     const dialog = view.getByRole('dialog', { name: '确认重新分析' });
     await expect(dialog).toBeVisible();
-    await expect(view.locator('app-dialog')).toContainText('具体费用取决于模型和用量，目前无法估算');
+    await expect(view.locator('app-dialog').filter({ has: page.locator('dialog[open]') })).toContainText('具体费用取决于模型和用量，目前无法估算');
     expect(await dialog.ariaSnapshot()).toContain('接受可能再次计费并重试');
     await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible(); await expect(retry).toBeFocused();
     expect(state.posts).toHaveLength(1);
@@ -270,15 +352,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     await expect(result).toContainText('检查采集连接'); await expect(result).toContainText('未验证 Evidence ID');
     await expect(result).toContainText('建议尚未执行');
     const snapshot = await view.ariaSnapshot();
-    expect(snapshot).toContain('分析对象：订单数据库'); expect(snapshot).toContain('部分完成'); expect(snapshot).toContain('region "事实（自动观测与记录）');
+    expect(snapshot).toContain('订单数据库'); expect(snapshot).toContain('部分完成'); expect(snapshot).toContain('tab "当前证据');
     await view.getByRole('heading', { name: '只读 Agent 诊断 · 订单数据库' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`diagnosis-result-${viewport.width}.png`), fullPage: true });
     const evidenceLink = view.getByRole('link', { name: '查看当前资源证据' });
     await evidenceLink.focus(); await page.keyboard.press('Enter');
     await expect(view.locator('#evidence-facts')).toBeFocused();
-    await page.keyboard.press('Tab'); await expect(view.locator('[data-evidence-id] summary')).toBeFocused();
-    await page.keyboard.press('Enter'); await expect(view.locator('[data-evidence-id]')).toHaveAttribute('open', '');
-    await expect(view.locator('[data-evidence-id]')).toContainText('raw-correlation');
+    await view.getByRole('button', { name: /^查看证据/ }).focus();
+    await page.keyboard.press('Enter'); await view.getByText('原始字段与来源', { exact: true }).click();
+    await expect(view.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: '证据详情' }) })).toContainText('raw-correlation');
+    await page.keyboard.press('Escape');
+    await view.getByRole('tab', { name: /^分析结果/ }).click();
     await page.screenshot({ path: testInfo.outputPath(`business-diagnosis-${viewport.width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     state.status = 'failed'; state.result = null;
@@ -299,11 +383,11 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
       const state = await diagnosisFixture(page, { ...options, permissions: ['resources:view'] });
       await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
       const view = page.locator('resource-diagnosis-page');
-      await expect(view.locator('[data-diagnosis-overview]')).toContainText('不能');
+      await expect(view).toContainText('不能据此判断');
       await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toHaveCount(0);
       await expect(view).toContainText('无只读诊断权限');
       if (options.empty) await expect(view).toContainText('所选时间范围没有证据');
-      if (options.stale) { await expect(view.locator('[data-evidence-id] summary')).toContainText('已过期'); await expect(view.locator('[data-evidence-id] summary')).toContainText('2020/1/1'); }
+      if (options.stale) { await expect(view.locator('[data-evidence-id]').locator('xpath=ancestor::tr')).toContainText('已过期'); await expect(view.locator('[data-evidence-id]').locator('xpath=ancestor::tr')).toContainText('2020/1/1'); }
       if (options.evidenceStatus) await expect(view.getByRole('alert').filter({ hasText: '无当前资源证据查看权限' })).toBeVisible();
       expect(state.posts).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

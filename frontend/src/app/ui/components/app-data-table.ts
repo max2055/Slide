@@ -15,6 +15,7 @@ export interface Column {
   key: string;
   label: string;
   sortable?: boolean;
+  help?: string;
   width?: string;
   textAlign?: string;
 }
@@ -89,6 +90,8 @@ export class AppDataTable extends LitElement {
           color: var(--muted-strong);
           user-select: none;
         }
+        app-data-table .column-help { background:none; border:0; color:var(--accent-text); cursor:pointer; font:inherit; }
+        app-data-table .column-help:focus-visible { outline:2px solid var(--accent); }
         .data-table th.sortable {
           cursor: pointer;
         }
@@ -143,6 +146,7 @@ export class AppDataTable extends LitElement {
                     : "none"}
                 >
                   ${col.label}
+                  ${col.help ? html`<button type="button" class="column-help" title=${col.help} aria-label=${`${col.label}说明`} @click=${(event: Event) => { event.stopPropagation(); this.dispatchEvent(new CustomEvent("app-table-column-help", { detail: { key: col.key }, bubbles: true, composed: true })); }}>ⓘ</button>` : ""}
                   ${col.sortable && this._sortKey === col.key
                     ? html`<span class="sort-indicator"
                         >${this._sortDir === "asc" ? "▲" : "▼"}</span

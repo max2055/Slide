@@ -113,7 +113,7 @@ export class InvestigationsPage extends LitElement {
       @media(max-width:1439px) { investigations-page .workspace { grid-template-columns:minmax(160px, 220px) minmax(0, 1fr); } investigations-page .workspace-context { display:none; } investigations-page .evidence-toggle { display:inline-flex; } }
       @media(max-width:767px) { investigations-page .workspace { grid-template-columns:minmax(0,1fr); } investigations-page .investigation-list { max-height:220px; overflow:auto; } }
     </style>
-    ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要普通对话读取权限。"></app-empty-state>` : html`
+    ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
       <div class="workspace-header"><h1>AI 工作空间</h1><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
       ${c.error ? html`<div class="workspace-error" role="alert">${c.error}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       <div class="workspace">
@@ -152,12 +152,11 @@ export function sortAttentionItems(items: AttentionItem[]) {
 @customElement('attention-page')
 export class AttentionPage extends LitElement {
   @property({ attribute: false }) permissions: Set<string> | null = null;
-  @state() private overview = false;
   @state() private items: AttentionItem[] = [];
   @state() private loading = false;
   @state() private error = '';
   private generation = 0;
-  private expired = () => { this.generation++; this.items = []; this.loading = false; this.overview = false; this.requestUpdate(); };
+  private expired = () => { this.generation++; this.items = []; this.loading = false; this.requestUpdate(); };
   private permissionsChanged = (e: Event) => { this.expired(); this.permissions = new Set((e as CustomEvent<{ permissions: string[] }>).detail.permissions); };
   createRenderRoot() { return this; }
   connectedCallback() { super.connectedCallback(); window.addEventListener('slide-session-expired', this.expired); window.addEventListener('slide-permissions-loaded', this.permissionsChanged); }
@@ -175,9 +174,6 @@ export class AttentionPage extends LitElement {
   }
   render() {
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); } attention-page app-data-table { display:block; overflow:auto; }</style>
-      <div class="attention-actions"><button class="btn" aria-pressed=${!this.overview} @click=${() => this.overview = false}>关注事项</button>
-        ${hasSlidePermission(this.permissions, 'view_dashboard') ? html`<button class="btn" aria-pressed=${this.overview} @click=${() => this.overview = true}>资源概览</button>` : nothing}</div>
-      ${this.overview ? html`<dashboard-page></dashboard-page>` : html`
         <app-card><span slot="header">关注事项</span>
           <p>最近 20 项待处理聚合事件，按严重度、更新时间与 ID 排序。</p>
           ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
@@ -185,6 +181,6 @@ export class AttentionPage extends LitElement {
             <app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>
             <div class="attention-actions"><button class="btn" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
           ` : html`<app-empty-state title="暂无可访问事项"></app-empty-state>`}
-        </app-card>`}`;
+        </app-card>`;
   }
 }

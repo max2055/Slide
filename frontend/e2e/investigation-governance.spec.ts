@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { startInvestigationServer } from './fixtures/investigation-server.ts';
 import { MysqlInvestigationBudgetLedger } from '../../apps/db-ops-api/src/investigations/budget-ledger.js';
 import { investigationBudgetConfiguration } from '../../apps/db-ops-api/src/investigations/session-bridge.js';
@@ -36,14 +37,15 @@ test.beforeEach(async ({ page }, info) => {
 });
 test.afterEach(async () => { env.governanceStorage(true); await grant(); expect(pageErrors).toEqual([]); });
 test.setTimeout(60_000);
-async function login(page: Page, permissions = fullPermissions) {
+async function login(page: Page, permissions = fullPermissions, theme = 'light') {
   // Keep the exact same JWT during SQL revoke/restore. UI permissions are only
   // the initial caller ceiling; real routes reload live SQL authorization.
-  await page.addInitScript(({ token, permissions }) => {
+  await page.addInitScript(({ token, permissions, theme }) => {
     localStorage.setItem('token', token); localStorage.setItem('user', JSON.stringify({ id: 103, username: 'governance-manager' }));
     localStorage.setItem('permissions', JSON.stringify(permissions));
-    localStorage.setItem('slide.control.settings.v1', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
-  }, { token: env.token(manager), permissions });
+    localStorage.setItem('slide.i18n.locale', 'zh-CN'); localStorage.setItem('app-theme-mode', theme);
+    localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', navCollapsed: true, themeMode: theme }));
+  }, { token: env.token(manager), permissions, theme });
 }
 const view = (page: Page) => page.locator('investigation-governance-page');
 async function read(page: Page, kind: string) {
@@ -85,15 +87,20 @@ test('real unconfigured policies, uninitialized effective budget and empty persi
 });
 test('real durable five-state/mixed-rate/two-currency facts use grouped paging and inclusive cached input', async ({ page }) => {
   const before = await snapshot(); await login(page); await read(page, 'usage');
+  await view(page).getByRole('button', { name: '查看汇总口径' }).click();
   const totals = view(page).locator('[data-usage="totals"]');
   await expect(totals).toContainText('Reservation 总数7'); await expect(totals).toContainText('分组总数6');
   await expect(totals).toContainText('已知用量数3'); await expect(totals).toContainText('未知用量数1'); await expect(totals).toContainText('待返回用量数1');
+  await view(page).getByText('精确成本值', { exact: true }).click();
   await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.000164（164 micro）');
   await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.006000（6000 micro）');
   await expect(view(page).locator('[data-currency="EUR"]')).toContainText('EUR 0.000164（164 micro）');
-  const settled = view(page).locator('[data-usage-group="USD/settled/manual"]');
+  await page.keyboard.press('Escape');
+  await view(page).locator('[data-usage-group="USD/settled/manual"]').click();
+  const settled = view(page).locator('app-dialog');
   await expect(settled).toContainText('已知输入 Token 小计200'); await expect(settled).toContainText('其中缓存输入80');
   await expect(settled).toContainText('已知输出 Token 小计100'); await expect(settled).toContainText('未知成本数（含缺费率）1');
+  await page.keyboard.press('Escape');
   await expect(view(page)).toContainText('非供应商实收'); await expect(view(page)).toContainText('不能当作零费用');
   await view(page).getByRole('combobox', { name: '每页分组' }).selectOption('5');
   await expect(view(page).locator('[data-usage-group]')).toHaveCount(5); await expect(view(page)).toContainText('当前分组 1–5 / 6');
@@ -101,7 +108,7 @@ test('real durable five-state/mixed-rate/two-currency facts use grouped paging a
   await expect(view(page).locator('[data-usage-group]')).toHaveCount(1); await expect(view(page)).toContainText('当前分组 6–6 / 6');
   await expect(view(page).getByRole('button', { name: '下一组页' })).toBeDisabled();
   await view(page).getByRole('button', { name: '上一组页' }).click(); await expect(view(page).locator('[data-usage-group]')).toHaveCount(5);
-  await page.reload(); await expect(totals).toContainText('Reservation 总数7'); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
+  await page.reload(); await view(page).getByRole('button', { name: '查看汇总口径' }).click(); await expect(totals).toContainText('Reservation 总数7'); await page.keyboard.press('Escape'); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
   expect(await snapshot()).toEqual(before);
 });
 test('effective budget matching and real frozen hash conflict never become a remaining balance', async ({ page }) => {
@@ -114,6 +121,34 @@ test('effective budget matching and real frozen hash conflict never become a rem
     await expect(view(page).getByRole('alert')).toContainText('冲突，不能视为可准入');
     await expect(view(page).locator('[data-budget="frozen"]')).toBeVisible(); await expect(view(page)).toContainText('额度不等于余额');
   } finally { await env.pool.query('UPDATE investigation_budget_domains SET policy_hash=? WHERE domain_key=?', [rows[0].policy_hash, domain]); }
+});
+test('R2 real durable governance visual evidence at both widths and themes', async ({ page }) => {
+  const output = process.env.MAX157_OUTPUT_DIR ?? 'test-results/max157-ui-acceptance';
+  await mkdir(output, { recursive: true });
+  await login(page);
+  for (const width of [1280, 390]) for (const theme of ['dark', 'light']) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const kind of ['policies', 'budget', 'usage']) {
+      await read(page, kind); await expect.poll(() => view(page).evaluate((e: any) => e.facts !== null)).toBe(true);
+      await page.locator('slide-app').evaluate((e: any, theme) => e.applySettings({ ...e.settings, themeMode: theme }), theme);
+      await expect(page.locator('html')).toHaveAttribute('data-theme-mode', theme);
+      await expect(view(page).getByRole('button', { name: /^刷新/ })).toBeEnabled();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${output}/${kind}-durable-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
+      if (kind === 'budget') {
+        await view(page).locator('[data-budget="frozen"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${output}/budget-frozen-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
+      }
+      if (kind === 'usage') {
+        await view(page).getByRole('heading', { name: '成本与额度' }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${output}/usage-costs-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
+        await view(page).locator('[data-usage-group="USD/unknown/manual"]').click();
+        await expect(view(page).locator('app-dialog')).toContainText('未计量');
+        await page.screenshot({ path: `${output}/usage-detail-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
+        await page.keyboard.press('Escape');
+      }
+    }
+  }
 });
 for (const permissions of [basePermissions, [...basePermissions, 'ai:view'], [...basePermissions, 'config:manage']]) {
   test(`navigation and direct management deep links do zero reads without intersection: ${permissions.join(',')}`, async ({ page }) => {
@@ -141,16 +176,16 @@ for (const kind of ['policies', 'budget', 'usage']) {
   });
 }
 test('real storage unavailability HTTP503 removes old costs and retry recovers', async ({ page }) => {
-  await login(page); await read(page, 'usage'); await expect(view(page).locator('[data-usage="totals"]')).toBeVisible();
+  await login(page); await read(page, 'usage'); await expect(view(page).getByRole('button', { name: '查看汇总口径' })).toBeVisible();
   env.governanceStorage(false);
   const failed = page.waitForResponse(r => r.url().includes('/api/investigation-usage') && r.status() === 503);
   await view(page).getByRole('button', { name: '刷新用量与成本' }).click(); await failed;
   await expect(view(page).getByRole('alert')).toContainText('暂不可用'); await expect(view(page).locator('[data-currency]')).toHaveCount(0);
   expect(await view(page).evaluate((e: any) => e.facts)).toBeNull(); env.governanceStorage(true);
-  await view(page).getByRole('button', { name: '刷新用量与成本' }).click(); await expect(view(page).locator('[data-currency]')).toHaveCount(2);
+  await view(page).getByRole('button', { name: '刷新用量与成本' }).click(); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
 });
 test('SQL Session revocation sends real HTTP401 and erases displayed facts', async ({ page }) => {
-  await login(page); await read(page, 'usage'); await expect(view(page).locator('[data-currency]')).toHaveCount(2);
+  await login(page); await read(page, 'usage'); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
   await page.evaluate(() => { (window as any).governanceOriginal = document.querySelector('settings-shell')?.shadowRoot?.querySelector('investigation-governance-page'); });
   await env.pool.query('UPDATE users SET session_version=session_version+1 WHERE id=103');
   const rejected = page.waitForResponse(r => r.url().includes('/api/investigation-usage') && r.status() === 401);
@@ -160,7 +195,7 @@ test('SQL Session revocation sends real HTTP401 and erases displayed facts', asy
 });
 for (const boundary of ['revocation', 'http-rejection', 'refresh', 'selection', 'disconnect', 'pagination'] as const) {
   test(`delayed real HTTP200 cannot restore facts after ${boundary}`, async ({ page }) => {
-    await login(page); await read(page, 'usage'); await expect(view(page).locator('[data-usage="totals"]')).toBeVisible();
+    await login(page); await read(page, 'usage'); await expect(view(page).getByRole('button', { name: '查看汇总口径' })).toBeVisible();
     let release!: () => void, arrived!: () => void, delivered!: () => void;
     const held = new Promise<void>(r => release = r), fetched = new Promise<void>(r => arrived = r), done = new Promise<void>(r => delivered = r);
     let first = true;

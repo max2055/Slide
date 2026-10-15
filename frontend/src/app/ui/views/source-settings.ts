@@ -12,6 +12,8 @@ import { sourceError, readSourceResponse, renderSourceError, type SourceError } 
 interface SourceConfig { provider?: 'gitlab' | 'github'; baseUrl: string; repositoryPath: string; ref?: string; allowedPaths: string[]; allowModelContent: boolean; gitUsername?: string; httpProxy?: string; httpsProxy?: string; allProxy?: string }
 @customElement('source-settings')
 export class SourceSettings extends LitElement {
+  @state() private detailsView = new URL(location.href).searchParams.get('sourceView') === 'details';
+  private sourceViewChanged = () => { this.detailsView = new URL(location.href).searchParams.get('sourceView') === 'details'; };
   @state() private config: SourceConfig = { provider: 'gitlab', baseUrl: '', repositoryPath: '', allowedPaths: [], allowModelContent: false };
   @state() private token = '';
   @state() private retainToken = false;
@@ -44,13 +46,17 @@ export class SourceSettings extends LitElement {
     .action-content .btn, .action-content .btn-primary { min-height:40px; }
     .sync-status { color: var(--muted); font-size: var(--text-sm); margin: var(--space-sm) 0 0; }
     source-manifest { margin-top:var(--space-xl); }
+    .heading { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); }
+    .heading h1 { margin:0; font-size:24px; } .note,summary { color:var(--muted); font-size:12px; }
+    .configuration { margin-block:var(--space-lg); } summary { cursor:pointer; }
+    [hidden] { display:none !important; }
     @media (max-width: 720px) {
       .action-row { grid-template-columns:1fr; }
       .action-content { grid-column:1; }
     }
   `];
-  override connectedCallback() { super.connectedCallback(); this.readPermissions(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); void this.load(); }
-  override disconnectedCallback() { this.token = ''; this.retainToken = false; window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
+  override connectedCallback() { super.connectedCallback(); this.readPermissions(); window.addEventListener('slide-permissions-loaded', this.permissionsHandler); window.addEventListener('popstate', this.sourceViewChanged); void this.load(); }
+  override disconnectedCallback() { this.token = ''; this.retainToken = false; window.removeEventListener('popstate', this.sourceViewChanged); window.removeEventListener('slide-permissions-loaded', this.permissionsHandler); super.disconnectedCallback(); }
   private readPermissions() {
     try { this.permissions = new Set(JSON.parse(localStorage.getItem('permissions') ?? '[]')); } catch { this.permissions = new Set(); }
   }
@@ -121,10 +127,10 @@ export class SourceSettings extends LitElement {
     } catch (error) { this.fail(error, 'sync'); this.syncStatus = ''; } finally { this.busy = false; }
   }
   override render() {
-    return html`<h1>源码仓库</h1>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
+    return html`<div ?hidden=${this.detailsView}><div class="heading"><h1>源码仓库</h1><button class="btn" .disabled=${this.loading || this.busy} @click=${() => { void this.load(); this.revision++; }}>刷新</button></div><p class="note">让调查理解实现，同时保留版本与部署验证边界。</p></div>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
       ${renderSourceError(this.error)}${this.renderRecovery()}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
-      <form @submit=${this.save}>
+      <details class="configuration" ?hidden=${this.detailsView}><summary>仓库配置与同步</summary><form @submit=${this.save}>
         <h2>代码仓库配置</h2>
         <app-form-field label="代码托管平台" hint="只读同步指定分支或提交；无需预先绑定部署版本。" .inline=${true}><select aria-label="代码托管平台" .value=${this.config.provider ?? 'gitlab'} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, provider: (e.target as HTMLSelectElement).value as 'gitlab'|'github', baseUrl: (e.target as HTMLSelectElement).value === 'github' ? 'https://github.com' : '' }; }}><option value="gitlab">GitLab</option><option value="github">GitHub</option></select></app-form-field>
         <app-form-field label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" hint="填写实例根地址，不要填写项目路径、查询参数或令牌。" .inline=${true}><input aria-label="${this.config.provider === 'github' ? 'GitHub URL' : 'GitLab URL'}" title="平台实例根地址" placeholder=${this.config.provider === 'github' ? 'https://github.com' : 'https://gitlab.example.com'} type="url" .required=${true} .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.baseUrl} @input=${(e: Event) => { this.config = { ...this.config, baseUrl: (e.target as HTMLInputElement).value }; }}></app-form-field>
@@ -146,6 +152,6 @@ export class SourceSettings extends LitElement {
         <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || this.configChanged || (!this.token && !this.credential.hasSavedToken)} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.credential.hasSavedToken && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}</div></div>
         ${this.syncStatus ? html`<div class="action-row"><p class="action-content sync-status" role="status" aria-live="polite">${this.syncStatus}</p></div>` : nothing}
       </section>` : nothing}
-      <source-manifest .revision=${this.revision}></source-manifest>`;
+      </details><source-manifest @source-view-change=${this.sourceViewChanged} .revision=${this.revision}></source-manifest>`;
   }
 }
