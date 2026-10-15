@@ -26,7 +26,7 @@ describe.each(['instance', 'server'])('%s detail read time', kind => {
     el.lastUpdated = previous;
     if (status === 'network') fetchMock.mockRejectedValue(new Error('offline'));
     else if (status === 'malformed') fetchMock.mockResolvedValue(new Response('not-json'));
-    else fetchMock.mockResolvedValue(response({}, status));
+    else fetchMock.mockResolvedValue(response({}, Number(status)));
     await el.refreshCurrentTab();
     expect(el.lastUpdated).toEqual(previous);
   });
