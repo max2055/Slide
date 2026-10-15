@@ -6,8 +6,8 @@
  *     <input type="text" .value=${username} @input=${onInput} />
  *   </app-form-field>
  *
- * When `error` is set, the slotted input receives aria-invalid="true"
- * via the `updated()` lifecycle hook.
+ * Native label/description proxies stay in the slotted control's tree so ID
+ * references never cross a shadow boundary. Existing caller names are retained.
  */
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
@@ -20,17 +20,77 @@ export class AppFormField extends LitElement {
   @property({ type: Boolean }) required = false;
   @property({ type: Boolean, reflect: true }) inline = false;
 
-  updated(changed: Map<string, unknown>): void {
-    if (changed.has("error")) {
-      const control = this.querySelector("input, select, textarea");
-      if (control) {
-        if (this.error) {
-          control.setAttribute("aria-invalid", "true");
-        } else {
-          control.removeAttribute("aria-invalid");
-        }
+  private static nextId = 0;
+  private readonly associationId = `app-form-field-${++AppFormField.nextId}`;
+  private readonly nativeLabel = document.createElement("label");
+  private readonly description = document.createElement("span");
+  private control?: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  private previousInvalid: string | null = null;
+  private ownsInvalid = false;
+  private readonly observer = new MutationObserver(() => this.syncControl());
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.observer.observe(this, { childList: true, subtree: true });
+    this.syncControl();
+  }
+
+  override disconnectedCallback(): void {
+    this.observer.disconnect();
+    this.releaseControl();
+    super.disconnectedCallback();
+  }
+
+  override updated(): void { this.syncControl(); }
+
+  private restoreInvalid(): void {
+    if (this.control && this.ownsInvalid) {
+      if (this.control.getAttribute("aria-invalid") === "true") {
+        if (this.previousInvalid === null) this.control.removeAttribute("aria-invalid");
+        else this.control.setAttribute("aria-invalid", this.previousInvalid);
       }
+      this.ownsInvalid = false;
     }
+  }
+
+  private releaseControl(): void {
+    if (this.control) this.describeControl("");
+    this.restoreInvalid();
+    this.nativeLabel.htmlFor = "";
+    this.control = undefined;
+  }
+
+  private describeControl(text: string): void {
+    const control = this.control!;
+    const ids = (control.getAttribute("aria-describedby") ?? "").split(/\s+/)
+      .filter(id => id && id !== this.description.id);
+    if (text) ids.push(this.description.id);
+    if (ids.length) control.setAttribute("aria-describedby", ids.join(" "));
+    else control.removeAttribute("aria-describedby");
+  }
+
+  private syncControl(): void {
+    if (!this.isConnected) return;
+    const control = Array.from(this.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input:not([type=hidden]), select, textarea"))
+      .find(element => element.closest("app-form-field") === this);
+    if (control !== this.control) { this.releaseControl(); this.control = control; }
+    if (!control) return;
+    if (!control.id) control.id = `${this.associationId}-control`;
+    // These are slotted, visually hidden nodes, not a migration of the field DOM.
+    this.nativeLabel.slot = this.description.slot = "accessible-text";
+    this.description.id = `${this.associationId}-description`;
+    if (this.nativeLabel.parentNode !== this) this.append(this.nativeLabel);
+    if (this.description.parentNode !== this) this.append(this.description);
+    const hasCallerLabel = Array.from(control.labels ?? []).some(label => label !== this.nativeLabel);
+    this.nativeLabel.htmlFor = this.label && !hasCallerLabel ? control.id : "";
+    if (this.nativeLabel.textContent !== this.label) this.nativeLabel.textContent = this.label;
+    const text = this.error || this.hint;
+    if (this.description.textContent !== text) this.description.textContent = text;
+    this.describeControl(text);
+    if (this.error) {
+      if (!this.ownsInvalid) { this.previousInvalid = control.getAttribute("aria-invalid"); this.ownsInvalid = true; }
+      control.setAttribute("aria-invalid", "true");
+    } else this.restoreInvalid();
   }
 
   render() {
@@ -115,11 +175,19 @@ export class AppFormField extends LitElement {
           margin-top: var(--space-xs, 4px);
           line-height: 1.4;
         }
+        .accessible-text {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
+        }
       </style>
       <div class="form-field" part="field">
         ${this.label
           ? html`
-              <label class="form-label" part="label">
+              <label class="form-label" part="label" @click=${() => this.control?.focus()}>
                 ${this.label}${this.required
                   ? html`<span class="required-mark" aria-hidden="true">*</span>`
                   : ""}
@@ -127,8 +195,9 @@ export class AppFormField extends LitElement {
             `
           : ""}
         <div class="form-control" part="control">
-          <slot></slot>
+          <slot @slotchange=${this.syncControl}></slot>
         </div>
+        <span class="accessible-text"><slot name="accessible-text"></slot></span>
         ${this.hint && !this.error
           ? html`<div class="form-hint" part="hint">${this.hint}</div>`
           : ""}

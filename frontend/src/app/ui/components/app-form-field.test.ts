@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AppFormField } from './app-form-field.js';
+import type { AppFormField } from './app-form-field.js';
+import './app-form-field.js';
 
 async function mount(markup = '<input>') {
   const field = document.createElement('app-form-field') as AppFormField;
@@ -73,6 +74,6 @@ describe('app-form-field associations across its slot', () => {
     const field = await mount('<input type="hidden"><app-form-field label="子字段"><input></app-form-field><select><option>全部</option></select>');
     expect(field.querySelector('select')!.labels?.[0]?.textContent).toBe('用户名');
     expect(field.querySelector('input[type=hidden]')!.id).toBe('');
-    expect(field.querySelector('app-form-field input')!.labels?.[0]?.textContent).toBe('子字段');
+    expect(field.querySelector('app-form-field')!.querySelector('input')!.labels?.[0]?.textContent).toBe('子字段');
   });
 });

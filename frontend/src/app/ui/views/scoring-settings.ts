@@ -99,8 +99,8 @@ export class ScoringSettingsPage extends LitElement {
       <app-card variant="default">
         ${DIMS.map(d => html`
           <div class="dim-row">
-            <div class="dim-info"><span class="dim-label">${d.label}</span><span class="dim-desc">${d.desc}</span></div>
-            <div class="dim-slider"><input type="range" min="0" max="1" step="0.05" .value=${String(this.weights![d.key])} @input=${(e: Event) => { if (this.weights) this.weights = { ...this.weights, [d.key]: Math.min(1, Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0)) }; }}></div>
+            <div class="dim-info"><label class="dim-label" for=${`scoring-${d.key}`}>${d.label}</label><span class="dim-desc" id=${`scoring-${d.key}-description`}>${d.desc}</span></div>
+            <div class="dim-slider"><input id=${`scoring-${d.key}`} aria-describedby=${`scoring-${d.key}-description`} aria-valuetext=${`${Math.round(this.weights![d.key] * 100)}%`} type="range" min="0" max="1" step="0.05" .value=${String(this.weights![d.key])} @input=${(e: Event) => { if (this.weights) this.weights = { ...this.weights, [d.key]: Math.min(1, Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0)) }; }}></div>
             <div class="dim-value">${Math.round(this.weights![d.key] * 100)}%</div>
           </div>
         `)}
