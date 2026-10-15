@@ -17,6 +17,7 @@ async function fixture(page: Page, theme = 'light') {
   }));
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith('/api/')) return route.fallback();
     return route.fulfill({ json: path === '/api/auth/permissions' ? ['*'] : path === '/api/user/preferences' ? { preferences: { locale: 'zh-CN', themeMode: theme } } : [] });
   });
 }
@@ -27,6 +28,8 @@ test('503 persists and keyboard retry restores rows then confirmed empty state',
   await page.route('**/api/notification/dead-letters?*', route => route.fulfill({ status: state === 'failed' ? 503 : 200, json: state === 'failed' ? { error: 'controlled outage' } : state === 'rows' ? [job] : [] }));
   await page.goto('/events?view=notifications');
   const view = page.locator('alerts-page');
+  await expect(view).toBeVisible();
+  await expect(view.getByText('没有待重放的通知', { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath('503-page.png'), fullPage: true });
   await expect(view.getByRole('alert')).toContainText('HTTP 503');
   await expect(view.getByText('没有待重放的通知', { exact: true })).toHaveCount(0);
