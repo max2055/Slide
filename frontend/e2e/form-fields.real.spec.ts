@@ -21,25 +21,38 @@ test('real JWT/SQL scoring save + reload and system audit filtering', async ({ p
   const available = scoring.getByRole('slider', { name: '可用性', exact: true });
   const performance = scoring.getByRole('slider', { name: '性能', exact: true });
   await expect(available).toBeVisible();
+  await expect(scoring.locator('.total-value')).toHaveText('100% ✓');
   const originalAvailability = Number(await available.inputValue());
   const originalPerformance = Number(await performance.inputValue());
   const key = originalAvailability < .95 && originalPerformance >= .05 ? 'ArrowRight' : 'ArrowLeft';
   const delta = key === 'ArrowRight' ? .05 : -.05;
   await scoring.locator('label').filter({ hasText: '可用性' }).click(); await expect(available).toBeFocused();
   await page.keyboard.press(key);
+  await expect(scoring.locator('.total-value')).toHaveText(delta > 0 ? '105%' : '95%');
+  await expect(available).toHaveAccessibleDescription(`实例在线时长与连接成功率 权重总和${delta > 0 ? '超过' : '不足'} 100%，请${delta > 0 ? '减少' : '增加'} 5%`);
+  await expect(scoring.getByRole('button', { name: '保存配置' })).toBeDisabled();
   await available.press('Tab'); await expect(performance).toBeFocused();
   await page.keyboard.press(key === 'ArrowRight' ? 'ArrowLeft' : 'ArrowRight');
+  await expect(scoring.locator('.total-value')).toHaveText('100% ✓');
+  await expect(available).toHaveAccessibleDescription('实例在线时长与连接成功率');
   const save = page.waitForResponse(r => r.url().includes('/api/scoring/config') && r.request().method() === 'PUT');
   await scoring.getByRole('button', { name: '保存配置' }).click();
-  expect((await save).status()).toBe(200);
+  const savedResponse = await save;
+  expect(savedResponse.status()).toBe(200);
+  const savedRatios = savedResponse.request().postDataJSON();
+  expect(savedRatios.availability).toBeCloseTo(originalAvailability + delta);
+  expect(savedRatios.performance).toBeCloseTo(originalPerformance - delta);
   await expect(scoring.getByText('权重配置已保存')).toBeVisible();
   await page.reload();
   await expect(available).toHaveValue(String(Number((originalAvailability + delta).toFixed(2))));
   await expect(performance).toHaveValue(String(Number((originalPerformance - delta).toFixed(2))));
+  await expect(scoring.locator('.total-value')).toHaveText('100% ✓');
   await page.screenshot({ path: info.outputPath('scoring-real-save-reload.png'), fullPage: true });
   const cdp = await page.context().newCDPSession(page);
   const tree = await cdp.send('Accessibility.getFullAXTree');
-  for (const name of ['可用性', '性能', '容量', '安全性']) expect(tree.nodes.some(node => node.role?.value === 'slider' && node.name?.value === name)).toBe(true);
+  for (const [name, description] of [['可用性', '实例在线时长与连接成功率'], ['性能', '查询延迟、吞吐量与资源利用率'], ['容量', '磁盘使用率与连接数占比'], ['安全性', '安全配置与合规检查']]) {
+    expect(tree.nodes.some(node => node.role?.value === 'slider' && node.name?.value === name && node.description?.value === description)).toBe(true);
+  }
   await info.attach('scoring-real-accessibility-tree.json', { body: JSON.stringify(tree, null, 2), contentType: 'application/json' });
   await writeFile(info.outputPath('scoring-real-accessibility-tree.json'), JSON.stringify(tree, null, 2));
 

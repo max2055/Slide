@@ -107,8 +107,80 @@ test('scoring sliders have names, native click focus and percentage values', asy
   await slider.focus(); await page.keyboard.press('ArrowRight');
   await expect(slider).toHaveValue('0.45');
   await expect(slider).toHaveAttribute('aria-valuetext', '45%');
-  await expect(slider).toHaveAccessibleDescription('实例在线时长与连接成功率');
+  await expect(slider).toHaveAccessibleDescription('实例在线时长与连接成功率 权重总和超过 100%，请减少 5%');
 });
+
+test('scoring total uses percent and keyboard errors remain associated until corrected', async ({ page }, info) => {
+  const weights = { availability: .35, performance: .35, capacity: .2, security: .1 };
+  let saved: unknown;
+  await page.route('**/api/scoring/config', async route => {
+    if (route.request().method() === 'PUT') saved = route.request().postDataJSON();
+    await route.fulfill({ json: route.request().method() === 'PUT' ? { success: true } : weights });
+  });
+  await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
+  const view = page.locator('scoring-settings-page');
+  const available = view.getByRole('slider', { name: '可用性', exact: true });
+  const performance = view.getByRole('slider', { name: '性能', exact: true });
+  const save = view.getByRole('button', { name: '保存配置' });
+  await page.screenshot({ path: info.outputPath('scoring-loaded.png'), fullPage: true });
+  await expect(view.locator('.total-value')).toHaveText('100% ✓');
+  await view.locator('label').filter({ hasText: '可用性' }).click();
+  await expect(available).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(view.locator('.total-value')).toHaveText('105%');
+  await expect(available).toHaveAccessibleDescription('实例在线时长与连接成功率 权重总和超过 100%，请减少 5%');
+  await expect(available).toHaveAttribute('aria-invalid', 'true');
+  await expect(save).toBeDisabled();
+  await page.screenshot({ path: info.outputPath('scoring-over.png'), fullPage: true });
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft');
+  await expect(view.locator('.total-value')).toHaveText('95%');
+  await expect(available).toHaveAccessibleDescription('实例在线时长与连接成功率 权重总和不足 100%，请增加 5%');
+  await page.screenshot({ path: info.outputPath('scoring-under.png'), fullPage: true });
+  await page.keyboard.press('Tab'); await expect(performance).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(view.locator('.total-value')).toHaveText('100% ✓');
+  await expect(available).not.toHaveAttribute('aria-invalid');
+  await expect(available).toHaveAccessibleDescription('实例在线时长与连接成功率');
+  await save.click();
+  expect(saved).toEqual({ ...weights, availability: .3, performance: .4 });
+});
+
+for (const scenario of ['empty', 'partial', 'invalid', 'forbidden', 'failed']) {
+  test(`scoring ${scenario} response never fabricates valid weights (controlled API)`, async ({ page }, info) => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    await page.route('**/api/scoring/config', async route => {
+      await pending;
+      const status = scenario === 'forbidden' ? 403 : scenario === 'failed' ? 500 : 200;
+      const json = scenario === 'empty' ? null : scenario === 'partial' ? {} : scenario === 'invalid'
+        ? { availability: .4, performance: .3, capacity: .2, security: '0.1' }
+        : { error: scenario === 'forbidden' ? '无权限查看评分权重' : '加载评分权重失败' };
+      await route.fulfill({ status, json });
+    });
+    await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
+    await expect(page.getByRole('status')).toHaveText('加载中...');
+    await expect(page.getByRole('slider')).toHaveCount(0);
+    finish();
+    await expect(page.getByRole('alert')).toContainText(scenario === 'empty' ? '无法加载配置'
+      : scenario === 'forbidden' ? '无权限查看评分权重' : scenario === 'failed' ? '加载评分权重失败' : '评分权重配置不完整或无效');
+    await expect(page.getByRole('slider')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '保存配置' })).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath(`scoring-${scenario}.png`), fullPage: true });
+  });
+}
+
+for (const mode of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390 }]) {
+  test(`scoring percentages and validation remain readable ${mode.theme} ${mode.width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: mode.width, height: 800 });
+    await page.route('**/api/scoring/config', route => route.fulfill({ json: { availability: .345, performance: .35, capacity: .2, security: .1 } }));
+    await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
+    await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, mode.theme);
+    await expect(page.locator('.total-value')).toHaveText('99.5%');
+    await expect(page.getByRole('button', { name: '保存配置' })).toBeDisabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath('scoring-theme.png'), fullPage: true });
+  });
+}
 
 test('same-name scoring forms remain isolated in their existing shadow roots', async ({ page }) => {
   await page.route('**/api/scoring/config', route => route.fulfill({ json: { availability: .4, performance: .3, capacity: .2, security: .1 } }));
