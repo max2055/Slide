@@ -19,24 +19,37 @@ mkdirSync(resolve(root, '.runtime/max176'), { recursive: true });
 const log = openSync(resolve(root, '.runtime/max176/backend.log'), 'w');
 const cwd = resolve(root, 'apps/db-ops-api');
 let server;
+let init;
+let allocated = false;
 const control = await mysql.createConnection(connection);
 async function cleanup() {
-  if (server && server.exitCode === null) {
-    server.kill('SIGTERM');
-    await new Promise(resolve => server.once('exit', resolve));
+  for (const child of [server, init]) if (child && child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGTERM');
+    await new Promise(resolve => child.once('exit', resolve));
   }
   // Only the database allocated by this invocation can be removed.
   if (!/^slide_ui_max176_\d+$/.test(database)) throw new Error('Unsafe cleanup');
-  await control.query(`DROP DATABASE IF EXISTS \`${database}\``);
+  if (allocated) {
+    await control.query(`DROP DATABASE IF EXISTS \`${database}\``);
+    const [remaining] = await control.execute('SELECT COUNT(*) AS count FROM information_schema.schemata WHERE schema_name=?', [database]);
+    if (remaining[0].count !== 0) throw new Error('Disposable database cleanup failed');
+    console.log(`MAX-176 cleanup verified: DB=${database} absent; child processes exited.`);
+  }
   await control.end(); closeSync(log);
 }
 let stopping = false;
 async function stop(code = 0) { if (stopping) return; stopping = true; await cleanup(); process.exit(code); }
 process.on('SIGTERM', () => { void stop(); }); process.on('SIGINT', () => { void stop(); });
 try {
-  const init = spawn(process.execPath, ['--import', 'tsx', 'init-db.ts'], { cwd, env, stdio: ['ignore', log, log] });
+  await control.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  allocated = true;
+  init = spawn(process.execPath, ['--import', 'tsx', 'init-db.ts'], { cwd, env, stdio: ['ignore', log, log] });
   await new Promise((resolve, reject) => { init.once('error', reject); init.once('exit', code => code === 0 ? resolve() : reject(new Error(`Database init failed: ${code}; see .runtime/max176/backend.log`))); });
   await control.query(`USE \`${database}\``);
+  const [identity] = await control.query('SELECT DATABASE() AS db');
+  if (identity[0].db !== database || !/^slide_ui_max176_\d+$/.test(database)) throw new Error('Unexpected fixture database');
+  const [disabled] = await control.query("UPDATE llm_providers SET enabled=0 WHERE api_key_encrypted IS NULL OR api_key_encrypted=''");
+  console.log(`Verified disposable DB=${database}; disabled ${disabled.affectedRows} keyless migration seed Providers only.`);
   // Public disposable test fixture password; never a real account credential.
   const hash = await bcrypt.hash(process.env.MAX176_TEST_PASSWORD || 'max176-isolated-test-only', 10);
   await control.execute("UPDATE users SET password_hash=?, status='active' WHERE username='admin'", [hash]);
@@ -49,5 +62,5 @@ try {
   }
   server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd, env, stdio: ['ignore', log, log] });
   server.once('exit', code => { if (!stopping) { console.error(`MAX-176 API exited ${code}; see .runtime/max176/backend.log`); void stop(1); } });
-  console.log(`MAX-176 isolated API PID=${server.pid} DB=${database} PORT=3176 WS=29776; no Provider/binding/collection changes.`);
-} catch (error) { console.error(error.message); await cleanup(); process.exit(1); }
+  console.log(`MAX-176 isolated API PID=${server.pid} DB=${database} PORT=3176 WS=29776; only disposable keyless seed Providers disabled; no shared changes.`);
+} catch (error) { if (!stopping) { console.error(error.message); await cleanup(); process.exit(1); } }
