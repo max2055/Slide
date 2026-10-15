@@ -38,7 +38,8 @@ describe('MAX-178 model editing boundary', () => {
   });
   it('cancel discards model edits without changing connection or making a request', async () => {
     view._editModel(0); view._patchModel({ name: 'discard' }); await view.updateComplete;
-    Array.from(view.shadowRoot.querySelector('app-dialog').querySelectorAll('button')).find((el: any) => el.textContent.trim() === '取消')!.dispatchEvent(new MouseEvent('click'));
+    const cancel = Array.from(view.shadowRoot.querySelector('app-dialog').querySelectorAll('button')).find((el: any) => el.textContent.trim() === '取消') as HTMLButtonElement;
+    cancel.click();
     expect(view.modelDraft).toBeNull(); expect(view.form.models[0]).toEqual(first); expect(put).not.toHaveBeenCalled();
   });
   it('retains failed model drafts and reports the error in the dialog', async () => {

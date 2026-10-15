@@ -132,6 +132,7 @@ test('multiple models: isolated saves, unknown semantics, keyboard, responsive t
   await page.setViewportSize({ width: 1440, height: 1000 });
   await view.locator('.advanced summary').click();
   await view.getByLabel('Max Tokens', { exact: true }).fill('3072');
+  await capture(page, 'connection-advanced-1440-dark');
   await view.getByRole('button', { name: '保存配置', exact: true }).click();
   await expect(view.getByRole('button', { name: '✓ 已保存配置', exact: true })).toBeVisible(); expect((await persisted()).max_tokens).toBe(3072);
   for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
@@ -194,7 +195,7 @@ test('supplemental controlled loading, failure, forbidden, empty and model-save 
     else await expect(view).toContainText('新建提供商');
     for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       await page.setViewportSize({ width, height: 1000 }); await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme);
-      if (state === 'loading') { await page.reload(); await expect(view.locator('.loading')).toBeVisible(); }
+      if (state === 'loading') { await page.reload(); await expect(view.locator('.loading')).toBeVisible(); await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme); }
       await capture(page, `controlled-${state}-${width}-${theme}`, 'HTTP controlled supplemental state');
     }
     await page.unroute('**/api/llm/configs');
