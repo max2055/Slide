@@ -1,15 +1,16 @@
 import { render } from 'lit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SlideApp } from './app.ts';
+import type { AppViewState } from './app-view-state.ts';
 import { renderApp } from './app-render.ts';
-import { tabFromPath } from './navigation.ts';
+import { tabFromPath, titleForTab } from './navigation.ts';
 
 const container = document.createElement('div');
 document.body.append(container);
 afterEach(() => { render(null, container); localStorage.clear(); });
 
 async function open(path: string, permissions: string[] | null = ['*'], basePath = '') {
-  const app = new SlideApp();
+  const app = new SlideApp() as unknown as AppViewState;
   app.connected = true;
   app.onboarding = false;
   app.basePath = basePath;
@@ -25,6 +26,9 @@ async function open(path: string, permissions: string[] | null = ['*'], basePath
 }
 
 describe('retired route compatibility', () => {
+  it('uses a translated breadcrumb for the retired config route', () => {
+    expect(titleForTab('config')).not.toMatch(/^tabs\./);
+  });
   it('explains retired config and offers the settings center', async () => {
     const notice = await open('/config');
     expect(notice?.textContent).toContain('旧版配置页面已停用');
