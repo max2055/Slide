@@ -120,7 +120,7 @@ const COMMANDS = Object.freeze({
   services: 'LC_ALL=C LANG=C systemctl list-units --type=service --state=running --no-legend --no-pager',
   ports: 'LC_ALL=C LANG=C ss -lntupH',
   processes: 'LC_ALL=C LANG=C ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 20',
-  logs: 'LC_ALL=C LANG=C journalctl --no-pager --quiet --output=json --since=-5 minutes --priority=warning --lines=200',
+  logs: 'LC_ALL=C LANG=C journalctl --no-pager --quiet --output=json --since="-5 minutes" --priority=warning --lines=200',
   interfaces: 'LC_ALL=C LANG=C cat /proc/net/dev',
   logFallback: 'LC_ALL=C LANG=C tail -n 200 -- /var/log/messages',
 });

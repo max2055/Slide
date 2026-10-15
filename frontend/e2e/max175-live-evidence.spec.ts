@@ -29,7 +29,7 @@ import { RolloutControl } from '../../apps/db-ops-api/src/metrics-v2/rollout/con
 test.skip(process.env.MAX175_LIVE_TARGET !== '1', 'Requires MAX-175 exclusive Docker targets and ports');
 const require = createRequire(resolve('../apps/db-ops-api/package.json'));
 const mysql = require('mysql2/promise'), bcrypt = require('bcrypt');
-const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175-R5';
+const output = process.env.MAX175_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/MAX-175-R6';
 const mysqlId = 'a6e6f31f6fa7a1ad1490a13bf094caa842809fa19b4b496d6c47f1385d52b313';
 const schema = `db_ops_ai_qualification_max175_live_${process.pid}`;
 const children: ChildProcess[] = [], sshClients = new Set<Client>();
@@ -87,7 +87,7 @@ test.beforeAll(async () => {
     versions: docker(['exec', targetId, 'rpm', '-q', 'openssh-server', 'net-snmp', 'procps-ng', 'iproute', 'systemd', 'python3','rsyslog']),
     ports: JSON.parse(docker(['inspect', targetId, '--format', '{{json .HostConfig.PortBindings}}'])),
     processes: docker(['exec', targetId, 'ps', '-eo', 'pid,comm,args']),
-    journalArgumentProbe:{current:probe(['--since=-5','minutes']),quotedEquivalent:probe(['--since=-5 minutes'])},
+    journalArgumentProbe:{legacySplit:probe(['--since=-5','minutes']),singleArgument:probe(['--since=-5 minutes'])},
   };
   const env = { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: '33175', DB_USER: 'root', DB_PASSWORD: '', DB_NAME: schema,
     JWT_SECRET_KEY: secret, ENCRYPTION_KEY: encryption, PORT: '3175', AGENT_WS_PORT: '29775', SLIDE_MEMORY_PIPELINE_ENABLED: 'false', METRICS_V2_COLLECTION_ENABLED:'false' };
@@ -239,9 +239,11 @@ test('real isolated collection → formal storage/query → normal metrics, logs
         await expect(view).toContainText('当前页面尚未取得诊断证据');
         const response=page.waitForResponse(r=>r.url().endsWith('/collect-diagnostics'));
         await view.getByRole('button',{name:'采集诊断证据',exact:true}).click(); expect((await response).status()).toBe(200);
-        await expect(view.locator('server-diagnostic-panel')).toContainText('MAX175_REAL_SYSLOG_WORKLOAD');
-        expect(diagnostics.quality).toBe('partial'); expect(diagnostics.recentSystemLogs.quality).toBe('partial');
-        expect(diagnostics.recentSystemLogs.reason).toBe('JOURNAL_UNAVAILABLE_FALLBACK_MESSAGES');
+        await expect(view.locator('server-diagnostic-panel')).toContainText('MAX175_REAL_JOURNAL_WORKLOAD');
+        expect(diagnostics.quality).toBe('partial'); expect(diagnostics.recentSystemLogs.quality).toBe('good');
+        expect(diagnostics.recentSystemLogs.reason).toBeUndefined();
+        expect(diagnostics.recentSystemLogs.items.some((item: any) => item.message.includes('MAX175_REAL_JOURNAL_WORKLOAD') && item.timestamp)).toBe(true);
+        expect(sshCalls.some((call: any) => call.commands.some((command: string) => command.includes('tail -n 200')))).toBe(false);
         expect(diagnostics.serviceStatus.quality).toBe('unknown');
         await page.screenshot({path:`${output}/server-live-logs-${width}-${theme}.png`,fullPage:true});
       }
