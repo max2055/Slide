@@ -40,6 +40,7 @@ export class BrandingSettings extends LitElement {
     .form-group + .form-group { border-top: 1px solid var(--border); }
     .form-group:last-child { padding-bottom: 0; }
     .group-description, .save-scope, .draft-status { color: var(--muted); font-size: 12px; }
+    app-card::part(header) { display: none; }
     .form-body { max-width: 690px; min-width: 0; }
     app-form-field { margin-bottom: var(--space-lg); }
     app-form-field:last-child { margin-bottom: 0; }
@@ -171,7 +172,7 @@ export class BrandingSettings extends LitElement {
             <div><h2 id="identity-heading">产品标识</h2><p class="group-description">设置产品显示名称，核对保存前的文字预览。</p></div>
             <div class="form-body">
               <app-form-field label="产品名称" hint="产品显示名称，如 Slide" .error=${this.fieldError("product_name")} required>
-                <input class="text-input" .value=${this.productName} ?disabled=${disabled} @input=${(e: Event) => this.edit("productName", e)} placeholder="Slide" />
+                <input required class="text-input" .value=${this.productName} ?disabled=${disabled} @input=${(e: Event) => this.edit("productName", e)} placeholder="Slide" />
               </app-form-field>
               <div class="preview" aria-label="产品名称预览"><strong>${this.productName.trim() || "未填写产品名称"}</strong><p>文字预览 · ${this.dirty ? "含未保存修改" : "当前已读取配置"}</p></div>
             </div>
@@ -180,13 +181,13 @@ export class BrandingSettings extends LitElement {
             <div><h2 id="runtime-heading">命令与运行环境</h2><p class="group-description">统一 CLI 命令、环境变量前缀和数据目录标识。</p></div>
             <div class="form-body">
               <app-form-field label="CLI 命令名称" hint="终端命令名称，如 slide" .error=${this.fieldError("cli_name")} required>
-                <input class="text-input" .value=${this.cliName} ?disabled=${disabled} @input=${(e: Event) => this.edit("cliName", e)} placeholder="slide" spellcheck="false" />
+                <input required class="text-input" .value=${this.cliName} ?disabled=${disabled} @input=${(e: Event) => this.edit("cliName", e)} placeholder="slide" spellcheck="false" />
               </app-form-field>
               <app-form-field label="环境变量前缀" hint="环境变量前缀，如 SLIDE" .error=${this.fieldError("env_prefix")} required>
-                <input class="text-input" .value=${this.envPrefix} ?disabled=${disabled} @input=${(e: Event) => this.edit("envPrefix", e)} placeholder="SLIDE" spellcheck="false" />
+                <input required class="text-input" .value=${this.envPrefix} ?disabled=${disabled} @input=${(e: Event) => this.edit("envPrefix", e)} placeholder="SLIDE" spellcheck="false" />
               </app-form-field>
               <app-form-field label="数据目录名称" hint="数据目录名称，如 .slide" .error=${this.fieldError("state_dir")} required>
-                <input class="text-input" .value=${this.stateDir} ?disabled=${disabled} @input=${(e: Event) => this.edit("stateDir", e)} placeholder=".slide" spellcheck="false" />
+                <input required class="text-input" .value=${this.stateDir} ?disabled=${disabled} @input=${(e: Event) => this.edit("stateDir", e)} placeholder=".slide" spellcheck="false" />
               </app-form-field>
             </div>
           </section>

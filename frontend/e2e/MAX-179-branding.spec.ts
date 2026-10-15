@@ -51,6 +51,8 @@ test('representative product group: real read, preview, save, cache and reload; 
   const view = page.locator('branding-settings');
   const product = view.getByRole('textbox', { name: '产品名称', exact: true });
   await expect(product).toHaveValue('Slide');
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await capture(page, 'real-default-desktop');
   await expect(product).toHaveAccessibleDescription('产品显示名称，如 Slide');
   const longName = 'MAX179 隔离品牌名称' + '长名称核对表单与预览。'.repeat(12);
   await product.fill(longName);
@@ -77,11 +79,26 @@ test('representative product group: real read, preview, save, cache and reload; 
   for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 960 });
     await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
-    await capture(page, `real-shell-${width}-${theme}`);
+    await view.getByRole('heading', { name: '品牌设置' }).scrollIntoViewIfNeeded();
+    await capture(page, `real-long-shell-${width}-${theme}`);
+    await view.getByRole('button', { name: '保存品牌' }).scrollIntoViewIfNeeded();
+    await capture(page, `real-long-shell-footer-${width}-${theme}`);
   }
   await product.fill('未保存草稿'); await view.getByRole('button', { name: '撤销修改' }).click(); await expect(product).toHaveValue(longName);
-  await view.locator('app-form-field').filter({ has: product }).locator('label.form-label').click(); await expect(product).toBeFocused();
+  await view.locator('app-form-field').first().locator('label.form-label').click(); await expect(product).toBeFocused();
   await page.keyboard.press('Tab'); await expect(view.getByRole('textbox', { name: 'CLI 命令名称', exact: true })).toBeFocused();
+  await product.fill('Slide');
+  await view.getByRole('button', { name: '保存品牌' }).click();
+  await expect(view.getByText('品牌配置已保存', { exact: true })).toBeVisible();
+  await page.reload(); await expect(product).toHaveValue('Slide');
+  for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
+    await page.setViewportSize({ width, height: 960 });
+    await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
+    await view.getByRole('heading', { name: '品牌设置' }).scrollIntoViewIfNeeded();
+    await capture(page, `real-shell-${width}-${theme}`);
+    await view.getByRole('button', { name: '保存品牌' }).scrollIntoViewIfNeeded();
+    await capture(page, `real-shell-footer-${width}-${theme}`);
+  }
   const tree = await (await page.context().newCDPSession(page)).send('Accessibility.getFullAXTree');
   expect(tree.nodes.filter(n => n.role?.value === 'textbox' && ['产品名称', 'CLI 命令名称', '环境变量前缀', '数据目录名称'].includes(n.name?.value)).length).toBe(4);
   await writeFile(`${output}/accessibility.json`, JSON.stringify(tree, null, 2));
@@ -106,6 +123,7 @@ test('controlled validation, save pending, failure, permission and unknown prese
   for (const name of ['产品名称', 'CLI 命令名称', '环境变量前缀', '数据目录名称']) {
     await expect(view.getByRole('textbox', { name, exact: true })).toHaveAccessibleDescription('此项不能为空');
   }
+  await expect(product).toBeFocused();
   expect(writes).toBe(0); await capture(page, 'controlled-empty-validation');
   await view.getByRole('button', { name: '撤销修改' }).click();
   const cli = view.getByRole('textbox', { name: 'CLI 命令名称', exact: true });
