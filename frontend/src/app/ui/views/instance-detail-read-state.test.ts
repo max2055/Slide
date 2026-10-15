@@ -63,4 +63,25 @@ describe('instance query read states', () => {
     finish(new Response('[{"id":"old","sql_text":"old instance SQL"}]')); await first;
     expect(await text(el)).not.toContain('old instance SQL');
   });
+  it.each(['topsql', 'sessions'])('%s renders successful data, then clears it when access is revoked', async tab => {
+    const data = tab === 'topsql' ? [{ id: 'q1', sql_text: 'SELECT sensitive_record', last_seen: new Date().toISOString() }] : [{ id: 1, query: 'SELECT sensitive_record' }];
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(data)));
+    const el = page(tab); await el.loadTabData(); expect(await text(el)).toContain('SELECT sensitive_record');
+    fetchMock.mockResolvedValue(new Response('{}', { status: 403 })); await el.loadTabData();
+    expect(await text(el)).toContain('无权'); expect(await text(el)).not.toContain('sensitive_record');
+  });
+  it('invalidates cached lists when the detail refresh fails before querying the tab', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('[]')); const el = page(); await el.loadTabData();
+    fetchMock.mockRejectedValueOnce(new Error('offline')); await el.refreshCurrentTab();
+    expect(await text(el)).toContain('失败');
+  });
+  it('keeps the latest request when two reads for the same instance finish out of order', async () => {
+    let finish!: (r: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const el = page(); const old = el.loadTabData();
+    fetchMock.mockResolvedValueOnce(new Response('[]')); await el.loadTabData();
+    finish(new Response('[{"id":"old","sql_text":"obsolete SQL","last_seen":"2026-10-15"}]')); await old;
+    expect(await text(el)).not.toContain('obsolete SQL'); expect(await text(el)).toContain('未返回');
+  });
+
 });

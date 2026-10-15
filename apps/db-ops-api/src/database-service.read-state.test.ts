@@ -15,11 +15,14 @@ describe('query availability remains distinct from empty success', () => {
     expect(await databaseService.getSlowQueries(991)).toBeNull();
   });
   it('preserves MySQL successful empty and slow_log fallback compatibility', async () => {
+    const source = vi.fn();
     const query = vi.fn().mockResolvedValue([[]]);
     service.connections.set(991, { id: 991, connected: true, db_type: 'mysql', pool: { query } });
-    expect(await databaseService.getSlowQueries(991)).toEqual([]);
+    expect(await databaseService.getSlowQueries(991, 10, source)).toEqual([]);
+    expect(source).toHaveBeenLastCalledWith('mysql-performance-schema');
     query.mockRejectedValueOnce(new Error('performance_schema unavailable'));
-    expect(await databaseService.getSlowQueries(991)).toEqual([]); expect(query).toHaveBeenCalledTimes(3);
+    expect(await databaseService.getSlowQueries(991, 10, source)).toEqual([]); expect(query).toHaveBeenCalledTimes(3);
+    expect(source).toHaveBeenLastCalledWith('mysql-slow-log');
   });
   it('Oracle session errors remain unavailable', async () => {
     service.connections.set(991, { id: 991, connected: true, db_type: 'oracle', oraclePool: {}, oracleConnection: { execute: vi.fn().mockRejectedValue(new Error('denied')) } });

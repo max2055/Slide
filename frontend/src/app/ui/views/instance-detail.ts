@@ -167,26 +167,32 @@ export class InstanceDetailPage extends LitElement {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
       if (instanceId !== this.instanceId) return;
       if (!res.ok) throw new Error("获取实例详情失败");
-      this.instance = await res.json();
+      const instance = await res.json();
+      if (instanceId !== this.instanceId) return;
+      this.instance = instance;
       this.loadDiagnosisHistory();
       await this.loadTabData();
-    } catch (err: any) { this.error = err.message; }
-    finally { this.loading = false; this.lastUpdated = new Date(); }
+    } catch (err: any) { if (instanceId === this.instanceId) this.error = err.message; }
+    finally { if (instanceId === this.instanceId) { this.loading = false; this.lastUpdated = new Date(); } }
   }
 
   private async refreshCurrentTab() {
     if (!this.instanceId || this.isRefreshing) return;
     this.isRefreshing = true;
+    const instanceId = this.instanceId;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
+      if (instanceId !== this.instanceId) return;
       if (!res.ok) {
         this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
         return;
       }
-      this.instance = await res.json();
+      const instance = await res.json();
+      if (instanceId !== this.instanceId) return;
+      this.instance = instance;
       await this.loadTabData();
       this.lastUpdated = new Date();
-    } catch { this._invalidateQueryReads('error'); }
+    } catch { if (instanceId === this.instanceId) this._invalidateQueryReads('error'); }
     finally { this.isRefreshing = false; }
   }
 
@@ -261,7 +267,7 @@ export class InstanceDetailPage extends LitElement {
       if (!current()) return;
       // Keep the existing array contract; null/error envelopes and malformed rows are not empty success.
       if (!Array.isArray(rows) || !rows.every(row => row && typeof row === 'object' &&
-        (kind === 'topsql' ? typeof row.sql_text === 'string' : row.id != null))) throw new Error('INVALID_QUERY_RESPONSE');
+        (kind === 'topsql' ? typeof row.sql_text === 'string' : row.id != null && (row.query == null || typeof row.query === 'string')))) throw new Error('INVALID_QUERY_RESPONSE');
       if (kind === 'topsql') this.slowQueries = rows; else this.sessions = rows;
       this.queryReads = { ...this.queryReads, [kind]: { status: 'success', instanceId, readAt: Date.now(), source: res.headers.get('x-slide-query-source') ?? 'unknown' } };
       this.queryExpiryTimers[kind] = setTimeout(() => this.requestUpdate(), this.QUERY_MAX_AGE);
