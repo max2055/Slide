@@ -17,7 +17,7 @@ const base = `http://127.0.0.1:${frontendPort}`;
 test.skip(process.env.MAX175_ISOLATED_MYSQL !== '1', 'Requires MAX-175 task-owned MySQL and exclusive task ports');
 const processes: ChildProcess[] = [];
 let pool: any, token: string, permissions: string[], password = randomBytes(24).toString('hex');
-let instanceId: number;
+let instanceId: number, serverId: number, networkId: number;
 async function ready(url: string, child: ChildProcess) {
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
@@ -48,6 +48,11 @@ test.beforeAll(async () => {
   const [insert] = await pool.query("INSERT INTO database_instances(name,db_type,host,port,username,password_encrypted,environment,status,health_status) VALUES ('MAX-175 订单数据库 · 隔离服务测试资源','mysql','127.0.0.1',33175,'root',?,'testing','inactive','unknown')", [encryptData('unused-isolated-target',env.ENCRYPTION_KEY)]);
   instanceId = insert.insertId;
   for (let i=0;i<55;i++) await pool.query("INSERT INTO database_logs(instance_id,log_level,source,message,raw_content,collected_at) VALUES (?,?,'mysql_error',?,?,DATE_SUB(NOW(),INTERVAL ? SECOND))", [instanceId,i%3?'info':'warning',`事件 ${i+1} · 持久化日志测试记录`,`完整事件 ${i+1}\n${'Long_SQL_context_'.repeat(24)}\nEND-OF-LOG-${i+1}`,i]);
+  const [server] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max175-no-target.invalid',22,'MAX-175 隔离服务器','Linux','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
+  serverId = server.insertId;
+  const [network] = await pool.query("INSERT INTO network_devices(name,label,host,vendor,collection_enabled,status) VALUES ('max175-network','MAX-175 隔离网络设备','max175-network.invalid','huawei',0,'unknown')");
+  networkId = network.insertId;
+  for(const [index,status] of [[1,'up'],[2,'down']] as const) await pool.query("INSERT INTO network_device_interfaces(device_id,if_index,if_name,if_alias,speed_bps,admin_status,oper_status,last_seen_at) VALUES (?,?,?,?,1000000000,'up',?,DATE_SUB(NOW(),INTERVAL 1 HOUR))",[networkId,index,`GigabitEthernet0/0/${index}`,'MAX-175 持久化接口记录 · '+ '长别名'.repeat(12),status]);
   const api = await launch(['--import','tsx','server.ts'], resolve('../apps/db-ops-api'), env, 'api.log');
   await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, api);
   const vite = await launch([resolve('node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port',String(frontendPort),'--strictPort'], resolve('.'), { ...env,VITE_API_PROXY_TARGET:`http://127.0.0.1:${apiPort}`,VITE_AGENT_WS_PROXY_TARGET:'http://127.0.0.1:29775' }, 'vite.log');
@@ -211,4 +216,48 @@ test('controlled metrics interactions and log context isolation',async({page})=>
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-session-expired')));release?.();
   await expect(page.locator('body')).not.toContainText('LATE-OLD-RESOURCE');
   await writeFile(`${output}/controlled-interactions.json`,JSON.stringify({source:'Explicit route interception, separate from normal-service evidence',coverage:['metrics filter/keyboard/details/chart gap','metrics failure/403','log pending + object change + session invalidation'],head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()},null,2));
+});
+
+
+test('server and network real service inventory, semantic tabs, interfaces and permission clearing',async({page})=>{
+  test.setTimeout(100_000);
+  await page.addInitScript(({token,permissions})=>{
+    localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));
+  },{token,permissions});
+  const reads:{path:string;status:number}[]=[], writes:string[]=[], errors:string[]=[];
+  page.on('response',r=>{const path=new URL(r.url()).pathname;if(path.startsWith('/api/')) reads.push({path,status:r.status()});});
+  page.on('request',r=>{if(['POST','PUT','DELETE'].includes(r.method())&&!r.url().includes('/metrics-v2/query')) writes.push(new URL(r.url()).pathname);});
+  page.on('pageerror',e=>errors.push(e.message));
+  for(const width of [1440,768,390]) for(const theme of ['light','dark']) {
+    await page.setViewportSize({width,height:1000});
+    await page.goto(`${base}/server-detail?id=${serverId}`);await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
+    const server=page.locator('server-detail');await expect(server.getByText('当前需要关注',{exact:true})).toBeVisible();await expect(server.locator('semantic-metrics')).toHaveCount(0);
+    await expect(server.locator('.resource-meta')).toContainText('观测于');
+    for(const tab of ['概览','指标与趋势','日志']) {
+      await server.getByRole('tab',{name:tab,exact:true}).click();
+      if(tab==='指标与趋势') await expect(server.locator('semantic-metrics .window')).toBeVisible();
+      if(tab==='日志') {await expect(server.locator('server-diagnostic-panel')).toBeVisible();await expect(server.locator('semantic-metrics')).toHaveCount(0);}
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${output}/server-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
+    }
+    await page.goto(`${base}/network-device-detail?networkDeviceId=${networkId}`);await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
+    const network=page.locator('network-device-detail');await expect(network.getByText('当前需要关注',{exact:true})).toBeVisible();await expect(network.locator('semantic-metrics')).toHaveCount(0);
+    for(const tab of ['概览','指标与趋势','接口','配置备份']) {
+      await network.getByRole('tab',{name:tab,exact:true}).click();
+      if(tab==='指标与趋势') await expect(network.locator('semantic-metrics .window')).toBeVisible();
+      if(tab==='接口') {
+        await expect(network.getByText('GigabitEthernet0/0/1',{exact:true})).toBeVisible();await expect(network.locator('semantic-metrics')).toHaveCount(0);
+        await network.getByLabel('接口运行状态',{exact:true}).selectOption('down');await expect(network.getByText('GigabitEthernet0/0/1',{exact:true})).toHaveCount(0);await expect(network.getByText('GigabitEthernet0/0/2',{exact:true})).toBeVisible();
+        await network.getByLabel('接口运行状态',{exact:true}).selectOption('');await network.getByLabel('接口名称或别名',{exact:true}).fill('0/0/1');await expect(network.getByText('GigabitEthernet0/0/2',{exact:true})).toHaveCount(0);
+        await network.getByLabel('接口名称或别名',{exact:true}).fill('');
+      }
+      if(tab==='配置备份') await expect(network.getByText('尚未配置 SSH 凭据',{exact:false})).toBeVisible();
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${output}/network-${tab}-${width}-${theme}-real-service.png`,fullPage:true});
+    }
+  }
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('slide-permissions-loaded')));await expect(page.locator('network-device-detail')).toContainText('权限或登录状态已变更');await expect(page.locator('network-device-detail .overview-grid')).toHaveCount(0);
+  expect(writes.filter(path=>!['/api/platform/frontend-events','/api/device/register','/api/device/challenge'].includes(path))).toEqual([]);expect(errors).toEqual([]);
+  expect(reads.filter(row=>row.path.startsWith(`/api/network-devices/${networkId}/interfaces`)).every(row=>row.status===200)).toBe(true);
+  await writeFile(`${output}/infrastructure-real-service.json`,JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),data:'Formal full API + isolated MySQL persisted inventory and interfaces. Collection disabled, no live SSH/SNMP target; diagnostic logs genuinely empty, semantic metrics unconfigured. Not live target acceptance.',reads,writes,errors},null,2));
 });

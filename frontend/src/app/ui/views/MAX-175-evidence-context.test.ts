@@ -55,3 +55,36 @@ it('clears previous metric time-window values during a new query and rejects per
   window.dispatchEvent(new CustomEvent('slide-session-expired')); finish(ok(data)); await settle();
   expect(el.result).toBeNull(); expect(el.error).toContain('权限或登录状态');
 });
+
+it('network clears old interfaces and backups, rejects delayed bodies on resource switch and revocation', async () => {
+  await import('./network-device-detail.js');
+  let finish!: (data: unknown) => void;
+  authFetch.mockImplementation(async (url: string) => {
+    if (url.endsWith('/interfaces')) return { ok:true, json:() => new Promise(resolve=>finish=resolve) };
+    if (url.endsWith('/relations')) return ok({relations:[]});
+    if (url.endsWith('/config-backups')) return ok({backups:[]});
+    if (url.endsWith('/backup-schedule')) return ok({enabled:false,dailyTime:'00:00'});
+    if (url==='/api/resources/overview') return ok({items:[]});
+    return ok({id:Number(url.split('/').at(-1)),name:'fixture',host:'isolated.invalid',vendor:'huawei',status:'unknown'});
+  });
+  const el=document.createElement('network-device-detail') as any;el.deviceId=1;document.body.append(el);await settle();
+  const pending=el.loadInterfaces();await settle();el.deviceId=2;await settle();finish({interfaces:[{ifName:'OLD-INTERFACE'}]});await pending;await settle();
+  expect(el.interfaces).toEqual([]);expect(el.selectedBackup).toBeNull();
+  const next=el.loadInterfaces();await settle();window.dispatchEvent(new CustomEvent('slide-session-expired'));finish({interfaces:[{ifName:'REVOKED-INTERFACE'}]});await next;await settle();
+  expect(el.interfaces).toEqual([]);expect(el.device).toBeNull();expect(el.textContent).toContain('权限或登录状态');
+});
+
+it('server clears diagnostic evidence and rejects late server reads after a switch', async () => {
+  await import('./server-detail.js');
+  let finish!: (data: unknown) => void;
+  authFetch.mockImplementation(async (url:string)=>{
+    if(url==='/api/servers/1') return {ok:true,json:()=>new Promise(resolve=>finish=resolve)};
+    if(url.endsWith('/instances')) return ok({instances:[]});
+    if(url==='/api/resources/overview') return ok({items:[]});
+    return ok({id:2,host:'new.invalid',status:'offline',os_type:'Linux'});
+  });
+  const el=document.createElement('server-detail') as any;el.serverId=1;document.body.append(el);await settle();el.diagnostics={secret:'old'};
+  el.serverId=2;await settle();finish({id:1,host:'OLD.invalid'});await settle();
+  expect(el.server.id).toBe(2);expect(el.diagnostics).toBeNull();
+  window.dispatchEvent(new CustomEvent('slide-permissions-loaded'));await settle();expect(el.server).toBeNull();
+});

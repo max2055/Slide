@@ -167,8 +167,19 @@ export class SemanticCoreList extends LitElement {
     network_device: [{ key: 'network.interface.oper_up', label: '接口运行状态' }],
   }[this.resourceType] ?? []), { key: 'error', label: '查询状态' }]; }
   private generation = 0;
-  override updated(changes: Map<string, unknown>) { if (changes.has('resources') || changes.has('resourceType')) void this.load(); }
-  override disconnectedCallback() { this.generation++; super.disconnectedCallback(); }
+  private onAccessChanged = () => { ++this.generation; this.rows = []; };
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.onAccessChanged);
+    window.addEventListener('slide-session-expired', this.onAccessChanged);
+  }
+  override willUpdate(changes: Map<string, unknown>) { if (changes.has('resources') || changes.has('resourceType')) void this.load(); }
+  override disconnectedCallback() {
+    this.generation++;
+    window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
+    window.removeEventListener('slide-session-expired', this.onAccessChanged);
+    super.disconnectedCallback();
+  }
   private async load() {
     this.rows = [];
     const generation = ++this.generation, to = new Date().toISOString();
