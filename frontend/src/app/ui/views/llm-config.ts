@@ -1,6 +1,8 @@
 import "../components/app-card.js";
 import "../components/app-form-field.js";
 import "../components/app-notice.js";
+import "../components/app-dialog.js";
+import "../components/app-badge.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * LLM 配置管理 — 两栏布局：左侧提供商列表 + 右侧详情/模板选择
@@ -153,6 +155,15 @@ export class LLMConfigPage extends LitElement {
   @state() private modelSuggestions: string[] = [];
   @state() private modelsLoading = false;
   @state() private modelsMessage = '';
+  @state() private modelDraft: ModelConfig | null = null;
+  @state() private modelIndex = -1;
+  @state() private modelError = '';
+  @state() private modelSaving = false;
+  @state() private modelFeedback = '';
+  @state() private discardOpen = false;
+  @state() private advancedOpen = false;
+  private pendingNavigation: (() => void) | null = null;
+  private savedForm = '';
   private _modelRequestVersion = 0;
   private _testRequestVersion = 0;
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -198,7 +209,46 @@ export class LLMConfigPage extends LitElement {
 
     /* Detail */
     .detail { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: var(--bg-elevated); }
-    .detail-inner { padding: 20px 28px; max-width: 560px; }
+    .detail { min-width: 0; }
+    .detail-inner { padding: var(--space-lg) var(--space-xl); max-width: 1120px; width: 100%; box-sizing: border-box; }
+    .page-header h1 { font-size: 24px; }
+    .page-header p { font-size: 14px; }
+    .config-section { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: var(--space-xl); padding: var(--space-xl) 0; border-bottom: 1px solid var(--border); }
+    .config-section:first-child { padding-top: 0; }
+    .section-intro h2 { margin: 0 0 var(--space-sm); font-size: 16px; color: var(--text-strong); }
+    .section-intro p, .scope-hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .section-body { min-width: 0; }
+    .section-body .form-row > * { min-width: 0; }
+    .section-body .form-label, .section-body .form-input, .section-body .form-select { font-size: 14px; }
+    .model-toolbar, .model-row, .dialog-actions, .provider-heading { display: flex; align-items: center; gap: var(--space-sm); }
+    .model-toolbar, .provider-heading { flex-wrap: wrap; margin-bottom: var(--space-md); }
+    .provider-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .model-toolbar .scope-hint { flex: 1 1 16rem; min-width: min(100%, 16rem); overflow-wrap: anywhere; }
+    .model-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); max-width: 100%; }
+    .model-toolbar-actions .btn { flex-shrink: 0; }
+    .connection-card::part(header), .connection-card::part(footer) { display: none; }
+    .model-row { justify-content: space-between; padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
+    .model-row:last-child { border-bottom: 0; }
+    .model-summary { min-width: 0; }
+    .model-summary strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 14px; color: var(--text-strong); overflow-wrap: anywhere; }
+    .model-summary p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: var(--space-xs) 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+    .model-row .btn { flex-shrink: 0; }
+    .model-list { max-height: 26rem; overflow-y: auto; }
+    .advanced summary { cursor: pointer; font-size: 14px; color: var(--text); padding: var(--space-xs) 0; }
+    .advanced-body { padding-top: var(--space-lg); }
+    .model-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); margin: var(--space-lg) 0; }
+    .model-fields app-form-field { min-width: 0; margin: 0; }
+    .raw-parameters { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+    .model-feedback { font-size: 12px; color: var(--muted); }
+    .sidebar-item { width: 100%; border: 0; background: transparent; text-align: left; font-family: inherit; }
+    @media (max-width: 1000px) { .config-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); } }
+    @media (max-width: 600px) {
+      .model-fields { grid-template-columns: minmax(0, 1fr); }
+      .form-row { flex-direction: column; gap: 0; }
+      .actions-bar { flex-wrap: wrap; }
+      .dialog-actions { flex-wrap: wrap; justify-content: end; }
+      .page-header h1 { font-size: 22px; }
+    }
 
     /* Template picker */
     .picker-section-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; margin-top: 4px; }
@@ -295,6 +345,10 @@ export class LLMConfigPage extends LitElement {
         if (fresh) {
           this.editing = fresh;
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
+          if (this.savedForm) {
+            const saved = JSON.parse(this.savedForm) as FormData;
+            this.savedForm = JSON.stringify({ ...saved, enabled: fresh.enabled, is_default: fresh.is_default });
+          }
         } else {
           this.editing = null;
         }
@@ -315,7 +369,18 @@ export class LLMConfigPage extends LitElement {
 
   // ── Sidebar actions ──────────────────────────────────────────────────────
 
+  private get connectionDirty() { return this.viewMode === 'form' && JSON.stringify(this.form) !== this.savedForm; }
+
+  private _navigate(action: () => void) {
+    if (this.saving || this.modelSaving) return;
+    if (this.connectionDirty) { this.pendingNavigation = action; this.discardOpen = true; }
+    else action();
+  }
+
   _selectProvider(p: LLMProvider) {
+    this.modelDraft = null;
+    this.modelFeedback = '';
+    this.savedOk = false;
     this._resetTest();
     this._resetDiscovery();
     const selectedModel = p.models_supported?.find(m => m.id === p.default_model);
@@ -343,9 +408,14 @@ export class LLMConfigPage extends LitElement {
     this.testResult = null;
     this.showKey = false;
     this.modelSuggestions = this.form.models.map(m => m.id);
+    this.savedForm = JSON.stringify(this.form);
   }
 
   _openAddPicker() {
+    this.modelDraft = null;
+    this.modelFeedback = '';
+    this.savedOk = false;
+    this._resetDiscovery();
     this._resetTest();
     this.selectedId = null;
     this.editing = null;
@@ -387,6 +457,7 @@ export class LLMConfigPage extends LitElement {
   // ── CRUD ─────────────────────────────────────────────────────────────────
 
   private async _save() {
+    if (this.saving || this.modelSaving) return;
     this.saving = true; this.formMsg = null; this.savedOk = false;
     try {
       const window = this.form.context_window;
@@ -403,9 +474,9 @@ export class LLMConfigPage extends LitElement {
       }];
       const body: any = {
         name: this.form.name,
-        displayName: this.form.display_name || undefined,
+        displayName: this.form.display_name,
         deploymentType: this.form.deployment_type,
-        apiFormat: this.form.api_format || undefined,
+        apiFormat: this.form.api_format,
         apiKey: this.form.api_key || undefined,
         baseURL: this.form.api_base_url || undefined,
         model: this.form.default_model || undefined,
@@ -423,7 +494,8 @@ export class LLMConfigPage extends LitElement {
         const result = await apiClient.post<{ success: boolean; error?: string }>("/llm/configs", body);
         if (result?.success === false) throw new Error(result.error || '保存失败');
       }
-      this.form = { ...this.form, api_key: '' };
+      this.form = { ...this.form, api_key: '', models };
+      this.savedForm = JSON.stringify(this.form);
       this._resetTest();
       this.savedOk = true;
       if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
@@ -457,7 +529,7 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
-    } catch (_) {}
+    } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
 
   private async _setDefault(p: LLMProvider) {
@@ -472,7 +544,7 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
-    } catch (_) {}
+    } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
 
   private async _delete(p: LLMProvider) {
@@ -487,14 +559,90 @@ export class LLMConfigPage extends LitElement {
 
   // ── Model CRUD ──────────────────────────────────────────────────────────
 
-  _addModel() {
-    this.form = { ...this.form, models: [...this.form.models, { id: "" }] };
+  _addModel() { this._editModel(-1); }
+
+  private _editModel(index: number) {
+    this.modelIndex = index;
+    this.modelDraft = index < 0 ? { id: '' } : structuredClone(this.form.models[index]);
+    this.modelError = '';
+  }
+
+  private _patchModel(patch: Partial<ModelConfig>) {
+    this.modelDraft = { ...this.modelDraft!, ...patch, ...(Object.keys(patch).some(key => ['contextWindow', 'maxTokens', 'supportsFunctionCall', 'supportsVision'].includes(key)) ? { parameterSource: 'manual' as const } : {}) };
+  }
+
+  private async _saveModel() {
+    if (!this.modelDraft || this.modelSaving) return;
+    this.modelError = '';
+    const model = { ...this.modelDraft, id: this.modelDraft.id.trim() };
+    const original = this.form.models[this.modelIndex];
+    try {
+      if (!model.id) throw new Error('请填写模型 ID。');
+      if (this.form.models.some((m, i) => i !== this.modelIndex && m.id === model.id)) throw new Error('模型 ID 已存在，请使用不同 ID。');
+      for (const [label, value, min] of [['上下文窗口', model.contextWindow, 1026], ['最大输出限制', model.maxTokens, 1]] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < min)) throw new Error(`${label}必须为不小于 ${min} 的整数。`);
+      }
+      for (const price of [model.cost?.input, model.cost?.output]) {
+        if (price !== undefined && (!Number.isFinite(price) || price < 0)) throw new Error('价格必须为不小于 0 的数值；未知时留空。');
+      }
+      const apply = (models: ModelConfig[]) => {
+        const index = original ? models.findIndex(m => m.id === original.id) : -1;
+        return index < 0 ? [...models, model] : models.map((m, i) => i === index ? model : m);
+      };
+      if (this.editing) {
+        this.modelSaving = true;
+        const models = apply(this.editing.models_supported || []);
+        const body: Record<string, unknown> = { modelsSupported: models };
+        const isDefault = original?.id === this.editing.default_model || model.id === this.editing.default_model;
+        if (isDefault) {
+          const window = model.contextWindow ?? this.editing.context_window;
+          const output = this.editing.max_tokens ?? 4096;
+          if (window !== undefined && output + 1024 >= window || model.maxTokens !== undefined && output > model.maxTokens) {
+            throw new Error('模型限制小于当前每次请求输出预留，请先在连接高级项调整 Max Tokens 并保存配置。');
+          }
+          body.model = model.id;
+          if (model.contextWindow !== undefined) body.contextWindow = model.contextWindow;
+          if (model.supportsFunctionCall !== undefined) body.supportsFunctionCall = model.supportsFunctionCall;
+          if (model.supportsVision !== undefined) body.supportsVision = model.supportsVision;
+        }
+        const result = await apiClient.put<{ success: boolean; error?: string }>(`/llm/configs/${this.editing.id}`, body);
+        if (result?.success === false) throw new Error(result.error || '保存模型失败');
+        const fresh = { ...this.editing, models_supported: models, ...(isDefault ? {
+          default_model: model.id, context_window: model.contextWindow ?? this.editing.context_window,
+          supports_function_call: model.supportsFunctionCall ?? this.editing.supports_function_call,
+          supports_vision: model.supportsVision ?? this.editing.supports_vision,
+        } : {}) };
+        this.editing = fresh;
+        this.providers = this.providers.map(p => p.id === fresh.id ? fresh : p);
+        // Advance only the model portion of the saved snapshot; preserve unsaved connection fields.
+        const saved = JSON.parse(this.savedForm) as FormData;
+        saved.models = apply(saved.models);
+        if (saved.default_model === original?.id) {
+          saved.default_model = model.id;
+          saved.context_window = model.contextWindow ?? saved.context_window;
+          saved.supports_function_call = model.supportsFunctionCall ?? saved.supports_function_call;
+          saved.supports_vision = model.supportsVision ?? saved.supports_vision;
+        }
+        this.savedForm = JSON.stringify(saved);
+      }
+      this.form = { ...this.form, models: apply(this.form.models) };
+      if (this.form.default_model === original?.id) {
+        this.form = { ...this.form, default_model: model.id, context_window: model.contextWindow ?? this.form.context_window,
+          supports_function_call: model.supportsFunctionCall ?? this.form.supports_function_call,
+          supports_vision: model.supportsVision ?? this.form.supports_vision };
+      }
+      this.modelFeedback = this.editing ? `模型「${model.name || model.id}」已保存；连接草稿未提交。` : '模型已加入待保存配置，请保存配置后生效。';
+      this.modelDraft = null;
+      this._resetTest();
+    } catch (e: any) { this.modelError = e.message || '保存模型失败'; }
+    finally { this.modelSaving = false; }
   }
 
   _removeModel(idx: number) {
     const models = [...this.form.models];
     models.splice(idx, 1);
     this.form = { ...this.form, models };
+    this.modelFeedback = '模型移除尚未保存，保存配置后生效；场景引用请在场景分配中核对。';
   }
 
   _updateModel(idx: number, patch: Partial<ModelConfig>) {
@@ -600,20 +748,28 @@ export class LLMConfigPage extends LitElement {
       </div>`;
     }
     if (this.error) {
-      return html`<div style="padding:var(--space-xl);text-align:center;color:var(--danger);font-size:var(--text-base)">${this.error}</div>`;
+      return html`<app-notice severity="error"><div role="alert">${this.error}</div><button class="btn" @click=${() => this._load()}>重新读取</button></app-notice>`;
     }
 
     return html`
       <div style="display:flex;flex-direction:column;height:100%">
         <div class="page-header">
           <h1>${this.activeTab === 'scenes' ? '场景分配' : '模型配置'}</h1>
-          <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '管理 AI 提供商：添加、编辑、启停、测试连接'}</p>
+          <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '先配置连接，再管理模型与高级参数'}</p>
         </div>
         <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}" style="flex:1">
           ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
           ${this._renderDetail()}
         </div>
       </div>
+      ${this._renderModelDialog()}
+      <app-dialog .open=${this.discardOpen} title="放弃未保存修改？" size="sm" @app-dialog-close=${() => { this.discardOpen = false; this.pendingNavigation = null; }}>
+        <p>当前连接配置有未保存修改，离开后将丢弃。</p>
+        <div slot="footer" class="dialog-actions">
+          <button class="btn" @click=${() => { this.discardOpen = false; this.pendingNavigation = null; }}>继续编辑</button>
+          <button class="btn-primary" @click=${() => { const action = this.pendingNavigation; this.discardOpen = false; this.pendingNavigation = null; action?.(); }}>放弃并离开</button>
+        </div>
+      </app-dialog>
     `;
   }
 
@@ -678,19 +834,19 @@ export class LLMConfigPage extends LitElement {
 
   _renderSidebar() {
     return html`
-    <div class="sidebar">
+    <div class="sidebar" ?inert=${this.saving || this.modelSaving}>
       <div class="sidebar-list">
         ${this.providers.length === 0 ? html`
           <div class="sidebar-empty">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg>
             <p>还没有 AI 提供商<br/>选择一个模板快速开始</p>
-            <button class="add-first-btn" @click=${this._openAddPicker}>添加第一个提供商</button>
+            <button class="add-first-btn" @click=${() => this._navigate(() => this._openAddPicker())}>添加第一个提供商</button>
           </div>
         ` : this.providers.map(p => {
           const brand = brandFor(p.name);
           const isSelected = this.selectedId === p.id;
           return html`
-          <div class="sidebar-item ${isSelected ? 'selected' : ''}" @click=${() => this._selectProvider(p)}>
+          <button type="button" class="sidebar-item ${isSelected ? 'selected' : ''}" @click=${() => this._navigate(() => this._selectProvider(p))}>
             <div class="brand-circle" style="background:${brand.bg};color:${brand.color}">${brand.initial}</div>
             <div class="item-info">
               <div class="item-name">${p.display_name || p.name}</div>
@@ -698,11 +854,11 @@ export class LLMConfigPage extends LitElement {
             </div>
             <span class="status-dot ${p.enabled ? 'status-on' : 'status-off'}" title=${p.enabled ? '已启用' : '已禁用'}></span>
             ${p.is_default ? html`<span class="default-star" title="默认提供商">★</span>` : ''}
-          </div>`;
+          </button>`;
         })}
       </div>
       <div class="sidebar-footer">
-        <button class="add-btn" @click=${this._openAddPicker}>
+        <button class="add-btn" @click=${() => this._navigate(() => this._openAddPicker())}>
           + 添加提供商
         </button>
       </div>
@@ -717,7 +873,7 @@ export class LLMConfigPage extends LitElement {
       return html`<div class="detail"><div class="detail-inner">${this._renderPicker()}</div></div>`;
     }
     if (this.viewMode === "form") {
-      return html`<div class="detail"><div class="detail-inner" @input=${this._resetTest} @change=${this._resetTest}>${this._renderForm()}</div></div>`;
+      return html`<div class="detail"><div class="detail-inner" ?inert=${this.saving || this.modelSaving} @input=${() => { this._resetTest(); this.requestUpdate(); }} @change=${() => { this._resetTest(); this.requestUpdate(); }}>${this._renderForm()}</div></div>`;
     }
     // placeholder
     return html`<div class="detail"><div class="placeholder">
@@ -756,40 +912,40 @@ export class LLMConfigPage extends LitElement {
 
   _renderForm() {
     const isEdit = !!this.editing;
-    const brand = brandFor(this.form.name || "new");
     return html`
-      <div class="form-section-title">${isEdit ? '编辑提供商' : '新建提供商'}</div>
-
+      <div class="provider-heading"><strong>${this.form.display_name || this.form.name || '新建提供商'}</strong>
+        <app-badge variant=${this.connectionDirty ? 'warning' : 'muted'}>${this.connectionDirty ? '未保存修改' : '已保存配置'}</app-badge>
+      </div>
+      <app-card class="connection-card">
+        <section class="config-section">
+          <div class="section-intro"><h2>基础连接</h2><p>先配置供应商，再管理模型与高级参数。</p></div>
+          <div class="section-body">
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">标识名 ${!isEdit ? html`<span style="color:var(--danger)">*</span>` : ''}</label>
-          <input class="form-input" .value=${this.form.name} @input=${(e: any) => this.form.name = e.target.value} placeholder="anthropic" ?disabled=${isEdit} style="font-family:var(--font-mono,monospace)" />
+          <label class="form-label" for="provider-name">标识名 ${!isEdit ? html`<span style="color:var(--danger)">*</span>` : ''}</label>
+          <input id="provider-name" class="form-input" .value=${this.form.name} @input=${(e: any) => this.form.name = e.target.value} placeholder="anthropic" ?disabled=${isEdit} style="font-family:var(--font-mono,monospace)" />
         </div>
         <div class="form-group">
-          <label class="form-label">显示名称</label>
-          <input class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} placeholder="Anthropic Claude" />
+          <label class="form-label" for="provider-display">显示名称</label>
+          <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} placeholder="Anthropic Claude" />
         </div>
       </div>
 
       <div class="form-group">
-        <label class="form-label">部署类型</label>
-        <select class="form-select" .value=${this.form.deployment_type} @change=${(e: any) => this.form.deployment_type = e.target.value}>
-          ${DEPLOY_TYPES.map(d => html`<option value=${d.value}>${d.label}</option>`)}
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">API 兼容格式</label>
-        <select class="form-select" .value=${this.form.api_format} @change=${(e: any) => this.form.api_format = e.target.value}>
-          ${API_FORMATS.map(f => html`<option value=${f.value}>${f.label}</option>`)}
+        <label class="form-label" for="api-format">API 兼容格式</label>
+        <select id="api-format" class="form-select" .value=${this.form.api_format} @change=${(e: any) => this.form.api_format = e.target.value}>
+          ${API_FORMATS.map(f => html`<option value=${f.value} .selected=${f.value === this.form.api_format}>${f.label}</option>`)}
         </select>
         <span class="form-hint">自定义提供商需指定 API 格式，预置模板可自动检测</span>
       </div>
 
+
+            <app-form-field label="Base URL"><input class="form-input" aria-label="Base URL" .value=${this.form.api_base_url}
+              @input=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, api_base_url: (e.target as HTMLInputElement).value }; }} /></app-form-field>
       <div class="form-group">
-        <label class="form-label">API Key</label>
+        <label class="form-label" for="provider-key">API Key</label>
         <div class="key-wrapper">
-          <input class="form-input" type=${this.showKey ? "text" : "password"} autocomplete="new-password" .value=${this.form.api_key} @input=${(e: any) => this.form.api_key = e.target.value} placeholder=${isEdit ? "留空不修改" : "sk-..."} style="font-family:var(--font-mono,monospace)" />
+          <input id="provider-key" class="form-input" type=${this.showKey ? "text" : "password"} autocomplete="new-password" .value=${this.form.api_key} @input=${(e: any) => this.form.api_key = e.target.value} placeholder=${isEdit ? "留空不修改" : "sk-..."} style="font-family:var(--font-mono,monospace)" />
           <button class="key-toggle" type="button" @click=${() => { this.showKey = !this.showKey; }} title=${this.showKey ? "隐藏 API Key" : "显示 API Key"}>
             ${this.showKey ? icons['eye-off'] : icons['eye']}
           </button>
@@ -797,22 +953,48 @@ export class LLMConfigPage extends LitElement {
         <span class="form-hint">Key 将加密存储到数据库${isEdit ? ' · 留空则不修改' : ''}</span>
       </div>
 
-      <div class="provider-controls">
+
+          </div>
+        </section>
+        <section class="config-section">
+          <div class="section-intro"><h2>模型清单</h2><p>一次只编辑一个模型，价格与能力在编辑中查看。</p></div>
+          <div class="section-body">
+            <div class="model-toolbar"><span class="scope-hint">${this.form.models.length} 个模型 · 默认 ${this.form.default_model || '未选择'}</span>
+              <div class="model-toolbar-actions">
+              <button class="btn" data-testid="load-models" .disabled=${this.modelsLoading || !this.form.name.trim() || !this.form.api_base_url.trim()}
+                @click=${this._fetchModels}>${this.modelsLoading ? '加载中…' : '加载模型'}</button>
+              <button class="btn" @click=${this._addModel}>+ 添加模型</button>
+              </div>
+            </div>
+            <p class="scope-hint">加载与移除模型后需保存配置；弹窗保存仅提交当前模型。</p>
+            ${this.modelsMessage ? html`<p class="form-hint" role="status" aria-live="polite">${this.modelsMessage}</p>` : ''}
+            <div class="model-list" aria-label="模型清单">
+              ${this.form.models.length ? this.form.models.map((m, i) => html`
+                <div class="model-row"><div class="model-summary"><strong>${m.name || m.id}</strong>
+                  ${m.id === this.form.default_model ? html`<app-badge variant="muted">默认</app-badge>` : ''}
+                  <p>${m.id} · 上下文 ${m.contextWindow === undefined ? '未知' : m.contextWindow.toLocaleString()} · 价格与能力见编辑</p>
+                </div><button class="btn" @click=${() => this._editModel(i)} aria-label=${`编辑模型 ${m.name || m.id}`}>编辑</button></div>
+              `) : html`<p class="scope-hint">尚无模型清单。可加载模型或手动添加；默认模型也可在连接高级项配置。</p>`}
+            </div>
+            ${this.modelFeedback ? html`<p class="model-feedback" role="status">${this.modelFeedback}</p>` : ''}
+          </div>
+        </section>
+        <section class="config-section">
+          <div class="section-intro"><h2>连接高级项</h2><p>保留默认模型、输出预留与兼容参数，按需调整。</p></div>
+          <div class="section-body"><details class="advanced" .open=${this.advancedOpen || !!this.formMsg && /上下文|Max Tokens/.test(this.formMsg)} @toggle=${(e: Event) => { this.advancedOpen = (e.target as HTMLDetailsElement).open; }}><summary>默认模型、输出与兼容参数</summary><div class="advanced-body">
+      <div class="form-group">
+        <label class="form-label" for="deployment">部署类型</label>
+        <select id="deployment" class="form-select" .value=${this.form.deployment_type} @change=${(e: any) => this.form.deployment_type = e.target.value}>
+          ${DEPLOY_TYPES.map(d => html`<option value=${d.value} .selected=${d.value === this.form.deployment_type}>${d.label}</option>`)}
+        </select>
+      </div>
+
         <app-form-field label="供应商参数目录" hint="自动识别官方地址；自定义代理可指定供应商。">
           <select class="form-select" aria-label="供应商参数目录" .value=${this.form.provider_type || ''}
             @change=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, provider_type: (e.target as HTMLSelectElement).value }; }}>
             <option value="">自动识别 / 其他</option><option value="deepseek">DeepSeek</option><option value="stepfun">StepFun 阶跃星辰</option><option value="mimo">Xiaomi MiMo</option>
           </select>
         </app-form-field>
-        <app-form-field label="Base URL">
-          <input class="form-input" aria-label="Base URL" .value=${this.form.api_base_url}
-            @input=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, api_base_url: (e.target as HTMLInputElement).value }; }} placeholder="https://api.stepfun.com/v1" />
-        </app-form-field>
-        <button class="btn" data-testid="load-models" .disabled=${this.modelsLoading || !this.form.name.trim() || !this.form.api_base_url.trim()} @click=${this._fetchModels}>
-          ${this.modelsLoading ? '加载中…' : '加载模型'}
-        </button>
-      </div>
-      ${this.modelsMessage ? html`<p class="form-hint" role="status" aria-live="polite">${this.modelsMessage}</p>` : ''}
       <div class="model-controls">
         <app-form-field label="选择模型" hint="选择后自动应用参数，保存后生效。">
           <select class="form-select" aria-label="选择模型" .value=${this.form.default_model} .disabled=${this.modelsLoading}
@@ -840,80 +1022,23 @@ export class LLMConfigPage extends LitElement {
       </div>
       ${this.form.models.find(m => m.id === this.form.default_model)?.maxTokens ? html`<p class="form-hint">模型最大输出：${this.form.models.find(m => m.id === this.form.default_model)!.maxTokens} tokens · 参数来源：${({ api: '供应商 API', catalog: '参数目录', manual: '手动配置', unknown: '未知' } as Record<string, string>)[this.form.models.find(m => m.id === this.form.default_model)?.parameterSource || 'manual']}</p>` : ''}
 
-      <!-- Models -->
-      <div style="margin-top:var(--space-xs);padding-top:var(--space-lg);border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-sm)">
-          <div class="form-section-title" style="margin-bottom:0">模型列表</div>
-          <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" @click=${this._addModel}>+ 添加模型</button>
-        </div>
-        ${this.form.models.length === 0 ? html`
-          <div style="padding:var(--space-lg);text-align:center;color:var(--muted);font-size:var(--text-sm);border:1px dashed var(--border);border-radius:var(--radius-sm)">
-            暂无模型 · 默认模型字段已指定基础模型，此处可配置更多
-          </div>
-        ` : this.form.models.map((m, i) => html`
-          <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-md);margin-bottom:var(--space-sm);background:var(--card)">
-            <div style="display:flex;gap:var(--space-sm);align-items:center;margin-bottom:var(--space-sm)">
-              <div class="form-group" style="flex:1;margin-bottom:0">
-                <label class="form-label" style="font-size:10px">模型 ID</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm);font-family:var(--font-mono,monospace)"
-                  .value=${m.id} @input=${(e: any) => this._updateModel(i, { id: e.target.value })}
-                  placeholder="claude-sonnet-4-6" />
-              </div>
-              <div class="form-group" style="flex:1;margin-bottom:0">
-                <label class="form-label" style="font-size:10px">显示名称</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)"
-                  .value=${m.name || ""} @input=${(e: any) => this._updateModel(i, { name: e.target.value || undefined })}
-                  placeholder="Claude Sonnet 4.6" />
-              </div>
-              <button class="model-remove-btn" @click=${() => this._removeModel(i)} title="删除此模型">
-                ${icons['trash-2']}
-              </button>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap: var(--space-sm)">
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:10px">Context Window</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number"
-                  .value=${m.contextWindow !== undefined ? String(m.contextWindow) : ""}
-                  @input=${(e: any) => this._updateModel(i, { contextWindow: e.target.value ? parseInt(e.target.value) : undefined })}
-                  placeholder="200000" />
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:10px">最大输出限制</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number"
-                  .value=${m.maxTokens !== undefined ? String(m.maxTokens) : ""}
-                  @input=${(e: any) => this._updateModel(i, { maxTokens: e.target.value ? parseInt(e.target.value) : undefined })}
-                  placeholder="16384" />
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:10px">Cost Input ($/1M)</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number" step="0.01"
-                  .value=${m.cost?.input !== undefined ? String(m.cost.input) : ""}
-                  @input=${(e: any) => this._updateModel(i, { cost: { ...m.cost, input: e.target.value ? parseFloat(e.target.value) : undefined } })}
-                  placeholder="3.00" />
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:10px">Cost Output ($/1M)</label>
-                <input class="form-input" style="font-size:var(--text-sm);padding:var(--space-xs) var(--space-sm)" type="number" step="0.01"
-                  .value=${m.cost?.output !== undefined ? String(m.cost.output) : ""}
-                  @input=${(e: any) => this._updateModel(i, { cost: { ...m.cost, output: e.target.value ? parseFloat(e.target.value) : undefined } })}
-                  placeholder="15.00" />
-              </div>
-            </div>
-          </div>
-        `)}
-      </div>
-
       <app-form-field label="工具调用能力" hint="仅在提供商及所用模型支持工具调用时启用；智能对话和后台分析需要此能力。">
         <input type="checkbox" aria-label="支持工具调用" .checked=${Boolean(this.form.supports_function_call)}
           @change=${(e: Event) => this._setSelectedParameters({ supports_function_call: (e.target as HTMLInputElement).checked })} />
       </app-form-field>
+
+            <app-form-field label="视觉能力"><input type="checkbox" aria-label="支持视觉" .checked=${Boolean(this.form.supports_vision)}
+              @change=${(e: Event) => this._setSelectedParameters({ supports_vision: (e.target as HTMLInputElement).checked })} /></app-form-field>
+          </div></details></div>
+        </section>
+        <p class="scope-hint">保存配置会提交此连接的基础项、默认模型、高级项与待保存模型清单。启停、设为默认和删除即时生效。</p>
       <!-- Provider info bar -->
       ${isEdit ? html`
         <div class="toggle-row">
-          <div class="toggle-item" @click=${() => this._toggle(this.editing!)}>
+          <button class="btn" @click=${() => this._toggle(this.editing!)}>
             <div class="toggle-switch ${this.editing!.enabled ? 'on' : ''}"></div>
             <span>${this.editing!.enabled ? '已启用' : '已禁用'}</span>
-          </div>
+          </button>
           ${this.editing!.is_default ? html`
             <span style="font-size:var(--text-xs);color:var(--accent-text);font-weight:500">★ 默认提供商</span>
           ` : html`
@@ -922,7 +1047,7 @@ export class LLMConfigPage extends LitElement {
         </div>
       ` : ''}
 
-      ${this.formMsg ? html`<div class="msg msg-err">${this.formMsg}</div>` : ''}
+      ${this.formMsg ? html`<div class="msg msg-err" role="alert">${this.formMsg}</div>` : ''}
 
       <div class="actions-bar">
         ${isEdit ? html`
@@ -932,12 +1057,12 @@ export class LLMConfigPage extends LitElement {
         ` : ''}
         <span class="spacer"></span>
         ${isEdit ? html`
-          <button class="btn-danger-outline" @click=${() => this._delete(this.editing!)}>删除</button>
+          <button class="btn" @click=${() => this._delete(this.editing!)}>删除</button>
         ` : html`
-          <button class="btn" @click=${() => { this.viewMode = "picker"; }}>返回模板</button>
+          <button class="btn" @click=${() => { this._navigate(() => this._openAddPicker()); }}>返回模板</button>
         `}
-        <button class="btn-primary ${this.savedOk ? 'btn-success' : ''}" @click=${this._save} ?disabled=${this.saving || !this.form.name}>
-          ${this.savedOk ? html`<span style="font-size:11px">✓ 已保存</span>` : this.saving ? '保存中...' : '保存'}
+        <button class="btn-primary ${this.savedOk ? 'btn-success' : ''}" @click=${this._save} ?disabled=${this.saving || this.modelSaving || !this.form.name}>
+          ${this.savedOk ? '✓ 已保存配置' : this.saving ? '保存中...' : '保存配置'}
         </button>
       </div>
       ${isEdit ? html`
@@ -947,7 +1072,49 @@ export class LLMConfigPage extends LitElement {
               ${this.testing ? '正在测试连接…' : this.testResult}
             </app-notice>` : ''}
         </div>` : ''}
+
+      </app-card>
     `;
+  }
+
+  private _renderModelDialog() {
+    const m = this.modelDraft;
+    const numberField = (label: string, value: number | undefined, update: (n: number | undefined) => void, min = 0, step = '1') => html`
+      <app-form-field label=${label} hint="留空表示未知"><input class="form-input" aria-label=${label} type="number" min=${min} step=${step}
+        .value=${value === undefined ? '' : String(value)} @input=${(e: Event) => { const value = (e.target as HTMLInputElement).value; update(value === '' ? undefined : Number(value)); }} /></app-form-field>`;
+    const capability = (label: string, key: 'supportsFunctionCall' | 'supportsVision') => html`
+      <app-form-field label=${label}><select class="form-select" aria-label=${label} .value=${m?.[key] === undefined ? '' : String(m[key])}
+        @change=${(e: Event) => { const value = (e.target as HTMLSelectElement).value; this._patchModel({ [key]: value === '' ? undefined : value === 'true' }); }}>
+        <option value="" .selected=${m?.[key] === undefined}>未知</option><option value="true" .selected=${m?.[key] === true}>支持</option><option value="false" .selected=${m?.[key] === false}>不支持</option></select></app-form-field>`;
+    return html`<app-dialog .open=${!!m} title="编辑模型" size="lg" .closable=${!this.modelSaving} .closeOnOverlay=${false}
+      @app-dialog-close=${() => { this.modelDraft = null; }}>
+      ${m ? html`
+        <p class="scope-hint">${this.editing ? '保存仅更新当前模型及其默认参数，不提交连接草稿。' : '新连接：应用后仍需保存配置。'}取消或 Esc 放弃本次编辑。</p>
+        <fieldset ?disabled=${this.modelSaving} style="border:0;padding:0;margin:0;min-width:0">
+        <div class="model-fields">
+          <app-form-field label="模型 ID"><input class="form-input" aria-label="模型 ID" .value=${m.id} @input=${(e: Event) => this._patchModel({ id: (e.target as HTMLInputElement).value })} /></app-form-field>
+          <app-form-field label="显示名称"><input class="form-input" aria-label="模型显示名称" .value=${m.name || ''} @input=${(e: Event) => this._patchModel({ name: (e.target as HTMLInputElement).value || undefined })} /></app-form-field>
+          ${numberField('模型上下文窗口', m.contextWindow, n => this._patchModel({ contextWindow: n }), 1026)}
+          ${numberField('最大输出限制', m.maxTokens, n => this._patchModel({ maxTokens: n }), 1)}
+          ${numberField('输入价格（$/1M tokens）', m.cost?.input, n => this._patchModel({ cost: { ...m.cost, input: n } }), 0, 'any')}
+          ${numberField('输出价格（$/1M tokens）', m.cost?.output, n => this._patchModel({ cost: { ...m.cost, output: n } }), 0, 'any')}
+          ${capability('模型工具调用能力', 'supportsFunctionCall')}${capability('模型视觉能力', 'supportsVision')}
+          <app-form-field label="参数来源"><select class="form-select" aria-label="参数来源" .value=${m.parameterSource || ''}
+            @change=${(e: Event) => this._patchModel({ parameterSource: (e.target as HTMLSelectElement).value as ModelConfig['parameterSource'] || undefined })}>
+            ${[['', '未标注'], ['unknown', '未知'], ['api', '供应商 API'], ['catalog', '参数目录'], ['manual', '手动配置']].map(([value, label]) => html`<option value=${value} .selected=${(m.parameterSource || '') === value}>${label}</option>`)}</select></app-form-field>
+          <app-form-field label="参数供应商"><input class="form-input" aria-label="参数供应商" .value=${m.parameterProvider || ''}
+            @input=${(e: Event) => this._patchModel({ parameterProvider: (e.target as HTMLInputElement).value || undefined })} /></app-form-field>
+        </div>
+        </fieldset>
+        <details><summary>原始参数（包含保留的扩展字段）</summary><pre class="raw-parameters">${JSON.stringify(m, null, 2)}</pre></details>
+        ${this.modelError ? html`<div class="msg msg-err" role="alert">${this.modelError}</div>` : ''}
+      ` : ''}
+      <div slot="footer" class="dialog-actions">
+        ${this.modelIndex >= 0 ? html`<button class="btn" ?disabled=${this.modelSaving} @click=${() => { this._removeModel(this.modelIndex); this.modelDraft = null; }}>从配置中移除（待保存）</button>` : ''}
+        <button class="btn" ?disabled=${this.modelSaving} @click=${() => { this.modelDraft = null; }}>取消</button>
+        <button class="btn-primary" ?disabled=${this.modelSaving} @click=${this._saveModel}>${this.modelSaving ? '保存中…' : this.editing ? '保存模型' : '应用到待保存配置'}</button>
+      </div>
+    </app-dialog>`;
   }
 }
 

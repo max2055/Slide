@@ -37,8 +37,8 @@ for (const [name, modelId] of [['deepseek', 'deepseek-flash'], ['stepfun', 'step
       await page.getByRole('button', { name: '测试连接', exact: true }).click();
       await expect(page.getByRole('status', { name: '连接测试结果' })).toContainText('连接成功');
       expect(fixture.keyReads()).toBe(2);
-      await page.getByRole('button', { name: '保存', exact: true }).click();
-      await expect(page.getByRole('button', { name: '✓ 已保存' })).toBeVisible();
+      await page.getByRole('button', { name: '保存配置', exact: true }).click();
+      await expect(page.getByRole('button', { name: '✓ 已保存配置' })).toBeVisible();
       await expect(key).toHaveValue('');
       await page.getByRole('button', { name: '测试连接', exact: true }).click();
       await expect(page.getByRole('status', { name: '连接测试结果' })).toContainText('连接成功');
@@ -78,6 +78,7 @@ for (const width of [390, 1280]) test(`loads models, applies parameters and save
     <script type="module">import '/src/app/styles.css'; import '/src/app/ui/views/settings-shell.ts'; import '/src/app/ui/views/llm-config.ts';</script>
     </body></html>` }));
   await page.goto('/settings/ai/models?view=providers');
+  await page.locator('llm-config-page .advanced summary').click();
   await expect(page.getByLabel('上下文窗口', { exact: true })).toHaveValue('4096');
   await page.getByRole('button', { name: '加载模型', exact: true }).click();
   await expect(page.getByLabel('选择模型', { exact: true })).toContainText(model.name);
@@ -89,18 +90,19 @@ for (const width of [390, 1280]) test(`loads models, applies parameters and save
   const contextBox = await page.getByLabel('上下文窗口', { exact: true }).boundingBox();
   const panelBox = await page.locator('llm-config-page').boundingBox();
   expect(contextBox!.x + contextBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1);
-  await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('button', { name: '✓ 已保存' })).toBeVisible();
+  await page.getByRole('button', { name: '保存配置', exact: true }).click();
+  await expect(page.getByRole('button', { name: '✓ 已保存配置' })).toBeVisible();
   expect(writes.at(-1)).toMatchObject({ contextWindow: 256000, maxTokens: 4096, supportsFunctionCall: true, model: model.id });
   await page.reload();
   await expect(page.getByLabel('上下文窗口', { exact: true })).toHaveValue('256000');
+  await page.locator('llm-config-page .advanced summary').click();
   fail = true;
   await page.getByRole('button', { name: '加载模型', exact: true }).click();
   await expect(page.locator('.form-hint[role="status"]')).toContainText('MODEL_DISCOVERY_HTTP_401');
   await expect(page.getByLabel('选择模型', { exact: true })).toHaveValue(model.id);
   await page.getByLabel('选择模型', { exact: true }).selectOption('unknown-next');
   await expect(page.locator('.form-hint[role="status"]')).toContainText('未知模型参数');
-  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByRole('button', { name: '保存配置', exact: true }).click();
   await expect(page.locator('.msg-err')).toContainText('上下文窗口');
   expect(writes).toHaveLength(1);
   expect(errors).toEqual([]);
@@ -135,6 +137,7 @@ for (const width of [390, 1280]) test(`scene assignments persist and report inva
   await page.goto('/settings/ai/models?view=providers');
   await expect(page.getByRole('tab', { name: '模型配置', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('input[list="model-suggestions"]')).toHaveValue('base');
+  await page.locator('llm-config-page .advanced summary').click();
   await page.locator('input[list="model-suggestions"]').fill('draft');
   await page.getByRole('tab', { name: '场景分配', exact: true }).click();
   await expect(page.locator('.sidebar')).toHaveCount(0);
