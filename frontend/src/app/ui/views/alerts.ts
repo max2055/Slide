@@ -96,6 +96,11 @@ export class AlertsPage extends LitElement {
       padding: 0;
     }
 
+    .notification-read-error {
+      padding-bottom: var(--space-lg);
+      text-align: center;
+    }
+
     /* Tabs */
     .tabs {
       display: flex;
@@ -554,8 +559,10 @@ export class AlertsPage extends LitElement {
   @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'maintenance' | 'silence' | 'baselines' | 'notifications' = 'alerts';
 
   // Durable notification recovery state
-  @state() private notificationDeadLetters: NotificationDeadLetter[] = [];
+  @state() private notificationDeadLetters: NotificationDeadLetter[] | null = null;
   @state() private notificationDeadLettersLoading = false;
+  @state() private notificationDeadLettersError: string | null = null;
+  private notificationReadController: AbortController | null = null;
   @state() private replayingNotification: NotificationDeadLetter | null = null;
   @state() private notificationReplayReason = '';
   @state() private notificationReplaySaving = false;
@@ -883,15 +890,46 @@ export class AlertsPage extends LitElement {
   }
 
   private async loadNotificationDeadLetters() {
+    if (this.notificationDeadLettersLoading) return;
+    const controller = new AbortController();
+    this.notificationReadController = controller;
     this.notificationDeadLettersLoading = true;
+    this.notificationDeadLettersError = null;
+    this.notificationDeadLetters = null;
+    this.replayingNotification = null;
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
     try {
-      const response = await authFetch('/api/notification/dead-letters?limit=100');
+      const response = await authFetch('/api/notification/dead-letters?limit=100', {
+        signal: controller.signal, cache: 'no-store',
+      });
+      if (response.status === 403) throw new Error('无权查看通知投递记录（HTTP 403），请联系管理员确认权限后重试。');
+      if (response.status === 401) throw new Error('登录已失效（HTTP 401），请重新登录后重试。');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      this.notificationDeadLetters = await response.json();
-    } catch (error: any) {
-      showToast(`加载通知死信失败: ${error.message}`, 'error');
+      const jobs: unknown = await response.json();
+      if (timedOut) throw new Error('通知投递读取超时');
+      if (!Array.isArray(jobs) || !jobs.every(job => job && typeof job.id === 'string' && job.id.length > 0
+        && typeof job.type === 'string' && job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload)
+        && Number.isFinite(job.attempts) && (job.lastError === null || typeof job.lastError === 'string')
+        && typeof job.createdAt === 'string' && Number.isFinite(Date.parse(job.createdAt)))) {
+        throw new Error('通知投递记录格式异常，请稍后重试。');
+      }
+      if (this.notificationReadController === controller && this.isConnected && !controller.signal.aborted) {
+        this.notificationDeadLetters = jobs;
+      }
+    } catch (error: unknown) {
+      if (this.notificationReadController === controller && this.isConnected) {
+        this.notificationDeadLettersError = timedOut ? '加载通知投递记录超时，请重试。'
+          : error instanceof SyntaxError ? '通知投递记录格式异常，请稍后重试。'
+          : error instanceof TypeError ? '网络异常，请检查连接后重试。'
+          : error instanceof Error ? error.message : '网络异常，请检查连接后重试。';
+      }
     } finally {
-      this.notificationDeadLettersLoading = false;
+      clearTimeout(timeout);
+      if (this.notificationReadController === controller) {
+        this.notificationReadController = null;
+        this.notificationDeadLettersLoading = false;
+      }
     }
   }
 
@@ -925,7 +963,16 @@ export class AlertsPage extends LitElement {
     return html`
       <app-card variant="default">
         <div slot="header">通知死信队列</div>
-        ${this.notificationDeadLettersLoading ? html`<div class="loading">加载通知投递记录...</div>` : this.notificationDeadLetters.length ? html`
+        <button slot="header" class="btn" .disabled=${this.notificationDeadLettersLoading || this.notificationReplaySaving}
+          @click=${this.loadNotificationDeadLetters}>刷新通知投递记录</button>
+        ${this.notificationDeadLettersLoading ? html`<div class="loading" role="status">加载通知投递记录...</div>`
+        : this.notificationDeadLettersError ? html`
+          <div role="alert" class="notification-read-error">
+            <app-empty-state title="无法加载通知投递记录" .description=${this.notificationDeadLettersError}></app-empty-state>
+            <button class="btn-primary" @click=${this.loadNotificationDeadLetters}>重试</button>
+          </div>
+        ` : this.notificationDeadLetters === null ? html`<div role="status">尚未加载通知投递记录</div>`
+        : this.notificationDeadLetters.length ? html`
           <div class="table-wrap">
             <table class="table">
               <thead><tr><th>任务</th><th>告警 / 渠道</th><th>尝试</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead>
@@ -1139,6 +1186,12 @@ export class AlertsPage extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._stopDiagnosisPolling();
+    this.notificationReadController?.abort();
+    this.notificationReadController = null;
+    this.notificationDeadLettersLoading = false;
+    this.notificationDeadLetters = null;
+    this.notificationDeadLettersError = null;
+    this.replayingNotification = null;
   }
 
   // ==================== Task 2: Rules CRUD ====================

@@ -72,4 +72,22 @@ describe('notification recovery reads', () => {
     resolve(json([job])); await Promise.resolve(); await Promise.resolve(); await element.updateComplete;
     expect(text(element)).not.toContain(job.id);
   });
+  it('a network failure is persistent and retryable', async () => {
+    readFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+    const element = await view();
+    await vi.waitFor(() => expect(text(element)).toContain('网络异常'));
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('无法加载通知投递记录');
+  });
+  it('after successful replay, a failed queue refresh stays visibly failed', async () => {
+    readFetch.mockResolvedValue(json([job])); const element = await view();
+    await vi.waitFor(() => expect(text(element)).toContain(job.id));
+    (element.shadowRoot!.querySelector('tbody button') as HTMLButtonElement).click(); await element.updateComplete;
+    const reason = element.shadowRoot!.querySelector('textarea')!;
+    reason.value = '确认后重放'; reason.dispatchEvent(new Event('input')); await element.updateComplete;
+    vi.mocked(authFetch).mockImplementation((url, options) => url.includes('/replay') ? Promise.resolve(json({ success: true })) : readFetch(url, options));
+    readFetch.mockResolvedValue(json({}, 503));
+    await (element as any)._replayNotificationDeadLetter(); await element.updateComplete;
+    expect(text(element)).toContain('HTTP 503'); expect(element.shadowRoot!.querySelector('tbody')).toBeNull();
+    expect(element.shadowRoot!.querySelector('app-dialog')).toBeNull();
+  });
 });

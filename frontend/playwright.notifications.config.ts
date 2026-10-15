@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './e2e', testMatch: 'notification-recovery.spec.ts',
+  testDir: './e2e', testMatch: process.env.NOTIFICATION_REAL_SERVICE_E2E === '1'
+    ? 'notification-recovery.real.spec.ts' : 'notification-recovery.spec.ts',
   outputDir: './test-results/notification-recovery', workers: 1, timeout: 30_000,
   use: { baseURL: 'http://127.0.0.1:5192', trace: 'retain-on-failure' },
   webServer: {
