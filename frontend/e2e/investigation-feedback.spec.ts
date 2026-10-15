@@ -18,6 +18,22 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await vite?.close(); await fixture?.close(); });
 
+// Match the native datetime-local normalized form without rounding the instant.
+function local(value: string) {
+  const d = new Date(value);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1)
+    .replace(/\.000$/, '').replace(/(\.\d*[1-9])0+$/, '$1').replace(/:00$/, '');
+}
+
+for (const instant of ['2026-10-15T01:34:04.570Z', '2026-10-15T01:34:04.100Z', '2026-10-15T01:34:04.007Z', '2026-10-15T01:34:00.570Z', '2026-10-15T01:34:00.000Z']) {
+  test(`native datetime-local accepts the exact instant ${instant}`, async ({ page }) => {
+    await page.setContent('<input aria-label="观察时间" type="datetime-local" step="0.001">');
+    const input = page.getByLabel('观察时间');
+    await input.fill(local(instant));
+    expect(new Date(await input.inputValue()).toISOString()).toBe(instant);
+  });
+}
+
 test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read', async ({ page }) => {
   const seed = await fixture.seed();
   await page.goto(`${url}t11-feedback`);
@@ -38,7 +54,6 @@ test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read',
   await page.getByLabel('验证方法', { exact: true }).fill('核对有界合成指标');
   // Datetime-local intentionally includes milliseconds so it stays within the
   // exact synthetic observed window regardless of local browser timezone.
-  const local = (value: string) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, -1); };
   await page.getByLabel('观察开始时间', { exact: true }).fill(local(seed.verification.from));
   await page.getByLabel('观察结束时间', { exact: true }).fill(local(seed.verification.to));
   await page.getByLabel('证据 ID（逗号分隔）', { exact: true }).fill(seed.proof.id);
