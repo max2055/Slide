@@ -1,7 +1,8 @@
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
-import { returnToDashboard } from './dashboard-model.js';
+import { returnToDashboard, runState, freshness, type Overview, type OverviewItem } from './dashboard-model.js';
+import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -28,7 +29,7 @@ interface CapacityInfo { total_size_gb: number; databases?: Array<{ name: string
 
 @customElement("instance-detail-page")
 export class InstanceDetailPage extends LitElement {
-  static override styles = css`
+  static override styles = [sharedBtnStyles, css`
     :host { display: block; animation: fade-in 0.3s ease-out; }
     @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
@@ -92,7 +93,7 @@ export class InstanceDetailPage extends LitElement {
       :host { max-width:100%;overflow-x:hidden; }
       .header { align-items:flex-start; }
       .header-left { width:100%;min-width:0;display:grid;grid-template-columns:minmax(0, 1fr) auto;align-items:start; }
-      .header-left .back-btn { grid-column:1 / -1;justify-self:start; }
+      .header-left > .btn { grid-column:1 / -1;justify-self:start; }
       .header-left .instance-title { grid-column:1; }
       .header-left app-badge { grid-column:2;align-self:start; }
       .header-right { width:100%;min-width:0; }
@@ -100,7 +101,26 @@ export class InstanceDetailPage extends LitElement {
       .last-updated { width:100%; }
       .tabs { max-width:100%; }
     }
-  `;
+    .header { margin-bottom:var(--space-md); padding-bottom:var(--space-md); }
+    .header-left { gap:var(--space-md); }
+    .instance-title { font-size:24px; }
+    .resource-meta { color:var(--muted); font-size:12px; margin-top:var(--space-xs); overflow-wrap:anywhere; }
+    .title-copy { flex:1; min-width:0; }
+    .tabs { margin-bottom:var(--space-lg); }
+    .tab { padding:var(--space-sm) var(--space-md); font-size:14px; }
+    .overview-grid { display:grid; grid-template-columns:minmax(0, 2fr) minmax(240px, 1fr); gap:var(--space-lg); }
+    .overview-grid > * { min-width:0; }
+    h2 { font-size:16px; margin:0; } h3 { font-size:14px; margin:0 0 var(--space-xs); }
+    .attention { padding-block:var(--space-md); border-bottom:1px solid var(--border); }
+    .attention:first-child { padding-top:0; } .attention:last-child { border-bottom:0; padding-bottom:0; }
+    .attention p { margin:var(--space-xs) 0 var(--space-sm); color:var(--muted); font-size:14px; line-height:1.6; }
+    .attention .btn { margin-right:var(--space-sm); }
+    dl { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:var(--space-sm) var(--space-md); margin:0; font-size:14px; }
+    dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
+    .overview-note { color:var(--muted); font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+    @media (max-width:768px) { .overview-grid { grid-template-columns:minmax(0, 1fr); } }
+    @media (max-width:600px) { .instance-title { font-size:22px; } .header-left .title-copy { grid-column:1; } }
+  `];
 
   @state() private instanceId: number | null = null;
   @state() private instance: InstanceDetail | null = null;
@@ -113,6 +133,52 @@ export class InstanceDetailPage extends LitElement {
   @state() private capHistory: { time: string[]; size: number[] } = { time: [], size: [] };
   @state() private lastUpdated: Date | null = null;
   @state() private detailReadError = '';
+  @state() private overview: OverviewItem | null = null;
+  @state() private overviewError = '';
+  @state() private overviewLoading = false;
+  private overviewRequest = 0;
+  private contextVersion = 0;
+  private onNavigate = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    if (detail?.tab === 'instance-detail' && Number.isSafeInteger(Number(detail.id)) && Number(detail.id) > 0) {
+      this.instanceId = Number(detail.id); this.activeTab = 'overview'; void this.loadData();
+    }
+  };
+  private onPopState = () => this.loadFromUrl();
+  private onPermissionsChanged = () => {
+    ++this.contextVersion; ++this.overviewRequest;
+    this.instance = null; this.overview = null; this.overviewLoading = false;
+    this._resetQueryReads(); this._resetEvidence(); this.loading = false;
+    this.error = '权限或登录状态已变更，请重新打开资源。'; this.stopAutoRefresh();
+  };
+  private _resetEvidence() {
+    this.capacity = null; this.capHistory = { time: [], size: [] };
+    this._stopDiagnosisPolling(); this.diagnosisHistory = []; this.diagnosisResult = null;
+    this.diagnosisStatus = 'idle'; this.diagnosisError = null;
+    this.activeDiagnosisRecord = null; this.diagnosisExecutionTrace = null; this.showDiagnosisModal = false;
+  }
+  private async loadOverview() {
+    const request = ++this.overviewRequest, id = this.instanceId;
+    this.overview = null; this.overviewError = ''; this.overviewLoading = true;
+    try {
+      const response = await authFetch('/api/resources/overview');
+      if (request !== this.overviewRequest || id !== this.instanceId) return;
+      if (!response.ok) throw new Error([401, 403].includes(response.status) ? '无权读取资源概览' : '资源概览读取失败');
+      const body: Overview = await response.json();
+      if (!Array.isArray(body.items)) throw new Error('资源概览返回格式异常');
+      if (request !== this.overviewRequest || id !== this.instanceId) return;
+      const item = body.items.find(row => row?.resource?.type === 'instance' && row.resource.id === id);
+      if (item && (!Array.isArray(item.gaps) || !item.gaps.every(gap => typeof gap === 'string')
+        || typeof item.status !== 'string' || typeof item.quality !== 'string'
+        || !['fresh', 'stale', 'missing'].includes(item.freshness)
+        || !Number.isFinite(item.unresolvedAlerts) || item.unresolvedAlerts < 0
+        || (item.observedAt !== null && !Number.isFinite(Date.parse(item.observedAt))))) throw new Error('资源概览返回格式异常');
+      this.overview = item ?? null;
+      if (!this.overview) this.overviewError = '当前快照未包含此资源，状态无法确认。';
+    } catch (error) {
+      if (request === this.overviewRequest) this.overviewError = error instanceof Error ? error.message : '资源概览读取失败';
+    } finally { if (request === this.overviewRequest) this.overviewLoading = false; }
+  }
   @state() private autoRefresh = true;
   @state() private isRefreshing = false;
   @state() private queryReads: Record<'topsql' | 'sessions', QueryRead> = {
@@ -137,19 +203,26 @@ export class InstanceDetailPage extends LitElement {
 
   override firstUpdated() {
     this.loadFromUrl();
-    window.addEventListener("slide-navigate", (e: any) => {
-      if (e.detail.tab === "instance-detail" && e.detail.id) {
-        this.instanceId = e.detail.id; this.activeTab = "overview"; this.loadData();
-      }
-    });
-    window.addEventListener("popstate", () => this.loadFromUrl());
+    window.addEventListener('slide-navigate', this.onNavigate);
+    window.addEventListener('popstate', this.onPopState);
+    window.addEventListener('slide-permissions-loaded', this.onPermissionsChanged);
+    window.addEventListener('slide-session-expired', this.onPermissionsChanged);
     this.startAutoRefresh();
   }
-  override disconnectedCallback() { super.disconnectedCallback(); this.stopAutoRefresh(); this._stopDiagnosisPolling(); this._resetQueryReads(); }
+  override disconnectedCallback() {
+    ++this.contextVersion; ++this.overviewRequest;
+    window.removeEventListener('slide-navigate', this.onNavigate);
+    window.removeEventListener('popstate', this.onPopState);
+    window.removeEventListener('slide-permissions-loaded', this.onPermissionsChanged);
+    window.removeEventListener('slide-session-expired', this.onPermissionsChanged);
+    super.disconnectedCallback(); this.stopAutoRefresh(); this._stopDiagnosisPolling(); this._resetQueryReads();
+  }
 
   private loadFromUrl() {
-    const id = new URLSearchParams(window.location.search).get("id");
-    if (id) { this.instanceId = parseInt(id, 10); this.loadData(); }
+    const raw = new URLSearchParams(window.location.search).get('id');
+    if (raw && /^[1-9]\d*$/.test(raw) && Number.isSafeInteger(Number(raw))) {
+      this.instanceId = Number(raw); void this.loadData();
+    }
   }
   private startAutoRefresh() {
     this.stopAutoRefresh();
@@ -161,32 +234,35 @@ export class InstanceDetailPage extends LitElement {
 
   private async loadData() {
     if (!this.instanceId) return;
+    const version = ++this.contextVersion;
+    this.instance = null; this._resetEvidence(); this.isRefreshing = false;
     this.loading = true; this.error = null;
     this.lastUpdated = null; this.detailReadError = '';
     this._resetQueryReads();
     const instanceId = this.instanceId;
+    void this.loadOverview();
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
-      if (instanceId !== this.instanceId) return;
+      if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? '无权读取实例详情' : '获取实例详情失败');
       const instance = await res.json();
-      if (instanceId !== this.instanceId) return;
+      if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       this.instance = instance;
       this.lastUpdated = new Date();
       this.loadDiagnosisHistory();
       await this.loadTabData();
-    } catch (err: any) { if (instanceId === this.instanceId) this.error = err.message; }
-    finally { if (instanceId === this.instanceId) this.loading = false; }
+    } catch (err: any) { if (instanceId === this.instanceId && version === this.contextVersion) this.error = err.message; }
+    finally { if (instanceId === this.instanceId && version === this.contextVersion) this.loading = false; }
   }
 
   private async refreshCurrentTab() {
     if (!this.instanceId || this.isRefreshing) return;
     this.isRefreshing = true;
     this.detailReadError = '';
-    const instanceId = this.instanceId;
+    const instanceId = this.instanceId, version = this.contextVersion;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}`);
-      if (instanceId !== this.instanceId) return;
+      if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       if (!res.ok) {
         this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
         this.detailReadError = res.status === 401 || res.status === 403 ? '无权读取实例详情' : '实例详情读取失败';
@@ -194,13 +270,13 @@ export class InstanceDetailPage extends LitElement {
         return;
       }
       const instance = await res.json();
-      if (instanceId !== this.instanceId) return;
+      if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       this.instance = instance;
       this.lastUpdated = new Date();
-      await this.loadTabData();
-      if (instanceId === this.instanceId) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
-    } catch { if (instanceId === this.instanceId) { this._invalidateQueryReads('error'); this.detailReadError = '实例详情读取失败'; } }
-    finally { this.isRefreshing = false; }
+      await Promise.all([this.loadTabData(), this.loadOverview()]);
+      if (instanceId === this.instanceId && version === this.contextVersion) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
+    } catch { if (instanceId === this.instanceId && version === this.contextVersion) { this._invalidateQueryReads('error'); this.detailReadError = '实例详情读取失败'; } }
+    finally { if (version === this.contextVersion) this.isRefreshing = false; }
   }
 
   private async loadTabData() {
@@ -218,10 +294,12 @@ export class InstanceDetailPage extends LitElement {
           break;
         }
         case "capacity": {
+          const version = this.contextVersion;
           const [cr, chr] = await Promise.all([
             authFetch(`/api/database/instances/${this.instanceId}/capacity`),
             authFetch(`/api/database/instances/${this.instanceId}/capacity/history?hours=168`),
           ]);
+          if (version !== this.contextVersion) return;
           if (cr.ok) this.capacity = await cr.json();
           if (chr.ok) { const h = await chr.json(); if (h.history) { this.capHistory = { time: h.history.map((x: any) => x.recorded_at?.substring(0, 16)||""), size: h.history.map((x: any) => x.total_size_gb||0) }; } }
           break;
@@ -316,9 +394,11 @@ export class InstanceDetailPage extends LitElement {
   // ---- Diagnosis ----
   private async _startDiagnosis() {
     if (!this.instanceId || this.diagnosisStatus === "running") return;
+    const version = this.contextVersion;
     try {
       const res = await authFetch("/api/ai/analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analysis_type: "fault_diagnosis", instance_id: this.instanceId, trigger_type: "manual" }) });
       const data = await res.json();
+      if (version !== this.contextVersion) return;
       if (!res.ok && data.status === 'unknown') {
         this.diagnosisStatus = 'unknown'; this.diagnosisResult = { id: data.analysisId, status: 'unknown' };
         this.diagnosisError = null; this.showDiagnosisModal = true; return;
@@ -326,9 +406,10 @@ export class InstanceDetailPage extends LitElement {
       if (!res.ok) throw new Error("提交诊断失败");
       this.diagnosisStatus = "running"; this.diagnosisError = null; this.showDiagnosisResult = true; this.showDiagnosisModal = true;
       this._startDiagnosisPolling(data.id);
-    } catch (err: any) { this.diagnosisStatus = "failed"; this.diagnosisError = err.message || "提交诊断失败"; this.showDiagnosisResult = true; this.showDiagnosisModal = true; }
+    } catch (err: any) { if (version !== this.contextVersion) return; this.diagnosisStatus = "failed"; this.diagnosisError = err.message || "提交诊断失败"; this.showDiagnosisResult = true; this.showDiagnosisModal = true; }
   }
   private _startDiagnosisPolling(analysisId: number) {
+    const version = this.contextVersion;
     this._stopDiagnosisPolling(); this.diagnosisPollingStart = Date.now();
     this.diagnosisPollTimer = setInterval(async () => {
       try {
@@ -336,7 +417,7 @@ export class InstanceDetailPage extends LitElement {
         const res = await authFetch(`/api/ai/analysis/status/${analysisId}`);
         if (!res.ok) return;
         const data = await res.json();
-        if (!data.ok || !data.record) return;
+        if (version !== this.contextVersion || !data.ok || !data.record) return;
         const record = data.record;
         if (record.status === "completed") {
           this.diagnosisStatus = "completed";
@@ -358,10 +439,11 @@ export class InstanceDetailPage extends LitElement {
   private _stopDiagnosisPolling() { if (this.diagnosisPollTimer) { clearInterval(this.diagnosisPollTimer); this.diagnosisPollTimer = null; } }
   private async loadDiagnosisHistory() {
     if (!this.instanceId) return;
+    const version = this.contextVersion;
     this.diagnosisHistoryLoading = true;
-    try { const r = await authFetch(`/api/ai/analysis/history?instance_id=${this.instanceId}&analysis_type=fault_diagnosis&limit=10`); if (r.ok) { const data = await r.json(); this.diagnosisHistory = data.records || []; } }
+    try { const r = await authFetch(`/api/ai/analysis/history?instance_id=${this.instanceId}&analysis_type=fault_diagnosis&limit=10`); if (r.ok) { const data = await r.json(); if (version === this.contextVersion) this.diagnosisHistory = data.records || []; } }
     catch { /* ignore */ }
-    finally { this.diagnosisHistoryLoading = false; }
+    finally { if (version === this.contextVersion) this.diagnosisHistoryLoading = false; }
   }
   private _formatDiagnosisTime(dateStr: string): string {
     const diffMs = Date.now() - new Date(dateStr).getTime();
@@ -389,10 +471,42 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _healthBadge() {
-    const s = this.instance?.health_status;
-    const m: Record<string, { variant: string; label: string }> = { healthy: { variant: "ok", label: "健康" }, warning: { variant: "warn", label: "警告" }, critical: { variant: "danger", label: "异常" }, unknown: { variant: "warn", label: "未知" }, error: { variant: "danger", label: "错误" } };
-    const b = m[s || ""] || { variant: "warn", label: s || "未知" };
-    return html`<app-badge variant=${b.variant}>${b.label}</app-badge>`;
+    const status = this.overview ? runState(this.overview) : 'unknown';
+    const labels = { normal:'正常', abnormal:'异常', unavailable:'不可用', unknown:'待确认' };
+    return html`<app-badge variant=${status === 'normal' ? 'ok' : status === 'unknown' ? 'muted' : 'warn'}>${labels[status]}</app-badge>`;
+  }
+  private _renderOverview() {
+    const item = this.overview;
+    const state = item ? runState(item) : 'unknown';
+    const fresh = item ? freshness(item) : 'missing';
+    const gaps: Record<string, string> = {
+      OBSERVATIONS_UNAVAILABLE:'观测读取失败', ALERTS_UNAVAILABLE:'告警读取失败', RELATIONS_UNAVAILABLE:'关系读取失败',
+      OBSERVATIONS_EMPTY:'尚未取得观测', OBSERVATIONS_EXPIRED:'观测已失效', OBSERVATIONS_STALE:'观测已过期',
+      OBSERVATIONS_FUTURE:'观测时间异常', ALERTS_TRUNCATED:'告警记录不完整', OBSERVATIONS_TRUNCATED:'观测记录不完整',
+    };
+    return html`<div class="overview-grid">
+      <app-card><h2 slot="header">当前需要关注</h2>
+        ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
+        ${this.overviewError ? html`<p role="alert">${this.overviewError}</p><button class="btn" @click=${this.loadOverview}>重新读取概览</button>` : nothing}
+        <section class="attention"><h3>${({ normal:'当前观测未提示运行异常', abnormal:'存在需要核对的异常', unavailable:'资源当前不可用', unknown:'当前证据不足以判断运行状态' })[state]}</h3>
+          <p>${item && !item.gaps.includes('ALERTS_UNAVAILABLE') ? `未解决告警 ${item.alertsTruncated ? '至少 ' : ''}${item.unresolvedAlerts} 项。` : '尚未取得可用的告警结果。'} 状态只反映已有观测，不能代替完整健康判断。</p>
+          <button class="btn" @click=${() => this._setTab('metrics')}>核对指标与时间范围</button>
+          <button class="btn" @click=${() => this._setTab('logs')}>查看日志与完整事件</button>
+        </section>
+        <section class="attention"><h3>证据缺口</h3>
+          <p>${item ? (item.gaps.length ? item.gaps.map(gap => gaps[gap] ?? '部分证据缺失').join('；') : item.quality !== 'good' ? '当前仅有部分或质量不足的观测，不能推断所有信号完整。' : '当前快照未报告缺口；不代表已覆盖全部信号。') : '尚未取得此资源的证据快照。'}${fresh === 'stale' ? ' 请先核对采集状态和观测时间。' : ''}</p>
+          <button class="btn" @click=${() => this._setTab('collection')}>查看采集配置</button>
+          ${item?.gaps.length ? html`<details class="overview-note"><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}
+        </section>
+      </app-card>
+      <app-card><h2 slot="header">资源与能力</h2><dl>
+        <dt>类型</dt><dd>${this.instance!.db_type}</dd><dt>环境</dt><dd>${this.instance!.environment || '未设置'}</dd>
+        <dt>连接地址</dt><dd>${this.instance!.host}:${this.instance!.port}</dd>
+        <dt>数据库</dt><dd>${this.instance!.database_name || '未指定'}</dd>
+        <dt>观测时间</dt><dd>${item?.observedAt ? new Date(item.observedAt).toLocaleString('zh-CN') : '未知'}</dd>
+        <dt>观测时效</dt><dd>${({ fresh:'新鲜', stale:'过期', missing:'未取得', failed:'读取失败' })[fresh]}</dd>
+      </dl><p class="overview-note">可用观测以指标页的能力与查询结果为准。概览提供方向，完整指标、定义和日志保留在专属页签。</p></app-card>
+    </div>`;
   }
 
   // ---- Render ----
@@ -405,18 +519,18 @@ export class InstanceDetailPage extends LitElement {
       <div class="page">
         <div class="header">
           <div class="header-left">
-            <button class="back-btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
-            <span class="instance-title">${this.instance.name}</span>
+            <button class="btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
+            <div class="title-copy"><span class="instance-title">${this.instance.name}</span><div class="resource-meta">${this.instance.db_type} · ${this.instance.host}:${this.instance.port} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div></div>
             ${this._healthBadge()}
           </div>
           <div class="header-right">
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
-            <button class="refresh-btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
+            <button class="btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
               style="${this.diagnosisStatus === "running" ? "border-color:var(--warn);color:var(--warn);" : ""}">
               ${this.diagnosisStatus === "running" ? html`${icons['loader']} 诊断中...` : html`${icons['activity']} 一键诊断`}
             </button>
-            <button class="refresh-btn" @click=${this._manualRefresh} ?disabled=${this.isRefreshing}>
+            <button class="btn" @click=${this._manualRefresh} ?disabled=${this.isRefreshing}>
               ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
             </button>
           </div>
@@ -424,9 +538,9 @@ export class InstanceDetailPage extends LitElement {
 
 
         <resource-investigation-links resourceType="instance" .resourceId=${this.instanceId}></resource-investigation-links>
-      <div class="tabs">
+      <div class="tabs" role="tablist" aria-label="资源详情页签">
           ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
-            <button class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
+            <button role="tab" aria-selected=${String(this.activeTab === t || t === "metrics" && this.activeTab === "trend")} class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
               ${({ overview:"概览", collection:"采集配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
               ${t === "topsql" && this._queryState('topsql') === 'success' && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
               ${t === "sessions" && this._queryState('sessions') === 'success' && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
@@ -480,7 +594,7 @@ export class InstanceDetailPage extends LitElement {
   private _renderTabContent() {
     if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
     switch (this.activeTab) {
-      case "overview":
+      case "overview": return this._renderOverview();
       case "metrics":
       case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
       case "health": return html`<health-score-tab .instanceId=${this.instanceId}></health-score-tab>`;

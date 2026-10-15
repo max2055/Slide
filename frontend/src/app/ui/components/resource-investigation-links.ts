@@ -2,8 +2,6 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { investigationApi, investigationErrorText, type InvestigationList } from '../controllers/investigation-api.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
-import './app-card.ts';
-import './app-empty-state.ts';
 
 export type ResourceType = 'instance' | 'server' | 'network_device';
 export function resourceDetailUrl(type: ResourceType, id: number) {
@@ -19,7 +17,17 @@ export class ResourceInvestigationLinks extends LitElement {
   @state() private error = '';
   private generation = 0;
   private invalidate = () => { ++this.generation; this.items = []; this.error = '权限已变更，请重新加载。'; this.loading = false; };
-  static styles = [sharedBtnStyles,css`:host {display:block;min-width:0;margin-bottom:var(--space-md);} a {color:var(--accent);overflow-wrap:anywhere;} p {margin:var(--space-sm) 0;}`];
+  static styles = [sharedBtnStyles, css`
+    :host { display:block; min-width:0; margin-bottom:var(--space-md); color:var(--muted); font-size:var(--text-sm); }
+    .related-line { display:flex; align-items:baseline; flex-wrap:wrap; gap:var(--space-sm) var(--space-md); }
+    a { color:var(--accent-text); overflow-wrap:anywhere; }
+    details { min-width:0; max-width:100%; } .latest { max-width:28ch; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    summary { cursor:pointer; color:var(--text); }
+    ul { margin:var(--space-sm) 0 0; padding-left:var(--space-lg); }
+    li { margin-block:var(--space-xs); }
+    [role=alert] { color:var(--danger); }
+    .btn { white-space:normal; }
+  `];
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener('slide-permissions-loaded', this.invalidate);
@@ -46,12 +54,12 @@ export class ResourceInvestigationLinks extends LitElement {
     finally { if (generation === this.generation) this.loading = false; }
   }
   render() {
-    return html`<app-card><span slot="header">资源调查</span>
-      ${this.loading ? html`<p role="status">正在加载调查…</p>` : this.error ? html`<p role="alert">${this.error}</p>` : this.items.length
-        ? this.items.map(row => html`<p><a href=${`/investigations?investigation=${row.id}`}>${row.title}</a></p>`)
-        : html`<app-empty-state title="暂无可访问的调查" description="从资源告警发起调查后，可在这里继续查看。"></app-empty-state>`}
+    return html`<div class="related-line" role="region" aria-label="资源调查">
+      ${this.loading ? html`<span role="status">正在加载调查…</span>` : this.error ? html`<span role="alert">${this.error}</span>` : this.items.length
+        ? html`<span>关联调查 · 最近 ${this.items.length} 项</span><a class="latest" title=${this.items[0].title} href=${`/investigations?investigation=${encodeURIComponent(this.items[0].id)}`}>${this.items[0].title}</a>${this.items.length > 1 ? html`<details><summary>更多调查</summary><ul>${this.items.slice(1).map(row => html`<li><a href=${`/investigations?investigation=${encodeURIComponent(row.id)}`}>${row.title}</a></li>`)}</ul></details>` : nothing}`
+        : html`<span>暂无可访问的调查</span>`}
       <a href=${`/investigations?resource=${this.resourceType}:${this.resourceId}`}>查看此资源的全部调查</a>
       ${this.error ? html`<button class="btn" @click=${this.load}>重新加载调查</button>` : nothing}
-    </app-card>`;
+    </div>`;
   }
 }
