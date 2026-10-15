@@ -39,10 +39,9 @@ export class SourceManifestView extends LitElement {
   private popState = () => this.readUrl();
   private readonly onExpired = () => { this.invalidate(); this.loading = false; this.error = sourceError('SOURCE_SESSION_REQUIRED'); };
   private readonly onPermissions = (event: Event) => {
-    this.invalidate();
     const codes = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
     if (permissionMatches(new Set(Array.isArray(codes) ? codes : []), 'config:view')) void this.load();
-    else { this.loading = false; this.error = sourceError('SOURCE_READ_FORBIDDEN'); }
+    else { this.invalidate(); this.loading = false; this.error = sourceError('SOURCE_READ_FORBIDDEN'); }
   };
   static styles = [sharedBtnStyles, workspaceStyles];
   override connectedCallback() {
@@ -91,7 +90,18 @@ export class SourceManifestView extends LitElement {
     const parent = this.scrollParent(); if (parent) parent.scrollTop = this.summaryScroll;
   }
   private invalidate() {
+    const restoreFocus = !!this.dialog;
     this.requestVersion++; this.manifest = null; this.dialog = ''; this.selectedItem = null;
+    if (restoreFocus) void this.restoreInvalidatedFocus(this.requestVersion);
+  }
+  private async restoreInvalidatedFocus(version: number) {
+    await this.updateComplete;
+    await (this.renderRoot.querySelector('app-dialog') as LitElement | null)?.updateComplete;
+    // The original trigger was removed with its snapshot; keep keyboard users
+    // at the current manifest rather than returning focus to a detached row.
+    if (this.isConnected && version === this.requestVersion && !this.dialog) {
+      this.tabIndex = -1; this.focus();
+    }
   }
   protected override willUpdate(changed: Map<string, unknown>) { if (changed.has('revision')) void this.load(); }
   override disconnectedCallback() {
