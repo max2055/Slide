@@ -123,7 +123,7 @@ test('effective budget matching and real frozen hash conflict never become a rem
   } finally { await env.pool.query('UPDATE investigation_budget_domains SET policy_hash=? WHERE domain_key=?', [rows[0].policy_hash, domain]); }
 });
 test('R2 real durable governance visual evidence at both widths and themes', async ({ page }) => {
-  const output = process.env.MAX157_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/max157-ui-acceptance';
+  const output = process.env.MAX157_OUTPUT_DIR ?? 'test-results/max157-ui-acceptance';
   await mkdir(output, { recursive: true });
   await login(page);
   for (const width of [1280, 390]) for (const theme of ['dark', 'light']) {

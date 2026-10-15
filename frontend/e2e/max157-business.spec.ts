@@ -15,7 +15,7 @@ let reader: typeof actor;
 let root: string, origin: string, commit: string;
 let upstream: ReturnType<typeof createServer>;
 const saved = new Map<string, string | undefined>();
-const output = process.env.MAX157_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/max157-ui-acceptance';
+const output = process.env.MAX157_OUTPUT_DIR ?? 'test-results/max157-ui-acceptance';
 
 test.beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'slide-max157-'));

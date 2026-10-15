@@ -24,7 +24,7 @@ async function login(page: Page, viewer = false) {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify({ id: actor.userId, username: actor.username }));
     localStorage.setItem('permissions', JSON.stringify(actor.permissions));
-    localStorage.setItem('slide.control.settings.v1', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
+    localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
   }, { token: env.token(actor), actor });
 }
 async function observed(page: Page) {
@@ -268,13 +268,20 @@ test('Profiles settings consumes readonly facts, responds to live SQL rejection 
     expect(response.status()).toBe(200); expect(response.headers()['cache-control']).toContain('no-store');
     const facts = await response.json();
     for (const item of facts.items) {
-      const card = profiles.locator(`[data-profile="${item.profile.id}"]`);
-      await expect(card).toContainText(item.profileHash);
-      await expect(card).toContainText(item.profile.responsibility);
-      await expect(card).toContainText(item.profile.prompt.hash);
-      for (const tool of item.profile.toolAllowlist) await expect(card).toContainText(tool);
+      const row = profiles.getByRole('row').filter({ has: page.locator(`[data-profile="${item.profile.id}"]`) });
+      await expect(row).toContainText(item.profile.responsibility);
+      const details = row.getByRole('button');
+      await details.click();
+      const dialog = profiles.locator('app-dialog').filter({ has: page.locator('dialog[open]') });
+      await dialog.getByText('版本与技术标识', { exact: true }).click();
+      await expect(dialog).toContainText(item.profileHash);
+      await expect(dialog).toContainText(item.profile.prompt.hash);
+      for (const identifier of await dialog.getByText('原始标识', { exact: true }).all()) await identifier.click();
+      for (const tool of item.profile.toolAllowlist) await expect(dialog.getByText(tool, { exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(details).toBeFocused();
     }
-    await expect(profiles).toContainText('尚未评估'); await expect(profiles).toContainText('有效预算');
+    await expect(profiles).toContainText('尚未评估'); await expect(profiles).toContainText('执行上限不代表剩余额度');
     for (const width of [1600, 1024, 390]) {
       await page.setViewportSize({ width, height: 950 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

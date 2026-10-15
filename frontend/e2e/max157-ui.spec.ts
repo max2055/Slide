@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { INVESTIGATION_PROFILES, investigationProfileHash } from '../../apps/db-ops-api/src/investigations/profiles.js';
 
-const output = process.env.MAX157_OUTPUT_DIR ?? '/Users/max/Coding/40-Slide/outputs/max157-ui-acceptance';
+const output = process.env.MAX157_OUTPUT_DIR ?? 'test-results/max157-ui-acceptance';
 const policy = { currency:'USD',maxConcurrent:4,manualReserved:1,maxPerResourceConcurrent:1,maxAutomaticRequestsPerHour:60,maxAutomaticTokensPerDay:500000,maxTotalTokensPerDay:1000000,maxCostMicrosPerDay:10000000 };
 const group = { state:'settled',mode:'manual',currency:'USD',count:2,knownUsageCount:2,unknownUsageCount:0,pendingUsageCount:0,knownInputTokens:12000,knownCachedInputTokens:4000,knownOutputTokens:6000,reservedTokens:64000,outstandingTokens:0,settledTokens:18000,reservedCostMicros:200000,outstandingCostMicros:0,estimatedSettledCostMicros:140000,unknownCostCount:0 };
 const groups = [group,{...group,state:'unknown',knownUsageCount:0,unknownUsageCount:2,knownInputTokens:0,knownCachedInputTokens:0,knownOutputTokens:0,settledTokens:0,outstandingTokens:64000,outstandingCostMicros:200000,estimatedSettledCostMicros:0},...Array.from({length:4},(_,i) => ({...group,currency:i % 2 ? 'EUR':'USD',state:['sent','reserved','cancelled','settled'][i]}))];
