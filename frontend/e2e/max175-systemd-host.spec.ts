@@ -57,7 +57,7 @@ test.beforeAll(async () => {
   // The API receives only its encrypted task inventory credential, not test variables.
   delete env.MAX175_TEST_PASSWORD;
   const apiCwd = resolve('../apps/db-ops-api');
-  execFileSync(process.execPath, ['--import','tsx','init-db.ts'], {cwd:apiCwd,env,stdio:'pipe'});
+  execFileSync(process.execPath, ['--import','tsx','init-db.ts'], {cwd:apiCwd,env,stdio:'pipe',timeout:90_000});
   pool = mysql.createPool({host:'127.0.0.1',port:33175,user:'root',database:schema,timezone:'Z'});
   await pool.query('UPDATE llm_providers SET enabled=0');
   await pool.query("UPDATE users SET password_hash=?,status='active' WHERE username='admin'", [await bcrypt.hash(password,10)]);
