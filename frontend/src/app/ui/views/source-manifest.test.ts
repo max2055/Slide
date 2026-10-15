@@ -25,11 +25,28 @@ it('offers GET retry for HTML responses, clears the error and renders the snapsh
   expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
   expect(view.shadowRoot!.textContent).toContain('fixture');
 });
-it('preserves the last good snapshot when a refresh fails', async () => {
+it('invalidates the last snapshot when a refresh fails', async () => {
   authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ releaseId: 'last-good', files: [] })))
     .mockResolvedValue(new Response(JSON.stringify({ error: 'SOURCE_STORAGE_UNAVAILABLE' }), { status: 503 }));
   const view = document.createElement('source-manifest'); document.body.append(view); await settle();
   await (view as any).load(); await settle();
-  expect(view.shadowRoot!.textContent).toContain('last-good');
+  expect(view.shadowRoot!.textContent).not.toContain('last-good');
   expect(view.shadowRoot!.textContent).toContain('存储不可用');
+});
+it.each([200, 403, 503])('closes old item details on revision change before manifest %s completes', async status => {
+  const old = { releaseId: 'old', files: [{ path: 'src/private-old.ts', digest: 'private-digest', bytes: 20 }] };
+  authFetch.mockResolvedValue(new Response(JSON.stringify(old)));
+  const view = document.createElement('source-manifest') as any; document.body.append(view); await settle();
+  await view.browse(); await view.updateComplete;
+  const button = [...view.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent === '查看') as HTMLButtonElement;
+  button.click(); await view.updateComplete;
+  expect(view.shadowRoot.textContent).toContain('private-digest');
+  let release!: (value: Response) => void;
+  authFetch.mockImplementation(() => new Promise<Response>(resolve => { release = resolve; }));
+  view.revision++; await view.updateComplete;
+  expect(view.shadowRoot.querySelector('app-dialog').open).toBe(false);
+  expect(view.shadowRoot.textContent).not.toContain('private-digest');
+  release(new Response(JSON.stringify(status === 200 ? { releaseId: 'new', files: [] } : { error: 'SOURCE_STORAGE_UNAVAILABLE' }), { status }));
+  await settle();
+  expect(view.shadowRoot.textContent).not.toContain('private-old');
 });
