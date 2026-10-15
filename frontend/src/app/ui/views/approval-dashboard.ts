@@ -677,9 +677,7 @@ export class ApprovalDashboard extends LitElement {
                 <div>
                   <app-badge variant="info">SQL</app-badge> ${this._riskBadge(r.risk_level)}
                   <span style="margin-left:8px;font-size:12px;color:var(--muted)">#${r.id} · ${new Date(r.created_at).toLocaleString("zh-CN")}</span>
-                  ${r.target_database ? html`
-                    <span style="margin-left:8px;font-size:11px;color:var(--muted, #6b7280)">DB: ${r.target_database}</span>
-                  ` : ''}
+                  <span class="caption">目标：${this.historyTarget({ kind: 'sql', record: r })}</span>
                 </div>
                 ${r.ai_recommendation ? html`
                   <span class="ai-badge">AI: ${approvalValue(r.ai_recommendation)?.recommendation === 'approve' ? '建议通过' : approvalValue(r.ai_recommendation)?.recommendation === 'reject' ? '建议驳回' : '建议未知'}</span>
