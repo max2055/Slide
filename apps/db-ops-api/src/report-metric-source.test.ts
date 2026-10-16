@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   getSlowQueries: vi.fn(),
 }));
 
-vi.mock('./metrics-v2/consumers/runtime.js', () => ({
+vi.mock('./metrics/consumers/runtime.js', () => ({
   operationalSource: mocks.source,
   metricConsumerService: { query: mocks.query },
 }));
@@ -49,7 +49,7 @@ describe('report formal metric source contract', () => {
     expect(source).toContain('operationalSource');
     expect(source).toContain("source === 'pending'");
     expect(source).toContain('METRIC_SOURCE_PENDING');
-    expect(source).toContain("source === 'v2'");
+    expect(source).toContain("source === 'semantic'");
     expect(source).toContain('generateSemanticMetricReport');
   });
 
@@ -94,7 +94,7 @@ describe('report formal metric source contract', () => {
         }],
       }],
     };
-    mocks.source.mockResolvedValue('v2');
+    mocks.source.mockResolvedValue('semantic');
     mocks.query.mockResolvedValue(semantic);
     const { reportService } = await import('./report-service.js');
 

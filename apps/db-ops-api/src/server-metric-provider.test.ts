@@ -6,7 +6,7 @@ import serverMetricProvider, {
   parseProcessCount,
   parseTopProcesses,
 } from './server-metric-provider.js';
-import { classifyCollectionFailure } from './server-collector.js';
+import { classifyCollectionFailure } from './migrations/metric-history/server-collector.js';
 
 describe('server metric provider fixed parsers', () => {
   it('parses bounded network dimensions and rx/tx counters', () => {

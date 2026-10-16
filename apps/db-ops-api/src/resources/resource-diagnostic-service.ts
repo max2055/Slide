@@ -1,4 +1,4 @@
-import { metricConsumerService, operationalSource } from '../metrics-v2/consumers/runtime.js';
+import { metricConsumerService, operationalSource } from '../metrics/consumers/runtime.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { canReadResource, resourceService } from './resource-service.js';
 import type { Observation, ResourceDetail, ResourceRef, ResourceRelation, ResourceType } from './types.js';
@@ -20,16 +20,14 @@ export interface ResourceDiagnosticDependencies {
 }
 
 type ObservationReader = ResourceDiagnosticDependencies['observations'];
-type OperationalSourceState = 'legacy' | 'v2' | 'pending';
+type OperationalSourceState = 'legacy' | 'semantic' | 'pending';
 
-/** Resource views must not mix old tables with an accepted or pending V2 source. */
+/** Resource views read only the accepted formal source. */
 export function sourceControlledObservations(
   sourceState: (ref: ResourceRef) => Promise<OperationalSourceState>,
-  legacy: ObservationReader,
+  formal: ObservationReader,
 ): ObservationReader {
-  return async (ref, actor, options) => await sourceState(ref) === 'legacy'
-    ? legacy(ref, actor, options)
-    : [];
+  return async (ref,actor,options) => await sourceState(ref) === 'semantic' ? formal(ref,actor,options) : [];
 }
 
 export interface ResourceDiagnosticPack {
@@ -387,7 +385,7 @@ export class ResourceDiagnosticService {
   async getObservations(actor: ActorContext, ref: ResourceRef, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
     validateRef(ref);
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
-    const metricIds = options.metricIds?.filter((id) => /^[a-z][a-z0-9_]{0,127}$/.test(id)).slice(0, 32);
+    const metricIds = options.metricIds?.filter((id) => /^[a-z][a-z0-9_.]{0,127}$/.test(id)).slice(0, 32);
     if (options.metricIds && metricIds?.length !== options.metricIds.length) throw new Error('METRIC_ID_INVALID');
     return (await this.dependencies.observations(ref, actor, {
       metricIds,
@@ -629,54 +627,11 @@ async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
   return Object.assign(result, { unavailableTypes });
 }
 
-async function legacyObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
-  const limit = Math.min(options.limit ?? MAX_OBSERVATIONS, MAX_OBSERVATIONS);
-  const metricIds = options.metricIds;
-  if (metricIds?.length) {
-    const values = await Promise.all(metricIds.slice(0, 32).map(async (metricId) => {
-      try {
-        return await observationService.latest(actor, ref, metricId, { validForMs: 5 * 60_000 });
-      } catch {
-        return null;
-      }
-    }));
-    return values.filter((value): value is Observation => value !== null);
-  }
-  const pool = dbConnection.getPool();
-  if (!pool) return [];
-  const table = ref.type === 'instance' ? 'metrics_history' : ref.type === 'server' ? 'server_metrics' : 'network_device_observations';
-  const idColumn = ref.type === 'instance' ? 'instance_id' : ref.type === 'server' ? 'server_id' : 'device_id';
-  const metricColumn = ref.type === 'instance' ? null : ref.type === 'server' ? 'metric_name' : 'metric_id';
-  const timeColumn = ref.type === 'instance' ? 'recorded_at' : ref.type === 'server' ? 'recorded_at' : 'observed_at';
-  if (ref.type === 'instance') {
-    const [rows] = await pool.execute<any[]>(
-      `SELECT recorded_at, cpu_usage, memory_usage, disk_usage, connections, qps, tps, slow_queries
-       FROM metrics_history WHERE instance_id = ? ORDER BY recorded_at DESC LIMIT 1`, [ref.id]);
-    const row = rows[0];
-    if (!row) return [];
-    return ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps', 'tps', 'slow_queries'].map((metricId) => ({
-      resource: ref, metricId, value: row[metricId] == null ? null : Number(row[metricId]),
-      observedAt: row.recorded_at ? new Date(row.recorded_at) : null,
-      validUntil: row.recorded_at ? new Date(new Date(row.recorded_at).getTime() + 5 * 60_000) : null,
-      source: 'metrics_history', quality: row[metricId] == null ? 'unknown' as const : 'good' as const,
-      reason: row[metricId] == null ? 'missing_observation' : undefined,
-    })).slice(0, limit);
-  }
-  const networkQualityColumns = ref.type === 'network_device' ? ', x.quality, x.source, x.valid_until AS validUntil, x.reason' : '';
-  const [rows] = await pool.execute<any[]>(
-    `SELECT x.${metricColumn} AS metricId, x.metric_value AS value, x.${timeColumn} AS observedAt${networkQualityColumns}, x.dimensions
-     FROM ${table} x JOIN (SELECT ${metricColumn} AS metric_id, MAX(${timeColumn}) AS latest_at FROM ${table} WHERE ${idColumn} = ? GROUP BY ${metricColumn}) latest
-       ON latest.metric_id = x.${metricColumn} AND latest.latest_at = x.${timeColumn}
-     WHERE x.${idColumn} = ? ORDER BY x.${timeColumn} DESC LIMIT ${limit}`, [ref.id, ref.id]);
-  return rows.map((row) => {
-    let dimensions: Record<string, string> | undefined;
-    try { dimensions = typeof row.dimensions === 'string' ? JSON.parse(row.dimensions) : row.dimensions ?? undefined; } catch { dimensions = undefined; }
-    const observedAt = row.observedAt ? new Date(row.observedAt) : null;
-    return { resource: ref, metricId: String(row.metricId), value: row.value == null ? null : Number(row.value), observedAt,
-      validUntil: ref.type === 'network_device' ? (row.validUntil ? new Date(row.validUntil) : null) : observedAt ? new Date(observedAt.getTime() + 5 * 60_000) : null,
-      reason: ref.type === 'network_device' ? row.reason ?? undefined : undefined, dimensions, source: String(row.source ?? table),
-      quality: ref.type === 'network_device' ? (row.quality ?? (row.value == null ? 'unknown' : 'good')) : (row.value == null ? 'unknown' : 'good'), } as Observation;
-  });
+async function formalObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
+  const ids=options.metricIds??(ref.type==='instance'?['cpu_usage','memory_usage','disk_usage','connections','qps','tps','slow_queries']
+    :ref.type==='server'?['cpu_usage','memory_usage','load_1min','uptime','process_count']:['device_uptime_seconds']);
+  const values=await Promise.all(ids.slice(0,Math.min(options.limit??32,32)).map(id=>observationService.latest(actor,ref,id,{validForMs:300000})));
+  return values;
 }
 
 async function defaultAlerts(ref: ResourceRef, actor: ActorContext, limit = MAX_ALERTS): Promise<Array<Record<string, unknown>>> {
@@ -700,7 +655,7 @@ export const resourceDiagnosticService = new ResourceDiagnosticService({
   semantic: (ref, actor) => metricConsumerService.query(actor, { resource: ref, view: 'core' }),
   list: defaultList,
   detail: async (ref, actor) => resourceService.detail(actor, ref),
-  observations: sourceControlledObservations(operationalSource, legacyObservations),
+  observations: sourceControlledObservations(operationalSource, formalObservations),
   relations: async (ref, actor) => resourceService.currentRelations(actor, ref),
   alerts: defaultAlerts,
 });

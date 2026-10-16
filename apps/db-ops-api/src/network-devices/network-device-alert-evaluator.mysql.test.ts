@@ -16,9 +16,9 @@ describe('network reachability / formal MySQL evaluator', () => {
       VALUES (901,'network_device','availability','error','persisted unreachable','previous check','device_reachability','0','{"rule_id":901}')`);
   }, 120_000);
   afterAll(async () => { vi.restoreAllMocks(); await f?.close(); }, 30_000);
-  it('missing/error/stale states neither create outages nor resolve an existing alert; fresh checks do', async () => {
+  it('historical device checks never trigger or recover a formal metric alert without an accepted metric reference', async () => {
     const now = new Date(Math.floor(Date.now() / 1000) * 1000);
-    const evaluator = new NetworkDeviceAlertEvaluator({ clock: () => now });
+    const evaluator = new NetworkDeviceAlertEvaluator();
     const state = async (status: string, at: Date | null) => {
       await f.pool.execute('UPDATE network_devices SET status=?,last_check_at=? WHERE id=901', [status,at]);
       return evaluator.evaluate();
@@ -32,18 +32,8 @@ describe('network reachability / formal MySQL evaluator', () => {
       const [rows] = await f.pool.query<any[]>('SELECT status FROM alerts WHERE network_device_id=901');
       expect(rows, status).toHaveLength(1); expect(rows[0].status, status).toBe('unread');
     }
-    expect(await state('online',now)).toMatchObject({ evaluated:1, triggered:0 });
-    const [recovered] = await f.pool.query<any[]>('SELECT status FROM alerts WHERE network_device_id=901');
-    expect(recovered[0].status).toBe('resolved');
-    const earlier=new Date(now.getTime()-1000);
-    expect(await state('unreachable',earlier)).toMatchObject({ evaluated:1, triggered:1 });
-    const [active] = await f.pool.query<any[]>("SELECT * FROM alerts WHERE network_device_id=901 AND status='unread'");
-    expect(active).toHaveLength(1); expect(active[0].metric_value).toBe('0');
-    expect(await state('unreachable',now)).toMatchObject({ triggered:1 });
-    const [touched]=await f.pool.query<any[]>("SELECT tags FROM alerts WHERE network_device_id=901 AND status='unread'");
-    const tags=typeof touched[0].tags==='string'?JSON.parse(touched[0].tags):touched[0].tags;
-    expect(tags).toMatchObject({observed_at:now.toISOString(),observed_from:now.toISOString(),observed_to:now.toISOString(),quality:'good'});
-    const [count] = await f.pool.query<any[]>('SELECT COUNT(*) n FROM alerts WHERE network_device_id=901');
-    expect(Number(count[0].n)).toBe(2);
+    for (const status of ['online','unreachable']) expect(await state(status,now)).toMatchObject({evaluated:0,triggered:0});
+    const [active]=await f.pool.query<any[]>("SELECT status FROM alerts WHERE network_device_id=901");
+    expect(active).toHaveLength(1);expect(active[0].status).toBe('unread');
   });
 });

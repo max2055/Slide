@@ -1,0 +1,415 @@
+/** Historical comparison only. No production imports. */
+import { evaluateOperationalRule } from '../../metrics/consumers/operational.js';
+import { assertWorkflowActive } from '../../workflows/execution-context.js';
+/**
+ * Server Alert Evaluator
+ *
+ * Evaluates server metric thresholds and unreachable detection,
+ * creating alerts through the existing alert engine pipeline.
+ *
+ * Requirements: ALR-01, ALR-02, ALR-03, ALR-04
+ */
+import { dbConnection } from '../../db-connection';
+import { serverDatabaseService } from '../../server-database-service';
+import { alertDatabaseService } from '../../alert-database-service';
+import { compileAlertRule, evaluateCompiledRule } from '../../alerts/compiled-rule.js';
+
+interface ServerMetricRow {
+  server_id: number;
+  metric_name: string;
+  metric_value: number;
+  recorded_at: Date;
+  dimensions?: Record<string, unknown> | string | null;
+}
+
+interface ServerAlertRuleRaw {
+  id: number;
+  name: string;
+  description: string | null;
+  metric_name: string;
+  operator: string;
+  threshold: number;
+  threshold_template: any;
+  duration_seconds: number;
+  recovery_seconds?: number;
+  severity: string;
+  enabled: boolean;
+  silence_minutes: number;
+  notification_channels: any;
+  server_id: number | null;
+  target_type: string;
+  db_types: string | null;
+  instance_ids: string | null;
+  template_id: number | null;
+  dimensions?: Record<string, unknown> | null;
+}
+
+function parseDimensions(value: unknown): Record<string, string> | null {
+  const parsed = typeof value === 'string' ? (() => { try { return JSON.parse(value); } catch { return null; } })() : value;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const result: Record<string, string> = {};
+  for (const key of ['interface', 'device', 'mount', 'direction']) {
+    if (typeof (parsed as any)[key] === 'string' && (parsed as any)[key].length <= 128) result[key] = (parsed as any)[key];
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+function dimensionsMatch(actual: Record<string, string> | null, expected: unknown): boolean {
+  const wanted = parseDimensions(expected);
+  if (!wanted) return true;
+  if (!actual) return false;
+  return Object.entries(wanted).every(([key, value]) => actual[key] === value);
+}
+
+class ServerAlertEvaluator {
+  /**
+   * Evaluate server metric threshold rules.
+   *
+   * For each collection-enabled server with active server alert rules,
+   * checks latest metrics against rule thresholds and creates alerts
+   * when thresholds are breached.
+   */
+  async evaluateServerRules(): Promise<void> {
+    if (!dbConnection.isConnected()) {
+      console.warn('[ServerAlertEvaluator] database not connected, skipping server rule evaluation');
+      return;
+    }
+
+    try {
+      // 1. Fetch enabled server alert rules (target_type='server') via shared API
+      assertWorkflowActive();
+      const allRules = await alertDatabaseService.getAlertRules(true);
+      const rules = allRules.filter(r => r.target_type === 'server');
+
+      if (!rules || rules.length === 0) {
+        return; // No server rules configured
+      }
+
+      const serverRules = rules as unknown as ServerAlertRuleRaw[];
+
+      // 2. Get all collection-enabled servers
+      assertWorkflowActive();
+      const servers = await serverDatabaseService.getCollectionEnabledServers();
+      if (servers.length === 0) {
+        return;
+      }
+
+      // 3. Build server -> rule assignments
+      // A rule applies to a server if rule.server_id IS NULL (global) or matches server.id
+      const serverRuleMap = new Map<number, ServerAlertRuleRaw[]>();
+      for (const server of servers) {
+        const applicableRules: ServerAlertRuleRaw[] = [];
+        for (const rule of serverRules) {
+          if (rule.server_id === null || rule.server_id === server.id) {
+            applicableRules.push(rule);
+          }
+        }
+        if (applicableRules.length > 0) {
+          serverRuleMap.set(server.id, applicableRules);
+        }
+      }
+
+      if (serverRuleMap.size === 0) {
+        return;
+      }
+
+      // 4. Evaluate each server's rules against latest metrics
+      for (const [serverId, rules] of serverRuleMap) {
+        const server = servers.find((s) => s.id === serverId);
+        if (!server) continue;
+
+        assertWorkflowActive();
+        const latestMetrics = await this._getLatestMetrics(serverId);
+
+
+        // Build metric lookup map
+        const metricMap = new Map<string, number>();
+        const metricDimensions = new Map<string, Record<string, string> | null>();
+        const metricRecordedAt = new Map<string, Date>();
+        for (const m of latestMetrics) {
+          // A rule without an explicit dimension evaluates the newest sample
+          // for the metric; dimensions remain attached for alert context.
+          const current = metricRecordedAt.get(m.metric_name);
+          const recordedAt = new Date(m.recorded_at);
+          if (!current || recordedAt >= current) {
+            metricMap.set(m.metric_name, m.metric_value);
+            metricDimensions.set(m.metric_name, parseDimensions(m.dimensions));
+            metricRecordedAt.set(m.metric_name, recordedAt);
+          }
+        }
+
+        for (const rule of rules) {
+          try {
+            let currentValue = metricMap.get(rule.metric_name);
+            let selectedDimensions = metricDimensions.get(rule.metric_name);
+            let selectedRecordedAt = metricRecordedAt.get(rule.metric_name);
+            if (rule.dimensions) {
+              const matching = latestMetrics
+                .filter((metric) => metric.metric_name === rule.metric_name && dimensionsMatch(parseDimensions(metric.dimensions), rule.dimensions))
+                .sort((left, right) => new Date(right.recorded_at).getTime() - new Date(left.recorded_at).getTime())[0];
+              if (matching) {
+                currentValue = matching.metric_value;
+                selectedDimensions = parseDimensions(matching.dimensions);
+                selectedRecordedAt = new Date(matching.recorded_at);
+              } else currentValue = undefined;
+            }
+            const semantic = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
+            if (semantic.handled) {
+              if (!semantic.level || semantic.value === null) {
+                const recovery = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any,
+                  rule.recovery_seconds ?? rule.duration_seconds);
+                if (recovery.recovery) {
+                  assertWorkflowActive();
+                  const existing = await alertDatabaseService.findActiveServerAlert(serverId, rule.metric_name, rule.id);
+                  if (existing) { assertWorkflowActive(); await alertDatabaseService.resolveAlert(existing.id); }
+                }
+                continue;
+              }
+              currentValue = semantic.value; selectedDimensions = semantic.dimensions; selectedRecordedAt = semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : undefined;
+            }
+            if (currentValue === undefined) {
+              continue; // Metric not collected for this server
+            }
+
+            const level = semantic.handled ? semantic.level : evaluateCompiledRule(compileAlertRule(rule as any, 'server'), currentValue);
+            if (!level) continue;
+            assertWorkflowActive();
+            if (!semantic.handled && !await this._durationMet(serverId, rule, currentValue)) continue;
+
+            const title = `[${rule.severity.toUpperCase()}] ${rule.name} - ${server.label || server.host}`;
+            const dimensions = selectedDimensions;
+            const collectedAt = selectedRecordedAt?.toISOString() ?? null;
+            const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
+            const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
+
+            const observation = { message, tags: {
+              semantic_migration: semantic.migration,
+              collected_at: collectedAt,
+              observed_from: semantic.handled ? semantic.observation?.from ?? null : collectedAt,
+              observed_to: semantic.handled ? semantic.observation?.to ?? null : collectedAt,
+              rule_window_seconds: rule.duration_seconds,
+              quality: semantic.handled ? semantic.observation?.quality ?? 'unknown' : collectedAt ? 'good' : 'unknown',
+              dimensions,
+            } };
+
+            // Check for existing active alert (dedup)
+            assertWorkflowActive();
+            const existing = await alertDatabaseService.findActiveServerAlert(
+              serverId, rule.metric_name, rule.id,
+            );
+            if (existing) {
+              // Touch existing alert with updated value
+              try {
+                assertWorkflowActive();
+                await alertDatabaseService.touchAlert(existing.id, currentValue, observation);
+              } catch {
+                assertWorkflowActive();
+                // Non-critical: touch failures are logged internally
+              }
+              continue;
+            }
+
+            assertWorkflowActive();
+            await alertDatabaseService.createAlert({
+              server_id: serverId,
+              alert_type: 'performance',
+              level,
+              title,
+              message,
+              description: rule.description || `服务器告警规则：${rule.name}`,
+              source: 'server-monitor',
+              metric_name: rule.metric_name,
+              metric_value: String(currentValue),
+              threshold_value: String(rule.threshold),
+              tags: {
+                ...observation.tags,
+                rule_id: rule.id,
+                rule_name: rule.name,
+                target_type: 'server',
+                auto_generated: true,
+              },
+            });
+
+            console.log(`[ServerAlertEvaluator] Created alert: ${title} (server #${serverId})`);
+          } catch (ruleErr) {
+            assertWorkflowActive();
+            console.error(`[ServerAlertEvaluator] Error evaluating rule #${rule.id} for server #${serverId}:`, ruleErr);
+          }
+        }
+      }
+    } catch (error) {
+      assertWorkflowActive();
+      console.error('[ServerAlertEvaluator] evaluateServerRules failed:', error);
+    }
+  }
+
+  /**
+   * Check for servers that have been unreachable for more than 10 minutes
+   * and create "服务器不可达" alerts if there are active server alert rules.
+   *
+   * Only triggers once per unreachable episode (dedup via findActiveServerAlert).
+   */
+  async checkUnreachable(): Promise<void> {
+    const pool = dbConnection.getPool();
+    if (!pool) {
+      return;
+    }
+
+    try {
+      // 1. Check if any server alert rules exist
+      assertWorkflowActive();
+      const [ruleCount] = await pool.execute(
+        `SELECT COUNT(*) AS cnt FROM alert_rules WHERE enabled = 1 AND target_type = 'server'`,
+      ) as any;
+      if (!ruleCount || ruleCount[0]?.cnt === 0) {
+        return; // No server rules, no need to check unreachable
+      }
+
+      // 2. Find servers unreachable for more than 10 minutes
+      assertWorkflowActive();
+      const [servers] = await pool.execute(
+        `SELECT id, host, label, status, last_check_at
+         FROM servers
+         WHERE status = 'unreachable'
+           AND last_check_at IS NOT NULL
+           AND last_check_at < NOW() - INTERVAL 10 MINUTE
+         ORDER BY host`,
+      ) as any;
+
+      if (!servers || servers.length === 0) {
+        return;
+      }
+
+      for (const server of servers) {
+        try {
+          // 3. Check for existing active unreachable alert (dedup)
+          assertWorkflowActive();
+          const existing = await alertDatabaseService.findActiveServerAlert(
+            server.id, 'unreachable', 0,
+          );
+          if (existing) {
+            continue; // Already alerted for this unreachable episode
+          }
+
+          // 4. Create "服务器不可达" alert
+          const label = server.label || server.host || `#${server.id}`;
+          const title = `[ERROR] 服务器不可达 - ${label}`;
+          const message = `服务器 ${server.host} (${label}) 已超过 10 分钟不可达，请检查网络连接或服务器状态。`;
+
+          assertWorkflowActive();
+          await alertDatabaseService.createAlert({
+            server_id: server.id,
+            alert_type: 'availability',
+            level: 'error',
+            title,
+            message,
+            description: `服务器 ${server.host} 自动检测为不可达状态`,
+            source: 'server-monitor',
+            metric_name: 'unreachable',
+            metric_value: '0',
+            threshold_value: '1',
+            tags: {
+              rule_id: 0,
+              rule_name: '服务器不可达检测',
+              target_type: 'server',
+              auto_generated: true,
+              unreachable_episode: true,
+            },
+          });
+
+          console.log(`[ServerAlertEvaluator] Created unreachable alert for server #${server.id} (${server.host})`);
+        } catch (serverErr) {
+          assertWorkflowActive();
+          console.error(`[ServerAlertEvaluator] Error checking unreachable for server #${server.id}:`, serverErr);
+        }
+      }
+    } catch (error) {
+      assertWorkflowActive();
+      console.error('[ServerAlertEvaluator] checkUnreachable failed:', error);
+    }
+  }
+
+  /**
+   * Get the latest metric values for a server.
+   */
+  private async _getLatestMetrics(serverId: number): Promise<ServerMetricRow[]> {
+    const pool = dbConnection.getPool();
+    if (!pool) return [];
+
+    try {
+      const [rows] = await pool.execute(
+        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
+         FROM server_metrics sm
+         INNER JOIN (
+           SELECT metric_name, dimensions, MAX(recorded_at) AS max_time
+           FROM server_metrics
+           WHERE server_id = ?
+           GROUP BY metric_name, dimensions
+         ) latest ON sm.metric_name = latest.metric_name
+           AND ((sm.dimensions = latest.dimensions) OR (sm.dimensions IS NULL AND latest.dimensions IS NULL))
+           AND sm.recorded_at = latest.max_time
+         WHERE sm.server_id = ?`,
+        [serverId, serverId],
+      ) as any;
+
+      return rows as ServerMetricRow[];
+    } catch (error) {
+      console.error(`[ServerAlertEvaluator] Failed to get latest metrics for server #${serverId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Evaluate a single threshold rule against a current value.
+   */
+  private _evaluateThreshold(rule: ServerAlertRuleRaw, currentValue: number): boolean {
+    const numericValue = Number(currentValue);
+    const numericThreshold = Number(rule.threshold);
+
+    switch (rule.operator) {
+      case '>': return numericValue > numericThreshold;
+      case '<': return numericValue < numericThreshold;
+      case '>=': return numericValue >= numericThreshold;
+      case '<=': return numericValue <= numericThreshold;
+      case '=': return numericValue === numericThreshold;
+      case '!=': return numericValue !== numericThreshold;
+      default: return false;
+    }
+  }
+
+  private async _durationMet(serverId: number, rule: ServerAlertRuleRaw, currentValue: number): Promise<boolean> {
+    if (!rule.duration_seconds || rule.duration_seconds <= 0) return true;
+    const pool = dbConnection.getPool();
+    if (!pool) return false;
+    try {
+      const since = new Date(Date.now() - rule.duration_seconds * 1_000);
+      const [rows] = await pool.execute(
+        'SELECT metric_value FROM server_metrics WHERE server_id = ? AND metric_name = ? AND recorded_at >= ? ORDER BY recorded_at ASC',
+        [serverId, rule.metric_name, since],
+      ) as any;
+      if (!rows.length) return false;
+      const compiled = compileAlertRule(rule as any, 'server');
+      return rows.every((row: any) => evaluateCompiledRule(compiled, Number(row.metric_value)) !== null)
+        && evaluateCompiledRule(compiled, currentValue) !== null;
+    } catch (error) {
+      console.error(`[ServerAlertEvaluator] Duration check failed for rule #${rule.id}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Map rule severity to alert level.
+   */
+  private _mapSeverity(severity: string): 'info' | 'warning' | 'error' | 'critical' {
+    const map: Record<string, 'info' | 'warning' | 'error' | 'critical'> = {
+      info: 'info',
+      warning: 'warning',
+      error: 'error',
+      critical: 'critical',
+    };
+    return map[severity] || 'warning';
+  }
+}
+
+// Singleton
+export const serverAlertEvaluator = new ServerAlertEvaluator();

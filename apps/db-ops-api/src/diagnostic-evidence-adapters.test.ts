@@ -8,6 +8,7 @@ import {
   instanceDiagnosticContextService,
   safeInstanceMetadataProvider,
 } from './instance-diagnostic-context-service.js';
+import { metricConsumerService } from './metrics/consumers/runtime.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
 import { instanceHostService } from './resources/instance-host-service.js';
 
@@ -63,12 +64,7 @@ describe('strict diagnostic evidence reads', () => {
 
   it('uses strict realtime reads in the production diagnostic context adapter', async () => {
     vi.spyOn(safeInstanceMetadataProvider, 'getInstance').mockResolvedValue({ id: 7, db_type: 'mysql' });
-    const realtime = vi.spyOn(metricsDatabaseService, 'getRealtimeMetrics')
-      .mockImplementation(async (...args: unknown[]) => {
-        const options = args[1] as { strict?: boolean } | undefined;
-        if (options?.strict) throw new Error('REALTIME_METRICS_QUERY_FAILED');
-        return null;
-      });
+    const realtime=vi.spyOn(metricConsumerService,'query').mockRejectedValue(new Error('REALTIME_METRICS_QUERY_FAILED'));
     vi.spyOn(metricsDatabaseService, 'getHistoricalMetrics').mockResolvedValue([]);
     vi.spyOn(metricsDatabaseService, 'getSlowQueries').mockResolvedValue([]);
     vi.spyOn(alertDatabaseService, 'getAlerts').mockResolvedValue({ items: [] });
@@ -78,7 +74,7 @@ describe('strict diagnostic evidence reads', () => {
 
     const result = await instanceDiagnosticContextService.collect(actor, 7);
 
-    expect(realtime).toHaveBeenCalledWith(7, { strict: true });
+    expect(realtime).toHaveBeenCalledWith(expect.objectContaining({instanceScopes:{7:'read-only'}}),expect.objectContaining({resource:{type:'instance',id:7},view:'all'}));
     expect(result.database.realtimeMetrics).toBeNull();
     expect(result.gaps).toContainEqual(expect.objectContaining({
       section: 'realtime', code: 'REALTIME_METRICS_QUERY_FAILED',

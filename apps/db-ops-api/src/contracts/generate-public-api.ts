@@ -11,6 +11,7 @@ import { InvestigationProfileSchemas } from '../investigations/profile-contracts
 import { InvestigationGovernanceSchemas } from '../investigations/governance-contracts.js';
 import { InvestigationBridgeSchemas } from '../investigations/bridge-contracts.js';
 import { SystemHttpSchemas } from '../investigations/system-http-contracts.js';
+import { metricJsonSchemas, metricPublicPaths } from './metrics/public-api.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -43,6 +44,7 @@ export function buildOpenApiDocument() {
     openapi: '3.1.0',
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
+      ...metricPublicPaths,
       '/api/alerts/{id}/investigation': { post: {
         operationId: 'openAlertInvestigation', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
         description: 'Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.',
@@ -441,7 +443,7 @@ export function buildOpenApiDocument() {
     },
     components: {
       securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
-      schemas: PublicApiSchemas,
+      schemas: { ...PublicApiSchemas, ...metricJsonSchemas },
     },
   });
 }
@@ -534,6 +536,9 @@ function schemaType(schema: TSchema): string {
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
   if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
+  if (schema.enum) return schema.enum.map((v: unknown) => JSON.stringify(v)).join(' | ');
+  if (Array.isArray(schema.type)) return schema.type.map((type: string) => schemaType({ ...schema, type })).join(' | ');
+  if (schema.oneOf) return `(${(schema.oneOf as TSchema[]).map(schemaType).join(' | ')})`;
   if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(schemaType).join(' | ')})`;
   if (schema.type === 'string') return 'string';
   if (schema.type === 'number' || schema.type === 'integer') return 'number';
@@ -541,6 +546,9 @@ function schemaType(schema: TSchema): string {
   if (schema.type === 'null') return 'null';
   if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema)}>`;
   if (schema.type === 'object') {
+    if (schema.additionalProperties && typeof schema.additionalProperties === 'object' && !schema.properties) {
+      return `Record<string, ${schemaType(schema.additionalProperties as TSchema)}>`;
+    }
     if (schema.patternProperties) {
       const values = Object.values(schema.patternProperties) as TSchema[];
       if (values.length !== 1) throw new Error('Unsupported investigation record schema');
@@ -559,7 +567,8 @@ function buildInvestigationClientTypes(): string {
 }
 
 export function buildClientTypes(): string {
-  return buildInvestigationClientTypes() + buildLegacyClientTypes()
+  return Object.entries(metricJsonSchemas).map(([name, schema]) => `export type ${name} = ${schemaType(schema as unknown as TSchema)};\n`).join('')
+    + buildInvestigationClientTypes() + buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
   jobType: string; queued: number; retry: number; scheduled: number; ready: number;
   running: number; deadLetter: number; expiredLeases: number; oldestReadyWaitMs: number | null;

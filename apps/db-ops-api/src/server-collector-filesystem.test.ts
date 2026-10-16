@@ -40,7 +40,7 @@ vi.mock('./db-connection', () => ({
   dbConnection: { getPool: () => ({ execute: mocks.execute, getConnection: mocks.dbGetConnection }) },
 }));
 
-import { buildFilesystemMetricRows, ServerCollector } from './server-collector.js';
+import { buildFilesystemMetricRows, ServerCollector } from './migrations/metric-history/server-collector.js';
 import { ServerMetricProvider, isSupportedLinuxOsType } from './server-metric-provider.js';
 import { metricRegistry } from './metric-registry.js';
 
@@ -87,8 +87,9 @@ describe('server collector Linux lifecycle', () => {
       release: mocks.dbRelease,
     });
     mocks.execute.mockImplementation(async (sql: string) => {
-      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
-      if (sql.includes('FROM metric_v2_rollout')) return [[], []];
+      if (sql.includes('metric_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_policy_bindings')) return [[], []];
+      if (sql.includes('FROM metric_rollout')) return [[], []];
       return [{ affectedRows: 1 }, []];
     });
   });
@@ -168,9 +169,10 @@ describe('server collector Linux lifecycle', () => {
       return commands.map(() => ok('12.5\n'));
     });
     mocks.execute.mockImplementation(async (sql: string) => {
-      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
-      if (sql.includes('FROM metric_v2_rollout')) return [[{
-        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      if (sql.includes('metric_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_policy_bindings')) return [[], []];
+      if (sql.includes('FROM metric_rollout')) return [[{
+        source: 'semantic', read_mode: 'semantic', published_revision: 2, applied_revision: null,
       }], []];
       throw new Error('server_metrics insert must be fenced');
     });

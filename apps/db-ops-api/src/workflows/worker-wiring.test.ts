@@ -24,7 +24,6 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     'await startup.step(() => enqueueNotificationDispatch())',
     'await startup.step(() => enqueueReportSchedule())',
     'await startup.step(() => workflowStore.enqueue(createCapacityConsistencyJob()))',
-    'monitorCollector.start()',
     'registerCronRunHandler(workflowRegistry',
     'await startup.step(() => cronManager!.start())',
     'workflowTimer = setInterval(',
@@ -37,6 +36,8 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     previous = position;
   }
   expect(server).not.toContain('workflowRegistry.register(');
+  expect(server).not.toContain('monitorCollector.start()');
+  expect(server).not.toContain('networkDeviceCollector.start()');
   expect(server).toContain('startup.assertOwned().then(() => workflowRuntime.runOnce');
   expect(server).toContain("}, 1_000);");
   expect(server).toContain('startup.ready && dispatchAvailable');

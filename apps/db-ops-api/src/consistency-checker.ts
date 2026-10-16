@@ -52,14 +52,14 @@ export class ConsistencyChecker {
     const [instances] = await pool.execute(`
       SELECT di.id, di.health_status, MAX(mh.recorded_at) AS latest_metric
       FROM database_instances di
-      LEFT JOIN metrics_history mh ON mh.instance_id = di.id
+      LEFT JOIN (SELECT r.resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='instance' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY r.resource_id) mh ON mh.resource_id = CAST(di.id AS CHAR)
       WHERE di.status = 'active'
       GROUP BY di.id, di.health_status
     `) as any;
     const [servers] = await pool.execute(`
       SELECT s.id, s.status, MAX(sm.recorded_at) AS latest_metric
       FROM servers s
-      LEFT JOIN server_metrics sm ON sm.server_id = s.id
+      LEFT JOIN (SELECT r.resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='server' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY r.resource_id) sm ON sm.resource_id = CAST(s.id AS CHAR)
       WHERE s.collection_enabled = 1
       GROUP BY s.id, s.status
     `) as any;
@@ -242,7 +242,7 @@ export class ConsistencyChecker {
     if (!pool) throw new Error('数据库未连接');
 
     const [rows] = await pool.execute(
-      'SELECT MAX(recorded_at) as latest FROM metrics_history',
+      `SELECT MAX(p.observed_at) AS latest FROM metric_publications p JOIN metric_rollout r ON r.series_hash=p.series_hash AND r.generation=p.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision`,
       [],
     ) as any;
 

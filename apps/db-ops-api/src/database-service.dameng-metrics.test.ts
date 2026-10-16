@@ -27,17 +27,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('Dameng realtime metrics', () => {
+// Historical parser comparison, never the current public metric reader.
+const historical = () => (databaseService as any).getDamengMetrics(connections.get(instanceId), instanceId);
+describe('historical Dameng realtime interpretation', () => {
   it('reads DM8 pool usage and computes rates from array counters across collections', async () => {
     const counters = installConnection();
     const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
-    await expect(databaseService.getRealtimeMetrics(instanceId)).resolves.toMatchObject({
+    await expect(historical()).resolves.toMatchObject({
       memory_usage: 37.5, cpu_usage: 2, connections: 20, qps: 0, tps: 0, dm_buffer_hit_rate: 0,
     });
     counters.executes += 120;
     counters.commits += 60;
     now.mockReturnValue(61000);
-    await expect(databaseService.getRealtimeMetrics(instanceId)).resolves.toMatchObject({ qps: 2, tps: 1 });
+    await expect(historical()).resolves.toMatchObject({ qps: 2, tps: 1 });
   });
 
   it.each([
@@ -45,7 +47,7 @@ describe('Dameng realtime metrics', () => {
     ['V$MEM_POOL', 'V$BUFFERPOOL', 'V$DEADLOCK_HISTORY', 'V$INSTANCE'],
   ])('keeps other metrics when optional views fail: %j', async (...unavailable) => {
     installConnection(unavailable);
-    const metrics = await databaseService.getRealtimeMetrics(instanceId);
+    const metrics = await historical();
     expect(metrics).toMatchObject({ memory_usage: null, cpu_usage: 2, connections: 20, qps: 0, tps: 0 });
     if (unavailable.includes('V$BUFFERPOOL')) expect(metrics).not.toHaveProperty('dm_buffer_hit_rate');
     if (unavailable.includes('V$DEADLOCK_HISTORY')) expect(metrics).not.toHaveProperty('dm_deadlock_count');

@@ -29,7 +29,7 @@ test('UI changes retain real browser, permissions and SQL-backed acceptance', ()
 });
 
 test('ordinary API changes retain the full SQL candidate and recovery', () => {
-  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/metrics-v2/storage.ts'])), ['api', 'browser', 'integration', 'recovery']);
+  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/metrics/storage.ts'])), ['api', 'browser', 'integration', 'recovery']);
 });
 
 test('cross-cutting, unknown, deleted and mixed paths require the full candidate', () => {

@@ -23,13 +23,13 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then echo 'isolated container readiness failed' >&2; exit 1; fi
-export METRICS_V2_TEST_MYSQL_PORT="$(docker port "$mysql_container" 3306/tcp | cut -d: -f2)"
-export METRICS_V2_TEST_SSH_PORT="$(docker port "$host_container" 22/tcp | cut -d: -f2)"
-export METRICS_V2_TEST_SSH_PASSWORD=isolated-fixture
-export METRICS_V2_BROWSER=1
-export MAX76_DATABASE_REPORT=../../docs/slide/metrics-v2/rollout/database-evidence.json
-export MAX76_HOST_REPORT=../../docs/slide/metrics-v2/rollout/host-evidence.json
-export MAX76_SNMP_REPORT=../../docs/slide/metrics-v2/rollout/snmp-evidence.json
-export MAX76_CAPACITY_REPORT=../../docs/slide/metrics-v2/rollout/capacity.json
-pnpm --filter slide-api exec vitest run src/metrics-v2 src/contracts/metrics-v2 --maxWorkers=1
+export METRICS_TEST_MYSQL_PORT="$(docker port "$mysql_container" 3306/tcp | cut -d: -f2)"
+export METRICS_TEST_SSH_PORT="$(docker port "$host_container" 22/tcp | cut -d: -f2)"
+export METRICS_TEST_SSH_PASSWORD=isolated-fixture
+export METRICS_BROWSER=1
+export MAX76_DATABASE_REPORT=../../docs/slide/metrics/rollout/database-evidence.json
+export MAX76_HOST_REPORT=../../docs/slide/metrics/rollout/host-evidence.json
+export MAX76_SNMP_REPORT=../../docs/slide/metrics/rollout/snmp-evidence.json
+export MAX76_CAPACITY_REPORT=../../docs/slide/metrics/rollout/capacity.json
+pnpm --filter slide-api exec vitest run src/metrics src/contracts/metrics --maxWorkers=1
 pnpm --filter slide-api exec vitest run tests/phase-94-docs-structure.test.ts

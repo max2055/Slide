@@ -18,13 +18,13 @@ it('checks role state again after the dependency resolves', async () => {
   expect(await probe.ready()).toBe(false);
 });
 it('keeps optional features disabled and logs only an allowlisted configuration summary', () => {
-  expect(startupConfig({})).toEqual({ metricsV2CollectionEnabled: false, memoryPipelineEnabled: false,
+  expect(startupConfig({})).toEqual({ metricsCollectionEnabled: false, memoryPipelineEnabled: false,
     memoryWorkspaceConfigured: false, memoryRetrievalMaxCount: 5, memoryRetrievalMaxTokens: 4096 });
   const config = startupConfig({ SLIDE_MEMORY_PIPELINE_ENABLED: 'true', SLIDE_MEMORY_WORKSPACE_ID: 'private-workspace',
     SLIDE_MEMORY_RETRIEVAL_MAX_COUNT: '3', SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS: '512', JWT_SECRET_KEY: 'private-secret' });
   expect(config).toMatchObject({ memoryPipelineEnabled: true, memoryWorkspaceConfigured: true, memoryRetrievalMaxCount: 3, memoryRetrievalMaxTokens: 512 });
   expect(JSON.stringify(config)).not.toContain('private');
   expect(() => startupConfig({ SLIDE_MEMORY_PIPELINE_ENABLED: 'true' })).toThrow('MEMORY_WORKSPACE_ID_REQUIRED');
-  expect(() => startupConfig({ METRICS_V2_COLLECTION_ENABLED: 'invalid' })).toThrow('METRIC_COLLECTION_ENABLED_INVALID');
+  expect(() => startupConfig({ METRICS_COLLECTION_ENABLED: 'invalid' })).toThrow('METRIC_COLLECTION_ENABLED_INVALID');
   expect(() => startupConfig({ SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS: '32769' })).toThrow('MEMORY_RETRIEVAL_LIMITS_INVALID');
 });

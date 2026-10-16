@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { MysqlNetworkDeviceCollectionStore, NetworkDeviceCollector, type NetworkDeviceCollectionStore } from './network-device-collector.js';
+import { MysqlNetworkDeviceCollectionStore, NetworkDeviceCollector, type NetworkDeviceCollectionStore } from '../migrations/metric-history/network-device-collector.js';
 import type { HuaweiInterfaceCollection, HuaweiMetricObservation, HuaweiProbeResult } from './huawei-adapter.js';
 import type { SnmpV3Config } from './snmp-types.js';
 import { metricRegistry } from '../metric-registry.js';
@@ -40,35 +40,13 @@ function adapter(overrides: Partial<{
 }
 
 describe('NetworkDeviceCollector', () => {
-  it('automatically polls on the heartbeat and applies metric interval changes without restarting', async () => {
+  it('compatibility start never starts an independent polling loop', async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-15T00:00:00Z'));
-    const definition = { id: 'device_cpu_percent', is_collected: true, default_interval: 300 };
-    const registry = vi.spyOn(metricRegistry, 'getByTargetType').mockReturnValue([definition] as any);
-    const states: any[] = [];
-    const persistence = store({ getCollectionEnabledDevices: async () => [target] });
-    const snmp = adapter();
-    const collector = new NetworkDeviceCollector(persistence, snmp, {
-      scheduleStore: {
-        list: async () => states,
-        record: async (_type, _id, _provider, metric, now, succeeded) => {
-          if (succeeded) states.splice(0, states.length, { metricId: metric.id, lastSuccessMs: now, nextDueMs: now + metric.default_interval * 1000, lastResult: 'success' });
-        },
-      },
-    });
+    const snmp=adapter(),collector=new NetworkDeviceCollector(store(),snmp);
     try {
-      collector.start();
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(1);
-      definition.default_interval = 30;
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(2);
-      definition.default_interval = 600;
-      await vi.advanceTimersByTimeAsync(300_000);
-      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(300_000);
-      expect(snmp.collectSystemMetrics).toHaveBeenCalledTimes(3);
-    } finally { collector.stop(); registry.mockRestore(); vi.useRealTimers(); }
+      collector.start();await vi.advanceTimersByTimeAsync(3600000);
+      expect(snmp.probe).not.toHaveBeenCalled();expect(snmp.collectSystemMetrics).not.toHaveBeenCalled();
+    } finally {collector.stop();vi.useRealTimers();}
   });
   it('fails closed on a denied target before reading credentials or opening SNMP', async () => {
     const persistence = store();
@@ -283,9 +261,10 @@ it('counts a failed probe once per tick even when metrics are also due', async (
 describe('MysqlNetworkDeviceCollectionStore legacy write boundary', () => {
   it('does not insert old observations while source cutover is pending', async () => {
     const execute = vi.fn(async (sql: string) => {
-      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
-      if (sql.includes('FROM metric_v2_rollout')) return [[{
-        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      if (sql.includes('metric_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_policy_bindings')) return [[], []];
+      if (sql.includes('FROM metric_rollout')) return [[{
+        source: 'semantic', read_mode: 'semantic', published_revision: 2, applied_revision: null,
       }], []];
       throw new Error(`unexpected legacy write: ${sql}`);
     });

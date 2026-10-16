@@ -1,6 +1,7 @@
 import { createInvestigationWorkflowHandler } from '../investigations/workflow-handler.js';
 import { SYSTEM_EVENT_JOB, type MysqlSystemEventBridge } from '../investigations/system-event-bridge.js';
 import type { CronCompletion } from '../cron/cron-run-store.js';
+import { createSlowQueryCollectionJob } from '../monitor-collector.js';
 import { createCapacityConsistencyJob } from '../capacity-consistency-monitor.js';
 import type { JobRegistry } from './job-registry.js';
 import type { WorkflowEnqueuer } from './notification-dispatch.js';
@@ -11,7 +12,7 @@ interface WorkflowHandlerDependencies {
   systemEventBridge?: Pick<MysqlSystemEventBridge, 'handler'>;
   investigationEngine?: () => Promise<import('../adapter/types.js').IAgentEngine>;
   faultDiagnosisService: { diagnoseUnhealthyInstances(): Promise<unknown> };
-  monitorCollector: { collectCapacityNow(): Promise<unknown> };
+  monitorCollector: { collectCapacityNow(): Promise<unknown>; collectSlowQueriesNow?():Promise<unknown> };
   baselineCalculator: { cleanupOldBaselines(): Promise<unknown> };
   alertEngine: { triggerEvaluation(): Promise<unknown> };
   workflowStore: WorkflowEnqueuer;
@@ -41,6 +42,10 @@ export function registerWorkflowHandlers(registry: JobRegistry, deps: WorkflowHa
     reportSchedule, notificationDatabaseService, notificationService, reportDatabaseService,
   } = deps;
   registry.register('fault.diagnose-unhealthy', async () => completion('fault.diagnose-unhealthy', await faultDiagnosisService.diagnoseUnhealthyInstances()));
+  if (monitorCollector.collectSlowQueriesNow) registry.register('diagnostic.slow-queries',async (_payload,_job,{signal})=>{
+    signal.throwIfAborted();await workflowStore.enqueue(createSlowQueryCollectionJob(new Date(Date.now()+300000)));
+    signal.throwIfAborted();return completion('diagnostic.slow-queries',await monitorCollector.collectSlowQueriesNow!());
+  });
   registry.register('capacity.collect', async () => completion('capacity.collect', await monitorCollector.collectCapacityNow()));
   registry.register('baseline.cleanup', async () => completion('baseline.cleanup', await baselineCalculator.cleanupOldBaselines()));
   registry.register('alert.evaluate', async () => completion('alert.evaluate', await alertEngine.triggerEvaluation()));

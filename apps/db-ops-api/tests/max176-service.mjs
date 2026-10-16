@@ -14,7 +14,7 @@ const connection = { host: supplied.DB_HOST || '127.0.0.1', port: Number(supplie
 const env = { ...process.env, DB_HOST: connection.host, DB_PORT: String(connection.port), DB_USER: connection.user, DB_PASSWORD: connection.password, DB_NAME: database,
   NODE_ENV: 'development', PORT: '3176', AGENT_WS_PORT: '29776', AGENT_WORKSPACE: resolve(root, '.runtime/max176/agent'),
   JWT_SECRET_KEY: randomBytes(32).toString('hex'), ENCRYPTION_KEY: randomBytes(32).toString('hex'),
-  METRICS_V2_COLLECTION_ENABLED: 'false', SLIDE_MEMORY_PIPELINE_ENABLED: 'false', PROMPT_HOT_RELOAD: 'false', AGENT_SKILL_DIRS: '', AGENT_SKILL_DIGESTS: '{}' };
+  METRICS_COLLECTION_ENABLED: 'false', SLIDE_MEMORY_PIPELINE_ENABLED: 'false', PROMPT_HOT_RELOAD: 'false', AGENT_SKILL_DIRS: '', AGENT_SKILL_DIGESTS: '{}' };
 mkdirSync(resolve(root, '.runtime/max176'), { recursive: true });
 const log = openSync(resolve(root, '.runtime/max176/backend.log'), 'w');
 const cwd = resolve(root, 'apps/db-ops-api');

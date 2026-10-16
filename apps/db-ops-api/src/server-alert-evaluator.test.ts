@@ -34,9 +34,9 @@ vi.mock('./alert-database-service', () => ({
   },
 }));
 
-vi.mock('./metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: mocks.semantic }));
+vi.mock('./metrics/consumers/operational.js', () => ({ evaluateOperationalRule: mocks.semantic }));
 
-import { serverAlertEvaluator } from './server-alert-evaluator';
+import { serverAlertEvaluator } from './migrations/metric-history/server-alert-evaluator';
 
 describe('ServerAlertEvaluator rule contract', () => {
   beforeEach(() => {

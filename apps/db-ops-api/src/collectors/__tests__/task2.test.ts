@@ -68,7 +68,7 @@ describe('MonitorCollector delegation', () => {
       new URL('../../monitor-collector.ts', import.meta.url),
       'utf-8'
     );
-    expect(source).toContain('unifiedCollector');
-    expect(source).toContain("./collector'");
+    expect(source).toContain('metricConfigurationService.trialCurrent');
+    expect(source).not.toContain('unifiedCollector.collectInstance');
   });
 });

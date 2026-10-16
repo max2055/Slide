@@ -38,7 +38,7 @@ vi.mock('./instance-database-service.js', () => ({
   },
 }));
 
-vi.mock('./collector.js', () => ({
+vi.mock('./migrations/metric-history/collector.js', () => ({
   unifiedCollector: { collectInstance: mocks.collectInstance },
 }));
 
@@ -53,7 +53,7 @@ vi.mock('./collection-capabilities.js', () => ({
   },
 }));
 
-vi.mock('./server-collector.js', () => ({
+vi.mock('./migrations/metric-history/server-collector.js', () => ({
   default: { start: vi.fn(), stop: vi.fn() },
 }));
 
@@ -69,7 +69,7 @@ vi.mock('./collection-scheduler.js', () => ({
   dueStoredMetricIds: vi.fn(async () => []),
 }));
 
-import { monitorCollector } from './monitor-collector.js';
+import { monitorCollector } from './migrations/metric-history/monitor-collector.js';
 
 const collectMetrics = (instance: Record<string, unknown>) =>
   (monitorCollector as any).collectInstanceMetrics(instance, ['cpu_usage']);

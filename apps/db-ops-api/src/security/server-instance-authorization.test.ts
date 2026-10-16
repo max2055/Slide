@@ -25,14 +25,15 @@ describe('server instance authorization coverage', () => {
     }
   });
 
-  it('activates a reloaded instance before collecting and returns the first collection result', () => {
+  it('activates a reloaded instance and reports configuration state for the unique scheduler', () => {
     const [route] = routeBlocks('/api/database/instances/:id/reload');
     const activeAt = route.block.indexOf('instanceDatabaseService.markInstanceActive(Number(id))');
-    const collectAt = route.block.indexOf('monitorCollector.collectInstanceNow(Number(id))');
+    const statusAt = route.block.indexOf('metricConfigurationService.status(');
 
     expect(activeAt).toBeGreaterThan(-1);
-    expect(collectAt).toBeGreaterThan(activeAt);
-    expect(route.block).toContain("message: '连接已建立，首次采集已完成', collection");
+    expect(statusAt).toBeGreaterThan(activeAt);
+    expect(route.block).not.toContain('monitorCollector.collectInstanceNow');
+    expect(route.block).toContain('configuration: await metricConfigurationService.status');
   });
 
   it('protects alternate instance parameter routes', () => {
