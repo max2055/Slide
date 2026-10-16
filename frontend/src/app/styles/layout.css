@@ -698,7 +698,7 @@
 
 .nav-item.active,
 .nav-item--active {
-  color: var(--text-strong);
+  color: var(--accent-text);
   background: color-mix(in srgb, var(--accent-subtle) 88%, var(--bg-elevated) 12%);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow:

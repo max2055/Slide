@@ -41,18 +41,18 @@
   --input: #e5e5ea;
   /* Input surface is separate from the legacy input border token. */
   --input-bg: var(--bg);
-  --ring: #409eff;
+  --ring: var(--accent);
 
   /* Accent - Database blue (D-01) */
-  --accent: #409eff;
-  /* Foreground blue needs more contrast than the brand surface color. */
-  --accent-text: color-mix(in srgb, var(--accent) 60%, black);
-  --accent-hover: #66b1ff;
-  --accent-muted: #409eff;
-  --accent-subtle: rgba(64, 158, 255, 0.08);
-  --accent-foreground: #10243a;
-  --accent-glow: rgba(64, 158, 255, 0.15);
-  --primary: #409eff;
+  --accent: #265f99;
+  /* The default is already the approved text blue; do not darken it twice. */
+  --accent-text: var(--accent-text-light, var(--accent));
+  --accent-hover: color-mix(in srgb, var(--accent) 90%, black);
+  --accent-muted: var(--accent);
+  --accent-subtle: color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-foreground: #ffffff;
+  --accent-glow: color-mix(in srgb, var(--accent) 15%, transparent);
+  --primary: var(--accent);
   --primary-foreground: var(--accent-foreground);
 
   /* Secondary */
@@ -78,7 +78,7 @@
   --info-subtle: rgba(37, 99, 235, 0.08);
 
   /* Focus */
-  --focus: rgba(64, 158, 255, 0.15);
+  --focus: color-mix(in srgb, var(--accent) 15%, transparent);
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 3px color-mix(in srgb, var(--ring) 70%, transparent);
   --focus-glow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ring), 0 0 12px var(--accent-glow);
 
@@ -221,17 +221,17 @@
   --border-strong: #3f3f46;
   --border-hover: #52525b;
   --input: #27272a;
-  --ring: #60a5fa;
+  --ring: var(--accent-text);
 
   --accent: #60a5fa;
-  --accent-text: var(--accent);
+  --accent-text: color-mix(in srgb, var(--accent) 60%, white);
   --accent-hover: #93c5fd;
   --accent-muted: rgba(96, 165, 250, 0.7);
   --accent-subtle: rgba(96, 165, 250, 0.1);
   --accent-foreground: #0f0f12;
   --accent-glow: rgba(96, 165, 250, 0.15);
   --primary: #60a5fa;
-  --primary-foreground: #0f0f12;
+  --primary-foreground: var(--accent-foreground);
 
   --secondary: #27272a;
   --secondary-foreground: #e4e4e7;
