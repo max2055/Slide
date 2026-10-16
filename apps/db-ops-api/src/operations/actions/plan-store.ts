@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { dbConnection } from '../../db-connection.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import type { TransactionConnection, TransactionPool } from '../../workflows/outbox-service.js';
@@ -5,6 +6,9 @@ import { OutboxService } from '../../workflows/outbox-service.js';
 import { InvestigationAuthorization } from '../../investigations/authorization.js';
 import {
   OperationsError,
+  versionReferenceSchema,
+  resourceRefSchema,
+  type VersionReference,
   operationsContentHash,
   type ActionPlanContent,
   type ActionPlanVersion,
@@ -28,7 +32,15 @@ export class PlanStore {
   ) {}
   async transaction<T>(work: (c: PlanConnection) => Promise<T>): Promise<T> {
     if (!this.pool) throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
-    return new OutboxService(this.pool).transaction((c) => work(c));
+    const c = await this.pool.getConnection();
+    try {
+      // Locking range reads protect the latest revision from concurrent appends,
+      // including writers that do not acquire any application-level mutex.
+      await c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      return await new OutboxService(this.pool).transactionOnConnection(c, () => work(c));
+    } finally {
+      c.release();
+    }
   }
   async now(c: PlanConnection): Promise<Date> {
     const [row] = await planRows(c, 'SELECT UTC_TIMESTAMP(3) AS now');
@@ -149,15 +161,78 @@ export interface ActionEnvironment {
    * mismatch, missing data, stale evidence or unavailable dependency. No sends. */
   validate(c: PlanConnection, content: Readonly<ActionPlanContent>, now: Date): Promise<void>;
 }
+/** Authoritative source port, independent of P02 graph reads. Implementations
+ * MUST use current locking reads on c, hold source identity/lifecycle/version
+ * locks through commit, and authorize the source content for actor. Never infer
+ * validity from the supplied reference or a previously confirmed relation.
+ * Unknown source namespaces fail closed. No separate connection/cache/no-op. */
+export interface RelationEvidenceResolver {
+  lock(
+    c: PlanConnection,
+    actor: ActorContext,
+    ref: Readonly<VersionReference>,
+  ): Promise<{
+    id: string;
+    version: number;
+    hash: string;
+    active: boolean;
+    validUntil: string;
+    resources: readonly ResourceRef[];
+  } | null>;
+}
+/** Explicit composition for investigation evidence (immutable version 1).
+ * Other evidence domains must supply their own authoritative resolver. */
+export class InvestigationRelationEvidence implements RelationEvidenceResolver {
+  constructor(private readonly investigations = new InvestigationAuthorization()) {}
+  async lock(c: PlanConnection, actor: ActorContext, ref: Readonly<VersionReference>) {
+    const [row] = await planRows(c, 'SELECT * FROM investigation_evidence WHERE id=? FOR SHARE', [
+      ref.id,
+    ]);
+    if (!row) return null;
+    const parsed = z
+      .array(resourceRefSchema)
+      .min(1)
+      .max(100)
+      .safeParse(decodePlanJson(row.metadata_json)?.resources);
+    if (!parsed.success) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+    const investigation = await this.investigations.load(c, row.investigation_id);
+    await this.investigations.authorize(c, actor, investigation, 'content', parsed.data);
+    return {
+      id: row.id as string,
+      version: 1,
+      hash: row.content_hash as string,
+      active: !row.expired_at && investigation.lifecycle !== 'archived',
+      validUntil: new Date(row.expires_at).toISOString(),
+      resources: [...investigation.resources, ...parsed.data].map(({ type, id }) => ({ type, id })),
+    };
+  }
+}
+export interface PlanSourceProof {
+  resources: readonly ResourceRef[];
+  /** Earliest locked source/reference deadline, rechecked after asynchronous work. */
+  validUntil: number;
+}
+const provenanceSchema = z.object({
+  evidence: z.array(versionReferenceSchema).min(1).max(100),
+  origin: z.enum(['manual', 'collector', 'model', 'legacy']),
+});
+const validTime = (v: unknown): number => {
+  const time = new Date(v as string | Date).getTime();
+  if (!Number.isFinite(time)) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+  return time;
+};
 export class PlanSources {
   constructor(
     private readonly environment: ActionEnvironment,
     private readonly investigations = new InvestigationAuthorization(),
+    private readonly relationEvidence?: RelationEvidenceResolver,
   ) {}
   private async references(
     c: PlanConnection,
     content: Readonly<ActionPlanContent>,
     now?: Date,
+    actor?: ActorContext,
+    deadlines: number[] = [],
   ): Promise<ResourceRef[]> {
     const resources: ResourceRef[] = [];
     for (const kind of ['relations', 'baselines'] as const)
@@ -168,10 +243,11 @@ export class PlanSources {
         const table = relation ? 'resource_relation_revisions' : 'behavior_baseline_versions';
         const key = relation ? 'relation_id' : 'id';
         // Table/column names above are a fixed server-owned allowlist.
-        const [row] = await planRows(c, `SELECT * FROM ${table} WHERE ${key}=? AND version=? FOR SHARE`, [
-          ref.id,
-          ref.version,
-        ]);
+        const [row] = await planRows(
+          c,
+          `SELECT * FROM ${table} WHERE ${key}=? AND version=? FOR SHARE`,
+          [ref.id, ref.version],
+        );
         if (!row) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
         if (relation)
           resources.push(
@@ -185,17 +261,67 @@ export class PlanSources {
             `SELECT version FROM ${table} WHERE ${key}=? ORDER BY version DESC LIMIT 1 FOR SHARE`,
             [ref.id],
           );
+          deadlines.push(Date.parse(ref.validUntil));
+          if (relation && row.valid_until) deadlines.push(validTime(row.valid_until));
           if (
             Number(latest?.version) !== ref.version ||
             row.content_hash !== ref.hash ||
             row.state !== (relation ? 'confirmed' : 'qualified') ||
             (relation &&
-              (new Date(row.valid_from).getTime() > now.getTime() ||
+              (validTime(row.valid_from) > now.getTime() ||
                 (row.valid_until &&
-                  (new Date(row.valid_until).getTime() <= now.getTime() ||
-                    Date.parse(ref.validUntil) > new Date(row.valid_until).getTime()))))
+                  (validTime(row.valid_until) <= now.getTime() ||
+                    Date.parse(ref.validUntil) > validTime(row.valid_until)))))
           )
             throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+          if (relation) {
+            const provenance = provenanceSchema.safeParse(decodePlanJson(row.provenance));
+            if (!provenance.success) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+            for (const evidence of provenance.data.evidence) {
+              if (Date.parse(evidence.validUntil) <= +now)
+                throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+              if (!this.relationEvidence || !actor)
+                throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
+              const source = await this.relationEvidence.lock(c, actor, evidence);
+              if (
+                !source ||
+                !source.active ||
+                source.id !== evidence.id ||
+                source.version !== evidence.version ||
+                source.hash !== evidence.hash ||
+                validTime(source.validUntil) <= +now ||
+                Date.parse(evidence.validUntil) > validTime(source.validUntil)
+              )
+                throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+              const scope = z.array(resourceRefSchema).min(1).max(200).safeParse(source.resources);
+              if (!scope.success) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+              resources.push(...scope.data);
+              deadlines.push(Date.parse(evidence.validUntil), validTime(source.validUntil));
+            }
+            if (row.legacy_provenance !== null) {
+              const [legacy] = await planRows(
+                c,
+                'SELECT * FROM resource_relations WHERE id=? FOR SHARE',
+                [ref.id],
+              );
+              const reverse = legacy?.relation_type === 'hosts';
+              if (
+                !legacy ||
+                legacy.provenance !== row.legacy_provenance ||
+                (reverse ? legacy.target_type : legacy.source_type) !== row.source_type ||
+                Number(reverse ? legacy.target_id : legacy.source_id) !== Number(row.source_id) ||
+                (reverse ? legacy.source_type : legacy.target_type) !== row.target_type ||
+                Number(reverse ? legacy.source_id : legacy.target_id) !== Number(row.target_id) ||
+                (reverse ? 'runs_on' : legacy.relation_type) !== row.relation_type ||
+                validTime(legacy.valid_from) > +now ||
+                (legacy.valid_until && validTime(legacy.valid_until) <= +now)
+              )
+                throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+              if (legacy.valid_until) deadlines.push(validTime(legacy.valid_until));
+            } else if (provenance.data.origin === 'legacy') {
+              throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+            }
+          }
         }
       }
     return resources;
@@ -222,7 +348,9 @@ export class PlanSources {
     resources.push(...(await this.references(c, content)));
     await this.investigations.authorize(c, actor, investigation, 'content', resources);
     return [
-      ...new Map(resources.map((ref) => [ref.type + ':' + ref.id, { type: ref.type, id: ref.id }])).values(),
+      ...new Map(
+        resources.map((ref) => [ref.type + ':' + ref.id, { type: ref.type, id: ref.id }]),
+      ).values(),
     ];
   }
   async check(
@@ -231,10 +359,28 @@ export class PlanSources {
     content: Readonly<ActionPlanContent>,
     now: Date,
   ): Promise<readonly ResourceRef[]> {
+    return (await this.lock(c, actor, content, now)).resources;
+  }
+  async lock(
+    c: PlanConnection,
+    actor: ActorContext,
+    content: Readonly<ActionPlanContent>,
+    now: Date,
+  ): Promise<PlanSourceProof> {
+    const deadlines = [
+      Date.parse(content.validUntil),
+      ...[...content.evidence, ...content.relations, ...content.baselines].map((ref) =>
+        Date.parse(ref.validUntil),
+      ),
+    ];
     const investigation = await this.investigations.load(c, content.investigationId);
     if (investigation.lifecycle === 'closed' || investigation.lifecycle === 'archived')
       throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
-    if (!investigation.resources.some((r) => r.type === content.target.type && r.id === content.target.id))
+    if (
+      !investigation.resources.some(
+        (r) => r.type === content.target.type && r.id === content.target.id,
+      )
+    )
       throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
     // Membership/complete source ACL is checked before returning any content.
     await this.investigations.authorize(c, actor, investigation, 'content');
@@ -258,21 +404,32 @@ export class PlanSources {
         ref.version !== 1 ||
         row.content_hash !== ref.hash ||
         row.expired_at ||
-        new Date(row.expires_at).getTime() <= now.getTime() ||
-        Date.parse(ref.validUntil) > new Date(row.expires_at).getTime()
+        validTime(row.expires_at) <= now.getTime() ||
+        Date.parse(ref.validUntil) > validTime(row.expires_at)
       )
         throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
       const metadata = decodePlanJson(row.metadata_json);
       if (!Array.isArray(metadata?.resources) || !metadata.resources.length)
         throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
       resources.push(...metadata.resources);
+      deadlines.push(validTime(row.expires_at));
     }
     if (!this.environment) throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
-    resources.push(...(await this.references(c, content, now)));
+    resources.push(...(await this.references(c, content, now, actor, deadlines)));
     await this.environment.validate(c, content, now);
     await this.investigations.authorize(c, actor, investigation, 'content', resources);
-    return [
-      ...new Map(resources.map((ref) => [`${ref.type}:${ref.id}`, { type: ref.type, id: ref.id }])).values(),
-    ];
+    const proof = {
+      resources: [
+        ...new Map(
+          resources.map((ref) => [`${ref.type}:${ref.id}`, { type: ref.type, id: ref.id }]),
+        ).values(),
+      ],
+      validUntil: Math.min(...deadlines),
+    };
+    // Source/time checks must survive environment/ACL reads that cross expiry.
+    const [clock] = await planRows(c, 'SELECT UTC_TIMESTAMP(3) AS now');
+    if (!Number.isFinite(proof.validUntil) || validTime(clock.now) >= proof.validUntil)
+      throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+    return proof;
   }
 }

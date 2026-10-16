@@ -9,11 +9,19 @@ import { ActorContextService, type ActorContext } from '../../auth/actor-context
 import { OperationsAuthorization, OPERATIONS_PERMISSIONS } from '../authorization.js';
 import { OperationsError } from '../contracts.js';
 import { ActionPlanService } from './plan-service.js';
-import { PlanSources, PlanStore, planRows, type PlanConnection } from './plan-store.js';
+import {
+  InvestigationRelationEvidence,
+  PlanSources,
+  PlanStore,
+  planRows,
+  type PlanConnection,
+} from './plan-store.js';
 import { registerActionPlanRoutes } from './routes.js';
 import { AgentToolApprovalService } from '../../security/agent-tool-approval-service.js';
 
-const port = Number(process.env.OPERATIONS_TEST_MYSQL_PORT ?? process.env.AGENT_RUN_TEST_MYSQL_PORT);
+const port = Number(
+  process.env.OPERATIONS_TEST_MYSQL_PORT ?? process.env.AGENT_RUN_TEST_MYSQL_PORT,
+);
 describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
   let pool: Pool,
     app: FastifyInstance,
@@ -31,8 +39,14 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
   };
   const contexts = new ActorContextService();
   const key = `p06-isolated-jwt-${randomUUID()}`;
+  let environmentHook: (() => Promise<void>) | undefined;
   let store: PlanStore, legacy: AgentToolApprovalService, sources: PlanSources;
-  const ids = { investigation: randomUUID(), request: randomUUID(), evidence: randomUUID() };
+  const ids = {
+    investigation: randomUUID(),
+    request: randomUUID(),
+    evidence: randomUUID(),
+    relationEvidence: randomUUID(),
+  };
   const sql = (query: string, values: unknown[] = []) => pool.execute(query, values as any[]);
   const loadActor = (id: number, session = 1) =>
     contexts.loadInvestigationActorFrom({ execute: sql }, id, 'user', session, 'p06');
@@ -79,7 +93,43 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     },
     rollback: { capability: 'none', description: 'Process memory cannot be restored' },
   });
-  const ref = (plan: { id: string; version: number }) => ({ planId: plan.id, expectedVersion: plan.version });
+  const relationProposal = async (legacyMapping = false) => {
+    const evidence = {
+      id: ids.relationEvidence,
+      version: 1,
+      hash: 'e'.repeat(64),
+      validUntil: new Date(Date.now() + 3600_000).toISOString(),
+    };
+    await sql(
+      `INSERT INTO resource_relation_revisions
+      (relation_id,version,source_type,source_id,target_type,target_id,relation_type,state,content_hash,provenance,
+       legacy_provenance,observed_at,confirmed_by,confirmed_at,valid_from,valid_until)
+      VALUES(1,1,'server',1,'server',2,'depends_on','confirmed',?,?,?,UTC_TIMESTAMP(3),2,UTC_TIMESTAMP(3),
+       DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR))`,
+      [
+        'c'.repeat(64),
+        JSON.stringify({
+          evidence: [evidence],
+          origin: legacyMapping ? 'legacy' : 'manual',
+          author: null,
+        }),
+        legacyMapping ? 'manual' : null,
+      ],
+    );
+    if (legacyMapping)
+      await sql(`INSERT INTO resource_relations
+      (id,source_type,source_id,target_type,target_id,relation_type,provenance,valid_from,valid_until)
+      VALUES(1,'server',1,'server',2,'depends_on','manual',DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE),
+        DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 HOUR))`);
+    return {
+      ...proposal(),
+      relations: [{ id: '1', version: 1, hash: 'c'.repeat(64), validUntil: evidence.validUntil }],
+    };
+  };
+  const ref = (plan: { id: string; version: number }) => ({
+    planId: plan.id,
+    expectedVersion: plan.version,
+  });
   const pending = async () => {
     const p = await service.create(author, proposal());
     return service.submit(author, ref(p));
@@ -113,7 +163,9 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     )[0];
   beforeAll(async () => {
     const admin = await mysql.createConnection(options);
-    await admin.query(`CREATE DATABASE ${database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await admin.query(
+      `CREATE DATABASE ${database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    );
     await admin.end();
     pool = mysql.createPool({ ...options, database });
     await apply(`CREATE TABLE users(id INT UNSIGNED PRIMARY KEY,username VARCHAR(64),password_hash VARCHAR(128),status VARCHAR(16),session_version BIGINT DEFAULT 1);
@@ -136,6 +188,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       for (const role of [1, 2, 3]) await sql('INSERT INTO role_permissions VALUES(?,?)', [role, i + 1]);
     }
     for (const name of [
+      '029_resource_observations',
       '054_agent_tool_approvals',
       '068_agent_tool_approval_scopes',
       '112_investigations',
@@ -151,7 +204,9 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       VALUES(?,'p06','p06','ops',1,'p06-session','user',1,?)`,
       [ids.investigation, 'f'.repeat(64)],
     );
-    await sql("INSERT INTO investigation_resources VALUES(?,'server',1,'primary')", [ids.investigation]);
+    await sql("INSERT INTO investigation_resources VALUES(?,'server',1,'primary')", [
+      ids.investigation,
+    ]);
     await sql("INSERT INTO investigation_members VALUES(?,2,'viewer',1,NULL)", [ids.investigation]);
     await sql(
       `INSERT INTO investigation_requests(id,investigation_id,actor_kind,actor_id,idempotency_key,request_hash,request_snapshot,job_id,accepted_version)
@@ -175,31 +230,53 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
         JSON.stringify({ resources: [{ type: 'server', id: 1 }] }),
       ],
     );
+    await sql(
+      `INSERT INTO investigation_evidence
+      (id,investigation_id,request_id,run_id,source_key,payload_hash,content_hash,metadata_json,raw_json,expires_at)
+      VALUES(?,?,?,'run','relation-evidence',?,?,?,'{}',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR))`,
+      [
+        ids.relationEvidence,
+        ids.investigation,
+        ids.request,
+        'e'.repeat(64),
+        'e'.repeat(64),
+        JSON.stringify({ resources: [{ type: 'server', id: 2 }] }),
+      ],
+    );
     await pool.query(
       `CREATE TABLE p06_environment(id INT PRIMARY KEY,tool_hash CHAR(64),policy_version VARCHAR(128),config_hash CHAR(64),eligible BOOLEAN)`,
     );
-    await sql('INSERT INTO p06_environment VALUES(1,?,?,?,true)', ['a'.repeat(64), '1', 'c'.repeat(64)]);
+    await sql('INSERT INTO p06_environment VALUES(1,?,?,?,true)', [
+      'a'.repeat(64),
+      '1',
+      'c'.repeat(64),
+    ]);
     store = new PlanStore(pool as any);
-    sources = new PlanSources({
-      validate: async (c, content) => {
-        const [env] = await planRows(c, 'SELECT * FROM p06_environment WHERE id=? FOR SHARE', [
-          content.target.id,
-        ]);
-        if (
-          !env?.eligible ||
-          env.tool_hash !== content.tool.hash ||
-          env.policy_version !== content.policyVersion ||
-          content.preconditions.length !== 1 ||
-          content.preconditions[0].kind !== 'target_config_hash' ||
-          content.preconditions[0].expected !== env.config_hash ||
-          content.tool.version !== '1' ||
-          content.verifier.version !== '1' ||
-          content.verifier.definitionHash !== 'd'.repeat(64)
-        )
-          throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
-        return;
+    sources = new PlanSources(
+      {
+        validate: async (c, content) => {
+          const [env] = await planRows(c, 'SELECT * FROM p06_environment WHERE id=? FOR SHARE', [
+            content.target.id,
+          ]);
+          if (
+            !env?.eligible ||
+            env.tool_hash !== content.tool.hash ||
+            env.policy_version !== content.policyVersion ||
+            content.preconditions.length !== 1 ||
+            content.preconditions[0].kind !== 'target_config_hash' ||
+            content.preconditions[0].expected !== env.config_hash ||
+            content.tool.version !== '1' ||
+            content.verifier.version !== '1' ||
+            content.verifier.definitionHash !== 'd'.repeat(64)
+          )
+            throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+          await environmentHook?.();
+          return;
+        },
       },
-    });
+      undefined,
+      new InvestigationRelationEvidence(),
+    );
     service = new ActionPlanService(store, sources, new OperationsAuthorization(), () => ({
       context: false,
       cases: false,
@@ -235,20 +312,30 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     }
   }, 60_000);
   beforeEach(async () => {
+    environmentHook = undefined;
     await sql("UPDATE users SET session_version=1,status='active'");
     await sql('DELETE FROM role_permissions');
     for (const role of [1, 2, 3])
       await sql('INSERT INTO role_permissions SELECT ?,id FROM permissions', [role]);
     await sql('DELETE FROM investigation_results WHERE version>1');
     await sql(
-      'UPDATE investigation_evidence SET content_hash=?,expired_at=NULL,expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR),metadata_json=?',
-      ['b'.repeat(64), JSON.stringify({ resources: [{ type: 'server', id: 1 }] })],
+      'UPDATE investigation_evidence SET content_hash=?,expired_at=NULL,expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR),metadata_json=? WHERE id=?',
+      ['b'.repeat(64), JSON.stringify({ resources: [{ type: 'server', id: 1 }] }), ids.evidence],
     );
-    await sql('UPDATE p06_environment SET tool_hash=?,policy_version=?,config_hash=?,eligible=true', [
-      'a'.repeat(64),
-      '1',
-      'c'.repeat(64),
-    ]);
+    await sql(
+      'UPDATE p06_environment SET tool_hash=?,policy_version=?,config_hash=?,eligible=true',
+      ['a'.repeat(64), '1', 'c'.repeat(64)],
+    );
+    await sql(
+      'UPDATE investigation_evidence SET content_hash=?,expired_at=NULL,expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR),metadata_json=? WHERE id=?',
+      [
+        'e'.repeat(64),
+        JSON.stringify({ resources: [{ type: 'server', id: 2 }] }),
+        ids.relationEvidence,
+      ],
+    );
+    await sql('DELETE FROM resource_relation_revisions');
+    await sql('DELETE FROM resource_relations');
     author = await loadActor(1);
     reviewer = await loadActor(2);
   });
@@ -410,19 +497,16 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       const input = proposal();
       const until = new Date(Date.now() + 3600_000).toISOString();
       if (kind === 'relation') {
-        await sql(
-          `INSERT INTO resource_relation_revisions(relation_id,version,source_type,source_id,target_type,target_id,relation_type,state,content_hash,provenance,observed_at,confirmed_by,confirmed_at,valid_from,valid_until)
-        VALUES(1,1,'server',1,'server',2,'depends_on','confirmed',?,'{}',UTC_TIMESTAMP(3),2,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 2 HOUR))`,
-          ['c'.repeat(64)],
-        );
-        input.relations = [{ id: '1', version: 1, hash: 'c'.repeat(64), validUntil: until }] as never;
+        input.relations = (await relationProposal()).relations as never;
       } else {
         await sql(
           `INSERT INTO behavior_baseline_versions(id,version,resource_type,resource_id,series_hash,series_identity,method_version,content_hash,state,training_from,training_until,validation_from,validation_until,quality,reference_bands)
         VALUES('baseline',1,'server',1,?,'{}','1',?,'qualified','2026-01-01','2026-01-15','2026-01-15','2026-01-22','{}','{}')`,
           ['c'.repeat(64), 'c'.repeat(64)],
         );
-        input.baselines = [{ id: 'baseline', version: 1, hash: 'c'.repeat(64), validUntil: until }] as never;
+        input.baselines = [
+          { id: 'baseline', version: 1, hash: 'c'.repeat(64), validUntil: until },
+        ] as never;
       }
       const plan = await service.create(author, input),
         p = await service.submit(author, ref(plan));
@@ -432,6 +516,327 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       else await sql("UPDATE behavior_baseline_versions SET state='invalidated' WHERE id='baseline'");
       await expect(execute(p)).rejects.toMatchObject({ statusCode: 422 });
       expect((await service.get(author, plan.id)).contentHash).toBe(plan.contentHash);
+    },
+  );
+  it.each(['reference-expired', 'source-expired', 'source-withdrawn', 'legacy-ended'])(
+    'P06-R1 rejects stale relation provenance at proposal: %s',
+    async (change) => {
+      const input = await relationProposal(change === 'legacy-ended');
+      if (change === 'reference-expired')
+        await sql('UPDATE resource_relation_revisions SET provenance=? WHERE relation_id=1', [
+          JSON.stringify({
+            evidence: [
+              {
+                id: ids.relationEvidence,
+                version: 1,
+                hash: 'e'.repeat(64),
+                validUntil: new Date(Date.now() - 1000).toISOString(),
+              },
+            ],
+            origin: 'manual',
+            author: null,
+          }),
+        ]);
+      if (change === 'source-expired')
+        await sql(
+          'UPDATE investigation_evidence SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
+          [ids.relationEvidence],
+        );
+      if (change === 'source-withdrawn')
+        await sql('UPDATE investigation_evidence SET expired_at=UTC_TIMESTAMP(3) WHERE id=?', [
+          ids.relationEvidence,
+        ]);
+      if (change === 'legacy-ended')
+        await sql(
+          'UPDATE resource_relations SET valid_until=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=1',
+        );
+      await expect(service.create(author, input)).rejects.toMatchObject({
+        code: 'OPERATIONS_PRECONDITION_FAILED',
+      });
+    },
+  );
+  const relationChange = async (change: string) => {
+    if (change === 'source-expired')
+      await sql(
+        'UPDATE investigation_evidence SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
+        [ids.relationEvidence],
+      );
+    if (change === 'source-withdrawn')
+      await sql('UPDATE investigation_evidence SET expired_at=UTC_TIMESTAMP(3) WHERE id=?', [
+        ids.relationEvidence,
+      ]);
+    if (change === 'source-hash')
+      await sql('UPDATE investigation_evidence SET content_hash=? WHERE id=?', [
+        'f'.repeat(64),
+        ids.relationEvidence,
+      ]);
+    if (change === 'legacy-ended')
+      await sql(
+        'UPDATE resource_relations SET valid_until=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=1',
+      );
+    if (change === 'legacy-deleted') await sql('DELETE FROM resource_relations WHERE id=1');
+    if (change === 'legacy-replaced')
+      await sql("UPDATE resource_relations SET provenance='collector' WHERE id=1");
+    if (change === 'legacy-retargeted')
+      await sql('UPDATE resource_relations SET target_id=3 WHERE id=1');
+    if (change === 'legacy-future')
+      await sql(
+        'UPDATE resource_relations SET valid_from=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR) WHERE id=1',
+      );
+    if (
+      [
+        'reference-expired',
+        'reference-missing',
+        'reference-version',
+        'reference-malformed',
+      ].includes(change)
+    ) {
+      const [row] = await planRows(
+        { execute: sql },
+        'SELECT provenance FROM resource_relation_revisions WHERE relation_id=1',
+      );
+      const provenance =
+        typeof row.provenance === 'string' ? JSON.parse(row.provenance) : row.provenance;
+      if (change === 'reference-expired')
+        provenance.evidence[0].validUntil = new Date(Date.now() - 1000).toISOString();
+      if (change === 'reference-missing') provenance.evidence[0].id = randomUUID();
+      if (change === 'reference-version') provenance.evidence[0].version = 2;
+      if (change === 'reference-malformed') provenance.evidence = [];
+      await sql('UPDATE resource_relation_revisions SET provenance=? WHERE relation_id=1', [
+        JSON.stringify(provenance),
+      ]);
+    }
+  };
+  const relationPending = async (input: unknown) =>
+    service.submit(author, ref(await service.create(author, input)));
+  const relationApproved = async (input: unknown) => {
+    const p = await relationPending(input);
+    await service.review(reviewer, { ...ref(p.plan), approvalId: p.approvalId, action: 'approve' });
+    return p;
+  };
+  for (const stage of ['proposal', 'submit', 'review', 'consume'] as const) {
+    it.each([
+      'reference-expired',
+      'source-expired',
+      'source-withdrawn',
+      'source-hash',
+      'reference-missing',
+      'reference-version',
+      'reference-malformed',
+      'legacy-ended',
+      'legacy-deleted',
+      'legacy-replaced',
+      'legacy-retargeted',
+      'legacy-future',
+    ])(`P06-R1 rejects %s at ${stage} without changing relation history`, async (change) => {
+      const input = await relationProposal(change.startsWith('legacy'));
+      const plan = stage === 'submit' ? await service.create(author, input) : undefined;
+      const p =
+        stage === 'review'
+          ? await relationPending(input)
+          : stage === 'consume'
+            ? await relationApproved(input)
+            : undefined;
+      await relationChange(change);
+      const act = () =>
+        stage === 'proposal'
+          ? service.create(author, input)
+          : stage === 'submit'
+            ? service.submit(author, ref(plan!))
+            : stage === 'review'
+              ? service.review(reviewer, {
+                  ...ref(p!.plan),
+                  approvalId: p!.approvalId,
+                  action: 'approve',
+                })
+              : execute(p!);
+      await expect(act()).rejects.toMatchObject({ code: 'OPERATIONS_PRECONDITION_FAILED' });
+      if (p)
+        expect(await state(p.approvalId)).toMatchObject({
+          status: stage === 'consume' ? 'approved' : 'pending',
+          used_count: 0,
+        });
+      const [row] = await planRows(
+        { execute: sql },
+        'SELECT version,state FROM resource_relation_revisions WHERE relation_id=1',
+      );
+      expect(row).toEqual({ version: 1, state: 'confirmed' });
+      if (plan || p)
+        expect((await service.get(author, (plan ?? p!.plan).id)).contentHash).toBe(
+          (plan ?? p!.plan).contentHash,
+        );
+    });
+  }
+  it('P06-R1 preserves adopted hosts as normalized runs_on while locking the actual legacy identity', async () => {
+    const input = await relationProposal(true);
+    await sql("INSERT INTO database_instances VALUES(1,'available')");
+    for (const [id, code] of [
+      [1001, 'instance:view'],
+      [1002, 'instance:manage'],
+    ] as const) {
+      await sql('INSERT INTO permissions VALUES(?,?)', [id, code]);
+      for (const role of [1, 2]) await sql('INSERT INTO role_permissions VALUES(?,?)', [role, id]);
+    }
+    for (const user of [1, 2])
+      await sql("INSERT INTO instance_permissions VALUES(?,1,'read-write',NULL)", [user]);
+    author = await loadActor(1);
+    reviewer = await loadActor(2);
+    await sql(
+      "UPDATE resource_relation_revisions SET source_type='instance',source_id=1,relation_type='runs_on' WHERE relation_id=1",
+    );
+    await sql(
+      "UPDATE resource_relations SET source_type='server',source_id=2,target_type='instance',target_id=1,relation_type='hosts' WHERE id=1",
+    );
+    const p = await relationApproved(input);
+    await execute(p);
+    expect(await state(p.approvalId)).toMatchObject({ status: 'consumed', used_count: 1 });
+    await sql('DELETE FROM instance_permissions');
+    await sql('DELETE FROM role_permissions WHERE permission_id IN (1001,1002)');
+    await sql('DELETE FROM permissions WHERE id IN (1001,1002)');
+    await sql('DELETE FROM database_instances');
+  });
+  it('P06-R1 requires an explicit relation evidence resolver; unknown sources cannot authorize', async () => {
+    const input = await relationProposal();
+    const noResolver = new ActionPlanService(
+      store,
+      new PlanSources({ validate: async () => {} }),
+      new OperationsAuthorization(),
+      () => ({
+        context: false,
+        cases: false,
+        baselines: false,
+        attention: false,
+        plans: true,
+        dispatch: true,
+      }),
+    );
+    await expect(noResolver.create(author, input)).rejects.toMatchObject({
+      code: 'OPERATIONS_DEPENDENCY_UNAVAILABLE',
+    });
+  });
+  it('P06-R1 checks underlying evidence source ACL, not just relation endpoints', async () => {
+    const input = await relationProposal();
+    // Both endpoints are allowed; the evidence source contains an additional resource.
+    await sql('INSERT INTO servers VALUES(3)');
+    await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?', [
+      JSON.stringify({ resources: [{ type: 'server', id: 3 }] }),
+      ids.relationEvidence,
+    ]);
+    const bounded = {
+      ...author,
+      resourceBoundary: { serverIds: [1, 2], instanceIds: [], networkDeviceIds: [] },
+    };
+    await expect(service.create(bounded, input)).rejects.toMatchObject({ statusCode: 404 });
+    await sql('DELETE FROM servers WHERE id=3');
+  });
+  it.each(['reference', 'legacy'])(
+    'P06-R1 rejects %s expiration during an asynchronous environment read',
+    async (kind) => {
+      const input = await relationProposal(kind === 'legacy');
+      if (kind === 'reference') {
+        const [row] = await planRows(
+          { execute: sql },
+          'SELECT provenance FROM resource_relation_revisions WHERE relation_id=1',
+        );
+        const provenance =
+          typeof row.provenance === 'string' ? JSON.parse(row.provenance) : row.provenance;
+        provenance.evidence[0].validUntil = new Date(Date.now() + 1000).toISOString();
+        await sql('UPDATE resource_relation_revisions SET provenance=? WHERE relation_id=1', [
+          JSON.stringify(provenance),
+        ]);
+      } else
+        await sql(
+          'UPDATE resource_relations SET valid_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=1',
+        );
+      environmentHook = async () => {
+        await sql('SELECT SLEEP(1.2)');
+      };
+      await expect(service.create(author, input)).rejects.toMatchObject({
+        code: 'OPERATIONS_PRECONDITION_FAILED',
+      });
+    },
+  );
+  it('P06-R1 rolls once consumption and intent back when underlying evidence expires inside enqueue', async () => {
+    const input = await relationProposal();
+    const p = await relationApproved(input);
+    const [row] = await planRows(
+      { execute: sql },
+      'SELECT provenance FROM resource_relation_revisions WHERE relation_id=1',
+    );
+    const provenance =
+      typeof row.provenance === 'string' ? JSON.parse(row.provenance) : row.provenance;
+    provenance.evidence[0].validUntil = new Date(Date.now() + 1000).toISOString();
+    await sql('UPDATE resource_relation_revisions SET provenance=? WHERE relation_id=1', [
+      JSON.stringify(provenance),
+    ]);
+    await expect(
+      service.enqueueApproved(
+        reviewer,
+        { ...ref(p.plan), approvalId: p.approvalId },
+        async (c, plan, id) => {
+          await enqueue(c, plan, id);
+          await c.execute('SELECT SLEEP(1.2)');
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'OPERATIONS_PRECONDITION_FAILED' });
+    expect(await state(p.approvalId)).toMatchObject({ status: 'approved', used_count: 0 });
+    expect(
+      await planRows({ execute: sql }, 'SELECT * FROM p06_intents WHERE approval_id=?', [
+        p.approvalId,
+      ]),
+    ).toHaveLength(0);
+  });
+  it.each(['evidence', 'legacy', 'legacy-delete', 'revision'])(
+    'P06-R1 serializes concurrent %s invalidation with once consumption',
+    async (kind) => {
+      const input = await relationProposal(kind.startsWith('legacy'));
+      const p = await relationApproved(input),
+        p2 = await relationApproved(input);
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      environmentHook = async () => {
+        environmentHook = undefined;
+        enter();
+        await gate;
+      };
+      // Capture both branches immediately so no rejected promise escapes cleanup.
+      const execution = execute(p);
+      const writer = await pool.getConnection();
+      try {
+        await entered;
+        await writer.query('SET SESSION innodb_lock_wait_timeout=1');
+        const statement =
+          kind === 'evidence'
+            ? 'UPDATE investigation_evidence SET expired_at=UTC_TIMESTAMP(3) WHERE id=?'
+            : kind === 'legacy'
+              ? 'UPDATE resource_relations SET valid_until=UTC_TIMESTAMP() WHERE id=?'
+              : kind === 'legacy-delete'
+                ? 'DELETE FROM resource_relations WHERE id=?'
+                : `INSERT INTO resource_relation_revisions
+          (relation_id,version,source_type,source_id,target_type,target_id,relation_type,state,content_hash,provenance,
+           legacy_provenance,observed_at,valid_from,valid_until)
+          SELECT relation_id,2,source_type,source_id,target_type,target_id,relation_type,'withdrawn',content_hash,provenance,
+           legacy_provenance,observed_at,valid_from,valid_until FROM resource_relation_revisions WHERE relation_id=? AND version=1`;
+        const value = kind === 'evidence' ? ids.relationEvidence : 1;
+        await expect(writer.execute(statement, [value])).rejects.toMatchObject({
+          code: 'ER_LOCK_WAIT_TIMEOUT',
+        });
+        release();
+        await execution;
+        await writer.execute(statement, [value]);
+        await expect(execute(p2)).rejects.toMatchObject({ code: 'OPERATIONS_PRECONDITION_FAILED' });
+        expect(await state(p.approvalId)).toMatchObject({ status: 'consumed', used_count: 1 });
+        expect(await state(p2.approvalId)).toMatchObject({ status: 'approved', used_count: 0 });
+      } finally {
+        release();
+        await execution.catch(() => undefined);
+        writer.release();
+      }
     },
   );
   it('fails closed when plans/dispatch disabled while retaining authorized reads', async () => {

@@ -24,7 +24,9 @@ import {
   proposedContent,
   type ApprovalAuthority,
 } from './approval-binding.js';
-import { PlanStore, PlanSources, planRows, decodePlanJson, type PlanConnection } from './plan-store.js';
+import {
+  PlanStore, PlanSources, planRows, decodePlanJson, type PlanConnection, type PlanSourceProof,
+} from './plan-store.js';
 
 const refSchema = z.strictObject({
   planId: z.string().min(1).max(128),
@@ -87,13 +89,24 @@ export class ActionPlanService {
     now: Date,
   ) {
     assertPlanFresh(plan, now);
-    const resources = await this.sources.check(c, caller, plan.content, now);
-    return this.authorization.authorize(c, caller, resources, action, {
+    const proof = await this.sources.lock(c, caller, plan.content, now);
+    await this.authorization.authorize(c, caller, proof.resources, action, {
       author: plan.content.author,
       requester: plan.content.requester,
     });
+    return proof;
   }
-  async create(caller: ActorContext, input: unknown, lifetimeMs?: number): Promise<ActionPlanVersion> {
+  private async fresh(c: PlanConnection, plan: ActionPlanVersion, proof: PlanSourceProof) {
+    const now = await this.store.now(c);
+    assertPlanFresh(plan, now);
+    if (now.getTime() >= proof.validUntil)
+      throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+  }
+  async create(
+    caller: ActorContext,
+    input: unknown,
+    lifetimeMs?: number,
+  ): Promise<ActionPlanVersion> {
     caller = freezeInvestigationCaller(caller);
     // Clone/validate synchronously before any awaited operation.
     const contentInput = structuredClone(input);
@@ -109,8 +122,9 @@ export class ActionPlanService {
         state: 'draft',
         content,
       };
-      await this.check(c, caller, plan, 'actions:propose', now);
+      const proof = await this.check(c, caller, plan, 'actions:propose', now);
       await this.store.insert(c, plan);
+      await this.fresh(c, plan, proof);
       return plan;
     });
   }
@@ -142,8 +156,9 @@ export class ActionPlanService {
         state: 'draft',
         content,
       };
-      await this.check(c, caller, plan, 'actions:propose', now);
+      const proof = await this.check(c, caller, plan, 'actions:propose', now);
       await this.store.insert(c, plan, previous);
+      await this.fresh(c, plan, proof);
       return plan;
     });
   }
@@ -179,7 +194,7 @@ export class ActionPlanService {
       )
         throw new OperationsError('OPERATIONS_FORBIDDEN');
       const now = await this.store.now(c);
-      await this.check(c, caller, plan, 'actions:propose', now);
+      const proof = await this.check(c, caller, plan, 'actions:propose', now);
       const proposer = approvalAuthority(caller),
         proposerLiveHash = await this.liveHash(c, proposer);
       const hash = actionApprovalHash(plan, proposer, proposerLiveHash);
@@ -207,11 +222,14 @@ export class ActionPlanService {
         "UPDATE action_plan_versions SET state='pending_approval' WHERE plan_id=? AND version=?",
         [plan.id, plan.version],
       );
+      await this.fresh(c, plan, proof);
       return { approvalId: String(insert.insertId), plan: { ...plan, state: 'pending_approval' } };
     });
   }
   private async approval(c: PlanConnection, plan: ActionPlanVersion, id: string) {
-    const [row] = await planRows(c, 'SELECT * FROM agent_tool_approvals WHERE id=? FOR UPDATE', [id]);
+    const [row] = await planRows(c, 'SELECT * FROM agent_tool_approvals WHERE id=? FOR UPDATE', [
+      id,
+    ]);
     if (row?.status === 'consumed') throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
     if (
       !row ||
@@ -261,7 +279,7 @@ export class ActionPlanService {
       requireState(plan, 'pending_approval');
       const { row, policy, now } = await this.approval(c, plan, command.approvalId);
       if (row.status !== 'pending') throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
-      await this.check(c, caller, plan, 'actions:approve', now);
+      const proof = await this.check(c, caller, plan, 'actions:approve', now);
       const reviewerSnapshot = approvalAuthority(caller),
         reviewerLiveHash = await this.liveHash(c, reviewerSnapshot);
       const approved = command.action === 'approve',
@@ -301,6 +319,7 @@ export class ActionPlanService {
         plan.id,
         plan.version,
       ]);
+      await this.fresh(c, plan, proof);
       return { ...plan, state };
     });
   }
@@ -325,7 +344,7 @@ export class ActionPlanService {
       if (!policy.reviewerLiveHash || (await this.liveHash(c, policy.reviewer)) !== policy.reviewerLiveHash)
         throw new OperationsError('OPERATIONS_FORBIDDEN');
       await this.check(c, authorityCaller(policy.reviewer), plan, 'actions:approve', now);
-      await this.check(c, caller, plan, 'actions:execute', now);
+      const proof = await this.check(c, caller, plan, 'actions:execute', now);
       const [binding] = await planRows(
         c,
         'SELECT * FROM action_approval_bindings WHERE approval_id=? FOR UPDATE',
@@ -355,7 +374,9 @@ export class ActionPlanService {
         'UPDATE action_approval_bindings SET consumed_at=UTC_TIMESTAMP(3) WHERE approval_id=? AND consumed_at IS NULL',
         [command.approvalId],
       );
-      return enqueue(c, plan, command.approvalId);
+      const result = await enqueue(c, plan, command.approvalId);
+      await this.fresh(c, plan, proof);
+      return result;
     });
   }
 }
