@@ -6,6 +6,10 @@ import type { AnyAgentTool, ToolPolicyResource } from '../tools/types.js';
 import { redactSensitiveData, stableJson } from './sensitive-data.js';
 import type { ExecuteCodeApprovalScope, ExecuteCodeRiskLevel } from './execute-code-risk.js';
 
+// Reserved domain adapter. Generic Chat/tool approvals must never review or
+// consume action plans, even before/without the operations tables installed.
+const ACTION_APPROVAL_TOOL = 'operations_action_plan';
+
 interface ApprovalExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
 }
@@ -76,6 +80,8 @@ export function buildApprovalBinding(
   args: Record<string, unknown>,
   resource: ToolPolicyResource,
 ): AgentToolApprovalBinding {
+  if (tool.name === ACTION_APPROVAL_TOOL || tool.name === 'restart_demo_service'
+    || args.kind === 'operations-action-plan-v1') throw new Error('ACTION_PLAN_APPROVAL_REQUIRED');
   const security = getToolSecurityDefinition(tool.name);
   if (!security) throw new Error('SECURITY_METADATA_MISSING');
   if (hmacKey.length < 8) throw new Error('AGENT_APPROVAL_HMAC_KEY_INVALID');
@@ -194,7 +200,7 @@ export class AgentToolApprovalService {
       const [result] = await this.executor().execute(
         `UPDATE agent_tool_approvals
          SET status = 'rejected', reviewer_id = ?, review_note = ?, reviewed_at = NOW()
-         WHERE id = ? AND status = 'pending' AND expires_at > NOW()`,
+         WHERE id = ? AND status = 'pending' AND expires_at > NOW() AND tool_name <> 'operations_action_plan'`,
         [reviewerId, note?.slice(0, 1000) ?? null, id],
       );
       return Number(result?.affectedRows) === 1;
@@ -214,7 +220,7 @@ export class AgentToolApprovalService {
              ELSE expires_at
            END,
            max_uses = CASE WHEN risk_level = 'high' OR ? = 'once' THEN 1 ELSE max_uses END
-       WHERE id = ? AND status = 'pending' AND expires_at > NOW()`,
+       WHERE id = ? AND status = 'pending' AND expires_at > NOW() AND tool_name <> 'operations_action_plan'`,
       [reviewerId, note?.slice(0, 1000) ?? null, scope ?? 'once', scope ?? 'once', scope ?? 'once', scope ?? 'once', id],
     );
     return Number(result?.affectedRows) === 1;
@@ -230,7 +236,7 @@ export class AgentToolApprovalService {
     if (!toolName || toolName.length > 128 || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
     const [rows] = await this.executor().execute(
       `SELECT id FROM agent_tool_approvals
-       WHERE tool_name = ? AND status = 'pending' AND expires_at > NOW()
+       WHERE tool_name = ? AND tool_name <> 'operations_action_plan' AND status = 'pending' AND expires_at > NOW()
        ORDER BY id ASC LIMIT 100`,
       [toolName],
     );
@@ -263,12 +269,12 @@ export class AgentToolApprovalService {
       return { approved: false, failure: 'INVALID_APPROVAL' };
     }
     const [rows] = await this.executor().execute(
-      `SELECT binding_hash, status, scope, session_key, risk_level, used_count, max_uses, expires_at
+      `SELECT binding_hash, status, scope, session_key, risk_level, used_count, max_uses, expires_at, tool_name
        FROM agent_tool_approvals WHERE id = ? AND requester_id = ? LIMIT 1`,
       [id, requesterId],
     );
     const row = Array.isArray(rows) ? rows[0] : undefined;
-    if (!row) return { approved: false, failure: 'INVALID_APPROVAL' };
+    if (!row || row.tool_name === ACTION_APPROVAL_TOOL || row.tool_name === 'restart_demo_service') return { approved: false, failure: 'INVALID_APPROVAL' };
     if (row.status === 'pending') return { approved: false, failure: 'APPROVAL_PENDING' };
     if (row.status === 'rejected') return { approved: false, failure: 'APPROVAL_REJECTED' };
     if (row.status === 'consumed' || Number(row.used_count ?? 0) >= Number(row.max_uses ?? 1)) {
