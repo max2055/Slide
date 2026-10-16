@@ -6,7 +6,7 @@ import mysql, { type Connection, type Pool } from 'mysql2/promise';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { ActorContextService, signAccessToken, type ActorContext } from '../../auth/actor-context.js';
 import { OperationsAuthorization, OPERATIONS_PERMISSIONS } from '../authorization.js';
-import { MysqlRelationStore, relationHash, type StoredRelation } from './store.js';
+import { MysqlRelationStore, relationHash, type RelationSession, type StoredRelation } from './store.js';
 import { RelationService, type RelationInput } from './service.js';
 import { registerRelationRoutes } from './routes.js';
 import { InstanceHostService, MysqlInstanceHostStore } from '../../resources/instance-host-service.js';
@@ -16,6 +16,7 @@ describe.skipIf(!port)('relations: real SQL / JWT / HTTP B05', () => {
   let admin: Connection, pool: Pool, app: FastifyInstance, service: RelationService, store: MysqlRelationStore;
   let now: Date, sourceState: 'valid' | 'withdrawn' | 'unavailable', enabled: boolean;
   let sourceChecks: number, withdrawAfter: number;
+  let onEvidence: ((session: RelationSession, relation: StoredRelation) => Promise<void>) | undefined;
   let actor: ActorContext, token: string;
   const database = `p02_${randomUUID().replaceAll('-', '')}`;
   const secret = randomUUID();
@@ -27,6 +28,13 @@ describe.skipIf(!port)('relations: real SQL / JWT / HTTP B05', () => {
   });
   const confirm = async (body: RelationInput = input()) => {
     const value = await service.suggest(actor, body);
+    return service.transition(actor, value.id, { expectedVersion: 1, action: 'confirm' });
+  };
+  const adoptLegacy = async (validUntil: Date | null = null) => {
+    const [insert] = await pool.execute<any>(`INSERT INTO resource_relations(source_type,source_id,target_type,target_id,relation_type,provenance,valid_from,valid_until)
+      VALUES('instance',1,'server',1,'runs_on','legacy-agent',?,?)`, [new Date(+now - 5000), validUntil]);
+    const { source: _s, target: _t, relationType: _r, ...body } = input();
+    const value = await service.revise(actor, String(insert.insertId), { ...body, expectedVersion: 0 });
     return service.transition(actor, value.id, { expectedVersion: 1, action: 'confirm' });
   };
   const headers = () => ({ authorization: `Bearer ${token}` });
@@ -62,7 +70,10 @@ describe.skipIf(!port)('relations: real SQL / JWT / HTTP B05', () => {
     for (const sql of readFileSync(new URL('../schema/operations-v1.sql', import.meta.url), 'utf8').split(';').filter(s => s.trim())) await pool.query(sql);
     store = new MysqlRelationStore(() => pool);
     const contexts = new ActorContextService(() => pool as any);
-    service = new RelationService(store, new OperationsAuthorization(contexts), { check: async () => ++sourceChecks > withdrawAfter ? 'withdrawn' : sourceState },
+    service = new RelationService(store, new OperationsAuthorization(contexts), { check: async (session, _actor, relation) => {
+      await onEvidence?.(session, relation);
+      return ++sourceChecks > withdrawAfter ? 'withdrawn' : sourceState;
+    } },
       () => ({ context: enabled, cases: false, attention: false, baselines: false, plans: false, dispatch: false }), () => now);
     app = Fastify();
     await registerRelationRoutes(app, async (request, reply) => {
@@ -73,6 +84,7 @@ describe.skipIf(!port)('relations: real SQL / JWT / HTTP B05', () => {
   }, 30_000);
   beforeEach(async () => {
     now = new Date(); sourceState = 'valid'; enabled = true; sourceChecks = 0; withdrawAfter = Infinity;
+    onEvidence = undefined;
     await pool.query('DELETE FROM resource_relation_revisions'); await pool.query('DELETE FROM resource_relations');
     await pool.query('DELETE FROM instance_permissions');
     await pool.query("INSERT INTO instance_permissions VALUES(1,1,'read-write',NULL),(1,2,'read-write',NULL),(2,1,'read-write',NULL)");
@@ -225,6 +237,61 @@ describe.skipIf(!port)('relations: real SQL / JWT / HTTP B05', () => {
     await pool.execute('UPDATE resource_relations SET valid_until=? WHERE id=?', [new Date(+now - 1), insert.insertId]);
     expect((await service.graph(actor, ref(1))).edges).toEqual([]);
     expect(await store.transaction(s => s.head(value.id))).toMatchObject({ version: 3, state: 'withdrawn' });
+  });
+
+  it.each(['ended', 'deleted'])('prunes a legacy path %s during the final evidence lookup', async change => {
+    const upstream = await adoptLegacy();
+    await confirm(); // instance:1 -> server:1 -> server:2
+    let reads = 0;
+    onEvidence = async (session, value) => {
+      if (value.id !== upstream.id || ++reads !== 2) return;
+      // A same-transaction source resolver can observe a lifecycle change even
+      // while external writers are serialized by the mapping's current lock.
+      await session.connection.execute(change === 'deleted' ? 'DELETE FROM resource_relations WHERE id=?'
+        : 'UPDATE resource_relations SET valid_until=? WHERE id=?',
+      change === 'deleted' ? [value.id] : [new Date(+now - 1), value.id]);
+    };
+    expect(await service.graph(actor, { type: 'instance', id: 1 })).toMatchObject({ edges: [], partial: true });
+    expect(reads).toBe(2);
+    expect(await store.transaction(s => s.head(upstream.id))).toMatchObject({ version: 3, state: 'withdrawn' });
+    expect((await service.history(actor, upstream.id)).revisions.map(r => r.state)).toEqual(['withdrawn', 'confirmed', 'suggested']);
+  });
+
+  it('prunes a path when the legacy source window expires during a later asynchronous lookup', async () => {
+    const upstream = await adoptLegacy(new Date(+now + 1000));
+    const downstream = await confirm();
+    let reads = 0;
+    onEvidence = async (_session, value) => {
+      if (value.id === downstream.id && ++reads === 2) now = new Date(+now + 2000);
+    };
+    expect(await service.graph(actor, { type: 'instance', id: 1 })).toMatchObject({ edges: [], partial: true });
+    expect(reads).toBe(2);
+    expect((await service.history(actor, upstream.id)).revisions).toHaveLength(2);
+  });
+
+  it.each(['ended', 'deleted'])('serializes concurrent legacy %s writers through graph commit', async change => {
+    const value = await adoptLegacy();
+    let checked = false;
+    onEvidence = async () => {
+      if (checked) return;
+      checked = true;
+      const writer = await pool.getConnection();
+      try {
+        await writer.query('SET SESSION innodb_lock_wait_timeout=1');
+        await writer.beginTransaction();
+        const write = writer.execute(change === 'deleted' ? 'DELETE FROM resource_relations WHERE id=?'
+          : 'UPDATE resource_relations SET valid_until=? WHERE id=?',
+        change === 'deleted' ? [value.id] : [new Date(+now - 1), value.id]);
+        await expect(write).rejects.toMatchObject({ code: 'ER_LOCK_WAIT_TIMEOUT' });
+      } finally { await writer.rollback(); writer.release(); }
+    };
+    expect((await service.graph(actor, { type: 'instance', id: 1 })).edges).toHaveLength(1);
+    expect(checked).toBe(true);
+    onEvidence = undefined;
+    await pool.execute(change === 'deleted' ? 'DELETE FROM resource_relations WHERE id=?'
+      : 'UPDATE resource_relations SET valid_until=? WHERE id=?',
+    change === 'deleted' ? [value.id] : [new Date(+now - 1), value.id]);
+    expect(await service.graph(actor, { type: 'instance', id: 1 })).toMatchObject({ edges: [], partial: true });
   });
 
   it('withdraws with the feature off and retains immutable audit history', async () => {
