@@ -69,4 +69,27 @@ describe('relation input and compatibility boundaries', () => {
       undefined, () => now);
     expect(await graphService.graph(actor, { type: 'server', id: 1 })).toMatchObject({ edges: [], partial: true });
   });
+
+  it('filters legacy source expiry across the asynchronous transaction commit', async () => {
+    let now = new Date('2026-10-16T00:00:00.000Z');
+    const value: StoredRelation = { id: '1', relationId: '1', version: 2, schemaVersion: 1,
+      source: { type: 'instance', id: 1 }, target: { type: 'server', id: 1 }, relationType: 'runs_on',
+      state: 'confirmed', origin: 'manual', author: { kind: 'user', id: 1 }, contentHash: 'a'.repeat(64), legacyProvenance: 'legacy',
+      observedAt: now.toISOString(), validFrom: now.toISOString(), validUntil: null, confirmedBy: 1, confirmedAt: now.toISOString(),
+      evidence: [{ id: 'source', version: 1, hash: 'a'.repeat(64), validUntil: '2026-10-17T00:00:00.000Z' }], withdrawalReason: null };
+    const session: RelationSession = {
+      connection: { execute: async () => [[{ id: 1 }]] } as any,
+      lockResources: async () => {}, lockHead: async () => {},
+      legacyValidity: async () => ({ validUntil: '2026-10-16T00:00:01.000Z' }),
+      head: async () => value, adjacent: async () => [value], history: async () => [], append: async () => {},
+    };
+    const graphService = new RelationService({ transaction: async work => {
+      const result = await work(session);
+      // The database commit completes after the source window closes.
+      await Promise.resolve(); now = new Date(+now + 2000);
+      return result;
+    } }, new OperationsAuthorization({ loadInvestigationActorFrom: async () => actor }),
+    { check: async () => 'valid' }, undefined, () => now);
+    expect(await graphService.graph(actor, value.source)).toMatchObject({ edges: [], partial: true });
+  });
 });
