@@ -67,6 +67,9 @@ describe.skipIf(!port)('operations draft schema / real MySQL', () => {
   it('enforces exact plan version and one approval / one execution under duplicate sends', async () => {
     await db.execute("INSERT INTO action_plans(id,investigation_id,author_kind,author_id,requester_kind,requester_id,target_type,target_id) VALUES('p','i','user',1,'user',1,'server',1)");
     await db.execute("INSERT INTO action_plan_versions(plan_id,version,content_hash,content,policy_version,valid_from,valid_until) VALUES('p',1,?,?,'v1',UTC_TIMESTAMP(3),DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 15 MINUTE))", ['a'.repeat(64), '{}']);
+    for (const approval of [1, 2, 3]) await db.execute(`INSERT INTO action_approval_bindings
+      (approval_id,plan_id,plan_version,content_hash,policy_version,author_id,requester_id,reviewer_id,expires_at)
+      VALUES(?,'p',1,?,'v1',1,1,2,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 15 MINUTE))`, [approval, 'a'.repeat(64)]);
     const insert = (id: string, approval: number, version: number, request: string) => db.execute(`INSERT INTO action_executions
       (id,plan_id,plan_version,approval_id,operation_id,actor_id,request_key,payload_hash)
       VALUES(?,'p',?,?,?,2,?,?)`, [id, version, approval, `remote-${id}`, request, 'b'.repeat(64)]);
