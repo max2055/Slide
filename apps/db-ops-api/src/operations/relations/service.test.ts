@@ -51,7 +51,7 @@ describe('relation input and compatibility boundaries', () => {
     const values = [edge('1', 1, 2), edge('2', 2, 3)];
     const session: RelationSession = {
       connection: { execute: async () => [[{ id: 1 }]] } as any,
-      lockResources: async () => {}, lockHead: async () => {}, legacyActive: async () => true,
+      lockResources: async () => {}, lockHead: async () => {}, legacyValidity: async () => ({ validUntil: null }),
       head: async id => values.find(value => value.id === id) ?? null,
       adjacent: async ref => values.filter(value => value.source.id === ref.id || value.target.id === ref.id),
       history: async () => [], append: async () => {},

@@ -108,7 +108,7 @@ export class RelationService {
         const evidence = await this.evidence.check(session, actor, current, now);
         if (evidence === 'unavailable') throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
         if (evidence !== 'valid') throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
-        if (!await session.legacyActive(current, now)) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+        if (!await session.legacyValidity(current, now)) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
         const candidates = await session.adjacent(current.source, 101);
         if (candidates.length > 100) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
         const conflicts = candidates.filter(value => value.relationId !== id && value.state === 'confirmed' && overlaps(current, value));
@@ -169,7 +169,7 @@ export class RelationService {
             if (!factsOnly && inWindow(value, now) && value.state === 'suggested') edges.push(projection(value, ref));
             continue;
           }
-          if (!await session.legacyActive(value, now)) {
+          if (!await session.legacyValidity(value, now)) {
             await this.expireHead(session, value, 'withdrawn'); partial = true; continue;
           }
           const evidence = value.evidence.length ? await this.evidence.check(session, actor, value, now) : 'unavailable';
@@ -192,9 +192,17 @@ export class RelationService {
         if (!current || current.version !== edge.version || current.contentHash !== edge.contentHash || !inWindow(current, sendAt)
           || current.state === 'confirmed' && (current.evidence.some(item => Date.parse(item.validUntil) <= +sendAt)
             || await this.evidence.check(session, actor, current, sendAt) !== 'valid')) { partial = true; continue; }
+        // Re-read after evidence: a same-transaction resolver may observe a
+        // legacy lifecycle change. Keep the current mapping locked until commit.
+        const legacy = await session.legacyValidity(current, this.clock());
+        if (!legacy) {
+          if (current.state === 'confirmed') await this.expireHead(session, current, 'withdrawn');
+          partial = true; continue;
+        }
         visible.push(edge);
         proofExpiry.set(edge.relationId, current.state === 'confirmed'
-          ? Math.min(...current.evidence.map(item => Date.parse(item.validUntil))) : Infinity);
+          ? Math.min(legacy.validUntil ? Date.parse(legacy.validUntil) : Infinity,
+            ...current.evidence.map(item => Date.parse(item.validUntil))) : Infinity);
       }
       await this.authorize(session, actor, [root]);
       // All asynchronous reads are over. Recheck time synchronously so an

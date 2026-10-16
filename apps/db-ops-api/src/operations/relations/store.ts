@@ -15,7 +15,8 @@ export interface RelationSession {
   connection: PoolConnection;
   lockResources(refs: readonly ResourceRef[]): Promise<void>;
   lockHead(id: string): Promise<void>;
-  legacyActive(value: StoredRelation, now: Date): Promise<boolean>;
+  /** Current source window, locked through commit; null means inactive/missing. */
+  legacyValidity(value: StoredRelation, now: Date): Promise<{ validUntil: string | null } | null>;
   head(id: string): Promise<StoredRelation | null>;
   adjacent(ref: ResourceRef, limit: number): Promise<StoredRelation[]>;
   history(id: string, before: number, limit: number): Promise<StoredRelation[]>;
@@ -80,11 +81,15 @@ class MysqlRelationSession implements RelationSession {
   async lockHead(id: string): Promise<void> {
     await this.connection.execute('SELECT version FROM resource_relation_revisions WHERE relation_id=? ORDER BY version DESC LIMIT 1 FOR UPDATE', [id]);
   }
-  async legacyActive(value: StoredRelation, now: Date): Promise<boolean> {
-    if (value.legacyProvenance === null) return true;
+  async legacyValidity(value: StoredRelation, now: Date): Promise<{ validUntil: string | null } | null> {
+    if (value.legacyProvenance === null) return { validUntil: null };
+    // Lock the identity even when its window has ended. Legacy lifecycle
+    // writers must serialize with confirmation/fact reads through commit.
     const [rows] = await this.connection.execute<any[]>(
-      'SELECT id FROM resource_relations WHERE id=? AND valid_from<=? AND (valid_until IS NULL OR valid_until>?)', [value.relationId, now, now]);
-    return rows.length === 1;
+      'SELECT valid_from,valid_until FROM resource_relations WHERE id=? FOR UPDATE', [value.relationId]);
+    const row = rows[0];
+    if (!row || +new Date(row.valid_from) > +now || row.valid_until && +new Date(row.valid_until) <= +now) return null;
+    return { validUntil: row.valid_until ? iso(row.valid_until) : null };
   }
   async lockResources(refs: readonly ResourceRef[]): Promise<void> {
     for (const ref of [...new Map(refs.map(ref => [`${ref.type}:${ref.id}`, ref])).values()]
