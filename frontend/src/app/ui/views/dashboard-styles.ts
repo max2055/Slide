@@ -120,6 +120,8 @@ export const dashboardStyles = css`
   :host app-badge[variant='danger'] { color: color-mix(in srgb, var(--danger) 60%, var(--text-strong)); }
   .collection-summary, .relation-summary { border-top: 1px solid var(--border); padding-top: var(--space-sm); margin-top: var(--space-sm); }
   .relation-source { overflow-wrap: anywhere; }
+  .relation-summary:has(> small:only-child) { border-top: 0; padding-top: 0; margin-top: var(--space-xs); }
+  @media (pointer: fine) and (min-width: 769px) { .health-track .btn-ghost { min-height: 24px; padding-block: 0; font-size: var(--text-sm); } }
   .database-panels { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); align-items: start; gap: var(--space-md); }
   .inventory-empty::part(header), .inventory-empty::part(footer) { display: none; }
   .empty-content { display: flex; flex-direction: column; align-items: center; padding: var(--space-xl) var(--space-md); }
