@@ -44,7 +44,7 @@ describe.skipIf(!port)('MAX-175 bounded executor evidence / isolated MySQL, cont
         hasToolCalls: calls === 1, shouldExecuteTools: calls === 1, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } }; },
       chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); } };
     const tools = new ToolRegistry(); tools.register({ name: 'get_instance_summary', description: 'Readonly fixture',
-      parameters: { type: 'object', properties: { instance_id: { type: 'number' } } }, readOnly: true, execute: async () => value });
+      parameters: { type: 'object', properties: { instance_id: { type: 'number' } } }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async () => value });
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider, toolsForActor: () => tools,
       budget: { domain: 'max175-evidence', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
     const terminal = await executor.execute({ investigationId: created.investigation.id, requestId, job,
