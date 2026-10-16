@@ -142,8 +142,8 @@ export class ReportsPage extends LitElement {
     }
 
     .report-type-card__action:hover {
-      background: var(--accent);
-      color: var(--accent-foreground);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
     }
 
     /* 表格样式 */
@@ -257,8 +257,8 @@ export class ReportsPage extends LitElement {
     }
 
     .action-btn:hover {
-      background: var(--accent);
-      color: var(--accent-foreground);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-color: var(--accent);
     }
 

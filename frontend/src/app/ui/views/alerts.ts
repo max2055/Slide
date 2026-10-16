@@ -139,8 +139,8 @@ export class AlertsPage extends LitElement {
       min-width: 16px;
       height: 16px;
       padding: 0 var(--space-xs);
-      background: var(--accent);
-      color: var(--accent-foreground);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-radius: var(--radius-full);
       font-size: 10px;
       font-weight: 600;
@@ -314,19 +314,19 @@ export class AlertsPage extends LitElement {
     }
 
     .action-btn:hover {
-      background: var(--accent);
-      color: var(--accent-foreground, #fff);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-color: var(--accent);
     }
 
     .action-btn.primary {
-      background: var(--accent);
-      color: var(--accent-foreground, #fff);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-color: var(--accent);
     }
 
     .action-btn.primary:hover {
-      background: var(--accent-hover);
+      background: var(--accent-solid-hover);
     }
 
     /* 加载和空状态 */
@@ -424,8 +424,8 @@ export class AlertsPage extends LitElement {
     }
 
     .toggle-btn.active {
-      background: var(--accent);
-      color: var(--accent-foreground);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
     }
 
     .toggle-btn svg {

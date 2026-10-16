@@ -895,7 +895,7 @@ export class ApprovalDashboard extends LitElement {
   private _renderBatchDialog() {
     if (!this.batchDialogOpen) return nothing;
     return html`
-      <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${!this.batchLoading} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
+      <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${false} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
         <div style="margin-bottom:12px;font-size:var(--text-md);color:var(--text, #3c3c43);">
           确认对选中的 <strong>${this.batchIds.length}</strong> 项请求执行${this.batchAction === 'approve' ? '通过' : '驳回'}操作？
         </div>

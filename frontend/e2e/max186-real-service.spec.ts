@@ -113,3 +113,105 @@ test('persisted inventory → overview → evidence → return, real HTTP/JWT/SQ
   expect(writes.filter(path=>path.includes('diagnos'))).toEqual([]);
   await writeFile(`${output}/service-evidence.json`,JSON.stringify({commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),source:'task-owned isolated MySQL + complete formal Fastify routes + real password login/JWT; persisted synthetic inventory, no target collection or provider calls',snapshot:{collectedAt:snapshot.collectedAt,items:snapshot.items.map((i:any)=>({resource:i.resource,status:i.status,freshness:i.freshness,gaps:i.gaps}))},reads,writes},null,2));
 });
+
+test('feedback: readable actions, consistent resource gutters, inset selects and protected form drafts', async ({ page }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  page.setDefaultTimeout(10_000);
+  page.on('pageerror', error => errors.push(error.message));
+  const [instance] = await pool.query('SELECT id FROM database_instances LIMIT 1');
+  await pool.query("INSERT INTO alerts(instance_id,alert_type,level,title,message,status) VALUES(?,'performance','warning','MAX-186 活动告警按钮验收','隔离合成告警，不调用模型','unread')", [instance[0].id]);
+  await pool.query("INSERT INTO alert_events(event_id,instance_id,title,severity,status) VALUES(UUID(),?,'MAX-186 待处理事项 · 长标题用于间距复核','warning','open')", [instance[0].id]);
+  await page.addInitScript(({ token, permissions }) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    localStorage.setItem('slide.i18n.locale', 'zh-CN');
+  }, { token, permissions });
+  const measurements: unknown[] = [];
+  for (const [width, mode, accent, density] of [
+    [1440, 'light', '#409eff', 'standard'], [1440, 'dark', '#409eff', 'standard'],
+    [390, 'light', '#409eff', 'compact'], [390, 'dark', '#409eff', 'compact'],
+    [1440, 'light', '#14b8a6', 'standard'], [1440, 'dark', '#14b8a6', 'standard'],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    const preferences = { locale: 'zh-CN', theme: 'claw', themeMode: mode, accentColor: accent, fontDensity: density };
+    const saved = await fetch(`http://127.0.0.1:${apiPort}/api/user/preferences`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ preferences }) });
+    expect(saved.ok).toBe(true);
+    for (const path of ['instances-db', 'servers', 'network-devices', 'attention', 'investigations', 'events']) {
+      await page.goto(`${base}/${path}`);
+      const view = page.locator(path === 'instances-db' ? 'instances-page' : path === 'events' ? 'alerts-page' : `${path}-page`);
+      if (['instances-db', 'servers', 'network-devices'].includes(path)) {
+        await expect(view.locator('resource-metrics-table')).toBeVisible();
+        const table = view.locator('resource-metrics-table');
+        const gutter = await table.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft));
+        expect(gutter).toBeGreaterThanOrEqual(8);
+        expect(gutter).toBe(await view.locator('.resource-toolbar').evaluate(el => parseFloat(getComputedStyle(el).paddingLeft)));
+        const tools = table.locator('.toolbar'), scroll = table.locator('.scroll');
+        expect((await scroll.boundingBox())!.y - ((await tools.boundingBox())!.y + (await tools.boundingBox())!.height)).toBeGreaterThanOrEqual(8);
+      } else if (path === 'attention') {
+        await expect(view.getByText('MAX-186 待处理事项 · 长标题用于间距复核')).toBeVisible();
+        const gap = await view.evaluate(el => {
+          const table = el.querySelector('app-data-table')!.getBoundingClientRect();
+          const actions = el.querySelector('.attention-actions')!.getBoundingClientRect();
+          return actions.top - table.bottom;
+        });
+        expect(gap).toBeGreaterThanOrEqual(12);
+      } else if (path === 'investigations') {
+        await expect(view.getByRole('button', { name: '创建手动调查', exact: true })).toBeVisible();
+        const select = view.getByRole('combobox', { name: '调查状态', exact: true });
+        if (width > 600) expect((await select.boundingBox())!.width).toBeLessThanOrEqual(145);
+      }
+      if (path === 'events') {
+        await expect(view.getByRole('button', { name: '确认', exact: true }).first()).toBeVisible();
+        for (const badge of await view.locator('.instance-badge').all()) {
+          if (!(await badge.isVisible())) continue;
+          expect(await badge.evaluate(el => el.getBoundingClientRect().right <= el.parentElement!.getBoundingClientRect().right)).toBe(true);
+        }
+      }
+      const selects = view.locator('select:not([multiple]):not([size])');
+      for (const select of await selects.all()) {
+        if (!(await select.isVisible())) continue;
+        const style = await select.evaluate(el => ({ appearance: getComputedStyle(el).appearance, padding: parseFloat(getComputedStyle(el).paddingRight), position: getComputedStyle(el).backgroundPosition }));
+        expect(style.appearance).toBe('none'); expect(style.padding).toBeGreaterThanOrEqual(36);
+        expect(style.position).toContain('12px');
+      }
+      for (const button of await view.locator('.btn-primary, .action-btn.primary, .btn.primary').all()) {
+        if (!(await button.isVisible())) continue;
+        const style = await button.evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }));
+        expect(style.color).toBe('rgb(255, 255, 255)');
+        const rgb = style.background.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => v / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+        expect(1.05 / (.2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2] + .05)).toBeGreaterThanOrEqual(4.5);
+        measurements.push({ width, mode, accent, density, path, ...style });
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${output}/feedback-${path}-${width}-${mode}-${accent.slice(1)}.png`, fullPage: true, animations: 'disabled' });
+      if (['instances-db', 'servers', 'network-devices'].includes(path)) {
+        const trigger = view.locator('.resource-action--add');
+        await trigger.click();
+        const modal = view.locator('app-dialog');
+        const input = modal.locator('input:visible:not([type=number]):not([type=password])').first();
+        await input.fill('误触后保留的资源表单');
+        await page.mouse.click(4, 4);
+        await expect(input).toHaveValue('误触后保留的资源表单');
+        if (width === 1440 && mode === 'light' && accent === '#409eff') await page.screenshot({ path: `${output}/feedback-form-${path}.png`, fullPage: true, animations: 'disabled' });
+        await page.keyboard.press('Escape'); await expect(view.getByRole('dialog')).toHaveCount(0); await expect(trigger).toBeFocused();
+      }
+      if (path === 'investigations') {
+        const trigger = view.getByRole('button', { name: '创建手动调查', exact: true });
+        await trigger.click();
+        const dialog = page.getByRole('dialog', { name: '创建手动调查', exact: true });
+        await expect(dialog).toBeVisible();
+        await page.getByRole('textbox', { name: '调查标题', exact: true }).fill('误触后保留的调查标题');
+        await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('误触遮罩后仍保留的未提交内容');
+        await page.mouse.click(4, 4);
+        await expect(dialog).toBeVisible();
+        await expect(page.getByRole('textbox', { name: '调查目标', exact: true })).toHaveValue('误触遮罩后仍保留的未提交内容');
+        await page.screenshot({ path: `${output}/feedback-create-${width}-${mode}-${accent.slice(1)}.png`, fullPage: true, animations: 'disabled' });
+        await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(trigger).toBeFocused();
+      }
+    }
+  }
+  expect(errors).toEqual([]);
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM agent_runs'))[0][0].n)).toBe(0);
+  await writeFile(`${output}/feedback-measurements.json`, JSON.stringify({ source: 'formal HTTP/JWT + task-owned SQL synthetic inventory and events; no shared sessions or model calls', measurements, errors }, null, 2));
+});

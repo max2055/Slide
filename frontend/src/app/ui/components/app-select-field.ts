@@ -2,6 +2,7 @@
  * Reusable select field with label and optional description.
  * Usage: <app-select-field label="Page Size" .value=${10} .options=${opts} @change=${handler}></app-select-field>
  */
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
@@ -17,7 +18,7 @@ export class AppSelectField extends LitElement {
   @property() value: string | number = "";
   @property({ type: Array }) options: SelectOption[] = [];
 
-  static styles = css`
+  static styles = [sharedFieldStyles, css`
     :host { display: block; }
     label { font-size: 13px; color: var(--text); display: block; margin-bottom: 4px; }
     .desc { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
@@ -28,15 +29,16 @@ export class AppSelectField extends LitElement {
       background: var(--card);
       color: var(--text);
       font-size: 13px;
-      min-width: 140px;
+      width: 100%;
+      min-width: 0;
     }
-  `;
+  `];
 
   render() {
     return html`
-      ${this.label ? html`<label>${this.label}</label>` : null}
+      ${this.label ? html`<label for="value">${this.label}</label>` : null}
       ${this.desc ? html`<div class="desc">${this.desc}</div>` : null}
-      <select .value=${String(this.value)} @change=${this._onChange}>
+      <select id="value" .value=${String(this.value)} @change=${this._onChange}>
         ${this.options.map((o) => html`
           <option value=${o.value} ?selected=${String(this.value) === String(o.value)}>${o.label}</option>
         `)}

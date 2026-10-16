@@ -38,7 +38,7 @@ export const sharedBtnStyles = css`
     transition: all 0.18s var(--ease-out);
   }
   .btn-primary:hover {
-    opacity: 0.92;
+    background: color-mix(in srgb, var(--btn-primary-bg, var(--accent-solid)) 92%, black);
     box-shadow: 0 2px 6px rgba(0,0,0,0.1), 0 0 0 3px var(--accent-glow);
     transform: translateY(-1px);
   }
@@ -95,7 +95,7 @@ export const sharedBtnStyles = css`
     transition: all 0.15s var(--ease-out);
     box-shadow: 0 1px 1px rgba(0,0,0,0.04);
   }
-  .btn-sm:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); box-shadow: 0 2px 4px var(--accent-subtle); transform: translateY(-1px); }
+  .btn-sm:hover { background: var(--accent-solid); color: var(--accent-solid-foreground); border-color: var(--accent); box-shadow: 0 2px 4px var(--accent-subtle); transform: translateY(-1px); }
   .btn-sm:active { transform: translateY(0); }
   .btn-sm:disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; transform: none; }
   .btn-sm.danger { color: var(--danger); border-color: var(--danger); }
@@ -114,7 +114,7 @@ export const sharedBtnStyles = css`
     color: var(--text);
     transition: all 0.15s var(--ease-out);
   }
-  .btn-xs:hover { background: var(--accent); color: var(--accent-foreground, #fff); border-color: var(--accent); }
+  .btn-xs:hover { background: var(--accent-solid); color: var(--accent-solid-foreground); border-color: var(--accent); }
   .btn-xs:active { transform: translateY(0px); }
 
   .btn-danger-outline {

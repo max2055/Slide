@@ -126,7 +126,7 @@ export class InvestigationsPage extends LitElement {
       investigations-page .workspace-filters { margin-bottom:var(--space-md); }
       investigations-page .workspace-filter-common { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); padding-bottom:var(--space-lg); }
       investigations-page .workspace-search { flex:1 1 180px; max-width:380px; min-width:0; }
-      investigations-page .workspace-status { flex:0 1 150px; min-width:0; }
+      investigations-page .workspace-status { flex:0 1 140px; min-width:0; }
       investigations-page .workspace-filter-common input, investigations-page .workspace-filter-common select { min-height:36px; }
       investigations-page .workspace-filter-common .btn, investigations-page .workspace-filter-common .btn-ghost { min-height:36px; font-size:var(--text-sm); }
       investigations-page .workspace-advanced-toggle { gap:var(--space-xs); }
@@ -259,7 +259,7 @@ export class AttentionPage extends LitElement {
     } catch { if (generation === this.generation) { this.items = []; this.error = failureMessage; this.readState = 'error'; } }
   }
   render() {
-    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); } attention-page app-data-table { display:block; overflow:auto; }</style>
+    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-lg); margin-bottom:0; } attention-page app-data-table { display:block; overflow:auto; }</style>
         <app-card><span slot="header">关注事项</span>
           <p>最近 20 项待处理聚合事件，按严重度、更新时间与 ID 排序。</p>
           ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : hasSlidePermission(this.permissions, 'alert:view') ? html`

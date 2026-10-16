@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
@@ -74,7 +75,7 @@ export class InvestigationGovernancePage extends LitElement {
       if (generation === this.generation) this.error = '调查设置暂不可用，请检查连接后重试。';
     } finally { if (generation === this.generation) this.loading = false; }
   }
-  static styles = [sharedBtnStyles, workspaceStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles];
   render() {
     return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button class="btn" ?disabled=${this.loading || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
       ${this.loading ? html`<app-card><div class="state-box" role="status">正在加载调查设置…</div></app-card>`

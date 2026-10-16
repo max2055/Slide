@@ -25,7 +25,7 @@ export class InstanceDiagnosisModal extends LitElement {
     .btn-primary {
       display: inline-flex; align-items: center; gap: var(--space-sm);
       padding: var(--space-sm) var(--space-xl);
-      background: var(--accent); color: var(--accent-foreground);
+      background: var(--accent-solid); color: var(--accent-solid-foreground);
       border: none; border-radius: var(--radius-sm);
       font-size: var(--text-md); font-weight: 500;
       cursor: pointer; transition: all 0.15s ease;

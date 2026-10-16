@@ -118,12 +118,12 @@ export class DatabaseLogTab extends LitElement {
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn.primary {
-      background: var(--accent);
-      color: var(--accent-foreground, #fff);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-color: var(--accent);
     }
 
-    .btn.primary:hover:not(:disabled) { background: var(--accent-hover, #2563eb); }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-solid-hover); }
 
     .table-container {
       overflow-x: auto;

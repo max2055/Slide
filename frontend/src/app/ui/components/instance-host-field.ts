@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { InstanceHostMapping, InstanceHostRole } from '../../../api/generated/public-api.js';
@@ -189,7 +190,7 @@ export class InstanceHostField extends LitElement {
 
   override render() {
     return html`
-      <style>${sharedBtnStyles.cssText}</style>
+      <style>${sharedFieldStyles}${sharedBtnStyles.cssText}</style>
       <style>
         :host { display: block; min-width: 0; }
         app-form-field { margin-bottom: 0; }

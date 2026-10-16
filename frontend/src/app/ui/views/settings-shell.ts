@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -61,7 +62,7 @@ export class SettingsShell extends LitElement {
     this.toggleAttribute("model-page", this.activePage === "models");
   }
 
-  static styles = css`
+  static styles = [sharedFieldStyles, css`
     :host {
       display: grid;
       grid-template-columns: minmax(11.5rem, 14rem) minmax(0, 1fr);
@@ -258,7 +259,7 @@ export class SettingsShell extends LitElement {
         padding: var(--space-lg) var(--space-md) var(--space-xl);
       }
     }
-  `;
+  `];
 
   private get visibleGroups() {
     return SETTINGS_GROUPS.map((group) => ({

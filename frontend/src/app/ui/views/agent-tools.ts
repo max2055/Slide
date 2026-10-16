@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
@@ -164,7 +165,7 @@ export class AgentToolsPage extends AgentListPage<Tool> {
   protected collection = 'tools';
   protected subject = '读取工具清单';
   @state() private selected: Tool | null = null;
-  static styles = [sharedBtnStyles, agentListStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, agentListStyles];
   protected clearDetails() { this.selected = null; }
   render() {
     const selected = this.selected;

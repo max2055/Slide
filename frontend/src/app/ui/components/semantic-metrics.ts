@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -101,7 +102,7 @@ export class SemanticMetrics extends LitElement {
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
     const trends = metrics.flatMap(metric => metric.series.map(series => ({ metric, series }))).filter(({series}) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1);
-    return html`<style>${sharedBtnStyles}
+    return html`<style>${sharedFieldStyles}${sharedBtnStyles}
       :host { display:block; min-width:0; color:var(--text); font-size:14px; }
       .actions { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-sm); margin-block:var(--space-md); }
       .actions label { display:grid; gap:var(--space-xs); min-width:0; max-width:100%; font-size:12px; color:var(--muted); }

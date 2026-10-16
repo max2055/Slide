@@ -13,7 +13,7 @@ import {
 } from "./navigation.ts";
 import { applyDensity, type Density } from "./density.ts";
 import { setFormatSettings } from "./format-config.ts";
-import { applyButtonPalette, type ButtonPalette } from "./btn-palette.ts";
+import { applyButtonPalette, primaryFill, type ButtonPalette } from "./btn-palette.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { loadSettings, saveSettings, UI_SETTINGS_STORAGE_KEY, type UiSettings } from "./storage.ts";
 import { normalizeOptionalString } from "./string-coerce.ts";
@@ -352,6 +352,7 @@ export function applyAccentColor(hex: string) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.style.setProperty("--accent", hex);
+  root.style.setProperty("--accent-solid", primaryFill(hex));
   root.style.setProperty("--primary", hex);
   root.style.setProperty("--ring", hex);
   root.style.setProperty("--accent-hover", hex + "cc");

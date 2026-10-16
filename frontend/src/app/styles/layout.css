@@ -146,8 +146,8 @@
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: var(--accent-solid);
+  color: #fff;
   font-size: var(--text-xs);
   font-weight: 600;
   flex-shrink: 0;

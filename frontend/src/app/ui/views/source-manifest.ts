@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -43,7 +44,7 @@ export class SourceManifestView extends LitElement {
     if (permissionMatches(new Set(Array.isArray(codes) ? codes : []), 'config:view')) void this.load();
     else { this.invalidate(); this.loading = false; this.error = sourceError('SOURCE_READ_FORBIDDEN'); }
   };
-  static styles = [sharedBtnStyles, workspaceStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles];
   override connectedCallback() {
     super.connectedCallback(); this.readUrl(); window.addEventListener('popstate', this.popState);
     window.addEventListener('slide-session-expired', this.onExpired);

@@ -124,7 +124,7 @@ export class AgentSecurityPolicyPage extends LitElement {
     .mode-control { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
     .mode-control button { border: 0; border-right: 1px solid var(--border); background: var(--card); color: var(--muted); padding: var(--space-xs) var(--space-md); cursor: pointer; }
     .mode-control button:last-child { border-right: 0; }
-    .mode-control button.active { background: var(--accent); color: var(--accent-foreground); }
+    .mode-control button.active { background: var(--accent-solid); color: var(--accent-solid-foreground); }
     .mode-control button:disabled { cursor: not-allowed; opacity: var(--disabled-opacity); }
     .choice-grid { align-items: stretch; flex-wrap: wrap; gap: var(--space-sm); }
     .choice { display: flex; gap: var(--space-sm); align-items: flex-start; width: min(21rem, 100%); padding: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); }

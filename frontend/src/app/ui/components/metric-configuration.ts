@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -170,7 +171,7 @@ export class MetricConfiguration extends LitElement {
   render() {
     const resolved = this.preview?.resources[0]?.resolved ?? this.effective;
     const packages = this.catalog?.packages.filter(p => p.package.resource_type === this.resourceType && (!this.published || p.package.id === this.published.binding.package.id)) ?? [];
-    return html`<style>${MetricConfiguration.componentStyles.map(style => style.cssText).join("\n")}</style><app-card><h2 slot="header">采集配置</h2>
+    return html`<style>${sharedFieldStyles}${MetricConfiguration.componentStyles.map(style => style.cssText).join("\n")}</style><app-card><h2 slot="header">采集配置</h2>
       <p>采集包不改变标准指标定义。预检仅验证配置与已有能力证据；目标权限需试采验证。</p>
       ${this.published?.application.status === 'failed' ? html`<p role="alert">采集器应用失败。请重新加载状态，检查连接和权限后重新预检、试采。</p>` : nothing}<p>当前发布版本 ${this.published?.binding.revision ?? '未绑定'} · 当前应用版本 ${this.published?.application.applied_revision ?? '未应用'} · ${this.published ? label(this.published.application.status) : '未发布'}</p>
       ${this.loaded && !this.published ? html`<p>首次绑定：此资源尚未发布采集策略，可选择采集包后预检与试采。</p>` : nothing}

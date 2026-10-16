@@ -118,13 +118,13 @@ export class IndexManagementPage extends LitElement {
     }
 
     .btn.primary {
-      background: var(--accent);
-      color: var(--accent-foreground);
+      background: var(--accent-solid);
+      color: var(--accent-solid-foreground);
       border-color: var(--accent);
     }
 
     .btn.primary:hover:not(:disabled) {
-      background: var(--accent-hover);
+      background: var(--accent-solid-hover);
     }
 
     .btn.danger {

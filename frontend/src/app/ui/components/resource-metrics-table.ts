@@ -131,7 +131,7 @@ export class ResourceMetricsTable extends LitElement {
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
     });
     return html`<style>${sharedBtnStyles}
-      :host { display:block; min-width:0; max-width:100%; color:var(--text); } .toolbar,.pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin-block:var(--space-md); }
+      :host { display:block; box-sizing:border-box; min-width:0; max-width:100%; padding:var(--space-lg); color:var(--text); } .toolbar,.pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin:0 0 var(--space-md); } .pages { margin:var(--space-md) 0 0; } @media(max-width:640px) { :host { padding:var(--space-md); } }
       .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } .link-button { color:var(--accent); background:none; border:none; cursor:pointer; font:inherit; } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; } .btn-sm { gap:var(--space-xs); padding:var(--space-xs) var(--space-sm); } :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     </style><div class="toolbar">
       <button class="btn" .disabled=${this.pending} @click=${() => this.load(true)}>刷新指标</button>

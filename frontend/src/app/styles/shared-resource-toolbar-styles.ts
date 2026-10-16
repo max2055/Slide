@@ -52,8 +52,8 @@ export const sharedResourceToolbarStyles = css`
 
   .resource-toolbar .filter-select,
   .resource-toolbar .resource-filter {
-    flex: 0 1 148px;
-    width: 148px;
+    flex: 0 1 140px;
+    width: 140px;
     min-width: 128px;
     height: 40px;
     box-sizing: border-box;
@@ -101,8 +101,8 @@ export const sharedResourceToolbarStyles = css`
   }
 
   .resource-toolbar .filter-btn.active {
-    background: var(--accent);
-    color: var(--accent-foreground);
+    background: var(--accent-solid);
+    color: var(--accent-solid-foreground);
     border-color: var(--accent);
   }
 

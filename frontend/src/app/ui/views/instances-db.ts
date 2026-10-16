@@ -636,7 +636,7 @@ export class InstancesPage extends LitElement {
     return html`
       <div class="page">
         <!-- 实例列表卡片 -->
-        <app-card>
+        <app-card .compact=${true}>
           <div class="toolbar resource-toolbar">
             <div class="search-box">
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>

@@ -756,7 +756,7 @@ export class EventManagementPage extends LitElement {
             @click=${() => { this.activeListTab = 'active'; this.eventsPage = 0; this._loadEvents(); }}
             style="padding:var(--space-sm) var(--space-lg);font-size:var(--text-base);font-weight:500;background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;color:var(--muted);position:relative;">
             活跃事件
-            ${this.stats ? html`<span style="position:absolute;top:2px;right:-4px;min-width:16px;height:16px;padding:0 var(--space-xs);background:var(--accent);color:var(--accent-foreground);border-radius:var(--radius-full);font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">${this.stats.open + this.stats.investigating + this.stats.handled}</span>` : nothing}
+            ${this.stats ? html`<span style="position:absolute;top:2px;right:-4px;min-width:16px;height:16px;padding:0 var(--space-xs);background:var(--accent-solid);color:var(--accent-solid-foreground);border-radius:var(--radius-full);font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">${this.stats.open + this.stats.investigating + this.stats.handled}</span>` : nothing}
           </button>
           <button class="tab ${this.activeListTab === 'resolved' ? 'active' : ''}"
             @click=${() => { this.activeListTab = 'resolved'; this.eventsPage = 0; this._loadEvents(); }}
