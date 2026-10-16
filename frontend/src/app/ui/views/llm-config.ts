@@ -131,19 +131,19 @@ export class LLMConfigPage extends LitElement {
     .page { max-width: 1120px; margin: 0 auto; }
     .shell { min-width: 0; }
     .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: 24px; font-weight: 600; margin: 0 0 var(--space-xs); color: var(--text-strong); }
-    .page-header p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.6; }
+    .page-header h1 { font-size: calc(var(--text-lg) * 1.5); font-weight: 600; margin: 0 0 var(--space-xs); color: var(--text-strong); }
+    .page-header p { font-size: var(--text-md); color: var(--muted); margin: 0; line-height: 1.6; }
     .provider-selector { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); margin-bottom: var(--space-lg); }
-    .provider-selector label { font-size: 14px; font-weight: 500; color: var(--text); }
+    .provider-selector label { font-size: var(--text-md); font-weight: 500; color: var(--text); }
     .provider-selector select { flex: 1; min-width: 0; max-width: 32rem; }
     .provider-selector .btn { flex-shrink: 0; }
-    .provider-count { font-size: 12px; color: var(--muted); }
+    .provider-count { font-size: var(--text-sm); color: var(--muted); }
     .detail, .detail-inner { min-width: 0; }
     .config-section { padding: var(--space-lg) 0; border-bottom: 1px solid var(--border); }
     .config-section:first-child { padding-top: 0; }
     .section-intro { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); margin-bottom: var(--space-md); }
-    .section-intro h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-strong); }
-    .section-intro p, .scope-hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .section-intro h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
+    .section-intro p, .scope-hint { margin: 0; font-size: var(--text-sm); line-height: 1.6; color: var(--muted); }
     .connection-identity { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); }
     .connection-identity > .form-group { min-width: 0; margin-bottom: 0; }
     .connection-hint { margin: var(--space-xs) 0 var(--space-md); }
@@ -154,10 +154,10 @@ export class LLMConfigPage extends LitElement {
     }
     .section-body { min-width: 0; }
     .section-body .form-row > * { min-width: 0; }
-    .section-body .form-label, .section-body .form-input, .section-body .form-select { font-size: 14px; }
+    .section-body .form-label, .section-body .form-input, .section-body .form-select { font-size: var(--text-md); }
     .model-toolbar, .model-row, .dialog-actions { display: flex; align-items: center; gap: var(--space-sm); }
     .model-toolbar { flex-wrap: wrap; margin-bottom: var(--space-xs); }
-    .model-toolbar h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-strong); }
+    .model-toolbar h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
     .model-toolbar .scope-hint { flex: 1 1 16rem; min-width: min(100%, 16rem); overflow-wrap: anywhere; }
     .model-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); max-width: 100%; }
     .model-toolbar-actions .btn { flex-shrink: 0; }
@@ -165,16 +165,16 @@ export class LLMConfigPage extends LitElement {
     .model-row { justify-content: space-between; padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
     .model-row:last-child { border-bottom: 0; }
     .model-summary { min-width: 0; }
-    .model-summary strong { font-size: 14px; color: var(--text-strong); overflow-wrap: anywhere; }
-    .model-summary p { margin: var(--space-xs) 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+    .model-summary strong { font-size: var(--text-md); color: var(--text-strong); overflow-wrap: anywhere; }
+    .model-summary p { margin: var(--space-xs) 0 0; font-size: var(--text-sm); line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
     .model-row .btn { flex-shrink: 0; }
     .model-list { max-height: 26rem; overflow-y: auto; scrollbar-gutter: stable; }
-    .advanced summary, .model-advanced summary { cursor: pointer; font-size: 14px; color: var(--text); padding: var(--space-xs) 0; }
+    .advanced summary, .model-advanced summary { cursor: pointer; font-size: var(--text-md); color: var(--text); padding: var(--space-xs) 0; }
     .advanced-body { padding-top: var(--space-lg); }
     .model-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); margin: var(--space-lg) 0; }
     .model-fields app-form-field { min-width: 0; margin: 0; }
-    .raw-parameters { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
-    .model-feedback { font-size: 12px; color: var(--muted); }
+    .raw-parameters { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-sm); }
+    .model-feedback { font-size: var(--text-sm); color: var(--muted); }
     @media (max-width: 600px) {
       .model-fields { grid-template-columns: minmax(0, 1fr); }
       .form-row { flex-direction: column; gap: 0; }

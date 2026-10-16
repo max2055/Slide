@@ -194,7 +194,7 @@ export class SettingsShell extends LitElement {
       :host([model-page]) .mobile-heading { display: grid; gap: var(--space-xs); }
       :host([model-page]) .mobile-heading__path { color: var(--muted); font-size: var(--text-xs); }
       :host([model-page]) .mobile-heading__row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
-      :host([model-page]) .mobile-heading__title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+      :host([model-page]) .mobile-heading__title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
       :host([model-page]) .settings-select { max-width: 55%; padding: var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); font: inherit; }
       :host([model-page]) .settings-main { overflow: visible; }
     }
