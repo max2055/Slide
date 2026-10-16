@@ -179,7 +179,9 @@ test.afterAll(async()=>{
   report.finalStop={at:finalAt,before:finalJobs,after:await jobs(),attemptsBefore:finalAttempts,attemptsAfter:await count()};
   report.checks.finalStop=report.finalStop.after.length===finalJobs.length&&report.finalStop.attemptsAfter===finalAttempts;
   expect.soft(report.checks.finalStop,'New disabled revision also stops after application').toBe(true);
-  report.finalBinding=(await request(policy)).value;await save();
+  report.finalBinding=(await request(policy)).value;
+  if(schedulerOnly){report.checks.noNewModelCalls=budget().requests===report.baselineBudget.requests;expect(report.checks.noNewModelCalls).toBe(true);}
+  await save();
   if(!schedulerOnly){
   expect.soft(report.checks.agentObservationTimesValid,'Observation timestamps must survive Agent evidence serialization').toBe(true);expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);}
   expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
