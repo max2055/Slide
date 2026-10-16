@@ -14,7 +14,8 @@ import {
 import { applyDensity, type Density } from "./density.ts";
 import { setFormatSettings } from "./format-config.ts";
 import { applyButtonPalette, type ButtonPalette } from "./btn-palette.ts";
-import { saveSettings, type UiSettings } from "./storage.ts";
+import { getSafeLocalStorage } from "./local-storage.ts";
+import { loadSettings, saveSettings, UI_SETTINGS_STORAGE_KEY, type UiSettings } from "./storage.ts";
 import { normalizeOptionalString } from "./string-coerce.ts";
 import { startThemeTransition, type ThemeTransitionContext } from "./theme-transition.ts";
 import { resolveTheme, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
@@ -57,7 +58,7 @@ type SettingsAppHost = SettingsHost &
     hello: { auth?: { role?: string; scopes?: string[] } } | null;
   };
 
-export function applySettings(host: SettingsHost, next: UiSettings) {
+export function applySettings(host: SettingsHost, next: UiSettings, persist = true) {
   const normalized = {
     ...next,
     lastActiveSessionKey:
@@ -66,7 +67,7 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
       "",
   };
   host.settings = normalized;
-  saveSettings(normalized);
+  if (persist) saveSettings(normalized);
   setFormatSettings(normalized);
   if (isSupportedLocale(normalized.locale) && normalized.locale !== i18n.getLocale()) {
     void i18n.setLocale(normalized.locale);
@@ -74,16 +75,20 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
   if (next.theme !== host.theme || next.themeMode !== host.themeMode) {
     host.theme = next.theme;
     host.themeMode = next.themeMode;
-    applyResolvedTheme(host, resolveTheme(next.theme, next.themeMode));
   }
+  // Startup theme initialization can change the DOM independently of host state.
+  // Reassert the loaded preference even when its stored value is unchanged.
+  applyResolvedTheme(host, resolveTheme(next.theme, next.themeMode));
   applyBorderRadius(next.borderRadius);
   applyAccentColor(next.accentColor);
   applyDensity(next.fontDensity);
   applySidebarPosition(next.sidebarPosition);
   applyReduceAnimations(next.reduceAnimations);
   applyNavWidth(next.navWidth);
-  if (next.btnPalette) applyButtonPalette(next.btnPalette as Partial<ButtonPalette>);
+  applyButtonPalette(next.btnPalette as Partial<ButtonPalette> ?? {}, true);
+  syncSystemThemeListener(host);
   host.applySessionKey = host.settings.lastActiveSessionKey;
+  window.dispatchEvent(new CustomEvent("slide-settings-applied"));
 }
 
 function applySessionSelection(host: SettingsHost, session: string) {
@@ -269,7 +274,24 @@ export function inferBasePath() {
   return inferBasePathFromPathname(window.location.pathname);
 }
 
+// One listener per connected app; receiving a storage update must not echo it to
+// storage/server, nor replace a tab's active chat/session/navigation state.
+const settingsStorageCleanup = new WeakMap<SettingsHost, () => void>();
+
 export function syncThemeWithSettings(host: SettingsHost) {
+  settingsStorageCleanup.get(host)?.();
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== UI_SETTINGS_STORAGE_KEY || event.storageArea !== window.localStorage) return;
+    const next = loadSettings();
+    applySettings(host, { ...host.settings,
+      theme: next.theme, themeMode: next.themeMode, accentColor: next.accentColor,
+      borderRadius: next.borderRadius, fontDensity: next.fontDensity,
+      sidebarPosition: next.sidebarPosition, reduceAnimations: next.reduceAnimations,
+      navWidth: next.navWidth, locale: next.locale, btnPalette: next.btnPalette,
+    }, false);
+  };
+  window.addEventListener("storage", onStorage);
+  settingsStorageCleanup.set(host, () => window.removeEventListener("storage", onStorage));
   host.theme = host.settings.theme ?? "claw";
   host.themeMode = host.settings.themeMode ?? "system";
   applyResolvedTheme(host, resolveTheme(host.theme, host.themeMode));
@@ -279,11 +301,13 @@ export function syncThemeWithSettings(host: SettingsHost) {
   applySidebarPosition(host.settings.sidebarPosition ?? "left");
   applyReduceAnimations(host.settings.reduceAnimations ?? false);
   applyNavWidth(host.settings.navWidth ?? 258);
-  if (host.settings.btnPalette) applyButtonPalette(host.settings.btnPalette as Partial<ButtonPalette>);
+  applyButtonPalette(host.settings.btnPalette as Partial<ButtonPalette> ?? {}, true);
   syncSystemThemeListener(host);
 }
 
 export function detachThemeListener(host: SettingsHost) {
+  settingsStorageCleanup.get(host)?.();
+  settingsStorageCleanup.delete(host);
   host.systemThemeCleanup?.();
   host.systemThemeCleanup = null;
 }
@@ -314,6 +338,14 @@ export function applyResolvedTheme(host: SettingsHost, resolved: ResolvedTheme) 
   root.dataset.theme = resolved;
   root.dataset.themeMode = themeMode;
   root.style.colorScheme = themeMode;
+  // The legacy entry-point initializer and its system listener still read this
+  // key. Keep it aligned so they cannot override an explicit UI preference.
+  try {
+    const storage = getSafeLocalStorage();
+    if (storage?.getItem("app-theme-mode") !== host.themeMode) {
+      storage?.setItem("app-theme-mode", host.themeMode);
+    }
+  } catch { /* blocked storage must not prevent theme application */ }
 }
 
 export function applyAccentColor(hex: string) {

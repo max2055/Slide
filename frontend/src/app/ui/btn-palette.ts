@@ -48,13 +48,15 @@ const TOKEN_MAP: Record<keyof ButtonPalette, string> = {
   dangerBorder: "--btn-danger-border",
 };
 
-export function applyButtonPalette(palette: Partial<ButtonPalette>) {
+export function applyButtonPalette(palette: Partial<ButtonPalette>, replace = false) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   for (const [key, cssVar] of Object.entries(TOKEN_MAP)) {
     const value = palette[key as keyof ButtonPalette];
     if (value !== undefined) {
       root.style.setProperty(cssVar, value);
+    } else if (replace) {
+      root.style.removeProperty(cssVar);
     }
   }
 }
