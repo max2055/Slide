@@ -71,7 +71,7 @@ async function capture(page: Page, name: string) {
 test('real JWT -> live permissions -> production routes -> MySQL: empty, populated, session, revoke', async ({ page }) => {
   await pool.query('TRUNCATE performance_schema.events_statements_summary_by_digest');
   const view = await open(page);
-  await view.getByRole('button', { name: '慢查询', exact: true }).focus(); await page.keyboard.press('Enter');
+  await view.getByRole('tab', { name: '慢查询', exact: true }).focus(); await page.keyboard.press('Enter');
   await expect(view).toContainText('本次查询未返回慢查询记录'); await expect(view).toContainText('MySQL performance_schema');
   await expect(view).toContainText('统计起止时间未知'); await expect(view).not.toContainText('数据库运行良好');
   await capture(page, 'real-mysql-empty-1280-light');
@@ -82,11 +82,11 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   const connection = await target;
   const running = connection.query('SELECT SLEEP(4) AS max163_active_session');
   try {
-    await view.getByRole('button', { name: '会话', exact: true }).click();
+    await view.getByRole('tab', { name: '会话', exact: true }).click();
     await expect(view.locator('tbody')).toContainText('max163_active_session'); await expect(view).toContainText('活跃会话快照');
     await capture(page, 'real-mysql-active-session');
   } finally { await running; await connection.end(); }
-  await view.getByRole('button', { name: /^慢查询/ }).click();
+  await view.getByRole('tab', { name: /^慢查询/ }).click();
 
   const deniedUser = `max163_denied_${randomUUID().replaceAll('-', '').slice(0, 8)}`;
   const deniedPassword = randomUUID();
@@ -94,7 +94,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   const deniedPool = mysql.createPool({ host: '127.0.0.1', port: Number(process.env.MAX163_TEST_MYSQL_PORT), user: deniedUser, password: deniedPassword });
   try {
     connections.get(991).pool = deniedPool;
-    await view.getByRole('button', { name: /^慢查询/ }).click();
+    await view.getByRole('tab', { name: /^慢查询/ }).click();
     await expect(view).toContainText('数据不可用'); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-mysql-query-denied');
   } finally { connections.get(991).pool = pool; await deniedPool.end(); await admin.query("DROP USER ?@'%'", [deniedUser]); }
@@ -102,7 +102,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   try {
     const denied = page.waitForResponse(r => r.url().endsWith('/api/database/instances/991/topsql') && r.status() === 403);
     // Refreshing the tab goes through the live JWT authorization check.
-    await view.getByRole('button', { name: /^慢查询/ }).click(); await denied;
+    await view.getByRole('tab', { name: /^慢查询/ }).click(); await denied;
     await expect(view.getByRole('alert')).toContainText('无权'); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-permission-revoked');
   } finally { await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (991,991,'read-only')"); }
@@ -119,7 +119,7 @@ for (const kind of ['topsql', 'sessions'] as const) for (const [width, theme] of
     await route.fulfill({ status, contentType: 'application/json', body: mode === 'malformed' ? '{}' : '[]' });
   });
   const view = await open(page, theme, width);
-  const tab = view.getByRole('button', { name: kind === 'topsql' ? '慢查询' : '会话', exact: true }); await tab.focus(); await page.keyboard.press('Enter');
+  const tab = view.getByRole('tab', { name: kind === 'topsql' ? '慢查询' : '会话', exact: true }); await tab.focus(); await page.keyboard.press('Enter');
   await expect(view).toContainText(kind === 'topsql' ? '加载慢查询数据' : '加载会话数据'); await capture(page, `controlled-${kind}-loading-${width}-${theme}`);
   mode = 'empty'; release(); await expect(view).toContainText('本次查询未返回'); await capture(page, `controlled-${kind}-empty-${width}-${theme}`);
   for (const [next, expected] of [['failed','读取失败'],['forbidden','无权读取'],['unavailable','数据不可用'],['malformed','读取失败'],['network','读取失败']]) {

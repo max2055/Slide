@@ -62,38 +62,18 @@ export class DatabaseLogTab extends LitElement {
       align-items: center;
     }
 
-    .stats-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .stat-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 12px 16px;
-      text-align: center;
-    }
-
-    .stat-card .stat-value {
-      font-size: 24px;
-      font-weight: 700;
-      color: var(--text-strong);
-    }
-
-    .stat-card .stat-label {
-      font-size: 11px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      margin-top: 2px;
-    }
-
-    .stat-card.stat-error { border-left: 3px solid var(--danger, #ef4444); }
-    .stat-card.stat-warning { border-left: 3px solid var(--warn, #f59e0b); }
-    .stat-card.stat-critical { border-left: 3px solid #991b1b; }
+    .stats-row { display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-bottom:var(--space-md); font-size:12px; color:var(--muted); }
+    .stats-row strong { color:var(--text-strong); font-size:14px; }
+    .stats-row span { white-space:nowrap; }
+    .scope-note { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+    .header { flex-wrap:wrap; gap:var(--space-sm); }
+    .header h2 { font-size:16px; }
+    .header-actions { flex-wrap:wrap; }
+    .filter-bar input { min-width:0; max-width:100%; box-sizing:border-box; }
+    .table { min-width:680px; }
+    .table-container:focus-visible { outline:2px solid var(--accent); }
+    button.message-cell { display:block; width:100%; border:0; background:transparent; padding:0; text-align:left; color:var(--text); font:inherit; }
+    .pagination { flex-wrap:wrap; }
 
     .filter-bar {
       display: flex;
@@ -284,6 +264,10 @@ export class DatabaseLogTab extends LitElement {
     }
 
     .raw-content {
+      position: sticky;
+      left: var(--space-sm);
+      box-sizing: border-box;
+      max-width: calc(100vw - 64px);
       font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
       font-size: 12px;
       white-space: pre-wrap;
@@ -339,77 +323,81 @@ export class DatabaseLogTab extends LitElement {
   @state() private analysisError: string | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
+  private logRequest = 0;
+  private statsRequest = 0;
+  private contextVersion = 0;
+  private queryWindow: { startTime: string; endTime: string } | null = null;
+  @state() private accessInvalidated = false;
+  @state() private statsError = '';
+  private onAccessChanged = () => {
+    this.accessInvalidated = true;
+    this.resetContext();
+    this.error = '权限或登录状态已变更，请重新打开资源后读取日志';
+    this.loading = false;
+  };
   override connectedCallback() {
     super.connectedCallback();
-    if (this.instanceId) {
-      this.loadLogs();
-      this.loadStats();
-    }
+    window.addEventListener('slide-permissions-loaded', this.onAccessChanged);
+    window.addEventListener('slide-session-expired', this.onAccessChanged);
   }
-
   override disconnectedCallback() {
+    this.resetContext();
+    window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
+    window.removeEventListener('slide-session-expired', this.onAccessChanged);
     super.disconnectedCallback();
-    this._stopPolling();
   }
-
   override willUpdate(changedProperties: Map<string, unknown>) {
-    if (changedProperties.has("instanceId") && this.instanceId) {
-      this.loadLogs();
-      this.loadStats();
+    if (changedProperties.has('instanceId')) {
+      this.accessInvalidated = false;
+      this.filterKeyword = '';
+      this.resetContext();
+      if (this.instanceId) { void this.loadLogs(); void this.loadStats(); }
     }
   }
-
+  private resetContext() {
+    ++this.contextVersion; ++this.logRequest; ++this.statsRequest;
+    this.offset = 0; this.logs = []; this.total = 0; this.stats = null; this.statsError = '';
+    this.queryWindow = null; this.selectedIds = new Set(); this.expandedId = null;
+    this._closeAnalysisResult();
+  }
   private _authHeaders(): Record<string, string> {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
-
   async loadLogs() {
-    if (!this.instanceId) return;
-    this.loading = true;
-    this.error = null;
-    this.offset = 0;
+    if (!this.instanceId || this.accessInvalidated) return;
+    const request = ++this.logRequest, instanceId = this.instanceId, context = this.contextVersion;
+    const current = () => request === this.logRequest && instanceId === this.instanceId && context === this.contextVersion;
+    this.loading = true; this.error = null; this.logs = []; this.selectedIds = new Set(); this.expandedId = null;
+    this.queryWindow ??= this._getTimeRange(this.filterTimeRange);
     try {
-      const params = new URLSearchParams({
-        instanceId: String(this.instanceId),
-        limit: String(this.limit),
-        offset: String(this.offset),
-      });
-      if (this.filterLevel !== "all") {
-        params.set("level", this.filterLevel);
-      }
-      const timeRange = this._getTimeRange(this.filterTimeRange);
-      if (timeRange.startTime) {
-        params.set("startTime", timeRange.startTime);
-        params.set("endTime", timeRange.endTime);
-      }
-      const res = await authFetch(`${API_BASE}/api/logs?${params.toString()}`, {
-        headers: this._authHeaders(),
-      });
-      if (!res.ok) throw new Error(`Failed to load logs: HTTP ${res.status}`);
+      const params = new URLSearchParams({ instanceId: String(instanceId), limit: String(this.limit), offset: String(this.offset), ...this.queryWindow });
+      if (this.filterLevel !== 'all') params.set('level', this.filterLevel);
+      const res = await authFetch(`${API_BASE}/api/logs?${params}`, { headers: this._authHeaders() });
+      if (!current()) return;
+      if ([401, 403].includes(res.status)) { this.onAccessChanged(); return; }
+      if (!res.ok) throw new Error(`日志读取失败（HTTP ${res.status}）`);
       const data = await res.json();
-      this.logs = data.logs || [];
-      this.total = data.total || 0;
-    } catch (e: any) {
-      this.error = e.message;
-    } finally {
-      this.loading = false;
-    }
+      if (!current()) return;
+      this.logs = data.logs || []; this.total = data.total || 0;
+    } catch (e: unknown) {
+      if (current()) { this.total = 0; this.error = e instanceof Error ? e.message : '日志读取失败'; }
+    } finally { if (current()) this.loading = false; }
   }
-
   async loadStats() {
-    if (!this.instanceId) return;
+    if (!this.instanceId || this.accessInvalidated) return;
+    const request = ++this.statsRequest, instanceId = this.instanceId, context = this.contextVersion;
+    const current = () => request === this.statsRequest && instanceId === this.instanceId && context === this.contextVersion;
+    this.stats = null; this.statsError = '';
     try {
       const hours = this._getTimeRangeHours(this.filterTimeRange);
-      const res = await authFetch(`${API_BASE}/api/logs/stats?instanceId=${this.instanceId}&hours=${hours}`, {
-        headers: this._authHeaders(),
-      });
-      if (res.ok) {
-        this.stats = await res.json();
-      }
-    } catch {
-      // Stats are optional, don't fail if unavailable
-    }
+      const res = await authFetch(`${API_BASE}/api/logs/stats?instanceId=${instanceId}&hours=${hours}`, { headers: this._authHeaders() });
+      if (!current()) return;
+      if ([401, 403].includes(res.status)) { this.onAccessChanged(); return; }
+      if (!res.ok) throw new Error('统计暂不可用');
+      const data = await res.json();
+      if (current()) this.stats = data;
+    } catch { if (current()) this.statsError = '统计暂不可用，不能据此判断日志数量或健康'; }
   }
 
   private _getTimeRange(range: string): { startTime: string; endTime: string } {
@@ -448,13 +436,14 @@ export class DatabaseLogTab extends LitElement {
   }
 
   private _handleFilterChange() {
-    this.loadLogs();
-    this.loadStats();
+    this.resetContext();
+    void this.loadLogs();
+    void this.loadStats();
   }
 
   private _handleSearch() {
-    // Keyword filtering is done client-side on the loaded logs
-    this.loadLogs();
+    // Search only the current loaded batch, without changing the server page.
+    this.selectedIds = new Set(); this.expandedId = null;
   }
 
   private _getFilteredLogs(): LogEntry[] {
@@ -487,6 +476,7 @@ export class DatabaseLogTab extends LitElement {
   private async _triggerAnalysis() {
     if (this.selectedIds.size === 0 || !this.instanceId) return;
 
+    const context = this.contextVersion, instanceId = this.instanceId;
     this.analysisLoading = true;
     this.analysisError = null;
     this.analysisResult = null;
@@ -507,15 +497,18 @@ export class DatabaseLogTab extends LitElement {
         }),
       });
 
+      if (context !== this.contextVersion || instanceId !== this.instanceId) return;
       if (!res.ok) {
         const errBody = await res.json().catch(() => null);
         throw new Error(errBody?.error || "AI 分析触发失败");
       }
 
       const data = await res.json();
+      if (context !== this.contextVersion || instanceId !== this.instanceId) return;
       this.analysisId = data.analysisId;
       this._startPolling(data.analysisId);
     } catch (err: any) {
+      if (context !== this.contextVersion || instanceId !== this.instanceId) return;
       this.analysisError = err.message || "AI 分析触发失败";
       this.analysisLoading = false;
     }
@@ -523,6 +516,7 @@ export class DatabaseLogTab extends LitElement {
 
   private _startPolling(id: number) {
     this._stopPolling();
+    const context = this.contextVersion, instanceId = this.instanceId;
     this.pollTimer = setInterval(async () => {
       try {
         const token = getToken();
@@ -531,6 +525,7 @@ export class DatabaseLogTab extends LitElement {
         });
         if (!res.ok) return;
         const data = await res.json();
+        if (context !== this.contextVersion || instanceId !== this.instanceId || this.analysisId !== id) return;
         this.analysisStatus = data.status;
 
         if (data.status === "completed") {
@@ -612,28 +607,15 @@ export class DatabaseLogTab extends LitElement {
   }
 
   private _renderStats() {
-    if (!this.stats) return html``;
+    if (this.accessInvalidated) return nothing;
+    if (!this.stats) return html`<p class="scope-note">${this.statsError || '正在读取范围统计…'}</p>`;
     const s = this.stats;
-    return html`
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value">${s.total}</div>
-          <div class="stat-label">总日志数</div>
-        </div>
-        <div class="stat-card stat-error">
-          <div class="stat-value">${s.by_level?.error ?? 0}</div>
-          <div class="stat-label">ERROR</div>
-        </div>
-        <div class="stat-card stat-warning">
-          <div class="stat-value">${s.by_level?.warning ?? 0}</div>
-          <div class="stat-label">WARNING</div>
-        </div>
-        <div class="stat-card stat-critical">
-          <div class="stat-value">${s.by_level?.critical ?? 0}</div>
-          <div class="stat-label">CRITICAL</div>
-        </div>
-      </div>
-    `;
+    return html`<div class="stats-row" aria-label="范围日志统计">
+      <span>范围统计（全部级别）</span><span>总计 <strong>${s.total}</strong></span>
+      <span>ERROR <strong>${s.by_level?.error ?? 0}</strong></span>
+      <span>WARNING <strong>${s.by_level?.warning ?? 0}</strong></span>
+      <span>CRITICAL <strong>${s.by_level?.critical ?? 0}</strong></span>
+    </div>`;
   }
 
   private _renderAnalysisSection() {
@@ -732,14 +714,6 @@ export class DatabaseLogTab extends LitElement {
       return html`<div class="page"><div class="empty-state">请选择一个数据库实例</div></div>`;
     }
 
-    if (this.loading) {
-      return html`<div class="page"><div class="loading">加载日志数据...</div></div>`;
-    }
-
-    if (this.error) {
-      return html`<div class="page"><div class="error">加载失败: ${this.error}</div></div>`;
-    }
-
     const filteredLogs = this._getFilteredLogs();
 
     return html`
@@ -747,10 +721,10 @@ export class DatabaseLogTab extends LitElement {
         <div class="header">
           <h2>数据库日志</h2>
           <div class="header-actions">
-            <button class="btn" @click=${() => { this.loadLogs(); this.loadStats(); }}>刷新</button>
+            <button class="btn" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
             <button
               class="btn-primary"
-              ?disabled=${this.selectedIds.size === 0 || this.analysisLoading}
+              ?disabled=${this.selectedIds.size === 0 || this.analysisLoading || this.accessInvalidated}
               @click=${this._triggerAnalysis}
             >
               AI 分析 (${this.selectedIds.size})
@@ -762,7 +736,7 @@ export class DatabaseLogTab extends LitElement {
 
         <div class="filter-bar">
           <label>级别:</label>
-          <select @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this._handleFilterChange(); }}>
+          <select aria-label="日志级别" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this._handleFilterChange(); }}>
             <option value="all" ?selected=${this.filterLevel === "all"}>全部</option>
             <option value="info" ?selected=${this.filterLevel === "info"}>INFO</option>
             <option value="warning" ?selected=${this.filterLevel === "warning"}>WARNING</option>
@@ -770,7 +744,7 @@ export class DatabaseLogTab extends LitElement {
             <option value="critical" ?selected=${this.filterLevel === "critical"}>CRITICAL</option>
           </select>
           <label>时间范围:</label>
-          <select @change=${(e: Event) => { this.filterTimeRange = (e.target as HTMLSelectElement).value; this._handleFilterChange(); }}>
+          <select aria-label="日志时间范围" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.filterTimeRange = (e.target as HTMLSelectElement).value; this._handleFilterChange(); }}>
             <option value="1h" ?selected=${this.filterTimeRange === "1h"}>最近 1 小时</option>
             <option value="6h" ?selected=${this.filterTimeRange === "6h"}>最近 6 小时</option>
             <option value="24h" ?selected=${this.filterTimeRange === "24h"}>最近 24 小时</option>
@@ -778,20 +752,21 @@ export class DatabaseLogTab extends LitElement {
           </select>
           <input
             type="text"
-            placeholder="关键字搜索..."
-            style="min-width: 180px;"
+            placeholder="在本批日志中搜索…"
+            aria-label="本批日志关键字"
             .value=${this.filterKeyword}
-            @input=${(e: Event) => { this.filterKeyword = (e.target as HTMLInputElement).value; }}
+            @input=${(e: Event) => { this.filterKeyword = (e.target as HTMLInputElement).value; this._handleSearch(); }}
             @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this._handleSearch(); }}
           />
           <button class="btn" @click=${this._handleSearch}>搜索</button>
         </div>
 
-        ${this.logs.length === 0
+        <p class="scope-note">关键字仅过滤本批 ${this.logs.length} 条，范围内共 ${this.total} 条。${this.queryWindow ? `查询范围：${this._formatTime(this.queryWindow.startTime)} — ${this._formatTime(this.queryWindow.endTime)}` : ''}</p>
+        ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : this.loading ? html`<div class="loading" role="status">加载日志数据...</div>` : this.logs.length === 0
           ? html`
               <div class="empty-state">
                 <div class="empty-icon">&#x1F4C4;</div>
-                <div>暂无日志数据，日志采集每 5 分钟执行一次</div>
+                <div>当前范围没有日志记录；不代表资源健康</div>
               </div>
             `
           : filteredLogs.length === 0
@@ -801,12 +776,12 @@ export class DatabaseLogTab extends LitElement {
               </div>
             `
           : html`
-              <div class="table-container">
+              <div class="table-container" tabindex="0" role="region" aria-label="日志列表，可横向滚动">
                 <table class="table">
                   <thead>
                     <tr>
                       <th style="width:40px;text-align:center">
-                        <input type="checkbox" @change=${(e: Event) => {
+                        <input type="checkbox" aria-label="选择本批日志" @change=${(e: Event) => {
                           const checked = (e.target as HTMLInputElement).checked;
                           if (checked) {
                             this.selectedIds = new Set(filteredLogs.map((l) => l.id));
@@ -829,12 +804,13 @@ export class DatabaseLogTab extends LitElement {
                           <td style="text-align:center">
                             <input
                               type="checkbox"
+                              aria-label=${`选择日志 ${log.id}`}
                               ?checked=${this.selectedIds.has(log.id)}
                               @change=${() => this._toggleSelect(log.id)}
                             >
                           </td>
                           <td style="white-space:nowrap;font-size:12px;color:var(--muted);text-align:center">
-                            ${this._formatTimeAgo(log.collected_at)}
+                            <time datetime=${log.collected_at} title=${this._formatTime(log.collected_at)}>${this._formatTime(log.collected_at)}</time>
                           </td>
                           <td style="text-align:center">
                             <span class="level-badge level-${log.log_level}">
@@ -845,9 +821,9 @@ export class DatabaseLogTab extends LitElement {
                             <span class="source-label">${this._sourceLabel(log.source)}</span>
                           </td>
                           <td>
-                            <div class="message-cell" @click=${() => this._toggleExpand(log.id)} title=${log.message}>
+                            <button class="message-cell" aria-expanded=${this.expandedId === log.id} aria-label=${`查看日志全文：${log.message}`} @click=${() => this._toggleExpand(log.id)} title=${log.message}>
                               ${this._truncateMessage(log.message)}
-                            </div>
+                            </button>
                           </td>
                           <td style="text-align:center">
                             ${log.detected_patterns && log.detected_patterns.length > 0
@@ -873,16 +849,13 @@ export class DatabaseLogTab extends LitElement {
                 </table>
               </div>
 
-              ${this.total > this.limit
-                ? html`
-                    <div class="pagination">
-                      <button class="btn" ?disabled=${this.offset === 0} @click=${() => { this.offset = Math.max(0, this.offset - this.limit); this.loadLogs(); }}>上一页</button>
-                      <span class="pagination-info">${this.offset + 1} - ${Math.min(this.offset + this.limit, this.total)} / ${this.total}</span>
-                      <button class="btn" ?disabled=${this.offset + this.limit >= this.total} @click=${() => { this.offset += this.limit; this.loadLogs(); }}>下一页</button>
-                    </div>
-                  `
-                : nothing}
             `}
+        ${!this.loading && !this.error && this.total > this.limit ? html`
+          <div class="pagination">
+            <button class="btn" ?disabled=${this.offset === 0} @click=${() => { this.offset = Math.max(0, this.offset - this.limit); void this.loadLogs(); }}>上一页</button>
+            <span class="pagination-info">${this.offset + 1} - ${Math.min(this.offset + this.limit, this.total)} / ${this.total}</span>
+            <button class="btn" ?disabled=${this.offset + this.limit >= this.total} @click=${() => { this.offset += this.limit; void this.loadLogs(); }}>下一页</button>
+          </div>` : nothing}
 
         ${this._renderAnalysisSection()}
       </div>

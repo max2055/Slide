@@ -30,9 +30,12 @@ for (const width of [390, 1280]) {
       </body></html>` }));
     await page.goto('/network-schedule-fixture');
     await expect(page.getByRole('heading', { name: '测试交换机' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '当前需要关注' })).toBeVisible();
+    await expect(page.locator('semantic-metrics')).toHaveCount(0);
+    await page.getByRole('tab', { name: '指标与趋势', exact: true }).click();
     await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
     await expect(page.getByText('模板扩展指标', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '配置备份', exact: true }).click();
+    await page.getByRole('tab', { name: '配置备份', exact: true }).click();
     await expect(page.getByLabel('每日执行时间', { exact: true })).toHaveValue('00:00');
     await expect(page.getByLabel('启用每日定时备份')).toBeChecked();
     await page.getByLabel('每日执行时间', { exact: true }).fill('03:45');
@@ -40,16 +43,19 @@ for (const width of [390, 1280]) {
     await page.getByRole('button', { name: '保存定时设置' }).click();
     await expect.poll(() => writes).toEqual([{ enabled: false, dailyTime: '03:45' }]);
     await page.reload();
-    await page.getByRole('button', { name: '配置备份', exact: true }).click();
+    await page.getByRole('tab', { name: '配置备份', exact: true }).click();
     await expect(page.getByLabel('每日执行时间', { exact: true })).toHaveValue('03:45');
     await expect(page.getByLabel('启用每日定时备份')).not.toBeChecked();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath('network-backup-settings.png'), fullPage: true });
-    const interfacesTab = page.getByRole('button', { name: '接口', exact: true });
+    const interfacesTab = page.getByRole('tab', { name: '接口', exact: true });
     await interfacesTab.click();
     await expect(interfacesTab).toHaveClass(/active/);
-    await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '关联资源', exact: true }).click();
+    await expect(interfacesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('semantic-metrics')).toHaveCount(0);
+    await expect(page.getByText('尚未取得接口记录', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('接口名称或别名', { exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: '关联资源', exact: true }).click();
     await expect(page.getByText('暂无关联资源', { exact: true })).toBeVisible();
   });
 }

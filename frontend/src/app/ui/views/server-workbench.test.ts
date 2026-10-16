@@ -25,9 +25,9 @@ describe("server workbench Phase 142 contract", () => {
     expect(source).toContain('aria-label="Database relation filter"');
   });
 
-  it("has the diagnostic evidence endpoint and expanded server tabs", () => {
+  it("keeps explicit diagnostic collection and expanded server tabs without implicit GET collection", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "./server-detail.ts"), "utf8");
-    expect(source).toContain("/diagnostics");
+    expect(source).not.toContain("/diagnostics`");
     expect(source).toContain("/collect-diagnostics");
     for (const label of ["网络", "进程", "服务", "日志", "关联资源"]) {
       expect(source).toContain(label);

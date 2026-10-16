@@ -16,13 +16,13 @@ async function settle(element: HTMLElement & { updateComplete: Promise<unknown> 
 }
 
 describe("network-device-detail", () => {
-  it('loads metric views only through the semantic Metrics V2 component', async () => {
+  it('keeps overview separate from metric queries', async () => {
     const element = document.createElement('network-device-detail') as any;
     element.deviceId = 4;
     document.body.append(element);
     await settle(element);
 
-    expect(element.querySelector('semantic-metrics[resourceType="network_device"]')).toBeTruthy();
+    expect(element.querySelector('semantic-metrics')).toBeNull();
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/metrics'))).toBe(false);
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(false);
     expect(element.textContent).not.toContain('兼容采集');
@@ -91,7 +91,7 @@ describe("network-device-detail", () => {
   });
   afterEach(() => document.body.replaceChildren());
 
-  it("loads the device overview and exposes semantic interface metrics and backup tabs", async () => {
+  it("loads the overview and exposes interface inventory and backup tabs", async () => {
     const element = document.createElement("network-device-detail") as any;
     element.deviceId = 4;
     document.body.append(element);
@@ -103,8 +103,8 @@ describe("network-device-detail", () => {
     const tab = (label: string) => buttons().find((button) => button.textContent?.trim() === label);
     tab("接口")?.click();
     await settle(element);
-    expect(element.querySelector('semantic-metrics[resourceType="network_device"]')).toBeTruthy();
-    expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(false);
+    expect(element.querySelector('semantic-metrics')).toBeNull();
+    expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(true);
 
     tab("配置备份")?.click();
     await settle(element);
@@ -158,7 +158,7 @@ describe("network-device-detail", () => {
     expect(showToast).toHaveBeenCalledWith("请先编辑网络设备并配置 SSH 用户名和密码或私钥", "error");
   });
 
-  it("binds the interface metric view to the selected network device", async () => {
+  it("binds the interface inventory to the selected network device", async () => {
     const element = document.createElement("network-device-detail") as any;
     element.deviceId = 4;
     document.body.append(element);
@@ -168,10 +168,9 @@ describe("network-device-detail", () => {
     buttons().find((button) => button.textContent?.trim() === "接口")?.click();
     await settle(element);
 
-    const metrics = element.querySelector('semantic-metrics[resourceType="network_device"]') as any;
-    expect(metrics).toBeTruthy();
-    expect(metrics.resourceId).toBe(4);
+    expect(element.querySelector('semantic-metrics')).toBeNull();
+    expect(element.textContent).toContain('GigabitEthernet0/0/1');
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/metrics'))).toBe(false);
-    expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(false);
+    expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(true);
   });
 });

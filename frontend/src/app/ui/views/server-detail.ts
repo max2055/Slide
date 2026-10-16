@@ -1,7 +1,7 @@
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/metric-configuration.js";
-import { returnToDashboard } from './dashboard-model.js';
+import { freshness, runState, type Overview, type OverviewItem, returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
@@ -49,13 +49,13 @@ export class ServerDetailPage extends LitElement {
     .header {
       display:flex;justify-content:space-between;align-items:center;
       flex-wrap:wrap;gap:var(--space-md);min-width:0;
-      margin-bottom:var(--space-xl);padding-bottom:16px;border-bottom:1px solid var(--border);
+      margin-bottom:var(--space-md);padding-bottom:16px;border-bottom:1px solid var(--border);
     }
     .header-left { display:flex;align-items:center;gap:var(--space-lg);min-width:0;flex-wrap:wrap; }
     .header-left .btn svg { width:16px;height:16px;flex-shrink:0; }
     .title-copy { min-width:0; }
 
-    .server-title { font-size:var(--text-2xl);font-weight:600;color:var(--text-strong);overflow-wrap:anywhere; }
+    .server-title { font-size:24px;font-weight:600;color:var(--text-strong);overflow-wrap:anywhere; }
     .server-subtitle { font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);overflow-wrap:anywhere; }
 
     .header-right { display:flex;align-items:center;gap:var(--space-md);min-width:0;flex-wrap:wrap; }
@@ -72,6 +72,14 @@ export class ServerDetailPage extends LitElement {
     .tab:hover { color:var(--text); }
     .tab.active { color:var(--accent-text);border-bottom-color:var(--accent); }
 
+    .overview-grid { display:grid;grid-template-columns:2fr 1fr;gap:var(--space-md); }
+    .overview-grid h2 { margin:0;font-size:16px; }
+    .overview-grid h3 { font-size:14px;color:var(--text-strong); }
+    .overview-grid p { font-size:14px;line-height:1.6;overflow-wrap:anywhere; }
+    .overview-grid section + section { border-top:1px solid var(--border);margin-top:var(--space-md); }
+    .overview-grid .btn { margin:var(--space-xs); }
+    .resource-meta { font-size:12px;color:var(--muted);overflow-wrap:anywhere; }
+    @media(max-width:800px) { .overview-grid { grid-template-columns:minmax(0,1fr); } }
     /* Status section */
     .status-grid {
       display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:var(--space-md);
@@ -125,7 +133,8 @@ export class ServerDetailPage extends LitElement {
       .last-updated { width:100%; }
       .status-grid,.config-grid { grid-template-columns:minmax(0, 1fr); }
       .status-item,.config-item { min-width:0; }
-      .tabs { max-width:100%;flex-wrap:wrap; }
+      .tabs { max-width:100%;flex-wrap:nowrap; }
+      .server-title { font-size:22px; }
       .hosted-instance { grid-template-columns:minmax(0, 1fr);align-items:flex-start; }
       .hosted-badges { justify-content:flex-start; }
       .hosted-instance .btn-ghost { justify-self:start; }
@@ -144,11 +153,37 @@ export class ServerDetailPage extends LitElement {
   @state() private hostedInstancesLoading = false;
   @state() private hostedInstancesError: string | null = null;
   @state() private diagnostics: ServerDiagnosticEvidence | null = null;
-  @state() private diagnosticsLoading = false;
   @state() private diagnosticsError: string | null = null;
   @state() private diagnosticsCollecting = false;
   private _navHandler: ((e: any) => void) | null = null;
   private contextVersion = 0;
+  private overviewRequest = 0;
+  @state() private overview: OverviewItem | null = null;
+  @state() private overviewLoading = false;
+  @state() private overviewError = '';
+  private onPermissionsChanged = () => {
+    ++this.contextVersion; ++this.overviewRequest;
+    this.server = null; this.overview = null; this.hostedInstances = []; this.diagnostics = null;
+    this.loading = false; this.isRefreshing = false; this.diagnosticsCollecting = false; this.diagnosticsError = null;
+    this.error = '权限或登录状态已变更，请重新打开资源。';
+  };
+  private async loadOverview(id: number, version = this.contextVersion) {
+    const request = ++this.overviewRequest;
+    const current = () => version === this.contextVersion && id === this.serverId && request === this.overviewRequest;
+    this.overview = null; this.overviewError = ''; this.overviewLoading = true;
+    try {
+      const response = await authFetch('/api/resources/overview');
+      if (!current()) return;
+      if (!response.ok) throw new Error([401,403].includes(response.status) ? '无权读取资源概览' : '资源概览读取失败');
+      const body: Overview = await response.json();
+      if (!current()) return;
+      const item = body.items?.find(row => row?.resource?.type === 'server' && row.resource.id === id);
+      if (item && (!Array.isArray(item.gaps) || typeof item.status !== 'string' || typeof item.quality !== 'string' || !Number.isFinite(item.unresolvedAlerts))) throw new Error('资源概览格式异常');
+      this.overview = item ?? null;
+      if (!item) this.overviewError = '当前快照未包含此资源，状态无法确认。';
+    } catch (error) { if (current()) this.overviewError = error instanceof Error ? error.message : '资源概览读取失败'; }
+    finally { if (current()) this.overviewLoading = false; }
+  }
 
   override firstUpdated() {
     this._navHandler = (e: any) => {
@@ -158,21 +193,24 @@ export class ServerDetailPage extends LitElement {
       }
     };
     window.addEventListener("slide-navigate", this._navHandler);
+    window.addEventListener('slide-permissions-loaded', this.onPermissionsChanged);
+    window.addEventListener('slide-session-expired', this.onPermissionsChanged);
     this.loadFromUrl();
   }
 
-  override updated(changed: Map<string, unknown>): void {
+  override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("serverId")) {
       const id = this.serverId;
       if (id != null && Number.isInteger(id) && id > 0) {
-        queueMicrotask(() => {
-          if (this.serverId === id) void this.loadServerContext(id);
-        });
-      }
+        void this.loadServerContext(id);
+      } else { this.onPermissionsChanged(); this.error = '服务器 ID 无效'; }
     }
   }
 
   override disconnectedCallback() {
+    ++this.contextVersion; ++this.overviewRequest;
+    window.removeEventListener('slide-permissions-loaded', this.onPermissionsChanged);
+    window.removeEventListener('slide-session-expired', this.onPermissionsChanged);
     super.disconnectedCallback();
     if (this._navHandler) {
       window.removeEventListener("slide-navigate", this._navHandler);
@@ -191,7 +229,9 @@ export class ServerDetailPage extends LitElement {
 
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
-    this.server = null;
+    this.server = null; this.diagnostics = null; this.diagnosticsError = null;
+    this.diagnosticsCollecting = false; this.isRefreshing = false;
+    void this.loadOverview(id, version);
     this.lastUpdated = null; this.detailReadError = '';
     this.error = null;
     this.loading = true;
@@ -203,80 +243,72 @@ export class ServerDetailPage extends LitElement {
   }
 
   private async loadServer(id: number, version = this.contextVersion) {
+    const current = () => version === this.contextVersion && id === this.serverId;
     try {
       const res = await authFetch(`/api/servers/${id}`);
+      if (!current()) return;
       if (res.ok) {
         const server = await res.json();
-        if (version === this.contextVersion) { this.server = server; this.lastUpdated = new Date(); }
+        if (current()) { this.server = server; this.lastUpdated = new Date(); }
       }
       else {
-        if (version === this.contextVersion) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
+        if (current()) this.error = res.status === 401 || res.status === 403 ? '无权读取服务器详情' : '获取服务器详情失败';
       }
     } catch (err: any) {
-      if (version === this.contextVersion) this.error = err.message;
+      if (current()) this.error = err.message;
     }
   }
 
   private async loadHostedInstances(id: number, version = this.contextVersion): Promise<void> {
+    const current = () => version === this.contextVersion && id === this.serverId;
     this.hostedInstances = [];
     this.hostedInstancesLoading = true;
     this.hostedInstancesError = null;
     try {
       const response = await authFetch(`/api/servers/${id}/instances`);
+      if (!current()) return;
       if (!response.ok) {
         throw new Error(response.status === 401 || response.status === 403
           ? "没有权限查看该服务器托管的数据库实例"
           : "托管数据库实例加载失败");
       }
       const data = await response.json() as HostedInstancesResponse;
-      if (version === this.contextVersion) this.hostedInstances = data.instances;
+      if (current()) this.hostedInstances = data.instances;
     } catch (error) {
-      if (version === this.contextVersion) {
+      if (current()) {
         this.hostedInstancesError = error instanceof Error ? error.message : "托管数据库实例加载失败";
       }
     } finally {
-      if (version === this.contextVersion) this.hostedInstancesLoading = false;
-    }
-  }
-
-  private async loadDiagnostics(id: number, version = this.contextVersion): Promise<void> {
-    this.diagnosticsLoading = true;
-    this.diagnosticsError = null;
-    try {
-      const response = await authFetch(`/api/servers/${id}/diagnostics`);
-      if (response.status === 404) {
-        // Older backends may not expose the optional evidence route yet.
-        if (version === this.contextVersion) this.diagnostics = null;
-        return;
-      }
-      if (!response.ok) throw new Error("服务器诊断证据加载失败");
-      const payload = await response.json();
-      const evidence = payload?.evidence ?? payload;
-      if (version === this.contextVersion) this.diagnostics = evidence as ServerDiagnosticEvidence;
-    } catch (error) {
-      if (version === this.contextVersion) {
-        this.diagnosticsError = error instanceof Error ? error.message : "服务器诊断证据加载失败";
-      }
-    } finally {
-      if (version === this.contextVersion) this.diagnosticsLoading = false;
+      if (current()) this.hostedInstancesLoading = false;
     }
   }
 
   private async collectDiagnostics() {
     if (!this.serverId || this.diagnosticsCollecting) return;
+    const id = this.serverId, version = this.contextVersion;
+    const current = () => version === this.contextVersion && id === this.serverId;
     this.diagnosticsCollecting = true;
+    this.diagnosticsError = null;
     try {
-      const response = await authFetch(`/api/servers/${this.serverId}/collect-diagnostics`, { method: "POST" });
+      const response = await authFetch(`/api/servers/${id}/collect-diagnostics`, { method: "POST" });
+      if (!current()) return;
+      const body = await response.json().catch(() => ({}));
+      if (!current()) return;
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "诊断采集失败");
       }
-      await this.loadDiagnostics(this.serverId);
+      // POST already returns the collected evidence. The legacy GET may collect
+      // again on a cache miss, so neither navigation nor this action calls it.
+      if (body.success !== true || !body.diagnostics || body.diagnostics.serverId !== id) throw new Error("诊断采集返回格式异常");
+      this.diagnostics = body.diagnostics as ServerDiagnosticEvidence;
       showToast("诊断证据已更新", "success");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "诊断采集失败", "error");
+      if (current()) {
+        this.diagnosticsError = error instanceof Error ? error.message : "诊断采集失败";
+        showToast(this.diagnosticsError, "error");
+      }
     } finally {
-      this.diagnosticsCollecting = false;
+      if (current()) this.diagnosticsCollecting = false;
     }
   }
 
@@ -287,7 +319,7 @@ export class ServerDetailPage extends LitElement {
     const serverId = this.serverId;
     const version = this.contextVersion;
     const current = () => version === this.contextVersion && serverId === this.serverId;
-    const hostedRefresh = this.loadHostedInstances(serverId, version);
+    const hostedRefresh = Promise.all([this.loadHostedInstances(serverId, version),this.loadOverview(serverId,version)]);
     try {
       const serverRes = await authFetch(`/api/servers/${serverId}`);
       if (!current()) return;
@@ -300,14 +332,15 @@ export class ServerDetailPage extends LitElement {
       if (!current()) return;
       this.server = server;
       this.lastUpdated = new Date();
-      if (["network", "processes", "services", "logs"].includes(this.activeTab)) await this.loadDiagnostics(serverId, version);
+      // The legacy diagnostics GET collects on cache miss/expiry. A page refresh
+      // must retain its original evidence/time instead of triggering collection.
       if (current()) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
     } catch {
       if (current()) this.detailReadError = '服务器详情读取失败';
     }
     finally {
       await hostedRefresh;
-      this.isRefreshing = false;
+      if (current()) this.isRefreshing = false;
     }
   }
 
@@ -352,9 +385,6 @@ export class ServerDetailPage extends LitElement {
   }
   private _applyTab(tab: string) {
     this.activeTab = tab;
-    if (["diagnostics", "network", "processes", "services", "logs"].includes(tab) && this.serverId && !this.diagnostics) {
-      this.loadDiagnostics(this.serverId);
-    }
   }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -400,13 +430,11 @@ export class ServerDetailPage extends LitElement {
           <div class="header-left">
             <button class="btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
             <div class="title-copy">
-              <span class="server-title">${this.server.host}</span>
-              ${this.server.label
-                ? html`<div class="server-subtitle">${this.server.label}</div>`
-                : nothing}
+              <span class="server-title">${this.server.label || this.server.host}</span><div class="resource-meta">${this.server.host}:${this.server.port} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div>
+              
             </div>
-            <app-badge variant=${this._statusBadgeVariant(this.server.status)}>
-              ${this._statusLabel(this.server.status)}
+            <app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>
+              ${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}
             </app-badge>
           </div>
           <div class="header-right">
@@ -420,7 +448,7 @@ export class ServerDetailPage extends LitElement {
         </div>
 
         <resource-investigation-links resourceType="server" .resourceId=${this.serverId ?? this.server.id}></resource-investigation-links>
-        <div class="tabs">
+        <div class="tabs" role="tablist" aria-label="服务器详情页签">
           ${[
             { key: "overview", label: "概览" },
             { key: "collection", label: "采集配置" },
@@ -433,7 +461,7 @@ export class ServerDetailPage extends LitElement {
             { key: "logs", label: "日志" },
             { key: "related", label: "关联资源" },
           ].map(t => html`
-            <button class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
+            <button role="tab" aria-selected=${String(this.activeTab === t.key)} class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
               ${t.label}
             </button>
           `)}
@@ -464,9 +492,10 @@ export class ServerDetailPage extends LitElement {
     return html`
       <app-card>
         <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
+        ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">当前页面尚未取得诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将从服务器采集，需要服务器管理权限。</p>` : nothing}
         <server-diagnostic-panel
           .evidence=${this.diagnostics}
-          .loading=${this.diagnosticsLoading}
+          .loading=${this.diagnosticsCollecting}
           .error=${this.diagnosticsError}
           .sectionFilter=${section}
         ></server-diagnostic-panel>
@@ -489,8 +518,21 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderOverview() {
-    return html`
-      <semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics>
+    const item = this.overview, state = item ? runState(item) : 'unknown';
+    return html`<div class="overview-grid">
+      <app-card><h2 slot="header">当前需要关注</h2>
+        ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
+        ${this.overviewError ? html`<p role="alert">${this.overviewError}</p>` : nothing}
+        <section><h3>${({ normal:'当前观测未提示运行异常', abnormal:'存在需要核对的异常', unavailable:'资源当前不可用', unknown:'当前证据不足以判断运行状态' })[state]}</h3>
+          <p>${item && !item.gaps.includes('ALERTS_UNAVAILABLE') ? `未解决告警 ${item.alertsTruncated ? '至少 ' : ''}${item.unresolvedAlerts} 项。` : '告警证据尚不可用。'} 状态只反映已有观测。</p>
+          <button class="btn" @click=${() => this._setTab('metrics')}>核对指标与时间范围</button>
+          <button class="btn" @click=${() => this._setTab('logs')}>查看系统日志证据</button>
+        </section>
+        <section><h3>证据缺口</h3><p>${!item ? '尚未取得此资源的证据快照。' : freshness(item) !== 'fresh' ? '观测缺失、过期或读取失败，请核对观测时间与采集配置。' : item.quality !== 'good' || item.gaps.length ? '当前证据不完整，请核对指标能力、告警与关联关系。' : '当前快照未报告缺口；不代表已覆盖全部信号。'}</p>
+          <button class="btn" @click=${() => this._setTab('collection')}>查看采集配置</button>
+          ${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}
+        </section>
+      </app-card>
       <app-card>
         <span slot="header">服务器状态</span>
         <div class="status-grid">
@@ -499,7 +541,7 @@ export class ServerDetailPage extends LitElement {
             <div class="status-value">${this.server!.os_type}</div>
           </div>
           <div class="status-item">
-            <div class="status-label">连接状态</div>
+            <div class="status-label">连接状态（登记值）</div>
             <div class="status-value">
               <app-badge variant=${this._statusBadgeVariant(this.server!.status)}>
                 ${this._statusLabel(this.server!.status)}
@@ -513,7 +555,7 @@ export class ServerDetailPage extends LitElement {
         </div>
       </app-card>
 
-      <app-card class="hosted-card">
+      </div><app-card class="hosted-card">
         <span slot="header">托管数据库实例</span>
         ${this._renderHostedInstances()}
       </app-card>

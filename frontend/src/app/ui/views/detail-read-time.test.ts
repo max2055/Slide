@@ -41,7 +41,7 @@ describe.each(['instance', 'server'])('%s detail read time', kind => {
   });
   it('ignores a refresh response after switching resources', async () => {
     const el = detail(kind); let finish!: (value: Response) => void;
-    fetchMock.mockImplementation((url: string) => url.endsWith('/instances') ? Promise.resolve(response({ instances: [] })) : new Promise(resolve => { finish = resolve; }));
+    fetchMock.mockImplementation((url: string) => url.endsWith('/instances') ? Promise.resolve(response({ instances: [] })) : url === '/api/resources/overview' ? Promise.resolve(response({ items: [] })) : new Promise(resolve => { finish = resolve; }));
     const pending = el.refreshCurrentTab();
     if (kind === 'instance') el.instanceId = 2; else { el.serverId = 2; el.contextVersion++; }
     finish(response({ id: 1, host: 'old.invalid' })); await pending;

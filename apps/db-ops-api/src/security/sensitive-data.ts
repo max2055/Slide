@@ -4,6 +4,7 @@ const SENSITIVE_KEY = /(?:password|passwd|pwd|secret|token|api[_-]?key|authoriza
 
 export function redactSensitiveData(value: unknown): unknown {
   if (typeof value === 'string') return redactSensitiveText(value);
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null;
   if (Array.isArray(value)) return value.map(redactSensitiveData);
   if (!value || typeof value !== 'object') return value;
 
