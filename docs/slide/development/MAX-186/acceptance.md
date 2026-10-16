@@ -16,7 +16,7 @@
 
 ## 验证与来源
 
-- 前端1122项单测通过（126文件，dashboard18项）；typecheck通过；build/CSP通过；lint 0错误，251条仓库既有警告，触达源码仅既有 `no-this-alias` 警告。
+- 前端1122项单测通过（126文件，dashboard18项）；typecheck通过；build/CSP通过；lint 0错误，254条非阻断警告，触达源码仅既有 `no-this-alias` 警告。
 - `dashboard-overview.spec.ts` 21项Chromium通过；覆盖1280×720、1440×900、1920×1080、768×1024、390×844，另外24组1280/1440/768/390 × 明暗 × compact/standard/comfortable。测量矩阵使用768/390×900。默认蓝、无整页横向溢出、键盘tab/disclosure/局部滚动、对比度、长名称、权限及状态均有断言。矩阵为HTTP受控响应，完整真实应用壳。
 - `max186-real-service.spec.ts` 1项通过：任务自有隔离MySQL8.4、正式完整Fastify、真实密码登录/JWT/权限与持久化资源读取，搜索刷新、证据页面、返回原筛选。1280/1440/768/390的明暗截图。资源是明确标注的持久化合成夹具，不代表真实目标采集或共享在线验收；没有产品模型调用。
 - 原夹具被Docker OOM终止（exit137、OOMKilled=true），造成一次最终复跑的连接失败；已用512MiB限制、64MiB buffer pool、关闭performance schema的本题夹具恢复，最终服务套件通过。没有修改产品代码处理该环境问题。
