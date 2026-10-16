@@ -41,12 +41,12 @@ describe('relation input and compatibility boundaries', () => {
     expect(projectResourceRelation(value, value.source)).toBe(value); expect(value.relationType).toBe('runs_on');
   });
 
-  it('removes an orphaned downstream edge when its upstream source is withdrawn before send', async () => {
-    const now = new Date('2026-10-16T00:00:00.000Z');
+  it.each(['withdrawn', 'expired'])('removes a path whose upstream becomes %s before send', async state => {
+    let now = new Date('2026-10-16T00:00:00.000Z');
     const edge = (id: string, source: number, target: number): StoredRelation => ({ id, relationId: id, version: 2, schemaVersion: 1,
       source: { type: 'server', id: source }, target: { type: 'server', id: target }, relationType: 'depends_on',
       state: 'confirmed', origin: 'manual', author: { kind: 'user', id: 1 }, contentHash: id.repeat(64), legacyProvenance: null,
-      observedAt: now.toISOString(), validFrom: now.toISOString(), validUntil: null, confirmedBy: 1, confirmedAt: now.toISOString(),
+      observedAt: now.toISOString(), validFrom: now.toISOString(), validUntil: '2026-10-16T00:00:01.000Z', confirmedBy: 1, confirmedAt: now.toISOString(),
       evidence: [{ id: 'source', version: 1, hash: 'a'.repeat(64), validUntil: '2026-10-17T00:00:00.000Z' }], withdrawalReason: null });
     const values = [edge('1', 1, 2), edge('2', 2, 3)];
     const session: RelationSession = {
@@ -59,7 +59,13 @@ describe('relation input and compatibility boundaries', () => {
     let upstreamReads = 0;
     const liveAuth = new OperationsAuthorization({ loadInvestigationActorFrom: async () => actor });
     const graphService = new RelationService({ transaction: work => work(session) }, liveAuth,
-      { check: async (_session, _actor, relation) => relation.id === '1' && ++upstreamReads > 1 ? 'withdrawn' : 'valid' },
+      { check: async (_session, _actor, relation) => {
+        if (relation.id === '1' && ++upstreamReads > 1) {
+          if (state === 'withdrawn') return 'withdrawn';
+          now = new Date(+now + 2000);
+        }
+        return 'valid';
+      } },
       undefined, () => now);
     expect(await graphService.graph(actor, { type: 'server', id: 1 })).toMatchObject({ edges: [], partial: true });
   });

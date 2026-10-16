@@ -185,7 +185,7 @@ export class RelationService {
       }
       // Revalidate exact heads and expiry after all source reads. A late source
       // change or a long traversal must not return a superseded fact.
-      const visible: RelationProjection[] = [];
+      const visible: RelationProjection[] = [], proofExpiry = new Map<string, number>();
       for (const edge of edges) {
         await this.authorize(session, actor, [edge.source, edge.target]);
         const current = await session.head(edge.relationId), sendAt = this.clock();
@@ -193,15 +193,22 @@ export class RelationService {
           || current.state === 'confirmed' && (current.evidence.some(item => Date.parse(item.validUntil) <= +sendAt)
             || await this.evidence.check(session, actor, current, sendAt) !== 'valid')) { partial = true; continue; }
         visible.push(edge);
+        proofExpiry.set(edge.relationId, current.state === 'confirmed'
+          ? Math.min(...current.evidence.map(item => Date.parse(item.validUntil))) : Infinity);
       }
       await this.authorize(session, actor, [root]);
+      // All asynchronous reads are over. Recheck time synchronously so an
+      // evidence lookup spanning the expiry boundary cannot release old facts.
+      const responseAt = +this.clock();
+      const validVisible = visible.filter(edge => +edge.validFrom <= responseAt
+        && (!edge.validUntil || +edge.validUntil > responseAt) && proofExpiry.get(edge.relationId)! > responseAt);
       // A late invalidation can disconnect an already-traversed subtree. Only
       // retain edges reachable from the root through the remaining valid path.
       const reachable = new Set([resourceKey(root)]), retained = new Set<string>();
       let frontier = [root];
       for (let depth = 0; depth < hops && frontier.length; depth++) {
         const next: ResourceRef[] = [];
-        for (const ref of frontier) for (const edge of visible) {
+        for (const ref of frontier) for (const edge of validVisible) {
           const key = resourceKey(ref);
           if (resourceKey(edge.source) !== key && resourceKey(edge.target) !== key) continue;
           retained.add(edge.relationId);
@@ -211,7 +218,7 @@ export class RelationService {
         frontier = next;
       }
       if (retained.size < visible.length) partial = true;
-      return { resource: root, edges: visible.filter(edge => retained.has(edge.relationId)), partial };
+      return { resource: root, edges: validVisible.filter(edge => retained.has(edge.relationId)), partial };
     });
   }
 
