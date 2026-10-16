@@ -34,7 +34,7 @@ test('button consistency across formal resource and governance pages', async ({ 
   ];
   for (const [width, mode, density] of [[1440, 'light', 'standard'], [1440, 'dark', 'standard'], [1440, 'dark', 'compact'], [1440, 'light', 'comfortable'], [390, 'light', 'compact'], [390, 'dark', 'comfortable']] as const) {
     await page.setViewportSize({ width, height: 900 });
-    const preferences = { locale: 'zh-CN', theme: 'claw', themeMode: mode, fontDensity: density, accentColor: '#409eff' };
+    const preferences = { locale: 'zh-CN', theme: 'claw', themeMode: mode, fontDensity: density, accentColor: '#265f99' };
     const saved = await fetch(`http://127.0.0.1:${apiPort}/api/user/preferences`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ preferences }) });
     expect(saved.ok).toBe(true);
     let reference: unknown;

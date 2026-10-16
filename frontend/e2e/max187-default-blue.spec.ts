@@ -178,6 +178,8 @@ test('real overview rows: 600-weight active navigation and 400-weight ordinary e
     await change(page,{themeMode});await page.setViewportSize({width,height:900});
     await page.goto(`${base}/investigations`);
     const create=page.getByRole('button',{name:'创建手动调查',exact:true});await expect(create).toBeVisible();
+    await page.mouse.move(0,0);
+    await expect(create).toHaveCSS('background-color','rgb(38, 95, 153)');
     const primary=await colors(page,'investigations-page .workspace-header .btn-primary');
     expect(primary.background).toEqual([38,95,153]);expect(primary.color).toEqual([255,255,255]);expect(primary.contrast).toBeGreaterThan(4.5);
     await create.click();await expect(page.getByRole('dialog',{name:'创建手动调查',exact:true})).toBeVisible();
