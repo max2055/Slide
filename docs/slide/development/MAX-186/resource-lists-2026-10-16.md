@@ -20,3 +20,16 @@
 本轮不自行切共享前端。只读核验：前端 PID66229、5173，cwd `/Users/max/Coding/40-Slide-max186-acceptance/frontend`，启动命令 `/opt/homebrew/bin/node .../frontend/node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173 --strictPort`，父 PID1，验收树干净，当前 HEAD `7c0f214d00932f616aff518668aa6cba31af5395`。既有 launchd 标识 `gui/501/com.slide.dev.frontend`，日志 `outputs/MAX-186/acceptance-runtime/frontend.log`；操作前仍须重新核验完整进程/日志身份及脏改。
 
 拟更新范围只有该前端验收树与其既有服务，保留原树、日志和 plist；后端及数据不变。Chief 核定确切新 head 和既有授权后再切换；若出现脏改则先保护。最小回退为用同一服务句柄停止候选、干净树切回上述 7c0f214d、原 plist 启动。真实账号操作与业务验收由 Max 本人完成。PR 保持 draft、任务 in_review，不合并/done。
+
+
+## 本轮结果
+
+产品实现提交 `565c92ec`；后续交付文档不改变产品源码，受测文件哈希随附件。
+
+- 前端全量 131 文件 / 1145 项通过（含本轮新增 4 项）；类型检查、build/CSP、contracts:check 及 lint 0 error 通过，lint 254 条既有 warning。
+- 正式隔离服务浏览器测试 1 项通过，三页 × 四明暗/视口组合共 12 组（1920 浅、1440 暗、390 浅/暗）。实测三页名称均为共享 ghost 颜色、桌面列设置与搜索同行，三页仅一个刷新；逐组实际触发原列表端点与 Metrics V2 查询，未产生采集/测试/模型写请求。列选择、恢复默认、键盘 Enter/Esc 与焦点返回通过。
+- 人工查看三页桌面原图及 390 暗色服务器原图：新增序号、名称色、主机去重及紧凑布局符合反馈。窄屏保留表格局部横向滚动，无整页溢出。分页/筛选重编号由共享组件 25 行 DOM 单测覆盖。
+- 首轮全量仅两项旧源码测试因属性顺序失败：保留原资源类型属性顺序后全量通过，未削弱测试。首轮浏览器脚本以 native dialog 为祖先查找 slot 内容超时，改为通过 app-dialog host 查找，产品交互不变；最终完整 12 组通过。失败日志保留。
+- 测试 API/Vite 进程退出 0，独立 schema 查询确认无残留，任务 MySQL 容器已移除。共享 5173/3000 未改动。上一 head 57a593cc 的实际完整 CI 已核 14/14（包括 release-artifact/ci-gate），不能继承为本轮新 head 结论。
+
+复现：`pnpm --filter slide-frontend test`，`pnpm --filter slide-frontend typecheck`，`pnpm --filter slide-frontend build`，`pnpm contracts:check`，`pnpm lint`。任务自有 MySQL 33186 就绪后：`MAX186_ISOLATED_MYSQL=1 MAX186_OUTPUT_DIR=/Users/max/Coding/40-Slide/outputs/MAX-186/resource-feedback/service pnpm --filter slide-frontend exec playwright test --config playwright.max186.config.ts -g 'resource feedback'`。未变共享配色/全控件矩阵沿用上轮有效证据。
