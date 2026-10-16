@@ -168,7 +168,8 @@ test('real overview rows: 600-weight active navigation and 400-weight ordinary e
   await page.mouse.move(0,0);
   await expect(refresh).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
   await expect(refresh).toHaveCSS('border-color','rgba(0, 0, 0, 0)');
-  await refresh.focus();expect((await colors(page,'dashboard-page .btn-refresh')).outline).toBe('solid');
+  await page.keyboard.press('Tab');await refresh.focus();
+  await expect(refresh).toBeFocused();expect((await colors(page,'dashboard-page .btn-refresh')).outline).toBe('solid');
   const reread=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/resources/overview');
   await refresh.press('Enter');expect((await reread).ok()).toBe(true);await expect(refresh).toBeEnabled();
   evidence.push({name:'integrated-overview-actions',evidenceAction,refresh:await colors(page,'dashboard-page .btn-refresh')});
