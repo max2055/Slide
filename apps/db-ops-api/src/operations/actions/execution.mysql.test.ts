@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { ActorContextService, type ActorContext } from '../../auth/actor-context.js';
 import { OperationsAuthorization, OPERATIONS_PERMISSIONS } from '../authorization.js';
 import { operationsContentHash } from '../contracts.js';
@@ -35,6 +35,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
   let receiptReads = 0;
   let preflight: (() => Promise<void>) | undefined,
     send: ((invocation: ActionInvocation) => Promise<unknown>) | undefined;
+  let validateEnvironment: ((c: PlanConnection) => Promise<void>) | undefined;
   const database = `operations_p07_${randomUUID().replaceAll('-', '')}`;
   const options = {
     host: '127.0.0.1',
@@ -200,6 +201,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     sources = new PlanSources({
       validate: async (_c: PlanConnection, p) => {
         if (p.tool.hash !== 'a'.repeat(64)) throw new Error('hash');
+        await validateEnvironment?.(_c);
       },
     });
     approvals = new ActionPlanService(plans, sources, new OperationsAuthorization(), () => flags);
@@ -232,6 +234,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     remoteReceipt = null;
     preflight = undefined;
     send = undefined;
+    validateEnvironment = undefined;
     await sql("UPDATE users SET session_version=1,status='active'");
     await sql('DELETE FROM role_permissions');
     for (const role of [1, 2])
@@ -247,6 +250,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     author = await actor(1);
     reviewer = await actor(2);
   });
+  afterEach(() => vi.restoreAllMocks());
   it('consumes once + unique execution + intent/outbox/job atomically under duplicate requests', async () => {
     const command = await approved();
     const [a, b] = await Promise.all([
@@ -319,6 +323,51 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     await worker.run(e.id, 'worker-c');
     expect(sends).toBe(1);
   });
+  it.each(['slow validation', 'SQL lock wait'])(
+    'R1 rejects expired lease after final %s before any send',
+    async (window) => {
+      const e = await queued();
+      const claim = store.claim.bind(store);
+      vi.spyOn(store, 'claim').mockImplementation((id, owner) => claim(id, owner, 1));
+      let validations = 0;
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => { entered = resolve; });
+      const blocker = window === 'SQL lock wait' ? await pool.getConnection() : null;
+      try {
+        if (blocker) {
+          await blocker.beginTransaction();
+          await blocker.execute('SELECT id FROM workflow_jobs FOR UPDATE');
+        }
+        validateEnvironment = async (c) => {
+          if (++validations !== 2) return;
+          if (blocker) {
+            entered();
+            await c.execute('SELECT id FROM workflow_jobs FOR UPDATE');
+          } else await c.execute('SELECT SLEEP(1.2)');
+        };
+        const running = worker.run(e.id, 'expired-final-check');
+        if (blocker) {
+          await waiting;
+          await blocker.execute('SELECT SLEEP(1.2)');
+          await blocker.commit();
+        }
+        await running;
+      } finally {
+        if (blocker) {
+          await blocker.rollback();
+          blocker.release();
+        }
+      }
+      expect(validations).toBe(2);
+      expect(sends).toBe(0);
+      expect(await state(e)).toMatchObject({ state: 'failed', sentAt: null });
+      await worker.run(e.id, 'redelivery');
+      expect(sends).toBe(0);
+      expect((await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?',
+        [e.approvalId]))[0]).toMatchObject({ status: 'consumed', used_count: 1 });
+      expect(await rows("SELECT * FROM outbox_events WHERE aggregate_id=? AND event_type='operations.action.state' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.state'))='dispatching'", [e.id])).toHaveLength(0);
+    },
+  );
   it('recovers crashed dispatch boundary as unknown and never resends/refunds', async () => {
     const e = await queued(),
       lease = await store.claim(e.id, 'crashed');
