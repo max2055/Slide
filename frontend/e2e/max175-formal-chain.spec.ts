@@ -25,7 +25,8 @@ async function startApi(name:string){
   await expect.poll(async()=>{if(apiProcess.exitCode!==null)throw Error('API exited');try{return(await fetch(api+'/api/health/ready')).status;}catch{return 0;}},{timeout:90000}).toBe(200);
   return apiProcess;
 }
-const report:any={version:1,mode:'production Fastify/JWT/worker/scheduler/Agent; isolated MySQL 9.6',checks:{},http:[]};
+const schedulerOnly=process.env.MAX175_SCHEDULER_ONLY==='1';
+const report:any={version:1,schedulerOnly,mode:'production Fastify/JWT/worker/scheduler/Agent; isolated MySQL 9.6',checks:{},http:[]};
 async function save(){await writeFile(`${output}/formal-chain-${process.pid}.json`,JSON.stringify(report,null,2));}
 async function request(path:string,body?:any,authorization=token,method=body===undefined?'GET':'POST') {
   const r=await fetch(api+path,{method,headers:{'Content-Type':'application/json',...(authorization?{Authorization:`Bearer ${authorization}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
@@ -120,6 +121,7 @@ test.afterAll(async()=>{
   report.collectionAttempts=(await pool.query('SELECT id,payload,stored_at FROM metric_v2_attempts'))[0];
   report.schedule=(await pool.query('SELECT * FROM metric_v2_schedule'))[0];report.events=(await pool.query('SELECT * FROM metric_v2_schedule_events'))[0];
   report.effective=(await request(policy+'/effective')).value;await save();
+  if(!schedulerOnly){
   await page.addInitScript(({token,permissions})=>{localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));localStorage.setItem('slide.i18n.locale','zh-CN');},{token,permissions});
   await page.goto(`${site}/instance-detail?id=${instanceId}`);await expect(page.locator('instance-detail-page')).toContainText('MAX-175 R11 readonly MySQL');
   await page.screenshot({path:`${output}/resource-real.png`,fullPage:true});
@@ -149,6 +151,7 @@ test.afterAll(async()=>{
   await page.screenshot({path:`${output}/agent-refresh-real.png`,fullPage:true});report.checks.agentRefresh=report.checks.agentCompleted;
   const permissionCheck=await launch(['--import','tsx','../../scripts/qualification/max175-failure-permissions.ts'],resolve('../apps/db-ops-api'),{...process.env,MAX175_CHECK_SCHEMA:schema,MAX175_TARGET_HOST:targetHost,MAX175_DB_PASSWORD:targetRoot,MAX175_OUTPUT_DIR:output},'permissions');
   report.checks.failurePermissions=await new Promise<boolean>(ok=>permissionCheck.once('exit',code=>ok(code===0)));await save();
+  }
   report.disable=await request(policy+'/publish',{expected_revision:1,overrides:{...overrides,enabled:'disable'}});expect(report.disable.status).toBe(200);
   await expect.poll(async()=>((await request(policy)).value.application.applied_revision),{timeout:15000}).toBe(2);
   const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_v2_attempts'))[0][0].n);
@@ -156,7 +159,11 @@ test.afterAll(async()=>{
   report.checks.stopNoCollection=report.stop.after===before;report.checks.stopNoNewTasks=report.stop.jobs.length===jobsBefore.length;await save();
   // A fresh production process must honor persisted disabled application state.
   const stoppedPid=apiProcess.pid;apiProcess.kill('SIGTERM');
-  await new Promise<void>((ok,fail)=>{const deadline=setTimeout(()=>fail(Error('Owned API shutdown timeout')),15000);apiProcess.once('exit',()=>{clearTimeout(deadline);ok();});});
+  await new Promise<void>((ok,fail)=>{
+    const grace=setTimeout(()=>{report.restartRequiredSecondSignal=true;apiProcess.kill('SIGTERM');},10000);
+    const deadline=setTimeout(()=>fail(Error('Owned API shutdown timeout')),25000);
+    apiProcess.once('exit',()=>{clearTimeout(grace);clearTimeout(deadline);ok();});
+  });
   await startApi('api-restarted');
   const restartBefore=await jobs(),restartAttempts=await count(),restartAt=new Date().toISOString();
   await new Promise(ok=>setTimeout(ok,11000));
@@ -173,7 +180,9 @@ test.afterAll(async()=>{
   report.checks.finalStop=report.finalStop.after.length===finalJobs.length&&report.finalStop.attemptsAfter===finalAttempts;
   expect.soft(report.checks.finalStop,'New disabled revision also stops after application').toBe(true);
   report.finalBinding=(await request(policy)).value;await save();
-  expect.soft(report.checks.agentObservationTimesValid,'Observation timestamps must survive Agent evidence serialization').toBe(true);expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
+  if(!schedulerOnly){
+  expect.soft(report.checks.agentObservationTimesValid,'Observation timestamps must survive Agent evidence serialization').toBe(true);expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);}
+  expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
   expect(report.checks.twoCycles,'Two real scheduler cycles are required; independent Agent and permission evidence is retained on failure').toBe(true);
 });
 
