@@ -15,6 +15,13 @@ export type ObservationQuality = 'good' | 'degraded' | 'invalid' | 'unknown';
 export interface Observation { resource: ResourceRef; metricId: string; dimensions?: Record<string, string>; value: number | null; observedAt: Date | null; validUntil: Date | null; source: string; quality: ObservationQuality; reason?: string; }
 export function resourceKey(ref: ResourceRef): string { return `${ref.type}:${ref.id}`; }
 
+/** hosts is a view of runs_on, never an independently writable edge. */
+export function projectResourceRelation<T extends ResourceRelation>(relation: T, from: ResourceRef): Omit<T, 'relationType'> & { relationType: ResourceRelationType } {
+  return relation.relationType === 'runs_on' && resourceKey(relation.target) === resourceKey(from)
+    ? { ...relation, source: relation.target, target: relation.source, relationType: 'hosts' }
+    : relation;
+}
+
 export function canonicalDimensions(dimensions?: Record<string, string>): Record<string, string> | undefined {
   if (!dimensions) return undefined;
   const entries = Object.entries(dimensions)
