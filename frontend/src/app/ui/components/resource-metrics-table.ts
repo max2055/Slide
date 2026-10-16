@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -17,6 +17,8 @@ export class ResourceMetricsTable extends LitElement {
   @property({ attribute: false }) entries: ResourceEntry[] = [];
   @property({ attribute: false }) columns: Column[] = [];
   @property() search = '';
+  @property({ type: Number }) refreshVersion = 0;
+  openColumnSettings() { this.columnsOpen = true; }
   @state() private columnsOpen = false;
   private previousSearch = '';
   @state() private page = 1;
@@ -35,7 +37,7 @@ export class ResourceMetricsTable extends LitElement {
     } catch { /* Storage may be unavailable; navigation still works. */ }
   }
   @state() private hiddenColumns: string[] = [];
-  override updated() {
+  override updated(changed: PropertyValues) {
     this.restorePreferences();
     try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns })); } catch { /* Optional preference storage. */ }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
@@ -44,9 +46,9 @@ export class ResourceMetricsTable extends LitElement {
     this.previousSearch = this.search;
     if (searchChanged) this.page = 1;
     if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
-    if (entriesChanged || searchChanged) void this.load();
+    if (entriesChanged || searchChanged || changed.has('refreshVersion')) void this.load(changed.has('refreshVersion'));
   }
-  override disconnectedCallback() { this.generation++; super.disconnectedCallback(); }
+  override disconnectedCallback() { this.generation++; this.setPending(false); super.disconnectedCallback(); }
   private get terms() { return this.search.trim().toLowerCase().split(/\s+/).filter(Boolean); }
   private isCollectionTerm(term: string) {
     return Object.entries(collectionLabels).some(([key, label]) => key !== 'loading' && (label.toLowerCase().includes(term) || key.includes(term)));
@@ -72,7 +74,7 @@ export class ResourceMetricsTable extends LitElement {
     const targets = this.searchesCollection ? this.candidates : this.visible;
     this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
     const queue = targets.filter(e => force || !this.rows.has(e.id));
-    this.pending = queue.length > 0;
+    this.setPending(queue.length > 0);
 
     let cursor = 0;
     const worker = async () => {
@@ -100,7 +102,11 @@ export class ResourceMetricsTable extends LitElement {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
-    if (generation === this.generation) this.pending = false;
+    if (generation === this.generation) this.setPending(false);
+  }
+  private setPending(value: boolean) {
+    this.pending = value;
+    this.dispatchEvent(new CustomEvent('resource-metrics-loading', { detail: value, bubbles: true, composed: true }));
   }
   private metric(entry: ResourceEntry, id: string) {
     const row = this.rows.get(entry.id);
@@ -121,22 +127,20 @@ export class ResourceMetricsTable extends LitElement {
     const metricColumns = this.resourceType === 'instance' ? [{ key: 'database_size', label: '数据库大小', help: '支持范围与统计口径' }, { key: 'uptime', label: '运行时长' }] : this.resourceType === 'server'
       ? [{ key: 'disk', label: '磁盘（挂载点）' }, { key: 'network', label: '网络速率（逐接口）' }]
       : [{ key: 'interfaces', label: '接口摘要' }];
-    const columns = [...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
-    const rows = this.visible.map(entry => {
+    const columns = [{ key: 'row_number', label: '序号', width: '4rem' }, ...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
+    const offset = (Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize))) - 1) * this.pageSize;
+    const rows = this.visible.map((entry, index) => {
       const row = this.rows.get(entry.id);
-      return { ...entry, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
+      return { ...entry, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
         database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
         collection: html`<span>${collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
     });
     return html`<style>${sharedBtnStyles}
-      :host { display:block; min-width:0; max-width:100%; color:var(--text); } .toolbar,.pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin-block:var(--space-md); }
-      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } .link-button { color:var(--accent); background:none; border:none; cursor:pointer; font:inherit; } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; } .btn-sm { gap:var(--space-xs); padding:var(--space-xs) var(--space-sm); } :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    </style><div class="toolbar">
-      <button class="btn" .disabled=${this.pending} @click=${() => this.load(true)}>刷新指标</button>
-      <button class="btn" aria-haspopup="dialog" @click=${() => { this.columnsOpen = true; }}>列设置</button>
-    </div>
+      :host { display:block; box-sizing:border-box; min-width:0; max-width:100%; padding:var(--space-lg); color:var(--text); } .pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin:0 0 var(--space-md); } .pages { margin:var(--space-md) 0 0; } @media(max-width:640px) { :host { padding:var(--space-md); } }
+      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; }  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    </style>
     ${this.resourceType === 'instance' ? html`<app-dialog .open=${this.sizeHelpOpen} size="lg" title="数据库大小：支持范围与统计口径" @app-dialog-close=${() => { this.sizeHelpOpen = false; }}>
       <p>单位使用 B / KiB / MiB / GiB（1024 进制）。读取最近一次已发布采集结果；刷新和翻页只读取指标存储。过期值保留并标注采集时间。</p>
       <p>MySQL 5.7 / 8.0 / 8.4：可见非系统库的表 data_length + index_length，属于估算分配空间；受账号元数据可见范围限制。</p>
@@ -146,7 +150,7 @@ export class ResourceMetricsTable extends LitElement {
       <div slot="footer"><button class="btn" @click=${() => { this.sizeHelpOpen = false; }}>关闭</button></div>
     </app-dialog>` : nothing}
     <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
-      ${columns.filter(c => !['actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
+      ${columns.filter(c => !['row_number', 'actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
       <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
     </app-dialog>
     ${this.pending && this.searchesCollection ? html`<p role="status">正在检查全部搜索资源的采集状态，结果尚未完整。</p>` : nothing}

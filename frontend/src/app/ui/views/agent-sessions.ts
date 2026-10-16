@@ -95,7 +95,7 @@ export class AgentSessionsPage extends AgentListPage<Session> {
     const entries = this.items.filter(s => [s.label, s.key, s.kind, status(s), s.status, s.instance_id].join(' ').toLowerCase().includes(this.query.trim().toLowerCase()) && (this.filter === 'all' || (this.filter === 'unknown' ? !statuses[s.status] : s.status === this.filter)))
       .sort((a, b) => this.sort === 'recent' ? (b.updatedAt ?? -Infinity) - (a.updatedAt ?? -Infinity) || a.key.localeCompare(b.key) : (this.sort === 'name-desc' ? -1 : 1) * (title(a).localeCompare(title(b), 'zh-CN') || a.key.localeCompare(b.key)));
     return html`
-      <header class="page-header"><div><h1>Agent 会话</h1><p class="caption">按名称、状态与最近活跃查找对话，完整消息在详情中查看。</p></div><button class="btn" ?disabled=${this.loading || !!this.deleting} @click=${this.load}>刷新</button></header>
+      <header class="page-header"><div><h1>Agent 会话</h1><p class="caption">按名称、状态与最近活跃查找对话，完整消息在详情中查看。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || !!this.deleting} @click=${this.load}>刷新</button></header>
       ${this.list({ entries, recent: true, placeholder: '查找会话名称、资源标识或状态', empty: '暂无会话', filters: [...Object.entries(statuses), ['unknown', '未知状态']],
         columns: [{ key: 'name', label: '会话与摘要', width: '43%' }, { key: 'status', label: '状态', width: '16%' }, { key: 'updated', label: '最近活跃', width: '22%' }, { key: 'actions', label: '操作', width: '19%' }],
         row: s => ({ name: html`<span class="entity" title=${title(s)}>${title(s)}</span><div class="sub summary">${s.message_count ?? 0} 条消息 · ${s.instance_id == null ? '未关联资源' : `资源 #${s.instance_id}`}</div>`,

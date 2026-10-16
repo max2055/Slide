@@ -441,8 +441,8 @@ export class ServerDetailPage extends LitElement {
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" @click=${() => this._oneClickInspection()} .disabled=${this.isRefreshing}>${icons['clipboard']} 一键巡检</button>
-            <button class="btn-primary" @click=${this.refreshCurrentTab} .disabled=${this.isRefreshing}>
-              ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
+            <button aria-busy=${String(this.isRefreshing)} class="btn btn-refresh" @click=${this.refreshCurrentTab} .disabled=${this.isRefreshing}>
+               刷新
             </button>
           </div>
         </div>

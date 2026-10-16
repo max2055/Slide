@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -101,7 +102,7 @@ export class SemanticMetrics extends LitElement {
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
     const trends = metrics.flatMap(metric => metric.series.map(series => ({ metric, series }))).filter(({series}) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1);
-    return html`<style>${sharedBtnStyles}
+    return html`<style>${sharedFieldStyles}${sharedBtnStyles}
       :host { display:block; min-width:0; color:var(--text); font-size:14px; }
       .actions { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-sm); margin-block:var(--space-md); }
       .actions label { display:grid; gap:var(--space-xs); min-width:0; max-width:100%; font-size:12px; color:var(--muted); }
@@ -129,7 +130,7 @@ export class SemanticMetrics extends LitElement {
         const absolute = this.from || this.to; this.from = ''; this.to = ''; if (!absolute) void this.load();
       }}><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24">最近 24 小时</option></select></label>
       <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
-      <button class="btn" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
+      <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.result ? html`<p class="window">查询窗口：${this.result.window.from} — ${this.result.window.to} · 窗口不代表实际观测时间</p>` : nothing}
     </div>
     ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}

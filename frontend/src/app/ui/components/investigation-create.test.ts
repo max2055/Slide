@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import type { AppDialog } from './app-dialog.ts';
 import { InvestigationCreate } from './investigation-create.ts';
 import { investigationApi, InvestigationApiError } from '../controllers/investigation-api.ts';
 vi.mock('../controllers/investigation-api.ts', async importOriginal => ({ ...await importOriginal<object>(), investigationApi: vi.fn() }));
@@ -54,4 +55,14 @@ it('unknown acceptance retries the same body and idempotency key', async () => {
   await (view as any).submit();
   const [first, retry] = vi.mocked(investigationApi).mock.calls;
   expect(retry).toEqual(first);
+});
+
+it('ignores an outside click without losing the investigation draft', async () => {
+  const view = await form();
+  const dialog = view.querySelector<AppDialog>('app-dialog')!;
+  await dialog.updateComplete;
+  dialog.shadowRoot!.querySelector('.dialog-overlay')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await view.updateComplete;
+  expect(view.open).toBe(true);
+  expect((view.querySelector('[aria-label="调查目标"]') as HTMLInputElement).value).toBe('sensitive goal');
 });

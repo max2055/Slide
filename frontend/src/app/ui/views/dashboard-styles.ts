@@ -1,10 +1,10 @@
 import { css } from 'lit';
 export const dashboardStyles = css`
-  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: var(--accent-text); --btn-ghost-color: var(--muted-strong); --btn-ghost-hover-color: var(--overview-action); --btn-secondary-border: var(--border); }
+  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: var(--accent-text, var(--accent)); }
   * { box-sizing: border-box; }
-  .dashboard-grid { display: grid; gap: var(--space-md); padding-bottom: var(--space-xl); min-width: 0; }
-  h1 { font-size: var(--text-xl); margin: 0; color: var(--text-strong); }
-  h2 { font-size: var(--text-md); margin: 0; }
+  .dashboard-grid { display: grid; gap: var(--space-xl); padding-bottom: var(--space-xl); min-width: 0; }
+  h1 { font-size: calc(var(--text-lg) * 1.5); font-weight: 600; line-height: 1.3; margin: 0; color: var(--text-strong); }
+  h2 { font-size: var(--text-lg); font-weight: 600; line-height: 1.5; margin: 0; color: var(--text-strong); }
   p { margin: var(--space-sm) 0; }
   svg { width: 20px; height: 20px; flex: none; }
   .toolbar, .actions, .filters, .metadata { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); min-width: 0; }
@@ -20,17 +20,25 @@ export const dashboardStyles = css`
   stat-card { min-width: 0; cursor: pointer; font-variant-numeric: tabular-nums; }
   .dashboard__primary { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; gap: var(--space-md); }
   app-card { min-width: 0; }
-  .risk-row { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-sm); row-gap: var(--space-xs); min-width: 0; }
+  .risk-row { padding: var(--space-sm) 0; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-sm); row-gap: var(--space-xs); min-width: 0; }
   .risk-row:last-child { border-bottom: 0; }
   .risk-row.selected { background: var(--accent-subtle); box-shadow: inset 3px 0 var(--overview-action); }
   .risk-identity { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+  .risk-content { min-width: 0; }
   .risk-identity > span { display: flex; color: var(--muted-strong); }
   .resource-name { font-weight: 600; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .risk-identity app-badge { flex: none; }
-  .risk-row > .actions { justify-content: flex-end; gap: 0; }
-  .risk-observation { grid-column: 1 / -1; }
+  .risk-next { align-self: start; white-space: nowrap; color: var(--overview-action); font-weight: 500; }
+  .risk-next svg { width: 14px; height: 14px; }
+  .queue-hint { margin: 0 0 var(--space-xs); }
+  .risk-reasons { margin-top: var(--space-xs); align-items: baseline; }
+  .risk-observation { flex: 1 1 100%; }
+  .risk-observation:not([open]) { flex: 0 0 auto; }
+  .risk-observation summary { padding: 0; color: var(--muted-strong); }
+  .risk-observation[open] summary { margin-bottom: var(--space-xs); }
+  .risk-observation .metadata { align-items: center; }
   .risk-observation time { font-variant-numeric: tabular-nums; }
-  .risk-observation .relation-select { margin-left: auto; }
+
   .health-row { display: grid; gap: var(--space-xs); margin-bottom: var(--space-sm); }
   .health-track { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
   .health-track button { font-variant-numeric: tabular-nums; padding: var(--space-xs); }
@@ -44,7 +52,17 @@ export const dashboardStyles = css`
   .table-scroll { overflow: auto; max-width: 100%; }
   .table-scroll app-data-table { min-width: 760px; }
   .table-scroll td:first-child { max-width: 240px; overflow-wrap: anywhere; }
-  .table-scroll td .actions { min-width: 190px; }
+  .resource-actions { align-items: baseline; flex-wrap: nowrap; }
+  .resource-actions > a, .more-actions summary { white-space: nowrap; }
+  .more-actions summary { color: var(--muted-strong); }
+  .more-actions .actions { flex-direction: column; align-items: stretch; }
+  .table-scroll:focus-visible { outline: 2px solid var(--overview-action); outline-offset: 2px; }
+  .table-scroll .data-table { table-layout: fixed; }
+  .table-scroll .data-table th:first-child { width: 26%; }
+  .table-scroll .data-table th:last-child { width: 19%; }
+  .table-scroll .data-table td { font-size: var(--text-md); vertical-align: top; overflow-wrap: anywhere; }
+  .table-scroll small { font-size: var(--text-sm); }
+  .table-scroll time { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
   input, select { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-sm); max-width: 100%; min-width: 0; }
   .filters app-form-field { flex: 1 1 200px; max-width: 360px; }
   .notice { border-left: 3px solid var(--warn); padding: var(--space-sm); color: var(--text); background: var(--warn-subtle); overflow-wrap: anywhere; }
@@ -57,8 +75,8 @@ export const dashboardStyles = css`
   .skeleton { min-height: 100px; border-radius: var(--radius-md); background: var(--border); opacity: .45; }
   .skeleton.large { min-height: 240px; }
   details > summary { cursor: pointer; padding: var(--space-xs) 0; }
-  :host { font-size: var(--text-base); line-height: 1.5; }
-  app-card::part(root) { border-radius: var(--radius-sm); box-shadow: none; }
+  :host { font-size: var(--text-md); line-height: 1.5; }
+  app-card::part(root) { border-radius: var(--radius-md); box-shadow: none; }
   app-card::part(header), app-card::part(footer) { padding: var(--space-sm) var(--space-md); }
   app-card::part(body) { padding: var(--space-md); }
   app-card:not(#resource-details)::part(footer) { display: none; }
@@ -67,7 +85,7 @@ export const dashboardStyles = css`
   stat-card::part(label), stat-card::part(hint) { color: var(--muted-strong); font-size: var(--text-sm); text-transform: none; letter-spacing: normal; }
   stat-card::part(value) { font-variant-numeric: tabular-nums; }
   stat-card[aria-pressed='true']::part(root) { background: var(--accent-subtle); outline: 1px solid var(--overview-action); outline-offset: -1px; }
-  .btn, .btn-ghost, .btn-primary { min-height: 32px; padding: var(--space-xs) var(--space-sm); font-size: var(--text-sm); }
+  .risk-row .btn-ghost { min-height: var(--control-height-sm); font-size: var(--text-sm); }
   button[aria-pressed='true'] { background: var(--accent-subtle); color: var(--overview-action); }
   .scope-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-lg); align-items: center; border-bottom: 1px solid var(--border); padding-bottom: var(--space-sm); }
   .scope-switch { gap: 0; }
@@ -79,8 +97,7 @@ export const dashboardStyles = css`
   .scope-filters app-form-field::part(label), .capacity-controls app-form-field::part(label) { margin: 0; white-space: nowrap; }
   .scope-filters app-form-field { min-width: 0; }
   .main-panels { display: grid; gap: var(--space-md); min-width: 0; }
-  .main-panels .risk-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .main-panels .risk-row > .actions { grid-row: auto; }
+  .main-panels:empty { display: none; }
   :host { --overview-series-0: var(--accent); --overview-series-1: color-mix(in srgb, var(--accent) 75%, var(--text-strong)); --overview-series-2: color-mix(in srgb, var(--accent) 45%, var(--card)); --overview-series-3: var(--muted-strong); --overview-series-4: color-mix(in srgb, var(--accent) 25%, var(--card)); --overview-series-5: var(--text-strong); }
   .engine-distribution { display: flex; gap: var(--space-lg); align-items: center; min-height: 210px; }
   .engine-pie { width: 160px; height: 160px; border-radius: 50%; flex: none; }
@@ -103,14 +120,15 @@ export const dashboardStyles = css`
   :host app-badge[variant='danger'] { color: color-mix(in srgb, var(--danger) 60%, var(--text-strong)); }
   .collection-summary, .relation-summary { border-top: 1px solid var(--border); padding-top: var(--space-sm); margin-top: var(--space-sm); }
   .relation-source { overflow-wrap: anywhere; }
+  .relation-summary:has(> small:only-child) { border-top: 0; padding-top: 0; margin-top: var(--space-xs); }
+  @media (pointer: fine) and (min-width: 769px) { .health-track .btn-ghost { min-height: 24px; padding-block: 0; font-size: var(--text-sm); } }
   .database-panels { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); align-items: start; gap: var(--space-md); }
   .inventory-empty::part(header), .inventory-empty::part(footer) { display: none; }
   .empty-content { display: flex; flex-direction: column; align-items: center; padding: var(--space-xl) var(--space-md); }
   .empty-content .btn-primary { width: auto; }
   .empty-state-description { color: var(--muted-strong); }
-  @container (max-width: 1000px) { .engine-distribution { flex-wrap: wrap; justify-content: center; } .engine-pie { width: 120px; height: 120px; } .main-panels .risk-row { grid-template-columns: minmax(0, 1fr); } .main-panels .risk-row > .actions { grid-row: 3; } }
-  @container (max-width: 1000px) { .risk-row { grid-template-columns: minmax(0, 1fr); } .risk-row > .actions { grid-row: 3; justify-content: flex-start; } .scope-filters { max-width: none; } }
+  @container (max-width: 1000px) { .engine-distribution { flex-wrap: wrap; justify-content: center; } .engine-pie { width: 120px; height: 120px; } .scope-filters { max-width: none; } }
   @container (max-width: 760px) { .dashboard__stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard__primary, .database-panels { grid-template-columns: minmax(0, 1fr); } .scope-toolbar { align-items: stretch; } .scope-filters { flex-basis: 100%; } }
-  @container (max-width: 420px) { .dashboard__stat-cards { grid-template-columns: minmax(0, 1fr); } .metric-row, .engine-row { grid-template-columns: minmax(0, 1fr) auto; } .metric-row meter, .engine-row meter { display: none; } .scope-filters { flex-wrap: wrap; } .risk-identity { flex-wrap: wrap; } .risk-observation .relation-select { margin-left: 0; } }
-  @media (pointer: coarse), (max-width: 768px) { .btn, .btn-ghost, .btn-primary, .scope-switch .btn, input, select { min-height: 44px; } .scope-switch { width: 100%; } }
+  @container (max-width: 420px) { h1 { font-size: calc(var(--text-lg) * 1.375); } .metric-row, .engine-row { grid-template-columns: minmax(0, 1fr) auto; } .metric-row meter, .engine-row meter { display: none; } .scope-filters { flex-wrap: wrap; } .risk-identity { flex-wrap: wrap; } .risk-row { column-gap: var(--space-xs); } .risk-next { padding-inline: 0; } .risk-next svg { display: none; } }
+  @media (pointer: coarse), (max-width: 768px) { .btn, .btn-primary { min-height: max(44px, var(--control-height)); } .btn-ghost, .scope-switch .btn, input, select, summary { min-height: 44px; } summary { display: list-item; align-content: center; } .scope-switch { width: 100%; } }
 `;

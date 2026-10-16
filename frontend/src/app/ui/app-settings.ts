@@ -14,7 +14,7 @@ import {
 } from "./navigation.ts";
 import { applyDensity, type Density } from "./density.ts";
 import { setFormatSettings } from "./format-config.ts";
-import { applyButtonPalette, type ButtonPalette } from "./btn-palette.ts";
+import { applyButtonPalette, primaryFill, type ButtonPalette } from "./btn-palette.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { loadSettings, saveSettings, UI_SETTINGS_STORAGE_KEY, type UiSettings } from "./storage.ts";
 import { normalizeOptionalString } from "./string-coerce.ts";
@@ -353,6 +353,7 @@ export function applyAccentColor(hex: string) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.style.setProperty("--accent", hex);
+  root.style.setProperty("--accent-solid", primaryFill(hex));
   root.style.setProperty("--primary", hex);
   // Preserve existing custom text colors; the new default is already a text blue.
   root.style.setProperty("--accent-text-light", hex.toLowerCase() === DEFAULT_ACCENT_COLOR

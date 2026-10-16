@@ -1,4 +1,4 @@
-import { DEFAULT_ACCENT_COLOR, accentForeground } from "../accent-color.ts";
+import { DEFAULT_ACCENT_COLOR } from "../accent-color.ts";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Appearance Settings — comprehensive visual personalization.
@@ -10,7 +10,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { i18n, isSupportedLocale, I18nController, t } from "../../i18n/index.ts";
 import { applyAccentColor, applyBorderRadius, applyNavWidth } from "../app-settings.ts";
-import { applyButtonPalette, DEFAULT_PALETTE, type ButtonPalette } from "../btn-palette.ts";
+import { applyButtonPalette, DEFAULT_PALETTE, primaryFill, type ButtonPalette } from "../btn-palette.ts";
 import { applyDensity, type Density } from "../density.ts";
 import { DEFAULT_TAB_OPTIONS, TAB_GROUPS, UTILITY_TABS, titleForTab } from "../navigation.ts";
 import "../components/app-card.js";
@@ -111,7 +111,7 @@ export class AppearanceSettings extends LitElement {
   @state() private notifySeverity: string[] = ["critical", "warning"];
   @state() private defaultModel: string = "";
 
-  @state() private btnPalPrimaryBg: string = DEFAULT_ACCENT_COLOR;
+  @state() private btnPalPrimaryBg: string = DEFAULT_PALETTE.primaryBg;
   @state() private btnPalPrimaryColor: string = DEFAULT_PALETTE.primaryColor;
   @state() private btnPalSecondaryBg: string = "#f1f3f5";
   @state() private btnPalDangerBg: string = DEFAULT_PALETTE.dangerBg;
@@ -190,8 +190,6 @@ export class AppearanceSettings extends LitElement {
       padding-top: var(--space-sm);
       border-top: 1px solid var(--border);
     }
-    .button-preview { font-size: var(--text-xs); padding: var(--space-xs) var(--space-md); }
-    .button-preview.btn-ghost { padding-inline: var(--space-sm); }
     .text-input {
       width: 100%; padding: 6px 10px;
       border: 1px solid var(--border);
@@ -237,8 +235,8 @@ export class AppearanceSettings extends LitElement {
     this.defaultModel = readSettingsField("defaultModel", "");
     // Apply visual state from current settings
     const savedPalette = readSettingsField<Partial<ButtonPalette>>("btnPalette", {});
-    this.btnPalPrimaryBg = savedPalette.primaryBg || this.accent;
-    this.btnPalPrimaryColor = savedPalette.primaryColor || accentForeground(this.accent);
+    this.btnPalPrimaryBg = savedPalette.primaryBg || primaryFill(this.accent);
+    this.btnPalPrimaryColor = savedPalette.primaryColor || DEFAULT_PALETTE.primaryColor;
     this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
     this.btnPalDangerBg = savedPalette.dangerBg || DEFAULT_PALETTE.dangerBg;
     this.btnPalGhostColor = savedPalette.ghostColor || DEFAULT_PALETTE.ghostColor;
@@ -491,6 +489,7 @@ export class AppearanceSettings extends LitElement {
           <div class="button-preview-row" aria-label=${t("appearance.buttonPreview")}>
             <button class="btn-primary button-preview" type="button">${t("appearance.primary")}</button>
             <button class="btn button-preview" type="button">${t("appearance.secondary")}</button>
+            <button class="btn btn-refresh button-preview" type="button">${t("common.refresh")}</button>
             <button class="btn-ghost button-preview" type="button">${t("appearance.inline")}</button>
             <button class="btn-primary btn-danger button-preview" type="button">${t("appearance.danger")}</button>
           </div>

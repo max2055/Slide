@@ -45,7 +45,7 @@ export class SystemEventsPageElement extends LitElement {
     } finally { if (generation === this.generation) this.loading = false; }
   }
   override render() {
-    return html`<div class="actions"><h2>平台异常</h2><button class="btn" ?disabled=${this.loading} @click=${() => void this.load()}>刷新异常</button></div>
+    return html`<div class="actions"><h2>平台异常</h2><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${() => void this.load()}>刷新异常</button></div>
       <p class="muted">持久错误事实与调查结果分别保留；执行完成不表示故障已恢复。</p>
       ${this.loading ? html`<p role="status">正在读取异常…</p>` : nothing}
       ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}

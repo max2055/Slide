@@ -312,14 +312,14 @@
 .usage-pin-btn.active,
 .chart-toggle .toggle-btn.active {
   border-color: var(--accent);
-  background: var(--accent);
-  color: var(--primary-foreground);
+  background: var(--accent-solid);
+  color: var(--accent-solid-foreground);
   font-weight: 600;
   box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .usage-action-btn.usage-primary-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--accent-solid-hover);
   border-color: var(--accent-hover);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent);
 }

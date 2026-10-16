@@ -23,7 +23,7 @@ for (const resourceType of ['instance', 'server', 'network_device']) {
     await page.evaluate(async () => { const { i18n } = await import('/src/app/i18n/index.ts'); await i18n.setLocale('zh-CN'); });
     const overview = page.locator('dashboard-page'); await expect(overview.locator('stat-card')).toHaveCount(4);
     const row = overview.locator(`[data-resource="${resourceType}:${resource.resource.id}"]`);
-    const target = await row.count() ? row.getByRole('link', { name: '查看资源', exact: true }) : overview.locator('app-data-table').getByRole('link', { name: '查看资源', exact: true }).first();
+    const target = await row.count() ? row.locator('.resource-name') : overview.locator('app-data-table td:first-child a').first();
     console.info(resourceType, 'opening detail'); await target.click();
     await expect(page).toHaveURL(new RegExp(`(?:id|networkDeviceId)=${resource.resource.id}`));
     // The existing detail back control must return to the original overview.

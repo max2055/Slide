@@ -149,7 +149,7 @@ export class AgentToolAuditPage extends LitElement {
 
   override render() {
     return html`
-      <div class="page-header"><div><h1>Agent 审计</h1><p>查看模型工具发现、执行决策和脱敏后的结果记录</p></div><button class="btn-icon" title="刷新" aria-label="刷新" @click=${() => this.load()} .disabled=${this.loading}>${icons.refresh}</button></div>
+      <div class="page-header"><div><h1>Agent 审计</h1><p>查看模型工具发现、执行决策和脱敏后的结果记录</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${() => this.load()} .disabled=${this.loading}>刷新</button></div>
       <app-card>
         <span slot="header">筛选</span>
         <div class="filters">

@@ -23,7 +23,7 @@ export class AppBadge extends LitElement {
         app-badge {
           display: inline-flex; align-items: center; gap: 5px;
           padding: 3px 10px; border-radius: var(--radius-full);
-          font-size: 11px; font-weight: 600; white-space: nowrap;
+          font-size: var(--text-xs); font-weight: 600; white-space: nowrap;
           line-height: 1; letter-spacing: 0.01em;
         }
         app-badge::before {

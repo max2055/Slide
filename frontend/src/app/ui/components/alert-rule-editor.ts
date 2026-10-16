@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Alert rule create/edit form modal.
  * Uses <app-dialog size="lg"> with <app-form-field> for structured inputs.
@@ -35,7 +36,7 @@ interface AlertRule {
 
 @customElement("alert-rule-editor")
 export class AlertRuleEditor extends LitElement {
-  static styles = css`
+  static styles = [sharedFieldStyles, css`
     .form-input {
       width: 100%;
       padding: var(--space-sm) var(--space-md);
@@ -53,10 +54,10 @@ export class AlertRuleEditor extends LitElement {
       box-shadow: var(--focus-ring);
     }
     .active {
-      background: var(--accent) !important;
-      color: var(--accent-foreground) !important;
+      background: var(--accent-solid) !important;
+      color: var(--accent-solid-foreground) !important;
     }
-  `;
+  `];
   @property({ type: Object }) rule: AlertRule | null = null;
   @property({ type: Boolean }) open = false;
   @property({ type: Array }) metricRegistry: any[] = [];
@@ -160,8 +161,8 @@ export class AlertRuleEditor extends LitElement {
 
         <app-form-field label="目标类型" required>
           <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
-            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'instance' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => { this._update('target_type', 'instance'); if (f.server_id) this._update('server_id', null); }}>实例</button>
-            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'server' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => { this._update('target_type', 'server'); if (f.db_types || f.instance_ids) this._update('db_types', null); this._update('instance_ids', null); }}>服务器</button>
+            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'instance' ? 'background:var(--accent-solid);color:var(--accent-solid-foreground);' : ''}" @click=${() => { this._update('target_type', 'instance'); if (f.server_id) this._update('server_id', null); }}>实例</button>
+            <button style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${(f.target_type||'instance') === 'server' ? 'background:var(--accent-solid);color:var(--accent-solid-foreground);' : ''}" @click=${() => { this._update('target_type', 'server'); if (f.db_types || f.instance_ids) this._update('db_types', null); this._update('instance_ids', null); }}>服务器</button>
           </div>
         </app-form-field>
 
@@ -215,8 +216,8 @@ export class AlertRuleEditor extends LitElement {
 
         <app-form-field label="阈值类型">
           <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
-            <button class="${f.threshold_type === 'static' ? 'active' : ''}" style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${f.threshold_type === 'static' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => this._update('threshold_type', 'static')}>静态</button>
-            <button class="${f.threshold_type === 'dynamic' ? 'active' : ''}" style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${f.threshold_type === 'dynamic' ? 'background:var(--accent);color:var(--accent-foreground);' : ''}" @click=${() => this._update('threshold_type', 'dynamic')}>动态</button>
+            <button class="${f.threshold_type === 'static' ? 'active' : ''}" style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${f.threshold_type === 'static' ? 'background:var(--accent-solid);color:var(--accent-solid-foreground);' : ''}" @click=${() => this._update('threshold_type', 'static')}>静态</button>
+            <button class="${f.threshold_type === 'dynamic' ? 'active' : ''}" style="flex:1;padding:var(--space-sm) var(--space-lg);border:none;background:var(--secondary);color:var(--text);font-size:var(--text-base);font-weight:500;cursor:pointer;${f.threshold_type === 'dynamic' ? 'background:var(--accent-solid);color:var(--accent-solid-foreground);' : ''}" @click=${() => this._update('threshold_type', 'dynamic')}>动态</button>
           </div>
           ${f.threshold_type === 'dynamic' ? html`<div style="font-size:var(--text-sm);color:var(--muted);margin-top:var(--space-xs);">阈值由基线算法自动计算</div>` : ''}
         </app-form-field>

@@ -1,4 +1,5 @@
 import "../components/resource-metrics-table.js";
+import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import "../components/app-card.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
@@ -254,7 +255,6 @@ export class InstancesPage extends LitElement {
       letter-spacing: 0.05em;
     }
 
-
     .indicator {
       width: 6px;
       height: 6px;
@@ -324,7 +324,6 @@ export class InstancesPage extends LitElement {
       color: var(--muted);
     }
 
-
     .form-group {
       margin-bottom: var(--space-lg);
     }
@@ -342,7 +341,6 @@ export class InstancesPage extends LitElement {
     .instance-form app-form-field {
       margin-bottom: 0;
     }
-
 
     .form-label {
       display: block;
@@ -540,6 +538,12 @@ export class InstancesPage extends LitElement {
     super.disconnectedCallback();
   }
 
+  @state() private metricRefreshVersion = 0;
+  @state() private metricsLoading = false;
+  private openColumnSettings() {
+    this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
+  }
+
   override firstUpdated() {
     this.loadInstances();
   }
@@ -549,6 +553,7 @@ export class InstancesPage extends LitElement {
       const res = await authFetch("/api/database/instances");
       if (!res.ok) throw new Error("Failed to load instances");
       this.instances = await res.json();
+      this.metricRefreshVersion++;
       this.loading = false;
     } catch (err: any) {
       this.error = err.message;
@@ -636,7 +641,7 @@ export class InstancesPage extends LitElement {
     return html`
       <div class="page">
         <!-- 实例列表卡片 -->
-        <app-card>
+        <app-card .compact=${true}>
           <div class="toolbar resource-toolbar">
             <div class="search-box">
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
@@ -668,11 +673,12 @@ export class InstancesPage extends LitElement {
               </button>
             </div>
             <div class="toolbar-actions">
+              <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${filtered.length === 0}>列设置</button>
               ${this.activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this.resetFilters}>重置筛选</button>`
                 : nothing}
-              <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this.refreshing} @click=${this.refreshInstances}>
-                ${icons['refresh']} 刷新
+              <button aria-busy=${String(this.refreshing || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.refreshing || this.metricsLoading} @click=${this.refreshInstances}>
+                 刷新
               </button>
               <button class="btn-primary resource-action resource-action--add" type="button" @click=${() => this._addInstance()}>
                 ${icons['plus']} 添加实例
@@ -687,7 +693,7 @@ export class InstancesPage extends LitElement {
               : nothing}
           </div>
 
-          <resource-metrics-table resourceType="instance" .search=${this.searchQuery}
+          <resource-metrics-table resourceType="instance" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
             .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '健康' }, { key: 'actions', label: '操作' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, inst.health_status, ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[inst.health_status] ?? "未知"],
@@ -1213,7 +1219,7 @@ export class InstancesPage extends LitElement {
         </div>
         <div slot="footer" style="justify-content:center;display:flex;gap:var(--space-md)">
           <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete} style="background:var(--danger);color:white;border-color:var(--danger);">确认删除</button>
+          <button class="btn danger" @click=${this._handleDelete} >确认删除</button>
         </div>
       </app-dialog>
     `;

@@ -39,7 +39,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
       ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
         <p class="muted">原结果不补跑；根因与恢复尚未验证。</p><pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre>` : nothing}
       <button class="btn evidence-toggle" @click=${options.onEvidence}>查看证据与成果</button>
-      <button class="btn" ?disabled=${controller.busy} @click=${() => void controller.select(detail.id)}>刷新调查</button>
+      <button aria-busy=${String(controller.busy)} class="btn btn-refresh" ?disabled=${controller.busy} @click=${() => void controller.select(detail.id)}>刷新调查</button>
       ${active ? html`<button class="btn" ?disabled=${controller.busy || controller.operationForbidden || controller.cancelRequested || !controller.online}
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}

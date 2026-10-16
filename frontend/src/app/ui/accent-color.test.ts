@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { accentForeground } from './accent-color.ts';
 import { applyAccentColor } from './app-settings.ts';
-import { DEFAULT_PALETTE } from './btn-palette.ts';
+import { DEFAULT_PALETTE, primaryFill } from './btn-palette.ts';
 
 describe('accent text and filled-control contrast', () => {
   it('does not darken the default twice and clears its text override for a custom color', () => {
@@ -19,6 +19,7 @@ describe('accent text and filled-control contrast', () => {
 
   it('uses a white default palette foreground and adapts custom accent controls', () => {
     expect(DEFAULT_PALETTE.primaryBg).toBe('#265f99');
+    expect(primaryFill('#265f99')).toBe('#265f99');
     expect(DEFAULT_PALETTE.primaryColor).toBe('#ffffff');
     expect(accentForeground('#14b8a6')).toBe('#000000');
     expect(accentForeground('#123456')).toBe('#ffffff');

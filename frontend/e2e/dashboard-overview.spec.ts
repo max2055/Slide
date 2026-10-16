@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 async function fixture(page: Page, options: { emptyNetwork?: boolean; overviewFailure?: boolean; longName?: boolean; relations?: 'empty' | 'failed'; permissions?: string[] } = {}) {
   await page.addInitScript((permissions) => {
@@ -151,7 +152,7 @@ for (const type of ['server', 'network_device']) {
   test(`direct ${type} detail resolves ID and returns the original overview`, async ({ page }) => {
     await fixture(page); await page.goto(`/dashboard?scope=${type}`);
     const view = page.locator('dashboard-page');
-    await view.locator('.risk-row').first().getByRole('link', { name: '查看资源', exact: true }).click();
+    await view.locator('.risk-row').first().locator('.resource-name').click();
     const detail = page.locator(type === 'server' ? 'server-detail' : 'network-device-detail');
     await expect(detail).toContainText(type === 'server' ? '10.0.0.2' : 'Core switch');
     await detail.getByRole('button', { name: type === 'server' ? '返回列表' : '网络设备', exact: true }).click();
@@ -165,6 +166,7 @@ for (const relations of ['empty', 'failed'] as const) {
     const control = await fixture(page, { relations }); await page.goto('/dashboard');
     const view = page.locator('dashboard-page'); const row = view.locator('.risk-row').first();
     await expect(view.locator('#risk-relations')).toContainText('选择风险');
+    await row.locator('summary').click();
     await row.getByRole('button', { name: /关联资源/ }).click();
     await expect(row).toHaveClass(/selected/);
     await expect(row.getByRole('button', { name: /关联资源/ })).toHaveAttribute('aria-pressed', 'true');
@@ -189,7 +191,10 @@ test('long risk names wrap without hiding actions', async ({ page }) => {
   const rows = page.locator('dashboard-page .risk-row'); await expect(rows).toHaveCount(5);
   for (const row of await rows.all()) {
     await expect(row.getByRole('link', { name: '查看证据', exact: true })).toBeVisible();
-    await expect(row.getByRole('link', { name: '只读诊断', exact: true })).toBeVisible();
+    await expect(row.locator('.resource-name')).toBeVisible();
+    await row.locator('summary').focus(); await page.keyboard.press('Enter');
+    await expect(row.locator('time')).toBeVisible();
+    await expect(row.getByRole('button', { name: /关联资源/ })).toBeVisible();
     expect(await row.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   }
 });
@@ -220,4 +225,76 @@ test('database pie and total trend follow the filtered inventory', async ({ page
   // The selected single-instance mode remains available alongside the default total.
   const selected = page.waitForResponse(response => response.url().includes('capacity-trend') && response.url().includes('instance_id=2'));
   await view.getByRole('combobox', { name: '统计范围', exact: true }).selectOption('2'); await selected;
+});
+
+
+test('risk actions and full-width evidence table preserve keyboard access', async ({ page }) => {
+  await fixture(page, { permissions: ['servers:view'] }); await page.setViewportSize({ width: 1440, height: 900 }); await page.goto('/dashboard');
+  const view = page.locator('dashboard-page'); const row = view.locator('.risk-row').first();
+  await expect(row.getByRole('link')).toHaveCount(2); // resource name and the next action
+  await expect(row.locator('.risk-reasons')).toContainText('未解决告警: 1');
+  const table = view.locator('#resource-details');
+  const bounds = await view.evaluate(element => ({ page: element.getBoundingClientRect().width, table: element.shadowRoot!.querySelector('#resource-details')!.getBoundingClientRect().width }));
+  expect(bounds.table).toBeCloseTo(bounds.page, 0);
+  const actions = table.locator('.more-actions').first(); await actions.locator('summary').focus(); await page.keyboard.press('Enter');
+  await expect(actions.getByRole('link', { name: '查看资源', exact: true })).toBeVisible();
+  await expect(actions.getByRole('button', { name: '只读诊断', exact: true })).toBeDisabled();
+  await page.keyboard.press('Enter'); await expect(actions).not.toHaveAttribute('open', '');
+  await table.getByRole('region', { name: '资源明细与证据' }).focus(); await expect(table.getByRole('region')).toBeFocused();
+});
+
+test('loading, successful empty snapshot, unknown data and revoked access remain distinct', async ({ page }, testInfo) => {
+  await fixture(page);
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  let state = 'loading';
+  const now = new Date().toISOString();
+  await page.route('**/api/resources/overview', async route => {
+    if (state === 'loading') { await wait; return route.fulfill({ json: { collectedAt: now, dataQuality: 'complete', items: [] } }); }
+    if (state === 'revoked') return route.fulfill({ status: 403, json: { error: 'FORBIDDEN' } });
+    if (state === 'failure') return route.fulfill({ status: 503, json: { error: 'UNAVAILABLE' } });
+    return route.fulfill({ json: { collectedAt: now, dataQuality: 'partial', items: [{ resource: { type: 'server', id: 91 }, label: '未知状态 · 告警读取失败', status: 'active', quality: 'unknown', freshness: 'missing', observedAt: null, unresolvedAlerts: 0, impactScope: [], gaps: ['ALERTS_UNAVAILABLE'] }] } });
+  });
+  await page.goto('/dashboard'); const view = page.locator('dashboard-page');
+  await expect(view.locator('.skeleton')).toHaveCount(5);
+  await page.screenshot({ path: testInfo.outputPath('controlled-loading.png') });
+  release(); await expect(view.locator('.inventory-empty')).toContainText('尚未纳管');
+  await expect(view).not.toContainText('当前观测未发现异常');
+  await page.screenshot({ path: testInfo.outputPath('controlled-empty.png') });
+  state = 'unknown'; await view.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(view.locator('.risk-row')).toContainText('数据不可用');
+  await expect(view.locator('.risk-row')).toContainText('未知');
+  await expect(view.locator('stat-card').nth(2)).toHaveAttribute('aria-label', '未解决告警 —');
+  await page.screenshot({ path: testInfo.outputPath('controlled-unknown-alerts-unavailable.png') });
+  state = 'revoked'; await view.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(view.locator('.risk-row')).toHaveCount(0); await expect(view.locator('stat-card')).toHaveCount(0);
+  await expect(view.getByRole('alert')).toContainText('当前账号无此类资源查看权限');
+  await page.screenshot({ path: testInfo.outputPath('controlled-revoked.png') });
+  state = 'failure'; await page.reload(); await expect(view.getByRole('alert')).toContainText('503');
+  await expect(view.locator('stat-card')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('controlled-initial-failure.png') });
+});
+
+test('R1.1 typography and user density across the viewport and theme matrix', async ({ page }, testInfo) => {
+  await fixture(page); await page.goto('/dashboard'); const view = page.locator('dashboard-page'); await expect(view.locator('.risk-row')).toHaveCount(5);
+  const measurements = [];
+  for (const width of [1280, 1440, 768, 390]) for (const mode of ['light', 'dark']) for (const density of ['compact', 'standard', 'comfortable']) {
+    await page.setViewportSize({ width, height: width === 1280 ? 720 : 900 });
+    await page.evaluate(async ({ mode, density }) => {
+      document.documentElement.dataset.themeMode = mode;
+      const { applyDensity } = await import('/src/app/ui/density.ts'); applyDensity(density as any);
+    }, { mode, density });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const sizes = await view.evaluate(element => {
+      const root = element.shadowRoot!;
+      const font = (selector: string) => parseFloat(getComputedStyle(root.querySelector(selector)!).fontSize);
+      return { title: font('h1'), section: font('h2'), body: font('.resource-name'), auxiliary: font('.metadata'), rowHeight: root.querySelector('.risk-row')!.getBoundingClientRect().height, accent: getComputedStyle(element).getPropertyValue('--accent').trim() };
+    });
+    if (density === 'standard') { expect(sizes.title).toBe(width === 390 ? 22 : 24); expect(sizes.section).toBe(16); expect(sizes.body).toBe(14); expect(sizes.auxiliary).toBe(12); }
+    if (width >= 1280 && density === 'standard') expect(sizes.rowHeight).toBeLessThan(85);
+    measurements.push({ viewport: page.viewportSize(), mode, density, source: 'controlled overview responses in real application shell', ...sizes });
+    await view.evaluate((element: any) => { element.scrollingParent().scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath(`controlled-${width}-${mode}-${density}.png`), animations: 'disabled' });
+  }
+  await writeFile(testInfo.outputPath('layout-measurements.json'), JSON.stringify(measurements, null, 2));
 });

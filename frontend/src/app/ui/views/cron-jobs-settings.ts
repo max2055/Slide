@@ -282,7 +282,7 @@ export class CronJobsSettings extends LitElement {
     .cron-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .cron-preset-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font-size: 11px; font-family: inherit; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; }
     .cron-preset-chip:hover { color: var(--text); border-color: var(--accent); }
-    .cron-preset-chip.active { color: var(--accent-foreground, #fff); background: var(--accent); border-color: var(--accent); }
+    .cron-preset-chip.active { color: var(--accent-solid-foreground); background: var(--accent-solid); border-color: var(--accent); }
     .cron-preset-expr { font-family: var(--mono, monospace); font-size: 10px; opacity: 1; }
 
 

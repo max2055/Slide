@@ -149,7 +149,7 @@ export function renderSessions(props: SessionsProps) {
               : "Active session keys and per-session overrides."}
           </div>
         </div>
-        <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
+        <button aria-busy=${String(props.loading)} class="btn btn-refresh" ?disabled=${props.loading} @click=${props.onRefresh}>
           ${props.loading ? t("common.loading") : t("common.refresh")}
         </button>
       </div>

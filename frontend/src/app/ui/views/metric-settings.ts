@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -84,7 +85,7 @@ export class MetricSettings extends LitElement {
   private canEditGroup() { return this.groupManage && this.groupLoaded; }
   render() {
     const c = this.catalog;
-    return html`<style>${MetricSettings.componentStyles.map(s => s.cssText).join('\n')}
+    return html`<style>${sharedFieldStyles}${MetricSettings.componentStyles.map(s => s.cssText).join('\n')}
       small { display:block;color:var(--muted);overflow-wrap:anywhere; } :focus-visible { outline:2px solid var(--accent); }
     </style>${this.error ? html`<app-notice role="alert">${this.error}</app-notice>` : nothing}
     ${this.view === 'legacy' ? html`<metric-registry-viewer></metric-registry-viewer>` : this.view === 'policies' ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><h2 slot="header">指标目录</h2><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>

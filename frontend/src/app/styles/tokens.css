@@ -142,10 +142,16 @@
   /* Layout */
   --shell-nav-width: 258px;
 
+  --control-height: 40px;
+  --control-height-sm: 28px;
+
   /* Button tokens — driven by appearance settings */
-  --btn-primary-bg: var(--accent);
-  --btn-primary-color: var(--accent-foreground, #fff);
-  --btn-primary-border: var(--accent);
+  --accent-solid: #265f99;
+  --accent-solid-foreground: #fff;
+  --accent-solid-hover: color-mix(in srgb, var(--accent-solid) 92%, black);
+  --btn-primary-bg: var(--accent-solid);
+  --btn-primary-color: #fff;
+  --btn-primary-border: var(--accent-solid);
   --btn-secondary-bg: var(--secondary);
   --btn-secondary-color: var(--text);
   --btn-secondary-border: var(--border);

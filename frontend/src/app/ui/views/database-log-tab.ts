@@ -102,28 +102,9 @@ export class DatabaseLogTab extends LitElement {
       border-color: var(--border-strong);
     }
 
-    .btn {
-      padding: 6px 14px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border);
-      background: var(--card);
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
-    }
-
     .btn:hover:not(:disabled) { background: var(--bg-secondary); }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .btn.primary {
-      background: var(--accent);
-      color: var(--accent-foreground, #fff);
-      border-color: var(--accent);
-    }
-
-    .btn.primary:hover:not(:disabled) { background: var(--accent-hover, #2563eb); }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-solid-hover); }
 
     .table-container {
       overflow-x: auto;
@@ -721,7 +702,7 @@ export class DatabaseLogTab extends LitElement {
         <div class="header">
           <h2>数据库日志</h2>
           <div class="header-actions">
-            <button class="btn" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
+            <button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
             <button
               class="btn-primary"
               ?disabled=${this.selectedIds.size === 0 || this.analysisLoading || this.accessInvalidated}

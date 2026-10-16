@@ -154,7 +154,7 @@ export class ApprovalDashboard extends LitElement {
     .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
     .sql-preview { font-family: var(--mono, monospace); font-size: var(--text-sm); padding: var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 80px; }
     .actions { display: flex; gap: var(--space-sm); margin-top: 12px; }
-    .btn { padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-sm); font-size: var(--text-base); cursor: pointer; border: 1px solid var(--border, #e5e7eb); background: var(--card, #fff); color: var(--text, #3c3c43); }
+
     .btn-approve { background: var(--ok-subtle, #ecfdf5); color: var(--ok, #22c55e); border-color: var(--ok, #22c55e); }
     .btn-reject { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); border-color: var(--danger, #ef4444); }
     .batch-bar { display: flex; align-items: center; gap: var(--space-md); height: 48px; padding: 0 var(--space-lg); margin-bottom: 12px; background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); animation: fade-in 0.2s ease; }
@@ -173,7 +173,6 @@ export class ApprovalDashboard extends LitElement {
     .back-link { color: var(--accent-text); cursor: pointer; font-size: var(--text-md); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
     .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0; }
-
 
     .error-box { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: 12px; }
     .detail-split { display: grid; grid-template-columns: 1fr 360px; gap: 32px; align-items: start; }
@@ -624,7 +623,7 @@ export class ApprovalDashboard extends LitElement {
       }
     }
     return html`
-      <div class="page-head"><div><h1>${this.filter === 'processed' ? '审批历史' : '待审批'}</h1><p class="caption">${this.filter === 'processed' ? '先看目标、风险与结果，完整 SQL、分析和错误按需查看。' : '核对 SQL、目标资源与风险后，再决定是否批准及执行。'}</p></div><button class="btn" ?disabled=${this.loading} @click=${this.loadRequests}>刷新</button></div>
+      <div class="page-head"><div><h1>${this.filter === 'processed' ? '审批历史' : '待审批'}</h1><p class="caption">${this.filter === 'processed' ? '先看目标、风险与结果，完整 SQL、分析和错误按需查看。' : '核对 SQL、目标资源与风险后，再决定是否批准及执行。'}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${this.loadRequests}>刷新</button></div>
       <div class="tabs" aria-label="审批分类">
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" aria-pressed=${this.filter === 'pending'} @click=${() => this.switchFilter('pending')}>待审批</button>
         <button class="tab ${this.filter === 'processed' ? 'active' : ''}" aria-pressed=${this.filter === 'processed'} @click=${() => this.switchFilter('processed')}>审批历史</button>
@@ -895,7 +894,7 @@ export class ApprovalDashboard extends LitElement {
   private _renderBatchDialog() {
     if (!this.batchDialogOpen) return nothing;
     return html`
-      <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${!this.batchLoading} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
+      <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${false} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
         <div style="margin-bottom:12px;font-size:var(--text-md);color:var(--text, #3c3c43);">
           确认对选中的 <strong>${this.batchIds.length}</strong> 项请求执行${this.batchAction === 'approve' ? '通过' : '驳回'}操作？
         </div>

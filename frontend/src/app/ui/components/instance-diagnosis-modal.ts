@@ -22,25 +22,7 @@ export class InstanceDiagnosisModal extends LitElement {
     .empty-state { text-align: center; padding: 40px; }
     .empty-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); margin-bottom: var(--space-sm); }
     .empty-desc { font-size: var(--text-md); color: var(--muted); margin-bottom: var(--space-lg); }
-    .btn-primary {
-      display: inline-flex; align-items: center; gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-xl);
-      background: var(--accent); color: var(--accent-foreground);
-      border: none; border-radius: var(--radius-sm);
-      font-size: var(--text-md); font-weight: 500;
-      cursor: pointer; transition: all 0.15s ease;
-    }
-    .btn-primary:hover { opacity: 0.9; }
-    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
-    .btn-ghost {
-      display: inline-flex; align-items: center; gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-lg);
-      background: transparent; color: var(--accent-text);
-      border: 1px solid var(--accent); border-radius: var(--radius-sm);
-      font-size: var(--text-md); font-weight: 500;
-      cursor: pointer; transition: all 0.15s ease;
-    }
-    .btn-ghost:hover { background: var(--accent-subtle); }
+
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner {
       display: inline-block;
@@ -177,7 +159,7 @@ export class InstanceDiagnosisModal extends LitElement {
     if (!this.loading) {
       return html`
         <div slot="footer">
-          <button class="btn-primary" style="background:transparent;color:var(--muted);border:1px solid var(--border);" @click=${this._close}>关闭</button>
+          <button class="btn" @click=${this._close}>关闭</button>
         </div>
       `;
     }

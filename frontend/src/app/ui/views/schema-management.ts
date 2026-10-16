@@ -72,7 +72,6 @@ export class SchemaManagementPage extends LitElement {
 
     .page { padding: 0; }
 
-
     .toolbar {
       display: flex;
       align-items: center;
@@ -81,31 +80,6 @@ export class SchemaManagementPage extends LitElement {
       border-bottom: 1px solid var(--border);
       background: var(--bg-elevated);
       flex-wrap: wrap;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-md);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-      border: 1px solid var(--border);
-      background: var(--secondary);
-      color: var(--text);
-    }
-
-    .btn:hover {
-      background: var(--bg-hover);
-      border-color: var(--border-strong);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
     }
 
     .select {
@@ -609,7 +583,7 @@ export class SchemaManagementPage extends LitElement {
               ${this.detecting ? html`<span class="spinner"></span> 检测中...` : "检测变更"}
             </button>
 
-            <button class="btn" @click=${this.refreshData} style="margin-left: auto;">
+            <button class="btn btn-refresh" @click=${this.refreshData} style="margin-left: auto;">
               刷新
             </button>
           </div>

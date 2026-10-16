@@ -513,7 +513,7 @@ ${JSON.stringify({ generatedAt: d.generatedAt, readAt: this.readAt, evidence: ev
           <h1>平台观测</h1>
           <p class="caption">先核对运行信号与证据缺口；平台自检另行展示一致性检查。</p>
         </div>
-        <button class="btn" @click=${this.load} ?disabled=${this.loading || this.denied}>
+        <button aria-busy=${String(this.loading)} class="btn btn-refresh" @click=${this.load} ?disabled=${this.loading || this.denied}>
           ${this.loading ? "读取中…" : "刷新"}
         </button>
       </header>

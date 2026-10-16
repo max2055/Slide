@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './app-form-field.js';
@@ -21,7 +22,7 @@ export class MetricPolicyFields extends LitElement {
     input,select { box-sizing:border-box;width:100%;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:var(--space-sm); }
   `;
   private change(patch: Partial<Overrides>) { this.dispatchEvent(new CustomEvent('policy-change', { detail: { ...this.overrides, ...patch }, bubbles: true, composed: true })); }
-  render() { return html`<style>${MetricPolicyFields.componentStyles.cssText}</style><div class="fields">
+  render() { return html`<style>${sharedFieldStyles}${MetricPolicyFields.componentStyles.cssText}</style><div class="fields">
     <app-form-field label="采集开关"><select aria-label="采集开关" .value=${this.overrides.enabled ?? 'inherit'} .disabled=${this.disabled} @change=${(e: Event) => this.change({ enabled: (e.target as HTMLSelectElement).value as Toggle })}>
       <option value="inherit">继承</option><option value="enable">启用</option><option value="disable">停用</option></select></app-form-field>
     ${this.renderFields(true)}</div><details><summary>高级参数</summary><div class="fields">${this.renderFields(false)}</div></details>`; }

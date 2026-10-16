@@ -28,7 +28,7 @@ export class AppDialog extends LitElement {
   @property() size: DialogSize = "md";
   @property() title = "";
   @property({ type: Boolean }) closable = true;
-  @property({ type: Boolean }) closeOnOverlay = true;
+  @property({ type: Boolean }) closeOnOverlay = false;
 
   private _previousFocus: HTMLElement | null = null;
 

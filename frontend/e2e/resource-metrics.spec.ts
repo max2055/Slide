@@ -25,7 +25,7 @@ for (const width of [375, 1440, 1920]) for (const theme of ['light', 'dark']) te
     expect(buttonStyle.color).toBe(buttonStyle.border);
     const layout = () => table.locator('.scroll').evaluate(el => ({ top: (el as HTMLElement).offsetTop, height: (el as HTMLElement).offsetHeight }));
     const before = await layout();
-    const settings = table.getByRole('button', { name: '列设置', exact: true });
+    const settings = page.locator(tag).locator('.resource-toolbar').getByRole('button', { name: '列设置', exact: true });
     await settings.click();
     const dialog = table.getByRole('dialog', { name: '列设置' });
     await expect(dialog).toBeVisible();

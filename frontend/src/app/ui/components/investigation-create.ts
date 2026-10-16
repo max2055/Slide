@@ -164,7 +164,7 @@ export class InvestigationCreate extends LitElement {
       investigation-create .create-footer { display:flex; gap:var(--space-sm); flex-wrap:wrap; }
       investigation-create [role=alert] { color:var(--danger); overflow-wrap:anywhere; }
     </style>
-    <app-dialog size="xl" .open=${this.open} .closeOnOverlay=${!this.controller.busy} .closable=${!this.controller.busy} title=${this.sessionId ? '将对话转为调查' : '创建手动调查'} @app-dialog-close=${this.close}>
+    <app-dialog size="xl" .open=${this.open} .closeOnOverlay=${false} .closable=${!this.controller.busy} title=${this.sessionId ? '将对话转为调查' : '创建手动调查'} @app-dialog-close=${this.close}>
       <p>调查只读取所选边界内的数据。${this.sessionId ? '关联原 Session，不复制历史消息。' : ''}</p>
       ${this.validation || this.controller.error ? html`<p role="alert">${this.validation || this.controller.error}</p>` : ''}
       <fieldset ?disabled=${this.controller.busy || this.controller.acceptanceUnknown}>

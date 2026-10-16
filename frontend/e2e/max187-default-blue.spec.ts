@@ -153,6 +153,8 @@ test('real overview rows: 600-weight active navigation and 400-weight ordinary e
   instanceId=result.insertId;
   await prefs({accentColor:'#265f99',themeMode:'light'});await login(page);await page.goto(`${base}/dashboard`);
   await expect(page.locator('dashboard-page .risk-row')).toHaveCount(1);
+  // MAX-186 keeps observation/relations behind an explicit disclosure.
+  await page.locator('dashboard-page .risk-observation summary').click();
   await page.locator('dashboard-page .relation-select').click();
   const selector='dashboard-page #risk-relations a';await expect(page.locator(selector)).toBeVisible();
   const active=await colors(page,'.nav-item--active .nav-item__text'),ordinary=await colors(page,selector);
@@ -160,7 +162,30 @@ test('real overview rows: 600-weight active navigation and 400-weight ordinary e
   expect(active.color).toEqual([38,95,153]);expect(ordinary.color).toEqual(active.color);
   await page.locator(selector).hover();expect((await colors(page,selector)).color).toEqual(active.color);
   evidence.push({name:'real-overview-text',source:'isolated MySQL row → real overview API → rendered UI',active,ordinary});
-  await shot(page,'real-overview-light-1440');
+  const evidenceAction=await colors(page,'dashboard-page .risk-next');
+  expect(evidenceAction.color).toEqual(active.color);
+  const refresh=page.locator('dashboard-page .btn-refresh');
+  await page.mouse.move(0,0);
+  await expect(refresh).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+  await expect(refresh).toHaveCSS('border-color','rgba(0, 0, 0, 0)');
+  await page.keyboard.press('Tab');await refresh.focus();
+  await expect(refresh).toBeFocused();expect((await colors(page,'dashboard-page .btn-refresh')).outline).toBe('solid');
+  const reread=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/resources/overview');
+  await refresh.press('Enter');expect((await reread).ok()).toBe(true);await expect(refresh).toBeEnabled();
+  evidence.push({name:'integrated-overview-actions',evidenceAction,refresh:await colors(page,'dashboard-page .btn-refresh')});
+  await page.mouse.move(0,0);await shot(page,'real-overview-light-1440');
+  for(const width of [1440,390]) for(const themeMode of ['light','dark']) {
+    await change(page,{themeMode});await page.setViewportSize({width,height:900});
+    await page.goto(`${base}/investigations`);
+    const create=page.getByRole('button',{name:'创建手动调查',exact:true});await expect(create).toBeVisible();
+    await page.mouse.move(0,0);
+    await expect(create).toHaveCSS('background-color','rgb(38, 95, 153)');
+    const primary=await colors(page,'investigations-page .workspace-header .btn-primary');
+    expect(primary.background).toEqual([38,95,153]);expect(primary.color).toEqual([255,255,255]);expect(primary.contrast).toBeGreaterThan(4.5);
+    await create.click();await expect(page.getByRole('dialog',{name:'创建手动调查',exact:true})).toBeVisible();
+    await page.keyboard.press('Escape');await expect(create).toBeFocused();
+    evidence.push({name:'integrated-investigation-action',width,themeMode,primary});await shot(page,`investigation-${themeMode}-${width}`);
+  }
   await pool.query('DELETE FROM database_instances WHERE id=?',[instanceId]);
 });
 
@@ -184,8 +209,8 @@ test('explicit old blue, default UI choice, other tab, persistence, fresh login 
   await expect.poll(()=>accent(other)).toBe('#14b8a6');
   await expect.poll(async()=>(await request('/api/user/preferences')).preferences.accentColor).toBe('#14b8a6');
   await other.reload();await loaded(other);expect(await accent(other)).toBe('#14b8a6');
-  await expect.poll(async()=>(await colors(other,'dashboard-page .btn-primary')).color).toEqual([0,0,0]);
-  const customPrimary=await colors(other,'dashboard-page .btn-primary');expect(customPrimary.color).toEqual([0,0,0]);expect(customPrimary.contrast).toBeGreaterThan(4.5);
+  await expect.poll(async()=>(await colors(other,'dashboard-page .btn-primary')).color).toEqual([255,255,255]);
+  const customPrimary=await colors(other,'dashboard-page .btn-primary');expect(customPrimary.color).toEqual([255,255,255]);expect(customPrimary.contrast).toBeGreaterThan(4.5);
   evidence.push({name:'custom-color',customPrimary});await shot(other,'custom-light');
   await change(page,{btnPalette:{primaryBg:'#123456',primaryColor:'#ffffff',primaryBorder:'#123456'}});
   await expect.poll(async()=>(await colors(other,'dashboard-page .btn-primary')).background).toEqual([18,52,86]);

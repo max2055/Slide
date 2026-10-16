@@ -127,7 +127,7 @@ export class SourceSettings extends LitElement {
     } catch (error) { this.fail(error, 'sync'); this.syncStatus = ''; } finally { this.busy = false; }
   }
   override render() {
-    return html`<div ?hidden=${this.detailsView}><div class="heading"><h1>源码仓库</h1><button class="btn" .disabled=${this.loading || this.busy} @click=${() => { void this.load(); this.revision++; }}>刷新</button></div><p class="note">让调查理解实现，同时保留版本与部署验证边界。</p></div>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
+    return html`<div ?hidden=${this.detailsView}><div class="heading"><h1>源码仓库</h1><button aria-busy=${String(this.loading)} class="btn btn-refresh" .disabled=${this.loading || this.busy} @click=${() => { void this.load(); this.revision++; }}>刷新</button></div><p class="note">让调查理解实现，同时保留版本与部署验证边界。</p></div>${this.loading ? html`<div class="skeleton" aria-label="加载源码配置"></div>` : nothing}
       ${renderSourceError(this.error)}${this.renderRecovery()}
       ${this.message ? html`<p role="status">${this.message}</p>` : nothing}
       <details class="configuration" ?hidden=${this.detailsView}><summary>仓库配置与同步</summary><form @submit=${this.save}>

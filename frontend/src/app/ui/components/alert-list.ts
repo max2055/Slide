@@ -61,14 +61,11 @@ export class AlertList extends LitElement {
     .table tbody tr.critical:hover { background: rgba(239,68,68,0.12); }
     .alert-title { font-weight: 600; color: var(--text-strong); font-size: var(--text-md); }
     .alert-message { font-size: var(--text-sm); color: var(--muted); line-height: 1.5; max-width: 500px; }
-    .instance-badge { display: inline-flex; align-items: center; padding: var(--space-xs) var(--space-md); background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text); text-decoration: none; cursor: pointer; }
+    .instance-badge { display: inline-block; box-sizing: border-box; max-width:100%; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding: var(--space-xs) var(--space-md); background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text); text-decoration: none; cursor: pointer; }
     .type-badge { display: inline-flex; align-items: center; padding: var(--space-xs) var(--space-sm); background: rgba(59,130,246,0.12); color: var(--info); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
     .time-ago { font-size: var(--text-sm); color: var(--muted); }
     .actions { display: flex; gap: var(--space-sm); }
-    .action-btn { display: inline-flex; align-items: center; padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 11px; font-weight: 500; cursor: pointer; background: var(--card); color: var(--text); white-space: nowrap; }
-    .action-btn:hover { background: var(--accent); color: var(--accent-foreground,#fff); border-color: var(--accent); }
-    .action-btn.primary { background: var(--accent); color: var(--accent-foreground,#fff); border-color: var(--accent); }
-    .action-btn.primary:hover { background: var(--accent-hover); }
+
     .loading, .empty { display: flex; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); }
     .empty__content { text-align: center; }
     .empty__icon { width: 48px; height: 48px; margin-bottom: var(--space-md); opacity: 0.6; color: var(--muted); }
@@ -82,7 +79,7 @@ export class AlertList extends LitElement {
     .tab { padding: var(--space-md) var(--space-xl); font-size: var(--text-md); font-weight: 500; color: var(--muted); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; transition: all .15s ease; position: relative; }
     .tab:hover { color: var(--text); }
     .tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
-    .tab-badge { position: absolute; top: 8px; right: 4px; min-width: 16px; height: 16px; padding: 0 var(--space-xs); background: var(--accent); color: var(--accent-foreground); border-radius: var(--radius-full); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+    .tab-badge { position: absolute; top: 8px; right: 4px; min-width: 16px; height: 16px; padding: 0 var(--space-xs); background: var(--accent-solid); color: var(--accent-solid-foreground); border-radius: var(--radius-full); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
     .form-input { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-base); color: var(--text); background: var(--card); box-sizing: border-box; }
     .skeleton { background: var(--skeleton, var(--border)); border-radius: var(--radius-sm); animation: skeleton-pulse 1.5s ease-in-out infinite; }
     .skeleton-line { height: 14px; border-radius: var(--radius-sm); }
@@ -174,7 +171,7 @@ export class AlertList extends LitElement {
             </select>
           ` : ''}
           <input class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
-          <button class="btn" @click=${() => this._emit('alert-refresh')}>刷新</button>
+          <button class="btn btn-refresh" @click=${() => this._emit('alert-refresh')}>刷新</button>
         </div>
 
         ${filtered.length > 0 ? html`
@@ -229,14 +226,14 @@ export class AlertList extends LitElement {
         <td style="text-align:center;">
           ${alert.target_type === 'network_device'
             ? (alert.network_device_name
-                ? html`<a href="#" class="instance-badge" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-network-device', { id: alert.network_device_id }); }}>${alert.network_device_name}</a>`
+                ? html`<a href="#" class="instance-badge" title=${alert.target_type === 'network_device' ? alert.network_device_name : alert.instance_name} @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-network-device', { id: alert.network_device_id }); }}>${alert.network_device_name}</a>`
                 : html`<span style="color:var(--muted);">设备 #${alert.network_device_id ?? '—'}</span>`)
             : alert.target_type === 'server'
             ? (alert.server_name
-                ? html`<span class="instance-badge">${alert.server_name}</span>`
+                ? html`<span class="instance-badge" title=${alert.server_name}>${alert.server_name}</span>`
                 : html`<span style="color:var(--muted);">—</span>`)
             : (alert.instance_name
-                ? html`<a href="#" class="instance-badge" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-instance', { id: alert.instance_id }); }}>${alert.instance_name}</a>`
+                ? html`<a href="#" class="instance-badge" title=${alert.target_type === 'network_device' ? alert.network_device_name : alert.instance_name} @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-instance', { id: alert.instance_id }); }}>${alert.instance_name}</a>`
                 : html`<span style="color:var(--muted);">—</span>`)
           }
         </td>
@@ -247,10 +244,10 @@ export class AlertList extends LitElement {
         <td style="text-align:center;">
           <div class="actions" style="flex-wrap:wrap;gap:3px;">
             ${alert.status === 'unread' || alert.status === 'read'
-              ? html`<button class="action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
-              : html`<button class="action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>`
+              ? html`<button class="btn-primary btn-sm action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
+              : html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>`
             }
-            ${isActive && alert.severity !== 'info' ? html`<button class="action-btn" @click=${() => this._emit('alert-rca', { id: alert.id })}>AI</button>` : ''}
+            ${isActive && alert.severity !== 'info' ? html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-rca', { id: alert.id })}>AI</button>` : ''}
           </div>
         </td>
       </tr>

@@ -93,10 +93,7 @@ export class HealthCenterPage extends LitElement {
       .page-header { gap:var(--space-md); display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: var(--space-xl); }
       .page-header h1 { font-size: 24px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
       .page-header p { font-size: 12px; line-height:1.7; color: var(--muted); margin: 0; }
-      .refresh-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); color: var(--text); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-      .refresh-btn:hover { background: var(--hover); }
-      .refresh-btn:active { background: var(--active); }
-      .refresh-btn .spinning { animation: spin 0.8s linear infinite; }
+
       @keyframes spin { to { transform: rotate(360deg); } }
 
       /* ── Health score + stats (unified top bar) ──── */
@@ -268,7 +265,7 @@ export class HealthCenterPage extends LitElement {
   }
   private renderHeader() {
     return html`<div class="page-header"><div><h1>系统自检</h1><p>平台数据一致性检查；通过不等于运行观测健康。</p><p>自检时间 ${this.formatTime(this.data?.timestamp)} · 页面读取 ${this.formatTime(this.readAt)}</p></div>
-      <button class="btn refresh-btn" @click=${this._refresh} ?disabled=${this.loading || this.refreshing || this.denied}><span>${icons['refresh-cw']}</span>${this.loading || this.refreshing ? '检查中…' : '刷新'}</button></div>`;
+      <button aria-busy=${String(this.loading || this.refreshing)} class="btn btn-refresh refresh-btn" @click=${this._refresh} ?disabled=${this.loading || this.refreshing || this.denied}>${this.loading || this.refreshing ? '检查中…' : '刷新'}</button></div>`;
   }
 
   private _sv(status: string) { return { pass:'ok',warn:'warn',fail:'danger',deferred:'muted' }[status] || 'muted'; }

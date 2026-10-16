@@ -61,3 +61,20 @@ export function applyButtonPalette(palette: Partial<ButtonPalette>, replace = fa
     }
   }
 }
+
+/** Retain the chosen hue while making white labels readable on filled controls. */
+export function primaryFill(accent: string): string {
+  if (!/^#[0-9a-f]{6}$/i.test(accent)) return DEFAULT_PALETTE.primaryBg;
+  const rgb = [1, 3, 5].map(start => parseInt(accent.slice(start, start + 2), 16));
+  for (let step = 0; step <= 100; step++) {
+    const channels = rgb.map(channel => Math.round(channel * (1 - step / 100)));
+    const linear = channels.map(channel => {
+      const value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    if (1.05 / (0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2] + 0.05) >= 4.6) {
+      return '#' + channels.map(channel => channel.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  return DEFAULT_PALETTE.primaryBg;
+}

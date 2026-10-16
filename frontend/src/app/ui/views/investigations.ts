@@ -126,7 +126,7 @@ export class InvestigationsPage extends LitElement {
       investigations-page .workspace-filters { margin-bottom:var(--space-md); }
       investigations-page .workspace-filter-common { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); padding-bottom:var(--space-lg); }
       investigations-page .workspace-search { flex:1 1 180px; max-width:380px; min-width:0; }
-      investigations-page .workspace-status { flex:0 1 150px; min-width:0; }
+      investigations-page .workspace-status { flex:0 1 140px; min-width:0; }
       investigations-page .workspace-filter-common input, investigations-page .workspace-filter-common select { min-height:36px; }
       investigations-page .workspace-filter-common .btn, investigations-page .workspace-filter-common .btn-ghost { min-height:36px; font-size:var(--text-sm); }
       investigations-page .workspace-advanced-toggle { gap:var(--space-xs); }
@@ -259,13 +259,13 @@ export class AttentionPage extends LitElement {
     } catch { if (generation === this.generation) { this.items = []; this.error = failureMessage; this.readState = 'error'; } }
   }
   render() {
-    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); } attention-page app-data-table { display:block; overflow:auto; }</style>
+    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-lg); margin-bottom:0; } attention-page app-data-table { display:block; overflow:auto; }</style>
         <app-card><span slot="header">关注事项</span>
           <p>最近 20 项待处理聚合事件，按严重度、更新时间与 ID 排序。</p>
           ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : hasSlidePermission(this.permissions, 'alert:view') ? html`
             ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
             ${this.loading || this.readState === 'success' ? html`<app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>` : nothing}
-            <div class="attention-actions"><button class="btn" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
+            <div class="attention-actions"><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
           ` : html`<app-empty-state title="无访问权限" description="需要告警读取权限。"></app-empty-state>`}
         </app-card>`;
   }

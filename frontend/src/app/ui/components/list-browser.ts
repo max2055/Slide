@@ -1,3 +1,4 @@
+import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { css, html } from 'lit';
 
 /** Local browsing only: callers must describe a partial remote dataset explicitly. */
@@ -18,6 +19,7 @@ export class ListBrowser {
 }
 
 export const listBrowserStyles = css`
+  ${sharedFieldStyles}
   :host { min-width:0; }
   :host(schema-management-page) .table-container > table,
   :host(index-management-page) .table-container > table,
