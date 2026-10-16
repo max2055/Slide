@@ -204,7 +204,8 @@ export class ActionExecutor {
         await this.check(c, e, p);
         // This commit is the conservative send boundary. Ack loss is UNKNOWN;
         // no caller can prove the remote call was not made after it.
-        await this.store.transition(c, e, 'dispatching');
+        if (!(await this.store.admitDispatch(c, e, lease)))
+          throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
         return Object.freeze({
           executionId: e.id,
           operationId: e.operationId,

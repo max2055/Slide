@@ -282,6 +282,33 @@ export class ActionExecutionStore {
       if (lock?.execution_id !== e.id) throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
     }
   }
+  /** Final send admission, after all asynchronous validation. The predicate is
+   * evaluated by MySQL in the same statement that crosses the send boundary;
+   * a prior leased() read cannot authorize dispatch after its deadline. */
+  async admitDispatch(
+    c: PlanConnection,
+    e: ExecutionRecord,
+    lease: ExecutionLease,
+  ): Promise<boolean> {
+    const [result] = (await c.execute(
+      `UPDATE action_executions SET state='dispatching',version=version+1,
+      sent_at=UTC_TIMESTAMP(3),updated_at=UTC_TIMESTAMP(3)
+      WHERE id=? AND version=? AND state='prechecking' AND cancel_requested_at IS NULL
+      AND lease_owner=? AND fence=? AND lease_expires_at>UTC_TIMESTAMP(3)`,
+      [lease.execution.id, e.version, lease.owner, lease.fence],
+    )) as [{ affectedRows: number }, unknown];
+    if (result.affectedRows !== 1) return false;
+    await new OutboxService({ getConnection: async () => c }).append(c, {
+      eventType: 'operations.action.state',
+      schemaVersion: 1,
+      aggregateType: 'action_execution',
+      aggregateId: e.id,
+      aggregateVersion: e.version + 1,
+      payload: { executionId: e.id, state: 'dispatching', version: e.version + 1 },
+      idempotencyKey: `action.state:${e.id}:${e.version + 1}`,
+    });
+    return true;
+  }
   async transition(
     c: PlanConnection,
     e: ExecutionRecord,
