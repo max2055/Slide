@@ -50,6 +50,11 @@ export class MysqlScheduleStore {
     return this.transaction(async c => {
       const current = await this.current(c, ref);
       if (!current || current.binding.revision !== plan.revision) return false;
+      // Read application state under the publication lock, not from the scan's
+      // potentially stale snapshot. The first disabled job must still be applied
+      // by a fenced worker; subsequent scans need no periodic no-IO jobs.
+      if (!current.resolved.settings.enabled && current.application.status === 'applied'
+        && current.application.applied_revision === plan.revision) return false;
       const [coordination] = await c.execute<RowDataPacket[]>(
         'SELECT phase FROM metric_v2_rollout_resources WHERE resource_key = ? FOR UPDATE', [refKey(ref)],
       );
