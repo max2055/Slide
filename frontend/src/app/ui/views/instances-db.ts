@@ -1,3 +1,4 @@
+import "../components/resource-collection-section.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import "../components/app-card.js";
@@ -538,6 +539,7 @@ export class InstancesPage extends LitElement {
     super.disconnectedCallback();
   }
 
+  @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -747,6 +749,7 @@ export class InstancesPage extends LitElement {
   }
 
   private _addInstance() {
+    this.connectionPending = true;
     this.hostRelationRequestVersion += 1;
     this.formData = {
       name: "",
@@ -769,6 +772,7 @@ export class InstancesPage extends LitElement {
   }
 
   private _editInstance(inst: DatabaseInstance) {
+    this.connectionPending = false;
     this.hostRelationRequestVersion += 1;
     this.editingInstance = inst;
     this.formData = {
@@ -955,7 +959,7 @@ export class InstancesPage extends LitElement {
     }
   }
 
-  private async _handleSubmit(isEdit: boolean) {
+  private async _handleSubmit(isEdit: boolean, configureCollection = false) {
     if (this.isSubmitting) return;
 
     const canManageHostRelations = this.canManageHostRelations;
@@ -1026,7 +1030,13 @@ export class InstancesPage extends LitElement {
       this.pendingCreatedInstanceId = null;
       this._resetDialogs();
       await this.loadInstances();
-      showToast("Instance updated successfully", "success");
+      showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
+      if (configureCollection) {
+        const saved = this.instances.find(i => i.id === instanceId);
+        if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
+        this._editInstance(saved); await this.updateComplete;
+        this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
+      }
     } catch (err: any) {
       showToast(`Update failed: ${err.message}`, "error");
     } finally {
@@ -1089,6 +1099,7 @@ export class InstancesPage extends LitElement {
   }
 
   private _updateForm(field: keyof InstanceFormData, value: string | number) {
+    this.connectionPending = true;
     this.formData = { ...this.formData, [field]: value };
   }
 
@@ -1189,6 +1200,7 @@ export class InstancesPage extends LitElement {
           ></instance-host-field>
         </div>` : nothing}
 
+        <resource-collection-section resourceType="instance" .resourceId=${isEdit ? this.editingInstance?.id ?? 0 : this.pendingCreatedInstanceId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
         </div>
         <div slot="footer" style="display:flex;justify-content:flex-end;align-items:center;gap:var(--space-md)">
@@ -1196,6 +1208,7 @@ export class InstancesPage extends LitElement {
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
           <button class="btn" @click=${this._closeDialogs} .disabled=${this.isSubmitting}>取消</button>
+          <button class="btn" .disabled=${this.isSubmitting || relationUnavailable} @click=${() => this._handleSubmit(isEdit, true)}>保存连接并配置采集</button>
           <button
             class="btn-primary"
             @click=${() => this._handleSubmit(isEdit)}

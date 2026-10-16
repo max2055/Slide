@@ -4,7 +4,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { metricRequest, metricError, type Catalog, type Overrides } from '../components/metric-configuration.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
-import './metric-registry.js';
+import '../components/resource-collection-section.js';
+import type { PolicyGroup } from '../components/metric-api.js';
 import { authFetch } from '../../../api/index.js';
 import { metricName, packageName, resourceLabels } from '../components/resource-metric-summary.js';
 import { numericFields } from '../components/metric-policy-fields.js';
@@ -25,6 +26,9 @@ export class MetricSettings extends LitElement {
   @state() private resources: Array<{ resource: { type: string; id: number }; label: string; attributes?: Record<string, unknown> }> = [];
   @state() private resourceNotice = '';
   @state() private resourceId = 0;
+  @state() private groups: PolicyGroup[] = [];
+  @state() private groupSearch = '';
+  @state() private groupError = '';
   @state() private groupId = '';
   @state() private groupRevision = 0;
   @state() private groupOverrides: Overrides = {};
@@ -32,6 +36,50 @@ export class MetricSettings extends LitElement {
   @state() private busy = false;
   @state() private groupLoaded = false;
   @state() private groupManage = false;
+  @state() private audits: Array<{ action: string; revision: number; at: string; configuration: unknown }> = [];
+  @state() private auditLoading = false;
+  @state() private auditError = '';
+  private auditGeneration = 0;
+  private accessGeneration = 0;
+  private groupsGeneration = 0;
+  private groupSearchTimer?: ReturnType<typeof setTimeout>;
+  private readonly accessChanged = () => {
+    this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++;
+    clearTimeout(this.groupSearchTimer);
+    this.catalog = null; this.resources = []; this.resourceId = 0; this.groups = []; this.audits = [];
+    this.groupId = ''; this.groupLoaded = false; this.groupManage = false; this.groupOverrides = {};
+    this.groupPreview = null; this.busy = false; this.auditLoading = false;
+    this.error = '权限或登录状态已变更，请重新打开设置后读取配置';
+  };
+  override willUpdate(changes: Map<string, unknown>) {
+    if (['view', 'resourceId', 'type'].some(k => changes.has(k))) {
+      this.audits = []; this.auditError = ''; this.auditGeneration++;
+      if (this.view === 'audit' && this.resourceId) void this.loadAudit();
+    }
+  }
+  override disconnectedCallback() {
+    this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++; clearTimeout(this.groupSearchTimer);
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    super.disconnectedCallback();
+  }
+  private async loadAudit() {
+    const generation = ++this.auditGeneration;
+    this.auditLoading = true; this.auditError = '';
+    try {
+      const rows = await metricRequest<MetricSettings['audits']>(`policy/resources/${this.type}/${this.resourceId}/audit`);
+      if (generation === this.auditGeneration) this.audits = rows;
+    } catch (e) { if (generation === this.auditGeneration) { this.audits = []; this.auditError = metricError(e); } }
+    finally { if (generation === this.auditGeneration) this.auditLoading = false; }
+  }
+  private renderAudit() {
+    return html`<h3>最近变更审计（最多 100 条）</h3><button class="btn btn-refresh" ?disabled=${this.auditLoading} @click=${this.loadAudit}>刷新审计</button>
+      ${this.auditError ? html`<p role="alert">${this.auditError}</p>` : html`<div class="scroll"><app-data-table .loading=${this.auditLoading}
+        .columns=${[{ key: 'action', label: '操作' }, { key: 'revision', label: '发布版本' }, { key: 'at', label: '时间' }, { key: 'detail', label: '变更详情' }]}
+        .rows=${this.audits.map(a => ({ action: a.action === 'binding.publish' ? '发布资源配置' : a.action === 'group.publish' ? '发布策略组' : a.action,
+          revision: a.revision, at: new Date(a.at).toLocaleString('zh-CN'), detail: html`<details><summary>配置与覆盖</summary><pre>${JSON.stringify(a.configuration, null, 2)}</pre></details>` }))}
+        emptyMessage="暂无配置变更记录"></app-data-table></div>`}`;
+  }
   static componentStyles = [sharedBtnStyles, css`
     :host { display:block; min-width:0; } .scroll { overflow:auto; max-width:100%; } app-data-table { min-width:48rem; }
     input,select,textarea { box-sizing:border-box; max-width:100%; width:100%; padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--bg); }
@@ -53,34 +101,61 @@ export class MetricSettings extends LitElement {
     @media (max-width:720px) { .package-summary { grid-template-columns:minmax(0,1fr); } }
     pre { white-space:pre-wrap; overflow-wrap:anywhere; }
   `];
-  override connectedCallback() { super.connectedCallback(); void this.load(); void this.loadResources(); }
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
+    void this.load(); void this.loadResources(); void this.loadGroups();
+  }
+  private searchGroups(value: string) {
+    this.groupSearch = value; this.groupsGeneration++; clearTimeout(this.groupSearchTimer);
+    this.groupSearchTimer = setTimeout(() => void this.loadGroups(), 250);
+  }
+  private async loadGroups() {
+    const generation = ++this.groupsGeneration;
+    this.groupError = '';
+    try {
+      const result = await metricRequest<{ groups: PolicyGroup[] }>(`policy/groups${this.groupSearch.trim() ? `?query=${encodeURIComponent(this.groupSearch.trim())}` : ''}`);
+      if (generation !== this.groupsGeneration) return;
+      const selected = this.groups.find(g => g.id === this.groupId);
+      this.groups = selected && !result.groups.some(g => g.id === selected.id) ? [selected, ...result.groups] : result.groups;
+    } catch (e) { if (generation === this.groupsGeneration) { this.groups = []; this.groupError = metricError(e); } }
+  }
   private async loadResources() {
+    const generation = this.accessGeneration;
     try {
       const response = await authFetch('/api/resources');
       if (!response.ok) throw new Error(String(response.status));
-      const data = await response.json(); this.resources = data.items;
+      const data = await response.json(); if (generation !== this.accessGeneration) return; this.resources = data.items;
       this.resourceNotice = data.truncated || data.unavailableTypes?.length ? '资源列表不完整；可从资源详情进入采集配置。' : '';
-    } catch (e) { this.resources = []; this.resourceNotice = metricError(e); }
+    } catch (e) { if (generation === this.accessGeneration) { this.resources = []; this.resourceNotice = metricError(e); } }
   }
-  private async load() { this.catalogError = ''; try { this.catalog = await metricRequest<Catalog>('config/catalog'); } catch (e) { this.catalogError = metricError(e); } }
+  private async load() {
+    const generation = this.accessGeneration; this.catalogError = '';
+    try { const catalog = await metricRequest<Catalog>('config/catalog'); if (generation === this.accessGeneration) this.catalog = catalog; }
+    catch (e) { if (generation === this.accessGeneration) this.catalogError = metricError(e); }
+  }
   private async group(operation: 'load' | 'preview' | 'publish') {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(this.groupId) || this.busy) return;
     if (operation !== 'load' && (!this.canEditGroup() || operation === 'publish' && !this.groupPreview)) return;
     this.busy = true; this.error = '';
+    const generation = this.accessGeneration;
     try {
       const path = `policy/groups/${this.groupId}`;
       if (operation === 'load') {
         this.groupManage = false;
         const access = await metricRequest<{ can_manage: boolean }>(`${path}/access`);
         const group = await metricRequest<{ revision: number; overrides: unknown }>(path).catch(e => { if (e.message === '404') return { revision: 0, overrides: {} }; throw e; });
+        if (generation !== this.accessGeneration) return;
         this.groupManage = access.can_manage; this.groupRevision = group.revision; this.groupOverrides = group.overrides as Overrides; this.groupLoaded = true; this.groupPreview = null;
       } else {
         const result = await metricRequest<NonNullable<MetricSettings['groupPreview']>>(`${path}/${operation}`, { expected_revision: this.groupRevision, overrides: this.groupOverrides });
+        if (generation !== this.accessGeneration) return;
         this.groupPreview = operation === 'preview' ? result : null;
         if (operation === 'publish') { this.groupLoaded = false; this.groupRevision++; }
       }
-    } catch (e) { this.groupPreview = null; this.groupLoaded = false; this.error = metricError(e); }
-    finally { this.busy = false; }
+    } catch (e) { if (generation === this.accessGeneration) { this.groupPreview = null; this.groupLoaded = false; this.error = metricError(e); } }
+    finally { if (generation === this.accessGeneration) this.busy = false; }
   }
   private canEditGroup() { return this.groupManage && this.groupLoaded; }
   render() {
@@ -88,7 +163,7 @@ export class MetricSettings extends LitElement {
     return html`<style>${sharedFieldStyles}${MetricSettings.componentStyles.map(s => s.cssText).join('\n')}
       small { display:block;color:var(--muted);overflow-wrap:anywhere; } :focus-visible { outline:2px solid var(--accent); }
     </style>${this.error ? html`<app-notice role="alert">${this.error}</app-notice>` : nothing}
-    ${this.view === 'legacy' ? html`<metric-registry-viewer></metric-registry-viewer>` : this.view === 'policies' ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><h2 slot="header">指标目录</h2><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
+    ${['policies', 'audit'].includes(this.view) ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><h2 slot="header">指标目录</h2><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
         <div class="filter-toolbar" role="group" aria-label="指标目录筛选">
         <app-form-field label="搜索名称或标识"><input aria-label="搜索指标" .value=${this.search} @input=${(e: Event) => { this.search = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="指标资源类型" .value=${this.type} @change=${(e: Event) => { this.type = (e.target as HTMLSelectElement).value; }}><option value="" .selected=${!this.type}>全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k} .selected=${this.type === k}>${v}</option>`)}</select></app-form-field>
@@ -132,19 +207,23 @@ export class MetricSettings extends LitElement {
     </div><details><summary>高级详情：原始 JSON</summary><pre>${JSON.stringify(p, null, 2)}</pre></details></details>`;
   }
   private changeResource(action: () => void) {
-    const config = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
+    const config = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
     if (config) config.confirmDiscard(action); else action();
   }
   private renderPolicies() {
-    return html`<div class="actions"><button class="btn" .disabled=${this.policyTab === 'resource'} @click=${() => { this.policyTab = 'resource'; }}>资源策略</button><button class="btn" .disabled=${this.policyTab === 'group'} @click=${() => { this.changeResource(() => { this.policyTab = 'group'; }); }}>策略组</button></div>
-      ${this.policyTab === 'resource' ? html`<app-card><h2 slot="header">资源采集策略</h2>
+    return html`${this.view !== 'audit' ? html`<div class="actions"><button class="btn" .disabled=${this.policyTab === 'resource'} @click=${() => { this.policyTab = 'resource'; }}>资源策略</button><button class="btn" .disabled=${this.policyTab === 'group'} @click=${() => { this.changeResource(() => { this.policyTab = 'group'; }); }}>策略组</button></div>` : nothing}
+      ${this.view === 'audit' || this.policyTab === 'resource' ? html`<app-card><h2 slot="header">资源采集策略</h2>
         <app-form-field label="资源类型"><select .value=${this.type} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, type = select.value; select.value = this.type; this.changeResource(() => { this.type = type; this.resourceId = 0; }); }}>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
         <app-form-field label="搜索资源"><input aria-label="搜索资源" .value=${this.search} @input=${(e: Event) => { this.search = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源"><select aria-label="资源" .value=${String(this.resourceId)} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, id = Number(select.value); select.value = String(this.resourceId); this.changeResource(() => { this.resourceId = id; }); }}><option value="0">请选择资源</option>${this.resources.filter(r => r.resource.type === this.type && (r.resource.id === this.resourceId || `${r.label} ${r.attributes?.host ?? ''}`.toLowerCase().includes(this.search.toLowerCase()))).map(r => html`<option value=${String(r.resource.id)}>${r.label} · ${r.attributes?.host ?? resourceLabels[r.resource.type]}</option>`)}</select></app-form-field>
         <p role="status">${this.resourceNotice}</p>${this.resourceNotice ? html`<button class="btn" @click=${this.loadResources}>重试资源列表</button>` : nothing}
-        ${this.resourceId > 0 ? html`<metric-configuration .resourceType=${this.type} .resourceId=${this.resourceId}></metric-configuration>` : html`<app-empty-state title="选择资源后管理采集配置"></app-empty-state>`}</app-card>` : html`
-      <app-card><h2 slot="header">策略组</h2><p>当前服务尚未提供策略组枚举接口。已有绑定可在资源配置查看；按标识管理属于高级操作。</p>
-        <app-form-field label="策略组标识"><input .value=${this.groupId} .disabled=${this.busy} @input=${(e: Event) => { this.groupId = (e.target as HTMLInputElement).value; this.groupLoaded = false; this.groupPreview = null; }}></app-form-field>
+        ${this.resourceId > 0 ? this.view === 'audit' ? this.renderAudit() : html`<resource-collection-section .resourceType=${this.type} .resourceId=${this.resourceId}></resource-collection-section>` : html`<app-empty-state title="选择资源后管理采集配置"></app-empty-state>`}</app-card>` : html`
+      <app-card><h2 slot="header">策略组</h2><p>选择可见策略组，预览影响后发布。未覆盖字段保留继承。</p>
+        ${this.groupError ? html`<p role="alert">${this.groupError}</p><button class="btn" @click=${this.loadGroups}>重试策略组列表</button>` : nothing}
+        <app-form-field label="搜索策略组"><input type="search" aria-label="搜索策略组" .value=${this.groupSearch} @input=${(e: Event) => this.searchGroups((e.target as HTMLInputElement).value)}></app-form-field>
+        <app-form-field label="策略组"><select aria-label="策略组" .value=${this.groupId} ?disabled=${this.busy} @change=${(e: Event) => { this.groupId = (e.target as HTMLSelectElement).value; this.groupLoaded = false; this.groupPreview = null; this.groupManage = false; }}>
+          <option value="">请选择策略组</option>${this.groups.filter(g => g.id === this.groupId || `${g.label ?? ''} ${g.id}`.toLowerCase().includes(this.groupSearch.trim().toLowerCase())).map(g => html`<option value=${g.id}>${g.label || g.id}</option>`)}</select></app-form-field>
+        ${!this.groupError && !this.groups.length ? html`<app-empty-state title="暂无可见策略组"></app-empty-state>` : nothing}
         <button class="btn" .disabled=${this.busy} @click=${() => this.group('load')}>读取策略组</button><p>发布版本 ${this.groupRevision}；未覆盖字段继承采集包与平台值。</p>
         <metric-policy-fields .overrides=${this.groupOverrides} .disabled=${this.busy || !this.canEditGroup()} @policy-change=${(e: CustomEvent<Overrides>) => { this.groupOverrides = e.detail; this.groupPreview = null; }}></metric-policy-fields>
         ${this.canEditGroup() ? html`<div class="actions"><button class="btn" .disabled=${this.busy} @click=${() => this.group('preview')}>预览组影响</button><button class="btn-primary" .disabled=${this.busy || !this.groupPreview} @click=${() => this.group('publish')}>发布策略组</button></div>` : nothing}

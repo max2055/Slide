@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { collectionStatus } from '../src/app/ui/components/metric-test-fixtures.js';
 const fixture = async (page: Page, tag: string, file: string) => {
   await page.route('**/resource-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${tag}<script type="module">import '/src/app/styles.css'; import '/src/app/ui/${file}.ts';</script></body></html>` }));
   await page.goto('/resource-fixture');
@@ -13,7 +14,7 @@ for (const width of [375, 1440, 1920]) for (const theme of ['light', 'dark']) te
     await fixture(page, `<${tag}></${tag}>`, `views/${file}`); await page.evaluate(t => { document.documentElement.dataset.themeMode = t; }, theme);
     const table = page.locator('resource-metrics-table'); await expect(table).toHaveCount(1); await expect(table.getByText(name, { exact: true })).toBeVisible(); await expect(page.locator('semantic-core-list')).toHaveCount(0); await expect(table.locator('table')).toHaveCount(1);
     const search = page.locator('input.search-input, input.resource-search-input');
-    await search.fill(`${type} ${version} 未配置`);
+    await search.fill(`${type} ${version} 采集状态未知`);
     await expect(table.getByText(name, { exact: true })).toBeVisible();
     await expect(table.locator('select')).toHaveCount(0);
     await search.fill('不存在的资源');
@@ -51,12 +52,20 @@ test('preview, failed and empty trials, invalidation, publish and application', 
   await page.route('**/api/**', route => {
     const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback();
     if (p.endsWith('/catalog')) return route.fulfill({ json: { packages: [{ package: pack, recommendations: {}, documentation: [] }], metrics: [] } });
+    if (p.endsWith('/recommendations')) return route.fulfill({ json: { packages: [{ release: { package: pack }, compatibility: 'compatible', recommended: true, checks: [], coverage: [], missing_core_metrics: [] }] } });
+    if (p.endsWith('/groups')) return route.fulfill({ json: { groups: [] } });
+    if (p.endsWith('/status')) {
+      const status = collectionStatus(published ? 'bound' : 'unbound');
+      status.binding.application = applied ? 'applied' : 'pending'; status.binding.applied_revision = applied ? 1 : null;
+      status.formal_visibility.state = applied ? 'available' : 'pending';
+      return route.fulfill({ json: status });
+    }
     if (p.endsWith('/access')) return route.fulfill({ json: { can_manage: true } });
     if (p.endsWith('/attempts')) return route.fulfill({ json: [] });
     if (p.endsWith('/effective')) return route.fulfill({ json: { resolved } });
     if (p.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, resources: [{ resolved }] } });
     if (p.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: succeed ? 'succeeded' : 'failed' }], samples: hasSamples ? [{ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', value: { encoding: 'float64', value: 60 }, quality: { status: 'good' } }] : [] } });
-    if (p.endsWith('/publish')) { writes.push(p); published = true; return route.fulfill({ json: {} }); }
+    if (p.endsWith('/activate')) { writes.push(p); published = true; return route.fulfill({ json: {} }); }
     return route.fulfill({ status: published ? 200 : 404, json: published ? { binding: { package: pack, revision: 1, group_id: null, overrides: {} }, application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null } } : { error: 'POLICY_NOT_FOUND' } });
   });
   await page.setViewportSize({ width: 375, height: 900 }); await fixture(page, '<metric-configuration resourceid="1"></metric-configuration>', 'components/metric-configuration');
@@ -70,7 +79,7 @@ test('preview, failed and empty trials, invalidation, publish and application', 
   hasSamples = true;
   await trial.click(); await expect(publish).toBeEnabled();
   await page.getByLabel('采集开关', { exact: true }).selectOption('disable'); await expect(trial).toBeDisabled(); await expect(publish).toBeDisabled(); await page.getByLabel('采集开关', { exact: true }).selectOption('inherit');
-  await preview.click(); await trial.click(); await publish.click(); await expect(page.getByText(/当前发布版本 1.*等待应用/)).toBeVisible(); expect(writes).toHaveLength(1); applied = true; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.getByText(/当前应用版本 1.*已应用/)).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await preview.click(); await trial.click(); await publish.click(); await expect(page.locator('.collection-facts')).toContainText('发布 1'); await expect(page.locator('.collection-facts')).toContainText('等待应用'); expect(writes).toHaveLength(1); applied = true; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.locator('.collection-facts')).toContainText('应用 1'); await expect(page.locator('.collection-facts')).toContainText('已应用'); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 test('empty resources and named resource selector', async ({ page }) => {
   await page.route('**/api/**', route => { const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback(); return route.fulfill({ json: p.endsWith('/catalog') ? { packages: [], metrics: [] } : p === '/api/resources' ? { items: [{ resource: { type: 'instance', id: 1 }, label: '订单数据库' }] } : [] }); });

@@ -1,3 +1,4 @@
+import "../components/resource-collection-section.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
@@ -229,6 +230,7 @@ export class ServersPage extends LitElement {
   @state() private _environmentFilter = "all";
   @state() private _relationFilter = "all";
 
+  @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -259,6 +261,7 @@ export class ServersPage extends LitElement {
   }
 
   private _openAddDialog() {
+    this.connectionPending = true;
     this._editingId = null;
     this._form = {
       host: "",
@@ -276,6 +279,7 @@ export class ServersPage extends LitElement {
   }
 
   private async _openEditDialog(server: ServerRow) {
+    this.connectionPending = false;
     this._editingId = server.id;
     // Fetch detail to get credential_username (stripped from list response)
     let credentialUsername = "";
@@ -310,10 +314,11 @@ export class ServersPage extends LitElement {
   }
 
   private _updateForm<K extends keyof ServerFormData>(field: K, value: ServerFormData[K]) {
+    this.connectionPending = true;
     this._form = { ...this._form, [field]: value };
   }
 
-  private async _handleSubmit() {
+  private async _handleSubmit(configureCollection = false) {
     if (this._isSubmitting) return;
 
     if (!this._form.host || !this._form.credential_username) {
@@ -346,9 +351,16 @@ export class ServersPage extends LitElement {
         throw new Error(err.error || "保存失败");
       }
 
+      const savedId = isEdit ? this._editingId : Number((await res.json()).id);
       this._closeDialog();
       await this._loadServers();
-      showToast(isEdit ? "服务器已更新" : "服务器已添加", "success");
+      showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
+      if (configureCollection) {
+        const saved = this._servers.find(s => s.id === savedId);
+        if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
+        await this._openEditDialog(saved); await this.updateComplete;
+        this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
+      }
     } catch (err: any) {
       showToast(`保存失败: ${err.message}`, "error");
     } finally {
@@ -713,6 +725,7 @@ export class ServersPage extends LitElement {
             }
           </app-form-field>
 
+          <resource-collection-section resourceType="server" .resourceId=${this._editingId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
           ${this._testConnectionMessage
             ? html`
                 <div class="test-result ${this._testConnectionSuccess ? "success" : "error"}">
@@ -728,7 +741,8 @@ export class ServersPage extends LitElement {
               ${this._testingConnection ? "测试中..." : "测试连接"}
             </button>
             <button class="btn" @click=${this._closeDialog}>取消</button>
-            <button class="btn-primary" @click=${this._handleSubmit} .disabled=${this._isSubmitting}>
+            <button class="btn" @click=${() => this._handleSubmit(true)} .disabled=${this._isSubmitting}>保存连接并配置采集</button>
+            <button class="btn-primary" @click=${() => this._handleSubmit()} .disabled=${this._isSubmitting}>
               ${this._isSubmitting ? "保存中..." : "保存"}
             </button>
           </div>

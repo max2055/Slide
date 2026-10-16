@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics-v2/config/registry.js';
-import { canonicalDefinitions } from '../../apps/db-ops-api/src/metrics-v2/packages/builtins.js';
+import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics/config/registry.js';
+import { canonicalDefinitions } from '../../apps/db-ops-api/src/metrics/packages/builtins.js';
 
 // Use the production immutable releases, including derived outputs and multiple versions.
 const packages = createConfigurationRegistry().list();
@@ -127,7 +127,7 @@ test('unknown IDs remain distinguishable and metric count deduplicates derived o
   await setup(page);
   const custom = ['vendor-one', 'vendor-two'].map(id => ({ package: { id, version: '2.0.0', resource_type: 'server', applicability: [],
     collectors: [{ mappings: [{ metric: { id: `${id}.value` } }, { metric: { id: `${id}.value` } }] }] }, derived: [{ output: { id: `${id}.rate` } }], documentation: [], recommendations: {} }));
-  await page.route('**/api/metrics-v2/config/catalog', route => route.fulfill({ json: { packages: custom, metrics: [] } }));
+  await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: custom, metrics: [] } }));
   await go(page, 'packages');
   await expect(entries(page)).toHaveCount(2);
   await expect(entries(page).first().locator('strong')).toHaveText('vendor-one');
@@ -143,7 +143,7 @@ test('package loading, forbidden error, retry and empty catalog', async ({ page 
   await setup(page);
   let finish!: () => void;
   const pending = new Promise<void>(resolve => { finish = resolve; });
-  await page.route('**/api/metrics-v2/config/catalog', async route => {
+  await page.route('**/api/metrics/config/catalog', async route => {
     await pending; return route.fulfill({ status: 403, json: {} });
   });
   await go(page, 'packages');
@@ -152,7 +152,7 @@ test('package loading, forbidden error, retry and empty catalog', async ({ page 
   finish();
   await expect(page.getByRole('alert')).toContainText('没有此资源的操作权限');
   await expect(page.getByText('暂无采集包', { exact: true })).toHaveCount(0);
-  await page.route('**/api/metrics-v2/config/catalog', route => route.fulfill({ json: { packages: [], metrics: [] } }));
+  await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: [], metrics: [] } }));
   await page.getByRole('button', { name: '重新加载目录' }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText('暂无采集包', { exact: true })).toBeVisible();

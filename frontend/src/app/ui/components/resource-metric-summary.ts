@@ -1,8 +1,9 @@
+import type { CollectionStatus } from './metric-api.js';
 import type { MetricResult, SemanticResult } from './semantic-metrics.js';
 export const collectionLabels: Record<string, string> = {
-  query_operation_unavailable: '不支持速率查询', loading: '正在读取', available: '采集正常', not_configured: '未配置', disabled: '已停用', unsupported: '不支持',
+  query_operation_unavailable: '不支持速率查询', loading: '正在读取', available: '采集正常', not_configured: '当前模板未覆盖', disabled: '已停用', unsupported: '不支持',
   permission_denied: '采集权限不足', temporary_failure: '采集失败', capability_unknown: '待验证',
-  stale: '已过期', partial: '部分缺失', query_failed: '指标加载失败', forbidden: '无查看权限', unavailable: '资源不可用',
+  stale: '已过期', partial: '部分缺失', query_failed: '指标加载失败', forbidden: '无查看权限', unavailable: '资源不可用', unknown: '采集状态未知', bound: '已绑定', unbound: '未绑定', waiting_sample: '待样本', global_disabled: '全局采集已关闭',
 };
 export const metricNames: Record<string, string> = {
   'mysql.tables.estimated_allocated_bytes': 'MySQL 非系统库表与索引估算分配空间',
@@ -23,10 +24,10 @@ export const packageName = (id: string) => ({ 'mysql-basic': 'MySQL 基础采集
   'mysql-representative': 'MySQL 数据库采集', 'postgresql-representative': 'PostgreSQL 数据库采集', 'oracle-representative': 'Oracle 数据库采集', 'dameng-representative': '达梦数据库采集',
 }[id] ?? id);
 export const metricName = (id: string) => metricNames[id] ?? id;
-export type MetricRow = { result?: SemanticResult; state: string; lastSuccess?: string; timeUnavailable?: boolean };
+export type MetricRow = { result?: SemanticResult; state: string; collection?: CollectionStatus; bindingError?: string; lastSuccess?: string; timeUnavailable?: boolean };
 export function collectionState(result: SemanticResult): string {
   const metrics = result.metrics;
-  if (!metrics.length) return 'not_configured';
+  if (!metrics.length) return 'unknown';
   for (const state of ['permission_denied', 'temporary_failure', 'capability_unknown']) if (metrics.some(m => m.state === state)) return state;
   if (metrics.every(m => m.state === metrics[0].state) && metrics[0].state !== 'available') return metrics[0].state;
   const buckets = metrics.flatMap(m => m.series.flatMap(s => s.buckets));
@@ -51,9 +52,12 @@ export function databaseSizeMetric(result: SemanticResult | undefined) {
   const id = result?.profile.columns.find(c => c.key === 'database_size')?.metric.id;
   return result?.metrics.find(m => m.definition.id === id);
 }
-export function databaseSizeSummary(result: SemanticResult | undefined): string {
+export function databaseSizeSummary(result: SemanticResult | undefined, collection?: CollectionStatus): string {
   const metric = databaseSizeMetric(result);
   if (!metric) return '暂不支持';
+  const coverage = collection?.coverage.find(c => c.metric.id === metric.definition.id);
+  if (coverage?.state === 'unsupported' || metric.state === 'unsupported') return '该版本不支持';
+  if (collection?.binding.state === 'bound' && metric.state === 'not_configured') return coverage?.state === 'not_covered' ? '当前模板未覆盖' : '待样本';
   if (['not_configured', 'disabled', 'unsupported', 'permission_denied'].includes(metric.state)) return collectionLabels[metric.state];
   const points = latest(metric);
   const bucket = points.length === 1 ? points[0].bucket : undefined;
@@ -62,8 +66,12 @@ export function databaseSizeSummary(result: SemanticResult | undefined): string 
   if (value == null) return metric.state === 'available' ? '暂无有效值' : collectionLabels[metric.state] ?? '待验证';
   return `${metric.state !== 'available' ? `${collectionLabels[metric.state] ?? '待验证'} · 上次 ` : ''}${value}${bucket!.accuracy === 'estimated' ? ' · 估算' : ''}${bucket!.freshness === 'stale' ? ' · 已过期' : ''}`;
 }
-export function metricSummary(result: SemanticResult | undefined, id: string): string {
+export function metricSummary(result: SemanticResult | undefined, id: string, collection?: CollectionStatus): string {
   const m = result?.metrics.find(m => m.definition.id === id);
+  const coverage = collection?.coverage.find(c => c.metric.id === id);
+  if (coverage?.state === 'unsupported') return '该版本不支持';
+  if (coverage?.state === 'not_covered') return '当前模板未覆盖';
+  if (collection?.binding.state === 'bound' && m?.state === 'not_configured') return '待样本';
   if (!m) return '暂无观测';
   if (m.state !== 'available') return collectionLabels[m.state] ?? '待验证';
   const series = latest(m);
