@@ -5,8 +5,7 @@ import "../components/app-dialog.js";
 import "../components/app-badge.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
- * LLM 配置管理 — 两栏布局：左侧提供商列表 + 右侧详情/模板选择
- * 参考 pi-web ModelsConfig 的 UX 模式优化
+ * LLM 配置管理 — 提供商选择栏 + 按任务分组的连接、模型与高级参数
  */
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
@@ -89,47 +88,6 @@ function blankForm(): FormData {
   return { name: "", display_name: "", api_base_url: "", default_model: "", deployment_type: "api", api_format: "", api_key: "", enabled: true, is_default: false, models: [] };
 }
 
-// ── Brand color + initial resolver ──────────────────────────────────────────
-
-const BRAND_MAP: Record<string, { color: string; bg: string }> = {
-  anthropic: { color: "#d97706", bg: "rgba(217,119,6,0.12)" },
-  openai: { color: "#10a37f", bg: "rgba(16,163,127,0.12)" },
-  deepseek: { color: "#4f46e5", bg: "rgba(79,70,229,0.12)" },
-  ollama: { color: "#374151", bg: "rgba(55,65,81,0.12)" },
-  google: { color: "#4285f4", bg: "rgba(66,133,244,0.12)" },
-  gemini: { color: "#4285f4", bg: "rgba(66,133,244,0.12)" },
-  bailian: { color: "#ff6a00", bg: "rgba(255,106,0,0.12)" },
-  qwen: { color: "#615dfa", bg: "rgba(97,93,250,0.12)" },
-  zhipu: { color: "#3859ff", bg: "rgba(56,89,255,0.12)" },
-  glm: { color: "#3859ff", bg: "rgba(56,89,255,0.12)" },
-  moonshot: { color: "#409eff", bg: "rgba(64,158,255,0.12)" },
-  kimi: { color: "#409eff", bg: "rgba(64,158,255,0.12)" },
-  minimax: { color: "#06b6d4", bg: "rgba(6,182,212,0.12)" },
-  mistral: { color: "#facc15", bg: "rgba(250,204,21,0.15)" },
-  groq: { color: "#f97316", bg: "rgba(249,115,22,0.12)" },
-  cohere: { color: "#39594d", bg: "rgba(57,89,77,0.12)" },
-  xai: { color: "#000000", bg: "rgba(0,0,0,0.08)" },
-  grok: { color: "#000000", bg: "rgba(0,0,0,0.08)" },
-  perplexity: { color: "#1e88e5", bg: "rgba(30,136,229,0.12)" },
-  huggingface: { color: "#ffbd45", bg: "rgba(255,189,69,0.15)" },
-  together: { color: "#6366f1", bg: "rgba(99,102,241,0.12)" },
-  fireworks: { color: "#fb3b4b", bg: "rgba(251,59,75,0.12)" },
-  cerebras: { color: "#f2753d", bg: "rgba(242,117,61,0.12)" },
-  openrouter: { color: "#6366f1", bg: "rgba(99,102,241,0.12)" },
-};
-
-function brandFor(name: string): { color: string; bg: string; initial: string } {
-  const lower = name.toLowerCase();
-  for (const [key, val] of Object.entries(BRAND_MAP)) {
-    if (lower.includes(key)) return { ...val, initial: name.charAt(0).toUpperCase() };
-  }
-  // fallback: generate a stable color from name hash
-  const hash = [...lower].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
-  const hue = Math.abs(hash) % 360;
-  return { color: `hsl(${hue}, 45%, 45%)`, bg: `hsla(${hue}, 45%, 45%, 0.12)`, initial: name.charAt(0).toUpperCase() };
-}
-
-
 // ── Component ───────────────────────────────────────────────────────────────
 
 @customElement("llm-config-page")
@@ -169,60 +127,37 @@ export class LLMConfigPage extends LitElement {
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
 
-    :host { display: block; height: 100%; }
-    .shell { display: flex; height: 100%; min-height: 0; overflow: hidden; }
-    .shell.scenes .detail { min-width: 0; }
-    .shell.scenes app-card { overflow-wrap: anywhere; }
-    @media (max-width: 720px) {
-      .shell { flex-direction: column; }
-      .shell .sidebar { width: auto; min-width: 0; max-height: 12rem; flex-shrink: 0; border-right: none; border-bottom: 1px solid var(--border); }
-      .shell .detail-inner { padding: var(--space-md); }
-    }
-    .page-header { margin-bottom: 24px; }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
-    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
-
-    /* Sidebar */
-    .sidebar { width: 240px; min-width: 240px; border-right: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; overflow: hidden; }
-    .sidebar-list { flex: 1; overflow-y: auto; padding: 4px 6px; }
-
-    /* Sidebar empty */
-    .sidebar-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px; text-align: center; gap: 10px; }
-    .sidebar-empty svg { opacity: 0.2; }
-    .sidebar-empty p { font-size: 11px; color: var(--muted); margin: 0; line-height: 1.4; }
-    .sidebar-empty .add-first-btn { margin-top: 4px; padding: 6px 16px; border-radius: var(--radius-md); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-foreground); transition: opacity 0.15s; }
-    .sidebar-empty .add-first-btn:hover { opacity: 0.85; }
-    .sidebar-item { display: flex; align-items: center; gap: var(--space-sm); padding: 8px 10px; border-radius: var(--radius-md); cursor: pointer; transition: background 0.12s; }
-    .sidebar-item:hover { background: var(--hover); }
-    .sidebar-item.selected { background: var(--active); }
-    .brand-circle { width: 28px; height: 28px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; color: inherit; }
-    .item-info { flex: 1; min-width: 0; }
-    .item-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .item-url { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-    .status-on { background: #22c55e; }
-    .status-off { background: var(--border); }
-    .default-star { font-size: 11px; color: var(--accent-text); flex-shrink: 0; margin-left: -2px; }
-    .sidebar-footer { padding: 8px 6px; border-top: 1px solid var(--border); }
-    .add-btn { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px 0; background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); cursor: pointer; font-size: 12px; transition: border-color 0.12s, color 0.12s; }
-    .add-btn:hover { border-color: var(--accent); color: var(--accent-text); }
-
-    /* Detail */
-    .detail { flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column; background: var(--bg-elevated); }
-    .detail { min-width: 0; }
-    .detail-inner { padding: var(--space-lg) var(--space-xl); max-width: 1120px; width: 100%; box-sizing: border-box; }
-    .page-header h1 { font-size: 24px; }
-    .page-header p { font-size: 14px; }
-    .config-section { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: var(--space-xl); padding: var(--space-xl) 0; border-bottom: 1px solid var(--border); }
+    :host { display: block; min-width: 0; container-type: inline-size; }
+    .page { max-width: 1120px; margin: 0 auto; }
+    .shell { min-width: 0; }
+    .page-header { margin-bottom: var(--space-lg); }
+    .page-header h1 { font-size: 24px; font-weight: 600; margin: 0 0 var(--space-xs); color: var(--text-strong); }
+    .page-header p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.6; }
+    .provider-selector { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); margin-bottom: var(--space-lg); }
+    .provider-selector label { font-size: 14px; font-weight: 500; color: var(--text); }
+    .provider-selector select { flex: 1; min-width: 0; max-width: 32rem; }
+    .provider-selector .btn { flex-shrink: 0; }
+    .provider-count { font-size: 12px; color: var(--muted); }
+    .detail, .detail-inner { min-width: 0; }
+    .config-section { padding: var(--space-lg) 0; border-bottom: 1px solid var(--border); }
     .config-section:first-child { padding-top: 0; }
-    .section-intro h2 { margin: 0 0 var(--space-sm); font-size: 16px; color: var(--text-strong); }
+    .section-intro { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); margin-bottom: var(--space-md); }
+    .section-intro h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-strong); }
     .section-intro p, .scope-hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .connection-identity { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); }
+    .connection-identity > .form-group { min-width: 0; margin-bottom: 0; }
+    .connection-hint { margin: var(--space-xs) 0 var(--space-md); }
+    @container (max-width: 620px) {
+      .connection-identity { grid-template-columns: minmax(0, 1fr); }
+      .provider-selector select { flex-basis: calc(100% - 5rem); }
+      .provider-count { margin-right: auto; }
+    }
     .section-body { min-width: 0; }
     .section-body .form-row > * { min-width: 0; }
     .section-body .form-label, .section-body .form-input, .section-body .form-select { font-size: 14px; }
-    .model-toolbar, .model-row, .dialog-actions, .provider-heading { display: flex; align-items: center; gap: var(--space-sm); }
-    .model-toolbar, .provider-heading { flex-wrap: wrap; margin-bottom: var(--space-md); }
-    .provider-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .model-toolbar, .model-row, .dialog-actions { display: flex; align-items: center; gap: var(--space-sm); }
+    .model-toolbar { flex-wrap: wrap; margin-bottom: var(--space-xs); }
+    .model-toolbar h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-strong); }
     .model-toolbar .scope-hint { flex: 1 1 16rem; min-width: min(100%, 16rem); overflow-wrap: anywhere; }
     .model-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); max-width: 100%; }
     .model-toolbar-actions .btn { flex-shrink: 0; }
@@ -230,24 +165,21 @@ export class LLMConfigPage extends LitElement {
     .model-row { justify-content: space-between; padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
     .model-row:last-child { border-bottom: 0; }
     .model-summary { min-width: 0; }
-    .model-summary strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 14px; color: var(--text-strong); overflow-wrap: anywhere; }
-    .model-summary p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: var(--space-xs) 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+    .model-summary strong { font-size: 14px; color: var(--text-strong); overflow-wrap: anywhere; }
+    .model-summary p { margin: var(--space-xs) 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
     .model-row .btn { flex-shrink: 0; }
-    .model-list { max-height: 26rem; overflow-y: auto; }
-    .advanced summary { cursor: pointer; font-size: 14px; color: var(--text); padding: var(--space-xs) 0; }
+    .model-list { max-height: 26rem; overflow-y: auto; scrollbar-gutter: stable; }
+    .advanced summary, .model-advanced summary { cursor: pointer; font-size: 14px; color: var(--text); padding: var(--space-xs) 0; }
     .advanced-body { padding-top: var(--space-lg); }
     .model-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); margin: var(--space-lg) 0; }
     .model-fields app-form-field { min-width: 0; margin: 0; }
     .raw-parameters { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
     .model-feedback { font-size: 12px; color: var(--muted); }
-    .sidebar-item { width: 100%; border: 0; background: transparent; text-align: left; font-family: inherit; }
-    @media (max-width: 1000px) { .config-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); } }
     @media (max-width: 600px) {
       .model-fields { grid-template-columns: minmax(0, 1fr); }
       .form-row { flex-direction: column; gap: 0; }
       .actions-bar { flex-wrap: wrap; }
       .dialog-actions { flex-wrap: wrap; justify-content: end; }
-      .page-header h1 { font-size: 22px; }
     }
 
     /* Template picker */
@@ -294,11 +226,11 @@ export class LLMConfigPage extends LitElement {
     .model-remove-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; margin-top: 14px; flex-shrink: 0; border: 1px solid rgba(239,68,68,0.25); border-radius: var(--radius-sm); background: transparent; color: var(--danger); cursor: pointer; transition: background 0.12s, border-color 0.12s; }
     .model-remove-btn:hover { background: rgba(239,68,68,0.1); border-color: #ef4444; }
     .model-remove-btn svg { width: 14px; height: 14px; }
-    .actions-bar { display: flex; gap: var(--space-sm); align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .actions-bar { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; margin-top: var(--space-lg); padding-top: var(--space-md); border-top: 1px solid var(--border); }
     .actions-bar .spacer { flex: 1; }
 
     /* Status toggle */
-    .toggle-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+    .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin: var(--space-md) 0; }
     .toggle-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); cursor: pointer; }
     .toggle-switch { width: 36px; height: 20px; border-radius: 999px; background: var(--border); position: relative; transition: background 0.2s; flex-shrink: 0; }
     .toggle-switch.on { background: #22c55e; }
@@ -741,7 +673,7 @@ export class LLMConfigPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="loading" style="flex-direction:column;gap:16px;padding:var(--space-xl);">
+      return html`<div class="loading" role="status" aria-label="正在读取模型配置" style="flex-direction:column;gap:16px;padding:var(--space-xl);">
         <div class="skeleton-block" style="width:200px;height:24px;"></div>
         <div class="skeleton-block" style="width:100%;height:200px;"></div>
         <div class="skeleton-line skeleton-line--long"></div>
@@ -752,12 +684,12 @@ export class LLMConfigPage extends LitElement {
     }
 
     return html`
-      <div style="display:flex;flex-direction:column;height:100%">
+      <div class="page">
         <div class="page-header">
           <h1>${this.activeTab === 'scenes' ? '场景分配' : '模型配置'}</h1>
           <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '先配置连接，再管理模型与高级参数'}</p>
         </div>
-        <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}" style="flex:1">
+        <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}">
           ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
           ${this._renderDetail()}
         </div>
@@ -834,35 +766,25 @@ export class LLMConfigPage extends LitElement {
 
   _renderSidebar() {
     return html`
-    <div class="sidebar" ?inert=${this.saving || this.modelSaving}>
-      <div class="sidebar-list">
-        ${this.providers.length === 0 ? html`
-          <div class="sidebar-empty">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg>
-            <p>还没有 AI 提供商<br/>选择一个模板快速开始</p>
-            <button class="add-first-btn" @click=${() => this._navigate(() => this._openAddPicker())}>添加第一个提供商</button>
-          </div>
-        ` : this.providers.map(p => {
-          const brand = brandFor(p.name);
-          const isSelected = this.selectedId === p.id;
-          return html`
-          <button type="button" class="sidebar-item ${isSelected ? 'selected' : ''}" @click=${() => this._navigate(() => this._selectProvider(p))}>
-            <div class="brand-circle" style="background:${brand.bg};color:${brand.color}">${brand.initial}</div>
-            <div class="item-info">
-              <div class="item-name">${p.display_name || p.name}</div>
-              <div class="item-url">${p.api_base_url || p.deployment_type}</div>
-            </div>
-            <span class="status-dot ${p.enabled ? 'status-on' : 'status-off'}" title=${p.enabled ? '已启用' : '已禁用'}></span>
-            ${p.is_default ? html`<span class="default-star" title="默认提供商">★</span>` : ''}
-          </button>`;
-        })}
-      </div>
-      <div class="sidebar-footer">
-        <button class="add-btn" @click=${() => this._navigate(() => this._openAddPicker())}>
-          + 添加提供商
-        </button>
-      </div>
-    </div>`;
+      <div class="provider-selector" ?inert=${this.saving || this.modelSaving}>
+        <label for="provider-select">提供商</label>
+        <select id="provider-select" class="form-select" .value=${String(this.selectedId ?? '')}
+          @change=${(event: Event) => {
+            const select = event.target as HTMLSelectElement;
+            const provider = this.providers.find(p => p.id === Number(select.value));
+            // Keep the committed selection while the discard dialog is pending.
+            select.value = String(this.selectedId ?? '');
+            if (provider) this._navigate(() => this._selectProvider(provider));
+          }}>
+          <option value="" .selected=${this.selectedId === null} disabled>${this.providers.length ? '选择提供商' : '尚无提供商'}</option>
+          ${this.providers.map(p => html`<option value=${String(p.id)} .selected=${this.selectedId === p.id}>
+            ${p.display_name || p.name}${p.is_default ? ' · 默认' : ''}${p.enabled ? '' : ' · 已禁用'}
+          </option>`)}
+        </select>
+        <span class="provider-count">共 ${this.providers.length} 个</span>
+        ${this.viewMode === 'form' ? html`<app-badge variant=${this.connectionDirty ? 'warning' : 'muted'}>${this.connectionDirty ? '未保存修改' : this.editing ? '已保存配置' : '新建配置'}</app-badge>` : ''}
+        <button class="btn add-btn" @click=${() => this._navigate(() => this._openAddPicker())}>+ 添加提供商</button>
+      </div>`;
   }
 
   _renderDetail() {
@@ -878,7 +800,7 @@ export class LLMConfigPage extends LitElement {
     // placeholder
     return html`<div class="detail"><div class="placeholder">
       <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/></svg>
-      <p>${this.providers.length === 0 ? '选择下方模板快速配置 AI 提供商' : '从左侧选择一个提供商查看详情'}</p>
+      <p>${this.providers.length === 0 ? '选择下方模板快速配置 AI 提供商' : '选择一个提供商查看详情'}</p>
     </div></div>`;
   }
 
@@ -913,14 +835,11 @@ export class LLMConfigPage extends LitElement {
   _renderForm() {
     const isEdit = !!this.editing;
     return html`
-      <div class="provider-heading"><strong>${this.form.display_name || this.form.name || '新建提供商'}</strong>
-        <app-badge variant=${this.connectionDirty ? 'warning' : 'muted'}>${this.connectionDirty ? '未保存修改' : '已保存配置'}</app-badge>
-      </div>
       <app-card class="connection-card">
         <section class="config-section">
           <div class="section-intro"><h2>基础连接</h2><p>先配置供应商，再管理模型与高级参数。</p></div>
           <div class="section-body">
-      <div class="form-row">
+      <div class="connection-identity">
         <div class="form-group">
           <label class="form-label" for="provider-name">标识名 ${!isEdit ? html`<span style="color:var(--danger)">*</span>` : ''}</label>
           <input id="provider-name" class="form-input" .value=${this.form.name} @input=${(e: any) => this.form.name = e.target.value} placeholder="anthropic" ?disabled=${isEdit} style="font-family:var(--font-mono,monospace)" />
@@ -929,16 +848,15 @@ export class LLMConfigPage extends LitElement {
           <label class="form-label" for="provider-display">显示名称</label>
           <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} placeholder="Anthropic Claude" />
         </div>
-      </div>
 
       <div class="form-group">
         <label class="form-label" for="api-format">API 兼容格式</label>
         <select id="api-format" class="form-select" .value=${this.form.api_format} @change=${(e: any) => this.form.api_format = e.target.value}>
           ${API_FORMATS.map(f => html`<option value=${f.value} .selected=${f.value === this.form.api_format}>${f.label}</option>`)}
         </select>
-        <span class="form-hint">自定义提供商需指定 API 格式，预置模板可自动检测</span>
       </div>
-
+      </div>
+      <p class="form-hint connection-hint">自定义提供商需指定 API 格式，预置模板可自动检测</p>
 
             <app-form-field label="Base URL"><input class="form-input" aria-label="Base URL" .value=${this.form.api_base_url}
               @input=${(e: Event) => { this._resetDiscovery(); this.form = { ...this.form, api_base_url: (e.target as HTMLInputElement).value }; }} /></app-form-field>
@@ -957,16 +875,14 @@ export class LLMConfigPage extends LitElement {
           </div>
         </section>
         <section class="config-section">
-          <div class="section-intro"><h2>模型清单</h2><p>一次只编辑一个模型，价格与能力在编辑中查看。</p></div>
           <div class="section-body">
-            <div class="model-toolbar"><span class="scope-hint">${this.form.models.length} 个模型 · 默认 ${this.form.default_model || '未选择'}</span>
+            <div class="model-toolbar"><h2>模型清单</h2><span class="scope-hint">${this.form.models.length} 个模型 · 默认 ${this.form.default_model || '未选择'}</span>
               <div class="model-toolbar-actions">
               <button class="btn" data-testid="load-models" .disabled=${this.modelsLoading || !this.form.name.trim() || !this.form.api_base_url.trim()}
                 @click=${this._fetchModels}>${this.modelsLoading ? '加载中…' : '加载模型'}</button>
               <button class="btn" @click=${this._addModel}>+ 添加模型</button>
               </div>
             </div>
-            <p class="scope-hint">加载与移除模型后需保存配置；弹窗保存仅提交当前模型。</p>
             ${this.modelsMessage ? html`<p class="form-hint" role="status" aria-live="polite">${this.modelsMessage}</p>` : ''}
             <div class="model-list" aria-label="模型清单">
               ${this.form.models.length ? this.form.models.map((m, i) => html`
@@ -976,6 +892,7 @@ export class LLMConfigPage extends LitElement {
                 </div><button class="btn" @click=${() => this._editModel(i)} aria-label=${`编辑模型 ${m.name || m.id}`}>编辑</button></div>
               `) : html`<p class="scope-hint">尚无模型清单。可加载模型或手动添加；默认模型也可在连接高级项配置。</p>`}
             </div>
+            <p class="scope-hint">加载与移除后需保存配置；编辑仅保存当前模型。</p>
             ${this.modelFeedback ? html`<p class="model-feedback" role="status">${this.modelFeedback}</p>` : ''}
           </div>
         </section>
@@ -1096,6 +1013,8 @@ export class LLMConfigPage extends LitElement {
           <app-form-field label="显示名称"><input class="form-input" aria-label="模型显示名称" .value=${m.name || ''} @input=${(e: Event) => this._patchModel({ name: (e.target as HTMLInputElement).value || undefined })} /></app-form-field>
           ${numberField('模型上下文窗口', m.contextWindow, n => this._patchModel({ contextWindow: n }), 1026)}
           ${numberField('最大输出限制', m.maxTokens, n => this._patchModel({ maxTokens: n }), 1)}
+        </div>
+        <details class="model-advanced"><summary>计价、能力与参数来源</summary><div class="model-fields">
           ${numberField('输入价格（$/1M tokens）', m.cost?.input, n => this._patchModel({ cost: { ...m.cost, input: n } }), 0, 'any')}
           ${numberField('输出价格（$/1M tokens）', m.cost?.output, n => this._patchModel({ cost: { ...m.cost, output: n } }), 0, 'any')}
           ${capability('模型工具调用能力', 'supportsFunctionCall')}${capability('模型视觉能力', 'supportsVision')}
@@ -1105,8 +1024,9 @@ export class LLMConfigPage extends LitElement {
           <app-form-field label="参数供应商"><input class="form-input" aria-label="参数供应商" .value=${m.parameterProvider || ''}
             @input=${(e: Event) => this._patchModel({ parameterProvider: (e.target as HTMLInputElement).value || undefined })} /></app-form-field>
         </div>
-        </fieldset>
         <details><summary>原始参数（包含保留的扩展字段）</summary><pre class="raw-parameters">${JSON.stringify(m, null, 2)}</pre></details>
+        </details>
+        </fieldset>
         ${this.modelError ? html`<div class="msg msg-err" role="alert">${this.modelError}</div>` : ''}
       ` : ''}
       <div slot="footer" class="dialog-actions">

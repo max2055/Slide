@@ -57,6 +57,10 @@ export class SettingsShell extends LitElement {
     super.disconnectedCallback();
   }
 
+  protected override updated() {
+    this.toggleAttribute("model-page", this.activePage === "models");
+  }
+
   static styles = css`
     :host {
       display: grid;
@@ -142,6 +146,11 @@ export class SettingsShell extends LitElement {
       padding: var(--space-xl);
     }
 
+    /* Models own a single document flow; avoid a full-height nested scroller. */
+    .settings-main--models { padding: var(--space-lg); }
+    .settings-main--models llm-config-page { height: auto; }
+    .settings-main--models .content-tabs { margin-bottom: var(--space-lg); }
+
     .mobile-heading { display: none; }
 
     .content-tabs {
@@ -168,6 +177,30 @@ export class SettingsShell extends LitElement {
       border-bottom-color: var(--accent);
       color: var(--accent-text);
       font-weight: 600;
+    }
+
+    @media (min-width: 721px) and (max-width: 1000px) {
+      :host([model-page]) {
+        display: block;
+        margin-inline: calc(var(--space-md) * -1);
+        overflow-y: auto;
+      }
+      :host([model-page]) .settings-nav {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        padding: var(--space-md) var(--space-lg);
+      }
+      :host([model-page]) .desktop-groups { display: none; }
+      :host([model-page]) .mobile-heading { display: grid; gap: var(--space-xs); }
+      :host([model-page]) .mobile-heading__path { color: var(--muted); font-size: var(--text-xs); }
+      :host([model-page]) .mobile-heading__row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+      :host([model-page]) .mobile-heading__title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+      :host([model-page]) .settings-select { max-width: 55%; padding: var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); font: inherit; }
+      :host([model-page]) .settings-main { overflow: visible; }
+    }
+
+    @media (max-width: 768px) {
+      :host([model-page]) { margin: calc(var(--space-xs) * -1) calc(var(--space-xs) * -1) -1rem; }
     }
 
     @media (max-width: 720px) {
@@ -364,7 +397,7 @@ export class SettingsShell extends LitElement {
         ${this.renderDesktopNavigation()}
         ${this.renderMobileNavigation()}
       </nav>
-      <main class="settings-main">
+      <main class="settings-main ${this.activePage === "models" ? "settings-main--models" : ""}">
         ${this.accessDenied
           ? html`<app-empty-state icon="lock" title="无权访问" description="当前账号无权访问此设置页面。"></app-empty-state>`
           : html`${this.renderContentTabs(item)}${this.renderPage()}`}
