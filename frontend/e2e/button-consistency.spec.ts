@@ -33,6 +33,8 @@ test('shared controls: document/shadow parity, appearance, density, focus and bu
     expect(styles.light).toEqual(styles.shadow);
     expect(styles.light[1].icon).toContain('data:image/svg+xml');
     expect(styles.light[1].iconSize).toBe('16px');
+    expect(styles.light[1].bg).toBe('rgba(0, 0, 0, 0)');
+    expect(styles.light[1].border).toBe('rgba(0, 0, 0, 0)');
     expect(styles.light[0].height).toBe(styles.light[1].height);
     expect(styles.light[1].height).toBe(styles.light[2].height);
     expect(styles.light[3].height).toBeLessThanOrEqual(styles.light[1].height);
@@ -46,19 +48,31 @@ test('shared controls: document/shadow parity, appearance, density, focus and bu
   await page.evaluate(async () => {
     const { applyButtonPalette } = await import('/src/app/ui/btn-palette.ts');
     const { applyBorderRadius } = await import('/src/app/ui/app-settings.ts');
-    applyButtonPalette({ primaryBg: '#245f99', primaryColor: '#ffffff', secondaryBg: '#293b48', secondaryColor: '#ffffff', secondaryBorder: '#64748b' });
+    applyButtonPalette({ primaryBg: '#245f99', primaryColor: '#ffffff', secondaryBg: '#293b48', secondaryColor: '#ffffff', secondaryBorder: '#64748b', ghostColor: '#e2e8f0', ghostHoverColor: '#ffffff', ghostHoverBg: '#334155' });
     applyBorderRadius(0);
   });
   for (const root of [page.locator('#light'), page.locator('#shadow')]) {
     const button = root.locator('.btn-refresh').first();
-    await expect(button).toHaveCSS('background-color', 'rgb(41, 59, 72)');
-    await expect(button).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(button).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)');
+    await expect(button).toHaveCSS('color', 'rgb(226, 232, 240)');
     await expect(button).toHaveCSS('border-radius', '0px');
     await button.focus(); await expect(button).toBeFocused();
     expect(await button.evaluate(el => getComputedStyle(el).outlineStyle)).toBe('solid');
+    await button.hover();
+    await expect(button).toHaveCSS('background-color', 'rgb(51, 65, 85)');
+    await expect(button).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await expect(button).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)');
     const primary = root.locator('.btn-primary'); await primary.hover();
     await expect(primary).toHaveCSS('color', 'rgb(255, 255, 255)');
   }
+  // Native keyboard activation and disabled behavior remain intact for a text action.
+  const refresh = page.locator('#light .btn-refresh').first();
+  await refresh.evaluate(el => { el.addEventListener('click', () => el.setAttribute('data-activated', 'true')); });
+  await refresh.focus(); await page.keyboard.press('Enter');
+  await expect(refresh).toHaveAttribute('data-activated', 'true');
+  await expect(page.locator('#light [aria-busy]')).toBeDisabled();
+  expect(await page.locator('#shadow [aria-busy]').evaluate(el => getComputedStyle(el, '::before').animationName)).toBe('button-refresh-spin');
   await page.emulateMedia({ reducedMotion: 'reduce', forcedColors: 'active' });
   expect(await page.locator('#shadow [aria-busy]').evaluate(el => getComputedStyle(el, '::before').animationName)).toBe('none');
   await testInfo.attach('computed-control-metrics.json', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });

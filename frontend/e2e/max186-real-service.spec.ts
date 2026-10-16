@@ -45,11 +45,14 @@ test('button consistency across formal resource and governance pages', async ({ 
       await expect(page.locator('html')).toHaveAttribute('data-density', density);
       const button = page.locator(tag).locator('.btn-refresh').first();
       await expect(button).toBeVisible(); await expect(button).toBeEnabled();
-      const expectedBackground = await button.evaluate(el => {
-        const probe = document.createElement('span'); probe.style.backgroundColor = 'var(--btn-secondary-bg)';
-        el.append(probe); const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color;
+      await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(button).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)');
+      // Theme attributes change before the button's color transition finishes.
+      const expectedColor = await button.evaluate(el => {
+        const probe = document.createElement('span'); probe.style.color = 'var(--btn-ghost-color)';
+        el.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color;
       });
-      await expect(button).toHaveCSS('background-color', expectedBackground);
+      await expect(button).toHaveCSS('color', expectedColor);
       const style = await button.evaluate(el => {
         const s = getComputedStyle(el), icon = getComputedStyle(el, '::before');
         return { height: Math.round(el.getBoundingClientRect().height * 100) / 100, font: s.fontSize, weight: s.fontWeight, padding: s.padding, radius: s.borderRadius, color: s.color, background: s.backgroundColor, border: s.borderColor, icon: icon.maskImage, iconSize: icon.width };
@@ -62,6 +65,9 @@ test('button consistency across formal resource and governance pages', async ({ 
       await button.click(); // Same formal read endpoint, never a diagnostic/model action.
       await expect(button).toBeEnabled();
       measurements.push({ path, width, mode, density, style });
+      await page.mouse.move(0, 0);
+      await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(button).toHaveCSS('color', expectedColor);
       await page.screenshot({ path: `${output}/consistency-${path}-${width}-${mode}-${density}.png`, fullPage: true, animations: 'disabled' });
     }
   }
