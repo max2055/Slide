@@ -23,7 +23,7 @@ export const sharedResourceToolbarStyles = css`
   .resource-toolbar .resource-search-input {
     box-sizing: border-box;
     width: 100%;
-    height: 40px;
+    height: var(--control-height, 40px);
     padding: var(--space-sm) var(--space-md) var(--space-sm) 34px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -55,7 +55,7 @@ export const sharedResourceToolbarStyles = css`
     flex: 0 1 140px;
     width: 140px;
     min-width: 128px;
-    height: 40px;
+    height: var(--control-height, 40px);
     box-sizing: border-box;
     padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--border);
@@ -83,7 +83,7 @@ export const sharedResourceToolbarStyles = css`
     display: inline-flex;
     align-items: center;
     gap: var(--space-xs);
-    height: 40px;
+    height: var(--control-height, 40px);
     padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -114,7 +114,7 @@ export const sharedResourceToolbarStyles = css`
   }
 
   .resource-toolbar .resource-action {
-    min-height: 40px;
+    min-height: var(--control-height, 40px);
     box-sizing: border-box;
     justify-content: center;
   }
@@ -131,7 +131,7 @@ export const sharedResourceToolbarStyles = css`
     display: flex;
     align-items: center;
     gap: var(--space-md);
-    min-height: 40px;
+    min-height: var(--control-height, 40px);
     padding: 0 var(--space-lg);
     border-bottom: 1px solid var(--border);
     color: var(--muted);
@@ -160,6 +160,17 @@ export const sharedResourceToolbarStyles = css`
 
   .resource-filter-reset {
     margin-left: auto;
+  }
+
+  @media (pointer: coarse), (max-width: 768px) {
+    .resource-toolbar .resource-action,
+    .resource-toolbar .search-input,
+    .resource-toolbar .resource-search-input,
+    .resource-toolbar .filter-select,
+    .resource-toolbar .resource-filter,
+    .resource-toolbar .filter-btn {
+      min-height: max(44px, var(--control-height, 40px));
+    }
   }
 
   @media (max-width: 900px) {

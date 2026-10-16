@@ -19,6 +19,54 @@ test.skip(process.env.MAX186_ISOLATED_MYSQL !== '1', 'Requires task-owned isolat
 const processes: ChildProcess[] = [];
 let pool: any, token: string, permissions: string[], password = randomBytes(24).toString('hex');
 let serverId: number;
+
+test('button consistency across formal resource and governance pages', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.addInitScript(({ token, permissions }) => {
+    localStorage.setItem('token', token); localStorage.setItem('permissions', JSON.stringify(permissions));
+    localStorage.setItem('slide.i18n.locale', 'zh-CN');
+  }, { token, permissions });
+  const measurements: unknown[] = [];
+  const paths = [
+    ['dashboard', 'dashboard-page'], ['instances-db', 'instances-page'], ['servers', 'servers-page'],
+    ['network-devices', 'network-devices-page'], ['attention', 'attention-page'],
+    ['agent-tools', 'agent-tools-page'], ['health', 'health-center-page'],
+  ];
+  for (const [width, mode, density] of [[1440, 'light', 'standard'], [1440, 'dark', 'standard'], [1440, 'dark', 'compact'], [1440, 'light', 'comfortable'], [390, 'light', 'compact'], [390, 'dark', 'comfortable']] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    const preferences = { locale: 'zh-CN', theme: 'claw', themeMode: mode, fontDensity: density, accentColor: '#409eff' };
+    const saved = await fetch(`http://127.0.0.1:${apiPort}/api/user/preferences`, { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ preferences }) });
+    expect(saved.ok).toBe(true);
+    let reference: unknown;
+    for (const [path, tag] of paths) {
+      await page.mouse.move(0, 0);
+      await page.goto(`${base}/${path}`);
+      await expect(page.locator('html')).toHaveAttribute('data-theme-mode', mode);
+      await expect(page.locator('html')).toHaveAttribute('data-density', density);
+      const button = page.locator(tag).locator('.btn-refresh').first();
+      await expect(button).toBeVisible(); await expect(button).toBeEnabled();
+      const expectedBackground = await button.evaluate(el => {
+        const probe = document.createElement('span'); probe.style.backgroundColor = 'var(--btn-secondary-bg)';
+        el.append(probe); const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color;
+      });
+      await expect(button).toHaveCSS('background-color', expectedBackground);
+      const style = await button.evaluate(el => {
+        const s = getComputedStyle(el), icon = getComputedStyle(el, '::before');
+        return { height: Math.round(el.getBoundingClientRect().height * 100) / 100, font: s.fontSize, weight: s.fontWeight, padding: s.padding, radius: s.borderRadius, color: s.color, background: s.backgroundColor, border: s.borderColor, icon: icon.maskImage, iconSize: icon.width };
+      });
+      if (!reference) reference = style;
+      expect(style, `${path}: ${width}/${mode}/${density}`).toEqual(reference);
+      expect(style.iconSize).toBe('16px');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), path).toBe(true);
+      await button.focus(); await expect(button).toBeFocused();
+      await button.click(); // Same formal read endpoint, never a diagnostic/model action.
+      await expect(button).toBeEnabled();
+      measurements.push({ path, width, mode, density, style });
+      await page.screenshot({ path: `${output}/consistency-${path}-${width}-${mode}-${density}.png`, fullPage: true, animations: 'disabled' });
+    }
+  }
+  await writeFile(`${output}/button-consistency.json`, JSON.stringify(measurements, null, 2));
+});
 async function ready(url: string, child: ChildProcess) {
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
@@ -78,7 +126,6 @@ test.afterAll(async () => {
     finally { await cleanup.end(); }
   }
 });
-
 
 test('persisted inventory → overview → evidence → return, real HTTP/JWT/SQL without model calls', async ({ page }) => {
   const reads: {path:string;status:number}[] = [], writes: string[] = [];

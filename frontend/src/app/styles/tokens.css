@@ -142,6 +142,9 @@
   /* Layout */
   --shell-nav-width: 258px;
 
+  --control-height: 40px;
+  --control-height-sm: 28px;
+
   /* Button tokens — driven by appearance settings */
   --accent-solid: #1870c9;
   --accent-solid-foreground: #fff;

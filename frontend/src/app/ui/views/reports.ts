@@ -67,7 +67,6 @@ export class ReportsPage extends LitElement {
       padding: 0;
     }
 
-
     /* 报表类型网格 */
     .report-types-grid {
       display: grid;
@@ -223,7 +222,6 @@ export class ReportsPage extends LitElement {
       color: var(--text);
     }
 
-
     .time-ago {
       font-size: var(--text-sm);
       color: var(--muted);
@@ -233,33 +231,6 @@ export class ReportsPage extends LitElement {
     .actions {
       display: flex;
       gap: var(--space-sm);
-    }
-
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: var(--space-xs);
-      padding: var(--space-xs) var(--space-md);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-xs);
-      font-weight: 500;
-      color: var(--text);
-      background: var(--secondary);
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .action-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .action-btn:hover {
-      background: var(--accent-solid);
-      color: var(--accent-solid-foreground);
-      border-color: var(--accent);
     }
 
     /* 加载和空状态 */
@@ -298,7 +269,6 @@ export class ReportsPage extends LitElement {
       font-size: var(--text-base);
       color: var(--muted);
     }
-
 
     /* Empty states */
     .field-row {
@@ -529,7 +499,7 @@ export class ReportsPage extends LitElement {
                 <td>${cfg.server_id ? `服务器 #${cfg.server_id}` : `实例 #${cfg.instance_id}`}</td>
                 <td><code>${cfg.cron}</code></td><td>${cfg.next_run ? this._formatTime(cfg.next_run) : '—'}</td>
                 <td><app-badge variant=${cfg.enabled ? 'ok' : 'neutral'}>${cfg.enabled ? '已启用' : '已停用'}</app-badge></td>
-                <td><div class="actions"><button class="action-btn" @click=${() => this._toggleConfig(cfg)}>${cfg.enabled ? '停用' : '启用'}</button><button class="action-btn" @click=${() => this._openEditDialog(cfg)}>编辑</button><button class="action-btn" @click=${() => this._confirmDelete(cfg)}>删除</button></div></td>
+                <td><div class="actions"><button class="btn-sm action-btn" @click=${() => this._toggleConfig(cfg)}>${cfg.enabled ? '停用' : '启用'}</button><button class="btn-sm action-btn" @click=${() => this._openEditDialog(cfg)}>编辑</button><button class="btn-sm action-btn" @click=${() => this._confirmDelete(cfg)}>删除</button></div></td>
               </tr>`)}
             </tbody></table></div>` : html`<app-empty-state title="暂无定时报表" description="新建计划后，系统会在到期时生成并保存报表。"><div slot="icon">${icons['clock']}</div></app-empty-state>`}
         </app-card>
@@ -543,7 +513,7 @@ export class ReportsPage extends LitElement {
           ${renderListBrowser(this.historyBrowser, historyPage.total, this.reports.length, "报表历史", () => this.requestUpdate(), "已载入（仅检索已载入历史）")}
           <div class="list-browser">
             <span>可见历史总数：${this.historyTotal === null ? '未知' : this.historyTotal} · 已读取 ${this.historyBatch} 批</span>
-            <button class="btn" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports()}>刷新历史</button>
+            <button aria-busy=${String(this.historyLoadingMore)} class="btn btn-refresh" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports()}>刷新历史</button>
             ${this.historyTotal === null || this.reports.length < this.historyTotal ? html`<button class="btn" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports(true)}>${this.historyLoadingMore ? '读取中...' : '读取下一批历史'}</button>` : ''}
           </div>
           ${this.reports.length > 0
@@ -584,7 +554,7 @@ export class ReportsPage extends LitElement {
                           <td style="text-align:center;">
                             <div class="actions">
                               <button class="btn-primary" @click=${() => this._download(report)}>下载</button>
-                              <button class="action-btn" @click=${() => this._view(report)}>查看</button>
+                              <button class="btn-sm action-btn" @click=${() => this._view(report)}>查看</button>
                             </div>
                           </td>
                         </tr>

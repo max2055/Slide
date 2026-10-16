@@ -208,7 +208,7 @@ export function renderAgents(props: AgentsProps) {
                 `
               : nothing}
             <button
-              class="btn btn--sm agents-refresh-btn"
+              class="btn btn-refresh agents-refresh-btn"
               ?disabled=${props.loading}
               @click=${props.onRefresh}
             >

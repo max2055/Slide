@@ -43,7 +43,6 @@ interface ServerFormData {
   credential_value: string;
 }
 
-
 const SERVER_ENVIRONMENT_OPTIONS = [
   { value: "development", label: "开发环境" },
   { value: "testing", label: "测试环境" },
@@ -547,8 +546,8 @@ export class ServersPage extends LitElement {
           <div class="card">
             <div class="toolbar resource-toolbar">
               <div class="toolbar-actions">
-                <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
-                  ${icons['refresh']} 刷新
+                <button aria-busy=${String(this._loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+                   刷新
                 </button>
                 <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
                   ${icons['plus']} 添加服务器
@@ -610,8 +609,8 @@ export class ServersPage extends LitElement {
               ${this._activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this._resetFilters}>重置筛选</button>`
                 : nothing}
-              <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
-                ${icons['refresh']} 刷新
+              <button aria-busy=${String(this._loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+                 刷新
               </button>
               <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
                 ${icons['plus']} 添加服务器
@@ -745,7 +744,7 @@ export class ServersPage extends LitElement {
         <div slot="footer" style="display:flex;justify-content:center;gap:var(--space-md);">
           <button class="btn" @click=${this._closeDeleteDialog}>取消</button>
           <button class="btn danger" @click=${this._handleDelete}
-            style="background:var(--danger);color:white;border-color:var(--danger);">确认删除</button>
+            >确认删除</button>
         </div>
       </app-dialog>
     `;

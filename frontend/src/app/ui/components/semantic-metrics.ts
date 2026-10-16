@@ -130,7 +130,7 @@ export class SemanticMetrics extends LitElement {
         const absolute = this.from || this.to; this.from = ''; this.to = ''; if (!absolute) void this.load();
       }}><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24">最近 24 小时</option></select></label>
       <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
-      <button class="btn" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
+      <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.result ? html`<p class="window">查询窗口：${this.result.window.from} — ${this.result.window.to} · 窗口不代表实际观测时间</p>` : nothing}
     </div>
     ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}

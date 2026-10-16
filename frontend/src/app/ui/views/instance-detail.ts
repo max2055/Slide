@@ -51,9 +51,7 @@ export class InstanceDetailPage extends LitElement {
     .instance-title { min-width:0;flex:1 1 12rem;font-size:var(--text-2xl);font-weight:600;color:var(--text-strong);overflow-wrap:anywhere; }
     .header-right { display:flex;align-items:center;gap:var(--space-md);min-width:0;flex-wrap:wrap; }
     .last-updated { font-size:var(--text-sm);color:var(--muted); }
-    .refresh-btn { display:inline-flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:var(--text-sm);font-weight:500;color:var(--accent-text);background:transparent;cursor:pointer; }
-    .refresh-btn:hover { background:var(--accent-solid);color:var(--accent-solid-foreground); }
-    .refresh-btn:disabled { opacity:0.6;cursor:not-allowed; }
+
     .tabs { display:flex;gap:var(--space-xs);margin-bottom:var(--space-xl);border-bottom:1px solid var(--border);overflow-x:auto; }
     .tab { padding:var(--space-md) var(--space-xl);font-size:var(--text-md);font-weight:500;color:var(--muted);background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap; }
     .tab:hover { color:var(--text); }
@@ -538,12 +536,11 @@ export class InstanceDetailPage extends LitElement {
               style="${this.diagnosisStatus === "running" ? "border-color:var(--warn);color:var(--warn);" : ""}">
               ${this.diagnosisStatus === "running" ? html`${icons['loader']} 诊断中...` : html`${icons['activity']} 一键诊断`}
             </button>
-            <button class="btn" @click=${this._manualRefresh} ?disabled=${this.isRefreshing}>
-              ${this.isRefreshing ? html`<span class="spinner" style="width:14px;height:14px;border-width:1.5px;"></span>` : icons['refresh']} 刷新
+            <button aria-busy=${String(this.isRefreshing)} class="btn btn-refresh" @click=${this._manualRefresh} ?disabled=${this.isRefreshing}>
+               刷新
             </button>
           </div>
         </div>
-
 
         <resource-investigation-links resourceType="instance" .resourceId=${this.instanceId}></resource-investigation-links>
       <div class="tabs" role="tablist" aria-label="资源详情页签">

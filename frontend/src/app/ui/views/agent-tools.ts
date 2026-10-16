@@ -172,7 +172,7 @@ export class AgentToolsPage extends AgentListPage<Tool> {
     const entries = this.items.filter(tool => [tool.name, tool.description, scope(tool), effects[effect(tool)] ?? '边界未知', approval(tool), ...(tool.security?.permissions ?? [])].join(' ').toLowerCase().includes(this.query.trim().toLowerCase()) && (this.filter === 'all' || effect(tool) === this.filter))
       .sort((a, b) => (this.sort === 'name-desc' ? -1 : 1) * a.name.localeCompare(b.name, 'zh-CN'));
     return html`
-      <header class="page-header"><div><h1>工具清单</h1><p class="caption">先看用途与执行边界，完整参数按需查看。</p></div><button class="btn" ?disabled=${this.loading} @click=${this.load}>刷新</button></header>
+      <header class="page-header"><div><h1>工具清单</h1><p class="caption">先看用途与执行边界，完整参数按需查看。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${this.load}>刷新</button></header>
       ${this.list({ entries, placeholder: '查找工具名称、用途或资源', empty: '暂无已注册工具', filters: [...Object.entries(effects), ['unknown', '边界未知']],
         note: '已注册不代表当前可执行；执行时仍需校验资源权限与审批。',
         columns: [{ key: 'name', label: '工具与用途', width: '38%' }, { key: 'scope', label: '适用范围', width: '18%' }, { key: 'boundary', label: '执行边界', width: '31%' }, { key: 'actions', label: '操作', width: '13%' }],

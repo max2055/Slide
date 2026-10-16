@@ -467,7 +467,7 @@ export class NetworkDevicesPage extends LitElement {
           <select class="resource-filter" aria-label="状态筛选" .value=${this.statusFilter} @change=${(e: Event) => (this.statusFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option></select>
           <div class="toolbar-actions">
             ${this.activeFilterCount > 0 ? html`<button class="btn-ghost resource-filter-reset" type="button" @click=${this.resetFilters}>重置筛选</button>` : nothing}
-            <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this.loading} @click=${this.loadDevices}>${icons.refresh} 刷新</button>
+            <button aria-busy=${String(this.loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading} @click=${this.loadDevices}> 刷新</button>
             <button class="btn-primary resource-action resource-action--add" type="button" @click=${this.openCreate}>${icons.plus} 添加设备</button>
           </div>
         </div>

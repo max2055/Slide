@@ -21,6 +21,8 @@
 
 消费组件时不另造同类 `.card`、`.modal-overlay`、`.badge`、toast 或按钮样式；不用 `alert()` 作为产品通知。共享组件确实缺少所需能力时，先评估最小扩展；专用实现须说明原因，不为一次性需求创建通用框架。
 
+按钮按场景统一：页面/列表刷新使用 `btn btn-refresh`（共享图标＋文字次要按钮）；创建/保存使用 `btn-primary`；行内操作使用 `btn-sm` / `btn-ghost`，删除保留 danger 语义；局部图标操作提供可访问名称。普通 DOM 与 Shadow DOM 共用 `shared-btn-styles.css`，页面不得重复定义通用 `.btn` 配色/尺寸。尺寸、字号、圆角与颜色消费现有外观 token；同场景一致，不要求聊天图标与页面工具栏相同。规范与验收范围见 [主要控件规范](../docs/slide/development/MAX-186/visual-controls-2026-10-16.md)。
+
 ## 样式与 Lit
 
 - 使用主题 token：颜色 `--accent`、`--text`、`--text-strong`、`--muted`、`--border`；圆角 `--radius-sm/md/lg`；间距 `--space-xs` 至 `--space-xl`。业务组件不硬编码同类颜色、圆角和间距。

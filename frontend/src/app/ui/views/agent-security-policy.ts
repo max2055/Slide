@@ -327,7 +327,7 @@ export class AgentSecurityPolicyPage extends LitElement {
           <select aria-label="Agent" .value=${this.selectedAgentId} @change=${this.selectAgent}>
             ${(this.catalog?.agents ?? []).map((agent) => html`<option value=${agent.id}>${agent.name} (${agent.id})</option>`)}
           </select>
-          <button class="btn-icon" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>${icons.refresh}</button>
+          <button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>刷新</button>
         </div>
       </div>
       ${this.loading || !this.policy || !this.catalog ? html`<div class="skeleton"></div>` : html`

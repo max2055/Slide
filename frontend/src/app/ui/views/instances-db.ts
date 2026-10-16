@@ -254,7 +254,6 @@ export class InstancesPage extends LitElement {
       letter-spacing: 0.05em;
     }
 
-
     .indicator {
       width: 6px;
       height: 6px;
@@ -324,7 +323,6 @@ export class InstancesPage extends LitElement {
       color: var(--muted);
     }
 
-
     .form-group {
       margin-bottom: var(--space-lg);
     }
@@ -342,7 +340,6 @@ export class InstancesPage extends LitElement {
     .instance-form app-form-field {
       margin-bottom: 0;
     }
-
 
     .form-label {
       display: block;
@@ -671,8 +668,8 @@ export class InstancesPage extends LitElement {
               ${this.activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this.resetFilters}>重置筛选</button>`
                 : nothing}
-              <button class="btn resource-action resource-action--refresh" type="button" .disabled=${this.refreshing} @click=${this.refreshInstances}>
-                ${icons['refresh']} 刷新
+              <button aria-busy=${String(this.refreshing)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.refreshing} @click=${this.refreshInstances}>
+                 刷新
               </button>
               <button class="btn-primary resource-action resource-action--add" type="button" @click=${() => this._addInstance()}>
                 ${icons['plus']} 添加实例
@@ -1213,7 +1210,7 @@ export class InstancesPage extends LitElement {
         </div>
         <div slot="footer" style="justify-content:center;display:flex;gap:var(--space-md)">
           <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete} style="background:var(--danger);color:white;border-color:var(--danger);">确认删除</button>
+          <button class="btn danger" @click=${this._handleDelete} >确认删除</button>
         </div>
       </app-dialog>
     `;

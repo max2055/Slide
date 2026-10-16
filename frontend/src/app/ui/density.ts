@@ -21,6 +21,8 @@ const BASE_SIZES = {
 } as const;
 
 const BASE_SPACING = {
+  '--control-height': 40,
+  '--control-height-sm': 28,
   '--space-xs': 4,
   '--space-sm': 8,
   '--space-md': 12,

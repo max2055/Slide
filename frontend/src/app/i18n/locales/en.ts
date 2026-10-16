@@ -573,7 +573,7 @@ export const en: TranslationMap = {
     pageSizeRows: "{count} rows",
     unavailablePage: "Previously selected page is unavailable",
     buttonColors: "Button Colors",
-    buttonColorsDesc: "Customize button colors by action type.",
+    buttonColorsDesc: "Primary actions use a filled button; refresh, filter and cancel use secondary buttons; inline actions stay compact. Customize colors by action type. Size, typography and roundness follow the density and corner settings above.",
     primaryAction: "Primary action",
     primaryFill: "Primary action fill color",
     primaryText: "Primary action text color",

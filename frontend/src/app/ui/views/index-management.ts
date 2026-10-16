@@ -92,45 +92,13 @@ export class IndexManagementPage extends LitElement {
       flex-wrap: wrap;
     }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-sm) var(--space-md);
-      border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-      border: 1px solid var(--border);
-      background: var(--secondary);
-      color: var(--text);
-    }
-
     .btn:hover:not(:disabled) {
       background: var(--bg-hover);
       border-color: var(--border-strong);
     }
 
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn.primary {
-      background: var(--accent-solid);
-      color: var(--accent-solid-foreground);
-      border-color: var(--accent);
-    }
-
     .btn.primary:hover:not(:disabled) {
       background: var(--accent-solid-hover);
-    }
-
-    .btn.danger {
-      background: var(--danger);
-      color: white;
-      border-color: var(--danger);
     }
 
     .select {

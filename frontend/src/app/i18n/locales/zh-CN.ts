@@ -585,7 +585,7 @@ export const zh_CN: TranslationMap = {
     pageSizeRows: "{count} 条",
     unavailablePage: "原选页面已不可用",
     buttonColors: "按钮颜色",
-    buttonColorsDesc: "按操作类型自定义按钮颜色。",
+    buttonColorsDesc: "主操作使用强调填充，刷新、筛选及取消使用次要按钮，行内操作保持紧凑。颜色按类型统一定制；字号、尺寸和圆角跟随上方密度与圆角设置。",
     primaryAction: "主要操作",
     primaryFill: "主要操作填充色",
     primaryText: "主要操作文字色",

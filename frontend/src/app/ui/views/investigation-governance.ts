@@ -77,7 +77,7 @@ export class InvestigationGovernancePage extends LitElement {
   }
   static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles];
   render() {
-    return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button class="btn" ?disabled=${this.loading || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
+    return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
       ${this.loading ? html`<app-card><div class="state-box" role="status">正在加载调查设置…</div></app-card>`
         : this.error || this.forbidden ? html`<app-card><div role="alert"><app-empty-state icon="lock" title=${this.forbidden ? '无权访问' : '暂不可用'} description=${this.error || '当前账号无权访问此调查设置。'}></app-empty-state></div></app-card>`
         : this.facts ? this.kind === 'policies' ? this.renderPolicies(this.facts as InvestigationPoliciesResponse) : this.kind === 'budget' ? this.renderBudget(this.facts as InvestigationBudgetResponse) : this.renderUsage(this.facts as InvestigationUsageResponse) : nothing}

@@ -85,7 +85,7 @@ export class ResourceDecisions extends LitElement {
     finally { if (version === this.requestVersion) this.busy = false; }
   }
   override render() {
-    return html`<section><header><h2>推论与假设记录</h2><button class="btn" title="刷新决策记录" aria-label="刷新决策记录" .disabled=${this.busy} @click=${this.load}>${icons['refresh-cw']}</button></header>
+    return html`<section><header><h2>推论与假设记录</h2><button aria-busy=${String(this.busy)} class="btn btn-refresh" title="刷新决策记录" aria-label="刷新决策记录" .disabled=${this.busy} @click=${this.load}>刷新</button></header>
       <p>人工记录的推论与假设，均待确认；记录判断不等于确认事实，也不代表已执行处理或确认恢复。自动观测另见上方事实。</p>
       ${this.error ? html`<p class="error" role="alert">判断记录或引用证据不可用。请检查访问权限、采集状态及输入后重试。</p><details><summary>查看判断错误详情</summary><p>${this.error}</p></details>` : nothing}${this.busy ? html`<div class="skeleton" aria-label="加载或保存决策"></div>` : nothing}
       ${this.items.length ? this.items.map(item => html`<article><header><span>${item.status === 'inference' ? '人工推论（待确认）' : '人工假设（待确认）'}</span></header><p>${item.statement}</p><p class="meta">依据时间 ${displayTime(item.from)} ~ ${displayTime(item.to)} · 记录时间 ${displayTime(item.createdAt)}</p><details><summary>引用证据 (${item.evidenceRefs.length})</summary><p>记录 ID ${item.id}</p>${item.evidenceRefs.map(id => html`<p><code>${id}</code></p>`)}</details></article>`) : !this.busy && !this.error ? html`<app-empty-state title="暂无决策记录"></app-empty-state>` : nothing}

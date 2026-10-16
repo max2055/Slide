@@ -189,8 +189,6 @@ export class AppearanceSettings extends LitElement {
       padding-top: var(--space-sm);
       border-top: 1px solid var(--border);
     }
-    .button-preview { font-size: var(--text-xs); padding: var(--space-xs) var(--space-md); }
-    .button-preview.btn-ghost { padding-inline: var(--space-sm); }
     .text-input {
       width: 100%; padding: 6px 10px;
       border: 1px solid var(--border);
@@ -490,6 +488,7 @@ export class AppearanceSettings extends LitElement {
           <div class="button-preview-row" aria-label=${t("appearance.buttonPreview")}>
             <button class="btn-primary button-preview" type="button">${t("appearance.primary")}</button>
             <button class="btn button-preview" type="button">${t("appearance.secondary")}</button>
+            <button class="btn btn-refresh button-preview" type="button">${t("common.refresh")}</button>
             <button class="btn-ghost button-preview" type="button">${t("appearance.inline")}</button>
             <button class="btn-primary btn-danger button-preview" type="button">${t("appearance.danger")}</button>
           </div>

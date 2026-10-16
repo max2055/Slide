@@ -2,7 +2,6 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
-import { icons } from '../../../icons.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-badge.js';
@@ -163,7 +162,7 @@ export class AgentSandboxStatusPage extends LitElement {
   override render() {
     const status = this.response?.status;
     return html`
-      <div class="page-header"><div><h1>Agent 沙箱</h1><p>只读展示 Controller 健康、rootless 资格、不可变隔离策略和近期作业元数据</p></div><button class="btn-icon" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>${icons.refresh}</button></div>
+      <div class="page-header"><div><h1>Agent 沙箱</h1><p>只读展示 Controller 健康、rootless 资格、不可变隔离策略和近期作业元数据</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>刷新</button></div>
       ${this.hasAdminAccess() ? html`<div class="layout">
         <app-card><span slot="header">系统全局设置</span><div class="config-row">
           <div class="config-copy"><strong>Agent 沙箱代码执行</strong><span>Shell、Python 和 Node 代码只能通过隔离 Sandbox Controller 执行，不会直接运行在宿主机；是否需要审批由 Agent 安全策略控制</span></div>

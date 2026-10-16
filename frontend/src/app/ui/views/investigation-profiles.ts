@@ -62,7 +62,7 @@ export class InvestigationProfilesPage extends LitElement {
   }
   render() {
     const item = this.selected, p = item?.profile;
-    return html`<div class="page-header"><div><h1>调查 Profiles</h1><p class="muted small">按调查对象查看预置职责、工具权限上限与执行限制。</p></div><button class="btn" ?disabled=${this.loading} @click=${this.load}>刷新 Profiles</button></div>
+    return html`<div class="page-header"><div><h1>调查 Profiles</h1><p class="muted small">按调查对象查看预置职责、工具权限上限与执行限制。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${this.load}>刷新 Profiles</button></div>
       ${this.loading ? html`<app-card><div class="state-box" role="status">正在加载 Profiles…</div></app-card>`
         : this.error || this.forbidden ? html`<app-card><div role="alert"><app-empty-state icon="lock" title=${this.forbidden ? '无权访问' : '加载失败'} description=${this.error}></app-empty-state></div></app-card>`
         : !this.facts?.items.length ? html`<app-card><app-empty-state icon="brain" title="尚未配置 Profiles" description="当前服务没有返回可展示的 Profile 事实。"></app-empty-state></app-card>`

@@ -65,10 +65,7 @@ export class AlertList extends LitElement {
     .type-badge { display: inline-flex; align-items: center; padding: var(--space-xs) var(--space-sm); background: rgba(59,130,246,0.12); color: var(--info); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
     .time-ago { font-size: var(--text-sm); color: var(--muted); }
     .actions { display: flex; gap: var(--space-sm); }
-    .action-btn { display: inline-flex; align-items: center; padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 11px; font-weight: 500; cursor: pointer; background: var(--card); color: var(--text); white-space: nowrap; }
-    .action-btn:hover { background: var(--accent-solid); color: var(--accent-solid-foreground); border-color: var(--accent); }
-    .action-btn.primary { background: var(--accent-solid); color: var(--accent-solid-foreground); border-color: var(--accent); }
-    .action-btn.primary:hover { background: var(--accent-solid-hover); }
+
     .loading, .empty { display: flex; align-items: center; justify-content: center; min-height: 300px; color: var(--muted); }
     .empty__content { text-align: center; }
     .empty__icon { width: 48px; height: 48px; margin-bottom: var(--space-md); opacity: 0.6; color: var(--muted); }
@@ -174,7 +171,7 @@ export class AlertList extends LitElement {
             </select>
           ` : ''}
           <input class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
-          <button class="btn" @click=${() => this._emit('alert-refresh')}>刷新</button>
+          <button class="btn btn-refresh" @click=${() => this._emit('alert-refresh')}>刷新</button>
         </div>
 
         ${filtered.length > 0 ? html`
@@ -247,10 +244,10 @@ export class AlertList extends LitElement {
         <td style="text-align:center;">
           <div class="actions" style="flex-wrap:wrap;gap:3px;">
             ${alert.status === 'unread' || alert.status === 'read'
-              ? html`<button class="action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
-              : html`<button class="action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>`
+              ? html`<button class="btn-primary btn-sm action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
+              : html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>`
             }
-            ${isActive && alert.severity !== 'info' ? html`<button class="action-btn" @click=${() => this._emit('alert-rca', { id: alert.id })}>AI</button>` : ''}
+            ${isActive && alert.severity !== 'info' ? html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-rca', { id: alert.id })}>AI</button>` : ''}
           </div>
         </td>
       </tr>

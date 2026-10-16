@@ -47,7 +47,7 @@ export class AgentSkillsPage extends AgentListPage<Skill> {
     const entries = this.items.filter(s => [s.name, s.description, s.filePath, s.source, s.enabled ? '已启用' : '已禁用'].join(' ').toLowerCase().includes(this.query.trim().toLowerCase()) && (this.filter === 'all' || (this.filter === 'enabled' ? s.enabled === true : this.filter === 'disabled' ? s.enabled === false : typeof s.enabled !== 'boolean')))
       .sort((a, b) => (this.sort === 'name-desc' ? -1 : 1) * (a.name.localeCompare(b.name, 'zh-CN') || a.filePath.localeCompare(b.filePath)));
     return html`
-      <header class="page-header"><div><h1>技能清单</h1><p class="caption">先看用途与启停状态，路径和原始配置按需查看。</p></div><button class="btn" ?disabled=${this.loading || !!this.pending} @click=${this.load}>刷新</button></header>
+      <header class="page-header"><div><h1>技能清单</h1><p class="caption">先看用途与启停状态，路径和原始配置按需查看。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || !!this.pending} @click=${this.load}>刷新</button></header>
       ${this.toggleError && !this.error ? html`<p role="alert">${this.toggleError} <button class="btn" @click=${this.load}>重新读取</button></p>` : nothing}
       ${this.list({ entries, placeholder: '查找技能名称、用途、路径或状态', empty: '暂无已加载技能', filters: [['enabled', '已启用'], ['disabled', '已禁用'], ['unknown', '状态未知']],
         columns: [{ key: 'name', label: '技能与用途', width: '60%' }, { key: 'status', label: '状态', width: '16%' }, { key: 'actions', label: '操作', width: '24%' }],

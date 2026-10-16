@@ -254,8 +254,8 @@ export class PromptSettingsPage extends LitElement {
           <p>查看、编辑和优化 AI 分析 Agent 的系统提示词，支持多版本管理和 AI 辅助优化</p>
         </div>
         <div style="display:flex;gap:8px;">
-          <button class="btn" @click=${this.loadTypes} title="刷新列表">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <button class="btn btn-refresh" @click=${this.loadTypes} title="刷新列表">
+
             刷新
           </button>
         </div>

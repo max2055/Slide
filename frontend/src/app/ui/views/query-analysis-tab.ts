@@ -88,26 +88,6 @@ export class QueryAnalysisTab extends LitElement {
     .tag-warn { background: var(--warn-subtle); color: var(--warn); }
     .tag-info { background: var(--info-subtle); color: var(--info); }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border: 1px solid var(--border, #e5e7eb);
-      background: var(--card, #fff);
-      padding: 6px 14px;
-      border-radius: var(--radius-sm, 4px);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      color: var(--text, #333);
-    }
-
-    .btn.primary {
-      background: var(--accent, #3b82f6);
-      color: var(--accent-foreground, #fff);
-      border: 1px solid var(--accent, #3b82f6);
-    }
-
     .empty { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .loading { padding: 20px; text-align: center; color: var(--muted, #6b7280); }
   `];

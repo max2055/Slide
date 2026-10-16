@@ -175,7 +175,6 @@ export class AlertsPage extends LitElement {
       color: var(--text-strong);
     }
 
-
     /* 表格样式 */
     .table-wrap {
       overflow: auto;
@@ -267,7 +266,6 @@ export class AlertsPage extends LitElement {
       color: var(--info);
     }
 
-
     .instance-badge {
       display: inline-flex;
       align-items: center;
@@ -292,41 +290,10 @@ export class AlertsPage extends LitElement {
       letter-spacing: 0.05em;
     }
 
-
     /* 操作按钮 */
     .actions {
       display: flex;
       gap: var(--space-sm);
-    }
-
-    .action-btn {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 10px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      font-size: 11px;
-      font-weight: 500;
-      cursor: pointer;
-      background: var(--card);
-      color: var(--text);
-      white-space: nowrap;
-    }
-
-    .action-btn:hover {
-      background: var(--accent-solid);
-      color: var(--accent-solid-foreground);
-      border-color: var(--accent);
-    }
-
-    .action-btn.primary {
-      background: var(--accent-solid);
-      color: var(--accent-solid-foreground);
-      border-color: var(--accent);
-    }
-
-    .action-btn.primary:hover {
-      background: var(--accent-solid-hover);
     }
 
     /* 加载和空状态 */
@@ -454,7 +421,6 @@ export class AlertsPage extends LitElement {
       color: var(--muted);
     }
 
-
     /* Checkbox group */
     .checkbox-group {
       display: flex;
@@ -479,7 +445,6 @@ export class AlertsPage extends LitElement {
       border-color: var(--accent);
       color: var(--accent-text);
     }
-
 
     .cfg-toggle {
       position: relative;
@@ -973,7 +938,7 @@ export class AlertsPage extends LitElement {
     return html`
       <app-card variant="default">
         <div slot="header">通知死信队列</div>
-        <button slot="header" class="btn" .disabled=${this.notificationDeadLettersLoading || this.notificationReplaySaving}
+        <button slot="header" class="btn btn-refresh" .disabled=${this.notificationDeadLettersLoading || this.notificationReplaySaving}
           @click=${this.loadNotificationDeadLetters}>刷新通知投递记录</button>
         ${this.notificationDeadLettersLoading ? html`<div class="loading" role="status">加载通知投递记录...</div>`
         : this.notificationDeadLettersError ? html`
@@ -1412,8 +1377,8 @@ export class AlertsPage extends LitElement {
                           </label>
                         </td>
                         <td style="text-align:center;">
-                          <button class="action-btn" @click=${() => this._openRuleModal(rule)}>编辑</button>
-                          <button class="action-btn" style="color:var(--danger);border-color:var(--danger);margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
+                          <button class="btn-sm action-btn" @click=${() => this._openRuleModal(rule)}>编辑</button>
+                          <button class="btn-sm danger action-btn" style="margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
                         </td>
                       </tr>
                     `)}
@@ -1581,8 +1546,8 @@ export class AlertsPage extends LitElement {
                         </td>
                         <td style="text-align:center;">
                           <div class="actions">
-                            <button class="action-btn" @click=${() => this._openEscalationModal(rule)}>编辑</button>
-                            <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._deleteEscalation(rule)}>删除</button>
+                            <button class="btn-sm action-btn" @click=${() => this._openEscalationModal(rule)}>编辑</button>
+                            <button class="btn-sm danger action-btn" @click=${() => this._deleteEscalation(rule)}>删除</button>
                           </div>
                         </td>
                       </tr>
@@ -1788,8 +1753,8 @@ export class AlertsPage extends LitElement {
                           </td>
                           <td style="text-align:center;">
                             <div class="actions">
-                              <button class="action-btn" @click=${() => this._openMaintenanceModal(win)}>编辑</button>
-                              <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._deleteMaintenance(win)}>删除</button>
+                              <button class="btn-sm action-btn" @click=${() => this._openMaintenanceModal(win)}>编辑</button>
+                              <button class="btn-sm danger action-btn" @click=${() => this._deleteMaintenance(win)}>删除</button>
                             </div>
                           </td>
                         </tr>
@@ -1990,7 +1955,7 @@ export class AlertsPage extends LitElement {
                         </td>
                         <td style="text-align:center;">
                           <div class="actions">
-                            <button class="action-btn" style="color:var(--danger);border-color:var(--danger);" @click=${() => this._cancelSilence(s)}>取消</button>
+                            <button class="btn-sm danger action-btn" @click=${() => this._cancelSilence(s)}>取消</button>
                           </div>
                         </td>
                       </tr>

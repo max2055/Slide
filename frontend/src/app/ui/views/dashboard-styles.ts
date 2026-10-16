@@ -1,6 +1,6 @@
 import { css } from 'lit';
 export const dashboardStyles = css`
-  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: var(--accent-text, var(--accent)); --btn-primary-bg: var(--overview-action); --btn-primary-color: var(--card); --btn-primary-border: var(--overview-action); --btn-ghost-color: var(--muted-strong); --btn-ghost-hover-color: var(--overview-action); --btn-secondary-border: var(--border); }
+  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: var(--accent-text, var(--accent)); }
   * { box-sizing: border-box; }
   .dashboard-grid { display: grid; gap: var(--space-xl); padding-bottom: var(--space-xl); min-width: 0; }
   h1 { font-size: calc(var(--text-lg) * 1.5); font-weight: 600; line-height: 1.3; margin: 0; color: var(--text-strong); }
@@ -85,7 +85,7 @@ export const dashboardStyles = css`
   stat-card::part(label), stat-card::part(hint) { color: var(--muted-strong); font-size: var(--text-sm); text-transform: none; letter-spacing: normal; }
   stat-card::part(value) { font-variant-numeric: tabular-nums; }
   stat-card[aria-pressed='true']::part(root) { background: var(--accent-subtle); outline: 1px solid var(--overview-action); outline-offset: -1px; }
-  .btn, .btn-ghost, .btn-primary { min-height: 32px; padding: var(--space-xs) var(--space-sm); font-size: var(--text-md); }
+  .risk-row .btn-ghost { min-height: var(--control-height-sm); font-size: var(--text-sm); }
   button[aria-pressed='true'] { background: var(--accent-subtle); color: var(--overview-action); }
   .scope-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-lg); align-items: center; border-bottom: 1px solid var(--border); padding-bottom: var(--space-sm); }
   .scope-switch { gap: 0; }
@@ -130,5 +130,5 @@ export const dashboardStyles = css`
   @container (max-width: 1000px) { .engine-distribution { flex-wrap: wrap; justify-content: center; } .engine-pie { width: 120px; height: 120px; } .scope-filters { max-width: none; } }
   @container (max-width: 760px) { .dashboard__stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard__primary, .database-panels { grid-template-columns: minmax(0, 1fr); } .scope-toolbar { align-items: stretch; } .scope-filters { flex-basis: 100%; } }
   @container (max-width: 420px) { h1 { font-size: calc(var(--text-lg) * 1.375); } .metric-row, .engine-row { grid-template-columns: minmax(0, 1fr) auto; } .metric-row meter, .engine-row meter { display: none; } .scope-filters { flex-wrap: wrap; } .risk-identity { flex-wrap: wrap; } .risk-row { column-gap: var(--space-xs); } .risk-next { padding-inline: 0; } .risk-next svg { display: none; } }
-  @media (pointer: coarse), (max-width: 768px) { .btn, .btn-ghost, .btn-primary, .scope-switch .btn, input, select, summary { min-height: 44px; } summary { display: list-item; align-content: center; } .scope-switch { width: 100%; } }
+  @media (pointer: coarse), (max-width: 768px) { .btn, .btn-primary { min-height: max(44px, var(--control-height)); } .btn-ghost, .scope-switch .btn, input, select, summary { min-height: 44px; } summary { display: list-item; align-content: center; } .scope-switch { width: 100%; } }
 `;

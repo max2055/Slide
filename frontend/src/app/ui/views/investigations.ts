@@ -265,7 +265,7 @@ export class AttentionPage extends LitElement {
           ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : hasSlidePermission(this.permissions, 'alert:view') ? html`
             ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
             ${this.loading || this.readState === 'success' ? html`<app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>` : nothing}
-            <div class="attention-actions"><button class="btn" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
+            <div class="attention-actions"><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
           ` : html`<app-empty-state title="无访问权限" description="需要告警读取权限。"></app-empty-state>`}
         </app-card>`;
   }

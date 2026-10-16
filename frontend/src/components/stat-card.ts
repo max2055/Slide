@@ -14,8 +14,8 @@ export class StatCard extends LitElement {
 
     .stat-card {
       display: grid;
-      gap: 4px;
-      padding: 14px 16px;
+      gap: var(--space-xs);
+      padding: var(--space-md) var(--space-lg);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       background: var(--card);
@@ -39,7 +39,7 @@ export class StatCard extends LitElement {
     }
 
     .stat-card__label {
-      font-size: 11px;
+      font-size: var(--text-xs);
       font-weight: 600;
       color: var(--muted);
       text-transform: uppercase;
@@ -47,7 +47,7 @@ export class StatCard extends LitElement {
     }
 
     .stat-card__value {
-      font-size: 22px;
+      font-size: var(--text-2xl);
       font-weight: 700;
       letter-spacing: -0.03em;
       line-height: 1.15;
@@ -55,7 +55,7 @@ export class StatCard extends LitElement {
     }
 
     .stat-card__hint {
-      font-size: 12px;
+      font-size: var(--text-sm);
       color: var(--muted);
       line-height: 1.35;
       display: flex;
@@ -113,10 +113,10 @@ export class StatCard extends LitElement {
 
     @media (max-width: 640px) {
       .stat-card {
-        padding: 12px 14px;
+        padding: var(--space-md);
       }
       .stat-card__value {
-        font-size: 18px;
+        font-size: var(--text-xl);
       }
     }
   `;

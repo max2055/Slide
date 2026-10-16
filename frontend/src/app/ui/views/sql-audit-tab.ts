@@ -328,23 +328,6 @@ export class SqlAuditTab extends LitElement {
       overflow-x: auto;
     }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      cursor: pointer;
-      border: 1px solid var(--border);
-      background: var(--secondary);
-      color: var(--text);
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .btn:hover {
-      background: var(--bg-hover);
-    }
   `];
 
   @property({ type: Number }) instanceId!: number;
