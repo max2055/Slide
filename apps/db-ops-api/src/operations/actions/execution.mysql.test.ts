@@ -331,7 +331,9 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       vi.spyOn(store, 'claim').mockImplementation((id, owner) => claim(id, owner, 1));
       let validations = 0;
       let entered!: () => void;
-      const waiting = new Promise<void>((resolve) => { entered = resolve; });
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
       const blocker = window === 'SQL lock wait' ? await pool.getConnection() : null;
       try {
         if (blocker) {
@@ -363,11 +365,88 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       expect(await state(e)).toMatchObject({ state: 'failed', sentAt: null });
       await worker.run(e.id, 'redelivery');
       expect(sends).toBe(0);
-      expect((await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?',
-        [e.approvalId]))[0]).toMatchObject({ status: 'consumed', used_count: 1 });
-      expect(await rows("SELECT * FROM outbox_events WHERE aggregate_id=? AND event_type='operations.action.state' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.state'))='dispatching'", [e.id])).toHaveLength(0);
+      expect(
+        (
+          await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?', [
+            e.approvalId,
+          ])
+        )[0],
+      ).toMatchObject({ status: 'consumed', used_count: 1 });
+      expect(
+        await rows(
+          "SELECT * FROM outbox_events WHERE aggregate_id=? AND event_type='operations.action.state' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.state'))='dispatching'",
+          [e.id],
+        ),
+      ).toHaveLength(0);
     },
   );
+  it.each([
+    "state='cancelled'",
+    'cancel_requested_at=UTC_TIMESTAMP(3)',
+    "lease_owner='replacement'",
+    'fence=fence+1',
+    'lease_expires_at=UTC_TIMESTAMP(3)',
+    'version=version+1',
+  ])('R1 atomic admission rejects changed durable authority: %s', async (mutation) => {
+    const e = await queued();
+    const lease = (await store.claim(e.id, 'old-worker'))!;
+    await store.transaction(async (c) => {
+      const checked = (await store.leased(c, lease))!;
+      await c.execute(`UPDATE action_executions SET ${mutation} WHERE id=?`, [e.id]);
+      expect(await store.admitDispatch(c, checked, lease)).toBe(false);
+    });
+    expect((await state(e)).sentAt).toBeNull();
+    expect(sends).toBe(0);
+    expect(
+      await rows(
+        "SELECT * FROM outbox_events WHERE aggregate_id=? AND event_type='operations.action.state'",
+        [e.id],
+      ),
+    ).toHaveLength(0);
+  });
+  it('R1 lost dispatch commit acknowledgement keeps unknown without send or refund', async () => {
+    const e = await queued();
+    const transaction = plans.transaction.bind(plans);
+    let lost = false;
+    vi.spyOn(plans, 'transaction').mockImplementation(async (work) => {
+      const value = await transaction(work);
+      if (value && typeof value === 'object' && 'executionId' in value && !lost) {
+        lost = true;
+        throw new Error('commit succeeded but acknowledgement lost');
+      }
+      return value;
+    });
+    await worker.run(e.id, 'lost-ack');
+    expect(lost).toBe(true);
+    expect(await state(e)).toMatchObject({ state: 'outcome_unknown', sentAt: expect.any(String) });
+    await worker.run(e.id, 'redelivery');
+    expect(sends).toBe(0);
+    expect(
+      await rows('SELECT * FROM action_dispatch_locks WHERE execution_id=?', [e.id]),
+    ).toHaveLength(2);
+    expect(
+      (
+        await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?', [e.approvalId])
+      )[0],
+    ).toMatchObject({ status: 'consumed', used_count: 1 });
+  });
+  it('R1 failed dispatch transaction rolls back admission and its outbox without sending', async () => {
+    const e = await queued();
+    const admit = store.admitDispatch.bind(store);
+    vi.spyOn(store, 'admitDispatch').mockImplementation(async (...args) => {
+      expect(await admit(...args)).toBe(true);
+      throw new Error('transaction fails after admission');
+    });
+    await worker.run(e.id, 'rollback');
+    expect(await state(e)).toMatchObject({ state: 'failed', sentAt: null });
+    expect(sends).toBe(0);
+    expect(
+      await rows(
+        "SELECT * FROM outbox_events WHERE aggregate_id=? AND event_type='operations.action.state' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.state'))='dispatching'",
+        [e.id],
+      ),
+    ).toHaveLength(0);
+  });
   it('recovers crashed dispatch boundary as unknown and never resends/refunds', async () => {
     const e = await queued(),
       lease = await store.claim(e.id, 'crashed');
