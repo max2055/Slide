@@ -1,4 +1,5 @@
 const SETTINGS_KEY_PREFIX = "slide.control.settings.v1:";
+export const UI_SETTINGS_STORAGE_KEY = SETTINGS_KEY_PREFIX + "default";
 const LEGACY_SETTINGS_KEY = "slide.control.settings.v1";
 const USERNAME_KEY = "slide.control.username.v1";
 const SESSION_TOKEN_KEY = "slide.control.session_token.v1";
@@ -193,7 +194,7 @@ export function loadSettings(): UiSettings {
 
   try {
     const raw =
-      storage?.getItem(SETTINGS_KEY_PREFIX + "default") ??
+      storage?.getItem(UI_SETTINGS_STORAGE_KEY) ??
       storage?.getItem(LEGACY_SETTINGS_KEY);
     if (!raw) {
       return defaults;
@@ -316,7 +317,7 @@ function persistSettings(next: UiSettings) {
   };
   const serialized = JSON.stringify(persisted);
   try {
-    storage?.setItem(SETTINGS_KEY_PREFIX + "default", serialized);
+    storage?.setItem(UI_SETTINGS_STORAGE_KEY, serialized);
     storage?.setItem(LEGACY_SETTINGS_KEY, serialized);
   } catch {
     // best-effort — quota exceeded or security restrictions should not

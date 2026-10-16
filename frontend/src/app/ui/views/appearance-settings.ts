@@ -205,6 +205,16 @@ export class AppearanceSettings extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("slide-settings-applied", this.readPersistedSettings);
+    this.readPersistedSettings();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("slide-settings-applied", this.readPersistedSettings);
+    super.disconnectedCallback();
+  }
+
+  private readPersistedSettings = () => {
     // Read persisted settings from unified localStorage key
     this.accent = readSettingsField("accentColor", "#409eff");
     this.radius = readSettingsField("borderRadius", 50);
@@ -225,15 +235,13 @@ export class AppearanceSettings extends LitElement {
     this.notifySeverity = readSettingsField("notifySeverity", ["critical", "warning"]);
     this.defaultModel = readSettingsField("defaultModel", "");
     // Apply visual state from current settings
-    const savedPalette = readSettingsField("btnPalette", null);
-    if (savedPalette) {
-      this.btnPalPrimaryBg = savedPalette.primaryBg || "#409eff";
-      this.btnPalPrimaryColor = savedPalette.primaryColor || DEFAULT_PALETTE.primaryColor;
-      this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
-      this.btnPalDangerBg = savedPalette.dangerBg || DEFAULT_PALETTE.dangerBg;
-      this.btnPalGhostColor = savedPalette.ghostColor || DEFAULT_PALETTE.ghostColor;
-    }
-  }
+    const savedPalette = readSettingsField<Partial<ButtonPalette>>("btnPalette", {});
+    this.btnPalPrimaryBg = savedPalette.primaryBg || this.accent;
+    this.btnPalPrimaryColor = savedPalette.primaryColor || DEFAULT_PALETTE.primaryColor;
+    this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
+    this.btnPalDangerBg = savedPalette.dangerBg || DEFAULT_PALETTE.dangerBg;
+    this.btnPalGhostColor = savedPalette.ghostColor || DEFAULT_PALETTE.ghostColor;
+  };
 
   render() {
     const radiusOpts = RADIUS_STOPS.map(r => ({ value: r.value, label: t(`appearance.${r.labelKey}`) }));
