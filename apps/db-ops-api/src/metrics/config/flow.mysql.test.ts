@@ -50,6 +50,20 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); }
   });
   const post = (path: string, body: unknown) => fetch(`${base}/api/metrics/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  it('reads real configuration evidence and recommendations before first binding', async () => {
+    const response = await fetch(`${base}/api/metrics/config/resources/instance/1/status`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      binding: { state: 'unbound', application: 'unbound', published_revision: null, applied_revision: null },
+      effective_enabled: { global_enabled: true, asset_enabled: true, enabled: false },
+      collection: { state: 'disabled', last_success_at: null },
+      formal_visibility: { state: 'unbound', source: 'none', last_observed_at: null, generation: null },
+    });
+    const recommendations = await fetch(`${base}/api/metrics/config/resources/instance/1/recommendations`);
+    expect(recommendations.status).toBe(200);
+    const { packages } = await recommendations.json() as any;
+    expect(packages.some((p: any) => p.recommended && p.compatibility === 'compatible')).toBe(true);
+  });
   it('select → inherited preview → trial → concurrent publish / 409 → pending and no formal observations', async () => {
     const catalog = await (await fetch(`${base}/api/metrics/config/catalog`)).json() as any;
     expect(catalog.packages.length).toBeGreaterThan(4);
