@@ -6,6 +6,7 @@ describe('operations feature gates', () => {
     expect(operationsFlags({})).toEqual({ context: false, cases: false, baselines: false, attention: false,
       plans: false, dispatch: false });
     expect(() => operationsFlags({ OPERATIONS_ACTION_DISPATCH_ENABLED: 'yes' })).toThrow('OPERATIONS_FLAG_INVALID');
+    expect(() => operationsFlags({ OPERATIONS_STOP_NEW_DISPATCH: 'yes' })).toThrow('OPERATIONS_FLAG_INVALID');
     expect(() => assertOperationsEnabled(operationsFlags({}), 'dispatch')).toThrow('OPERATIONS_FEATURE_DISABLED');
   });
   it('dispatch requires the plan gate and stop is independent of retained evidence', () => {
