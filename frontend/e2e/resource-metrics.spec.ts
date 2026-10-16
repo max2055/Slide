@@ -69,6 +69,7 @@ test('preview, failed and empty trials, invalidation, publish and application', 
     return route.fulfill({ status: published ? 200 : 404, json: published ? { binding: { package: pack, revision: 1, group_id: null, overrides: {} }, application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null } } : { error: 'POLICY_NOT_FOUND' } });
   });
   await page.setViewportSize({ width: 375, height: 900 }); await fixture(page, '<metric-configuration resourceid="1"></metric-configuration>', 'components/metric-configuration');
+  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
   const preview = page.getByRole('button', { name: '预检与影响预览' }), trial = page.getByRole('button', { name: '试采', exact: true }), publish = page.getByRole('button', { name: '发布', exact: true });
   await preview.click(); await trial.click(); await expect(publish).toBeDisabled();
   succeed = true;
@@ -78,8 +79,14 @@ test('preview, failed and empty trials, invalidation, publish and application', 
   expect(writes).toHaveLength(0);
   hasSamples = true;
   await trial.click(); await expect(publish).toBeEnabled();
-  await page.getByLabel('采集开关', { exact: true }).selectOption('disable'); await expect(trial).toBeDisabled(); await expect(publish).toBeDisabled(); await page.getByLabel('采集开关', { exact: true }).selectOption('inherit');
-  await preview.click(); await trial.click(); await publish.click(); await expect(page.locator('.collection-facts')).toContainText('发布 1'); await expect(page.locator('.collection-facts')).toContainText('等待应用'); expect(writes).toHaveLength(1); applied = true; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.locator('.collection-facts')).toContainText('应用 1'); await expect(page.locator('.collection-facts')).toContainText('已应用'); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.keyboard.press('Escape');
+  await page.getByRole('switch', { name: '启用此对象采集' }).check();
+  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
+  await expect(trial).toBeDisabled(); await expect(publish).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await page.getByRole('switch', { name: '启用此对象采集' }).uncheck();
+  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
+  await preview.click(); await trial.click(); await publish.click(); await expect(page.locator('.state-card .collection-facts')).toContainText('发布 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('等待应用'); expect(writes).toHaveLength(1); applied = true; await page.keyboard.press('Escape'); await page.getByText('最近正式采集尝试与技术证据', { exact: true }).click(); await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.locator('.state-card .collection-facts')).toContainText('应用 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('已应用'); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 test('empty resources and named resource selector', async ({ page }) => {
   await page.route('**/api/**', route => { const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback(); return route.fulfill({ json: p.endsWith('/catalog') ? { packages: [], metrics: [] } : p === '/api/resources' ? { items: [{ resource: { type: 'instance', id: 1 }, label: '订单数据库' }] } : [] }); });

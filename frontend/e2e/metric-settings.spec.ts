@@ -29,7 +29,8 @@ async function setup(page: Page, theme = 'light') {
   });
 }
 const go = (page: Page, view = 'catalog') => page.goto(`/settings/monitoring/metrics?view=${view}`);
-const entries = (page: Page) => page.locator('metric-settings .package-entry');
+const entries = (page: Page) => page.locator('metric-settings app-data-table tbody tr');
+const detail = (page: Page) => page.locator('metric-settings app-dialog[title="采集模板详情"] .package-entry');
 const noOverflow = async (page: Page) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   for (const control of await page.locator('metric-settings .filter-toolbar input, metric-settings .filter-toolbar select').all()) {
@@ -59,12 +60,12 @@ for (const width of [1440, 1280, 375]) for (const theme of ['light', 'dark']) {
     await page.screenshot({ path: info.outputPath('catalog.png'), fullPage: true });
     await page.getByRole('tab', { name: '采集包', exact: true }).click();
     await expect(entries(page)).toHaveCount(packages.length);
-    await expect(entries(page).locator(':scope > summary').filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
-    await expect(entries(page).locator(':scope > summary').filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();
+    await expect(entries(page).filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
+    await expect(entries(page).filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();
     await noOverflow(page);
     await page.screenshot({ path: info.outputPath('packages.png'), fullPage: true });
-    const mysql = entries(page).filter({ has: page.locator('summary small', { hasText: /^mysql-basic$/ }) }).first();
-    await mysql.locator(':scope > summary').click();
+    await entries(page).filter({ hasText: 'MySQL 基础采集' }).first().getByRole('button', { name: '查看模板' }).click();
+    const mysql = detail(page);
     for (const heading of ['包含指标', '适用范围', '所需权限', '发现方式', '推荐周期与配置']) await expect(mysql.getByRole('heading', { name: heading })).toBeVisible();
     await expect(mysql.locator('pre')).not.toBeVisible();
     await expect(mysql).toContainText('SHOW GLOBAL STATUS');
@@ -92,17 +93,18 @@ for (const width of [1280, 375]) test(`package names/IDs, combined type filter, 
   await expect(entries(page)).toHaveCount(2);
   await page.getByLabel('采集包资源类型').selectOption('instance');
   await expect(entries(page)).toHaveCount(2);
-  const entry = entries(page).first();
-  await entry.locator(':scope > summary').click();
+  await entries(page).first().getByRole('button', { name: '查看模板' }).click();
+  const entry = detail(page);
   await expect(entry).toContainText('数据库版本：8.1');
   await expect(entry.locator('pre')).not.toBeVisible();
   await entry.getByText('高级详情：原始 JSON', { exact: true }).click();
   await expect(entry.locator('pre')).toBeVisible();
   await expect(entry.locator('pre')).toContainText('"digest"');
   // Filtering must not reuse an expanded entry for a different package.
+  await page.keyboard.press('Escape');
   await search.fill('PostgreSQL');
   await expect(entries(page)).toHaveCount(1);
-  await expect(entries(page).getByRole('heading', { name: '包含指标' })).not.toBeVisible();
+  await expect(page.getByRole('dialog', { name: '采集模板详情' })).toHaveCount(0);
 });
 
 test('catalog search, source/resource combination and definition reading', async ({ page }) => {
@@ -125,18 +127,18 @@ test('catalog search, source/resource combination and definition reading', async
 
 test('unknown IDs remain distinguishable and metric count deduplicates derived outputs', async ({ page }) => {
   await setup(page);
-  const custom = ['vendor-one', 'vendor-two'].map(id => ({ package: { id, version: '2.0.0', resource_type: 'server', applicability: [],
+  const custom = ['vendor-one', 'vendor-two'].map(id => ({ package: { id, digest: id, version: '2.0.0', resource_type: 'server', applicability: [],
     collectors: [{ mappings: [{ metric: { id: `${id}.value` } }, { metric: { id: `${id}.value` } }] }] }, derived: [{ output: { id: `${id}.rate` } }], documentation: [], recommendations: {} }));
   await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: custom, metrics: [] } }));
   await go(page, 'packages');
   await expect(entries(page)).toHaveCount(2);
   await expect(entries(page).first().locator('strong')).toHaveText('vendor-one');
   await expect(entries(page).last().locator('strong')).toHaveText('vendor-two');
-  await expect(entries(page).first().locator(':scope > summary')).toContainText('2 项指标');
-  await entries(page).first().locator(':scope > summary').click();
+  await entries(page).first().getByRole('button', { name: '查看模板' }).click();
+  await expect(detail(page)).toContainText('2 项指标');
   await expect(page.getByText('vendor-one.value', { exact: true })).toBeVisible();
   await expect(page.getByText('vendor-one.rate', { exact: true })).toBeVisible();
-  await expect(entries(page).first().getByText('未提供权限说明', { exact: true })).toBeVisible();
+  await expect(detail(page).getByText('未提供权限说明', { exact: true })).toBeVisible();
 });
 
 test('package loading, forbidden error, retry and empty catalog', async ({ page }) => {

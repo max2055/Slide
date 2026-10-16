@@ -1,51 +1,50 @@
-# MAX-190 前端验证检查点
+# MAX-190 R1 实施检查点
 
-日期：2026-10-16。依据：已批准 R2 `2026-10-16-unified-metrics-plan.md`、MAX-189 先行契约 `baef0f44`。本记录是可继续执行的检查点，尚非完整业务验收交付。
+更新：2026-10-17（本地时间）。这是可接续的开发检查点，**不是完整业务验收交付**。唯一草稿 PR：<https://github.com/max2055/Slide/pull/200>；开发分支 `codex/max-190-unified-collection`。不使用含用户修改的平台基线分支作 PR 祖先。
 
-## 已实施与边界
+## 当前有效设计依据
 
-| 验收 | 当前实现／证据 | 尚待完成 |
+用户确认 R1：“OK，没问题，继续推进”。MAX-188 / MAX-190 的 `metadata.designReview.status=approved`；确认附件 `APPROVAL.md` 覆盖冻结包中历史“待审核”文字。
+
+- 冻结附件：`unified-collection-prototype-R1.zip`。
+- SHA-256：`ab49721cb37448222295b526cd6c1744b94e2b5b546596c5f2f0ad4416ae6074`，下载后实测一致。
+- 确认依据：MAX-190 交付线程成员评论 `01a1456e-58c1-7ea5-aef3-0fd4f67d53ec`，2026-10-16 15:57:02 UTC；`APPROVAL.md` 附件 `01a1456c-8def-79df-ab5e-b5a1954f0b20`。
+- 已解除视觉待审限制。Chief 合并视觉范围前仍须核对该版本及真实业务证据。不新增全批启动门槛，不暂停 MAX-189。
+
+## 本次实现与证据边界
+
+| 范围 | 本次实现 | 证据／剩余验收 |
 |---|---|---|
-| 三类资源唯一配置入口 | 新增／编辑保存连接后打开共享 `resource-collection-section` → `metric-configuration` 弹窗；详情展示共享摘要，设置资源策略复用摘要 | A 审定集成后的真实三类资源对照 |
-| 兼容推荐、覆盖保护 | 推荐来自服务；不兼容选项禁用并解释；保留原模板、完整 overrides、组继承和 CAS；候选变化清除试采 | 正式 MySQL 代表路径 |
-| 连续操作与五层状态 | 预检→试采→activate；发布／应用 revision、绑定／有效开关／执行／正式可见／覆盖独立；最多 15 次、间隔 2 秒的状态刷新，不覆盖候选 | 真正发布、应用和正式出数的 UI 证据 |
-| 列表真实语义 | 绑定独立读取；linux-basic 核心列缺失不改变绑定；容量依据兼容证据单独表示版本不支持；失败／权限／未知不转未绑定 | 真实 MySQL 9.6 列表与正式值一致性 |
-| 设置与中性命名 | 指标／包／组／资源审计；策略组服务端搜索；活动前端 API 为 `/api/metrics`；移除旧目录实现 | A 改名后的最终集成回归 |
-| 主题、键盘、特殊状态 | 受控浏览器矩阵桌面 1440、窄屏 390、明暗；8 个采集状态；审计正常／空／403；Escape 未保存确认、继续／放弃、焦点恢复 | 真实服务正常业务截图对照 |
+| MySQL 代表编辑入口 | 页内基本信息／监控与采集页签；候选配置主列＋当前状态侧栏；模板推荐、缺口、对象开关、间隔、策略组搜索和高级覆盖 | 产品组件、受控接口桌面1440／窄屏390、明暗截图；真实 MySQL 正常链路待 A 审定集成 |
+| 连续启用流程 | 同一共享弹窗检查→试采→发布→应用／正式数据；保留停用发布、全局阻塞、权限、CAS、样本检查和有界刷新 | 受控交互通过，不把本次试采或应用成功解释为正式可见 |
+| 连接与候选保护 | 页签切换保留候选；保存连接并继续配置不卸载既有候选；连接变化与重复预检均清除旧试采；普通保存／返回／详情导航保留未保存确认 | 覆盖隐藏页签对话框、继续／放弃、Shadow DOM 焦点恢复、提交期间禁止退出、关联失败仅重试关联 |
+| 详情 | 三列当前事实、覆盖／质量与真实配置事件；未知与错误单独表达；MySQL 编辑入口回同一页内编辑器 | 受控正常／空／加载／失败／权限／部分／未知／全局关闭矩阵；真实列表／详情／设置一致性待验收 |
+| 全局模板 | 共享表格与模板详情弹窗；保留名称／ID／资源类型筛选、权限、发现方式、原始定义与版本；既有策略组编辑功能保留 | R1 模板表／详情／空结果／Escape 焦点通过；无绑定对象统计契约，未复制原型演示计数 |
+| 服务器、网络设备 | 继续复用唯一采集编辑器、状态摘要和既有资源入口 | 按用户要求，在 MySQL 真实对照通过后再推广页内宿主；本次未宣称这一步完成 |
 
-详情的编辑按钮直接打开同一共享弹窗，保留当前详情上下文。连接保存与采集发布分别反馈。共享 `app-dialog-close` 改为可取消事件，供所有者完成未保存确认；未取消时仍关闭。
+R1 外层设计审阅壳不是产品导航。截图直接挂载实际产品组件，**API 响应受控**，不是部署截图或真实采集验收。页面数据由契约驱动，没有复制演示凭据、模板绑定数、正式值或资源版本。视觉对照说明见 `r1-visual-comparison.md`。
 
-权限事件及 401／403／404 刷新拒绝会清除旧值／证明。列表丢弃旧请求响应；设置审计和策略组同样有代次保护。状态接口失败时保留可核实的指标历史，但当前采集状态标为暂不可用。
+## 当前验证
 
-## 已通过检查
+- 完整前端单测：133 文件、1,161 项通过。
+- 前端 typecheck：通过。
+- 前端 build／CSP：通过，保留既有大 chunk 提示。
+- 当前分支 `contracts:check`：通过；A 尚未集成，不能替代新后端最终契约门禁。
+- `playwright.max190.config.ts`：16 项通过（R1 8 项＋摘要／审计异常矩阵8项）。
+- `playwright.resource-metrics.config.ts resource-metrics.spec.ts`：8 项通过（三类列表、试采失败／空样本／候选失效／发布／应用、空资源）。
+- `metric-settings.spec.ts` 已适配表格与详情弹窗；生产目录数据测试仍依赖 A 的 `src/metrics`，当前分支缺该实现，未在本次单独运行；不补双目录 fallback。
+- `git diff --check`：通过；活动前端未发现 `metrics-v2`／`MetricsV2`／`metric_v2` 残留。
 
-- `pnpm --filter slide-frontend test`：133 文件、1,159 项通过。
-- `pnpm --filter slide-frontend typecheck`：通过。
-- `pnpm --filter slide-frontend build`：通过；CSP 检查通过，仅有既有大 chunk 提示。
-- `pnpm contracts:check`：当前分支已有契约通过；此结果不能替代 A 集成后的新契约检查。
-- `pnpm --filter slide-frontend exec playwright test --config playwright.max190.config.ts`：8 组通过，全部为明确标注的受控状态。
-- 组合快照中 `playwright.resource-metrics.config.ts`：21 项通过；包含三类列表、设置、试采失效、发布、应用与网络设备设置。该快照使用本任务前端及 A 未审定后端，非最终合入候选。
-- `git diff --check`：通过。
+## 真实业务及集成仍未完成
 
-## 真实联调未通过及准确环境
+MAX-189 当前仍在开发；本次检索 `agent/15astra/max-189` 未找到可核验的 PR、独立审查或 merge SHA。不拿未审定工作树快照作最终后端。此前隔离 MySQL 9.6 提前联调止于 status HTTP 500、新实例 `db_version=null`；没有发布／三周期／唯一正式值，也未替代指定 mysql3306 验收。本次未重放该未知后端路径，未改 A 源码或共享服务。
 
-为避免改动共享 mysql3306／主目录服务，提前联调使用任务专有 MySQL 9.6 容器、完整 Fastify／JWT 和调度器；不 mock HTTP，不调用产品 LLM。它只验证隔离环境，不能替代 R2 要求的指定 mysql3306 最终验收。
+PR 旧 head `61e1920a` CI 已结束：frontend/backend/security 等通过；browser 与 browser-qualification 缺后端新路径 `src/metrics/config/registry.js`，investigation-api-qualification 的旧后端 flow 测试仍按旧界面操作；release-artifact / ci-gate 连带失败。原 run：<https://github.com/max2055/Slide/actions/runs/38923371822>。这些依赖在 A 审定集成后复验，不保留双 API 或伪填资源版本绕过。
 
-后端快照标识 `preliminary-20261016-2302`；快照内容摘要 SHA-256 为 `52d3cef58bde054315e1215478a70e2cf499287bd749385d163b95ab9f11a9fc`，基于 A 工作树的未审定实现；公开契约源为 `baef0f44`。源码和前端测试摘要、PID／cwd／命令、请求状态、截图及清理结果随证据包提供。日志中可能含敏感信息的 `*.private.log` 不进入证据包。
+接续：读取 A 实际 PR/head、Chief 独立审查及实际 merge SHA，整合审定提交，运行新契约／受影响 gate，以 mysql3306 完成真实 UI 检查→试采→发布→应用→至少三周期→正式查询值与列表／详情／设置一致性；对照批准 R1 后推广其余资源入口。完整证据前保持草稿，不置 in_review。每次 push 配置当前子任务 checks / 30m / on-timeout wake，目标15astra，交付线程不变。
 
-- 隔离目标：`192.168.1.30:23390`，镜像 `mysql:9.6`；API `127.0.0.1:3190`，Vite `127.0.0.1:5196`，Agent WS `29990`。
-- 新建连接通过 UI 保存成功，并打开共享采集编辑器。`GET /api/metrics/config/resources/instance/1/status` 返回 **500**，因此编辑器保留错误并禁止发布，没有显示成未绑定或成功。
-- `GET /api/database/instances` 中新实例 `db_version` 为 **null**；不能伪填为 9.6 绕过兼容检查。A 必须确认新资源版本发现与推荐初始化的正常路径，随后由 UI 复验。
-- catalog／access／recommendations／groups／attempts 均返回 200；资源无策略时 policy 返回明确 `404 POLICY_NOT_FOUND`。失败止于状态加载，未执行发布或得到 3 周期正式出数，**这些验收仍未完成**。
-- 首次脚本曾因 Shadow DOM slot 定位错误超时，已修正；后续记录中的 500 是真实 API 响应。审计夹具曾误拦截源码模块请求，修正后浏览器矩阵通过。
-- 自有测试进程优雅退出，容器删除。未停止主目录 5173／3000 服务，未触碰 A 的容器与源码，未改共享开关／Provider。
+## 历史记录与产物
 
-## 接续与兼容引用
+[原型实施前检查点](verification-checkpoint-pre-r1.md) 保留此前实现、1,159项单测、21项未审定组合 E2E 和真实失败环境；只作为历史，涉及旧弹窗和旧截图的描述已由上方覆盖，不能自动恢复为当前设计依据。
 
-保留草稿 PR，当前不申请完整验收。等待 MAX-189 完整审查和实际合入后，记录其 PR/head、review、merge SHA，整合对应提交，再运行公开契约／受影响 E2E 和真实正常业务链路，确认至少 3 周期及唯一正式查询值、列表／详情／设置一致。必要修复仍放本任务唯一主要 PR；每次 push 更新本 Issue 的 checks 监听。
-
-前端 E2E 已随活动命名改用 A 的 `src/metrics`、`contracts/metrics`、`metric_*` 和 `METRICS_COLLECTION_ENABLED`。A 尚未集成到本分支时，依赖这些后端文件的测试只能在组合快照运行，不能称本分支单独已能完成最终后端 gate。
-
-活动源码扫描未发现 `metrics-v2`／`MetricsV2`／`metric_v2` 残留。保留 `/metric-registry` 及对应内部路由标识仅作旧链接到统一 catalog 的兼容映射；退出条件是旧链接迁移完成并经过调用审计。采集包语义版本和 revision 继续保留。历史文档及 schema migration ID 不重写。
-
-完整截图／日志／摘要及校验和通过 Issue 附件交付；产物目录遵循仓库统一 outputs 规则。未调用产品 LLM；编码代理实测 token／费用遥测不可用，未派子代理。
+本轮截图、测试日志、批准依据摘要、源码散列与对照 HTML 存在统一 outputs/MAX-190/r1-checkpoint，并以 Issue 附件交付。没有产品 LLM 调用、子代理或本轮常驻服务；编码代理实测 token／费用遥测不可用。

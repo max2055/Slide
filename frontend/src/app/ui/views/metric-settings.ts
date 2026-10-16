@@ -1,7 +1,6 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { metricRequest, metricError, type Catalog, type Overrides } from '../components/metric-configuration.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import '../components/resource-collection-section.js';
@@ -22,6 +21,8 @@ export class MetricSettings extends LitElement {
   @state() private category = '';
   @state() private packageSearch = '';
   @state() private packageType = '';
+  @state() private packageDetail = '';
+
   @state() private policyTab = 'resource';
   @state() private resources: Array<{ resource: { type: string; id: number }; label: string; attributes?: Record<string, unknown> }> = [];
   @state() private resourceNotice = '';
@@ -46,6 +47,7 @@ export class MetricSettings extends LitElement {
   private readonly accessChanged = () => {
     this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++;
     clearTimeout(this.groupSearchTimer);
+    this.packageDetail = '';
     this.catalog = null; this.resources = []; this.resourceId = 0; this.groups = []; this.audits = [];
     this.groupId = ''; this.groupLoaded = false; this.groupManage = false; this.groupOverrides = {};
     this.groupPreview = null; this.busy = false; this.auditLoading = false;
@@ -88,6 +90,7 @@ export class MetricSettings extends LitElement {
     .filter-toolbar app-form-field { flex:1 1 10rem; min-width:0; margin-bottom:0; }
     .filter-toolbar app-form-field:first-child { flex:2 1 16rem; }
     .filter-toolbar button { align-self:end; }
+    .filter-toolbar{padding-inline:var(--space-lg)}.table-foot{padding:var(--space-md) var(--space-lg);color:var(--muted);font-size:12px;border-top:1px solid var(--border)}.template-note{margin-block:var(--space-xl);font-size:12px;color:var(--muted)}
     .package-entry { border-top:1px solid var(--border); padding-block:var(--space-md); overflow-wrap:anywhere; }
     summary { cursor:pointer; color:var(--text-strong); }
     .package-summary { display:inline-grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-sm) var(--space-md); width:calc(100% - 1.5em); vertical-align:top; }
@@ -179,23 +182,32 @@ export class MetricSettings extends LitElement {
     const c = this.catalog, query = this.packageSearch.trim().toLowerCase();
     const packages = c?.packages.filter(p => (!this.packageType || p.package.resource_type === this.packageType)
       && `${packageName(p.package.id)} ${p.package.id}`.toLowerCase().includes(query)) ?? [];
-    return html`<app-card><h2 slot="header">采集包</h2><p>采集包版本不可变；同一采集包升级保留覆盖值，标准指标定义保持不变。</p>
-      <div class="filter-toolbar" role="group" aria-label="采集包筛选">
-        <app-form-field label="搜索名称或标识"><input type="search" aria-label="搜索采集包" .value=${this.packageSearch} @input=${(e: Event) => { this.packageSearch = (e.target as HTMLInputElement).value; }}></app-form-field>
+    const detail = c?.packages.find(p => p.package.digest === this.packageDetail);
+    return html`<h2>指标与采集</h2><p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
+      <app-card .compact=${true}><div class="filter-toolbar" role="group" aria-label="采集包筛选">
+        <app-form-field label="搜索名称或标识"><input type="search" aria-label="搜索采集包" placeholder="搜索模板名称、引擎" .value=${this.packageSearch} @input=${(e: Event) => { this.packageSearch = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="采集包资源类型" .value=${this.packageType} @change=${(e: Event) => { this.packageType = (e.target as HTMLSelectElement).value; }}><option value="">全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
         <button class="btn" .disabled=${!this.packageSearch && !this.packageType} @click=${() => { this.packageSearch = ''; this.packageType = ''; }}>清空筛选</button>
       </div>${this.renderCatalogError()}
-      ${this.catalogError ? nothing : !c ? html`<div role="status" aria-label="正在读取采集包"><div class="skeleton"></div><div class="skeleton"></div></div>` : html`
-        <p role="status">显示 ${packages.length} / ${c.packages.length} 个采集包版本</p>
-        ${!packages.length ? html`<app-empty-state title=${c.packages.length ? '没有符合条件的采集包' : '暂无采集包'} description=${c.packages.length ? '请调整搜索名称、标识或资源类型，或清空筛选。' : '目录中尚无可用的采集包版本。'}></app-empty-state>` : repeat(packages, p => `${p.package.id}@${p.package.version}`, p => this.renderPackage(p))}`}
-    </app-card>`;
+      ${this.catalogError ? nothing : html`<div class="scroll"><app-data-table .loading=${!c} .columns=${[{ key: 'name', label: '模板' }, { key: 'version', label: '当前版本' }, { key: 'scope', label: '适用范围' }, { key: 'coverage', label: '指标覆盖' }, { key: 'actions', label: '操作' }]}
+        .rows=${packages.map(p => ({
+          name: html`<strong>${packageName(p.package.id)}</strong>`, version: p.package.version,
+          scope: p.package.applicability?.map(a => a.values.join(' / ')).join(' · ') || resourceLabels[p.package.resource_type] || p.package.resource_type,
+          coverage: [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])].map(metricName).join('、') || '未提供指标映射',
+          actions: html`<button class="btn btn-sm btn-ghost" @click=${() => { this.packageDetail = p.package.digest; }}>查看模板</button>`,
+        }))} emptyMessage=${c?.packages.length ? '没有符合条件的采集包' : '暂无采集包'}></app-data-table></div>`}
+      ${this.catalogError ? nothing : html`<p class="table-foot" role="status" aria-label=${!c ? '正在读取采集包' : nothing}>${c ? `显示 ${packages.length} / ${c.packages.length} 个采集包版本` : '正在读取采集包'}</p>`}
+      </app-card><section class="template-note"><h3>一个标准，保留有意义的版本</h3><p>模板版本用于追溯、兼容检查与回滚；对象配置在资源编辑中维护。</p></section>
+      <app-dialog .open=${!!detail} title="采集模板详情" size="lg" @app-dialog-close=${() => { this.packageDetail = ''; }}>
+        ${detail ? this.renderPackage(detail) : nothing}<div slot="footer"><button class="btn" @click=${() => { this.packageDetail = ''; }}>关闭</button></div>
+      </app-dialog>`;
   }
   private renderPackage(p: Catalog['packages'][number]) {
     const metrics = [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])];
     const applicability = p.package.applicability ?? [];
     const engines = applicability.filter(a => ['db.engine', 'os.family'].includes(a.attribute)).flatMap(a => a.values);
     const attributeLabel = (attribute: string) => ({ 'db.engine': '数据库引擎', 'db.version': '数据库版本', 'os.family': '操作系统', 'snmp.version': 'SNMP 版本' }[attribute] ?? attribute);
-    return html`<details class="package-entry"><summary><span class="package-summary">
+    return html`<details class="package-entry" open><summary><span class="package-summary">
       <span><strong>${packageName(p.package.id)}</strong><small>${p.package.id}</small></span>
       <span class="package-meta">${resourceLabels[p.package.resource_type] ?? p.package.resource_type}${engines.length ? ` · ${engines.join(' / ')}` : ''} · v${p.package.version} · ${metrics.length} 项指标</span>
     </span></summary><div class="package-sections">

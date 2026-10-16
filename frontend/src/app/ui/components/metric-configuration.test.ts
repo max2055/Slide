@@ -57,6 +57,27 @@ it('failed or empty trials cannot authorize publishing', async () => {
   el.trial = { decision: 'attempted', attempts: [{ status: 'failed' }], samples: [] };
   await el.execute('publish'); expect(authFetch.mock.calls).toHaveLength(before);
 });
+it('connection edits invalidate proofs and block writes until saved', async () => {
+  mock(); const el = await mount();
+  await el.execute('preview'); await el.execute('trial');
+  expect(el.preview).not.toBeNull();
+  el.connectionPending = true; await el.updateComplete;
+  expect(el.preview).toBeNull(); expect(el.trial).toBeNull();
+  const before = authFetch.mock.calls.length;
+  for (const action of ['preview', 'trial', 'publish']) await el.execute(action);
+  expect(authFetch.mock.calls).toHaveLength(before);
+  el.connectionPending = false; await el.updateComplete;
+  await el.execute('preview');
+  expect(el.preview).not.toBeNull(); expect(el.trial).toBeNull();
+});
+it('a repeated preview requires a new trial before publishing', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { decision: 'attempted', attempts: [{ status: 'success' }], samples: [{ value: 42 }] };
+  await el.execute('preview');
+  expect(el.trial).toBeNull();
+  const before = authFetch.mock.calls.length; await el.execute('publish');
+  expect(authFetch.mock.calls).toHaveLength(before);
+});
 it('publishing a successful trial sends the current revision and reloads application state', async () => {
   mock(); const el = await mount(); await el.execute('preview');
   authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1000 }] }) }));
@@ -172,6 +193,8 @@ it('revoked permissions clear proofs, values and write access without retrying',
   window.dispatchEvent(new Event('slide-permissions-loaded')); await el.updateComplete;
   expect(el.canManage).toBe(false); expect(el.collection).toBeNull(); expect(el.preview).toBeNull(); expect(el.trial).toBeNull();
   expect(el.shadowRoot.textContent).toContain('权限或登录状态已变更');
+  expect(el.shadowRoot.textContent).not.toContain('首次绑定');
+  expect(el.shadowRoot.textContent).not.toContain('尚未绑定');
   await el.execute('publish'); expect(authFetch.mock.calls.length).toBe(calls);
 });
 

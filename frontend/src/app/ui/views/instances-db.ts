@@ -539,6 +539,8 @@ export class InstancesPage extends LitElement {
     super.disconnectedCallback();
   }
 
+  @state() private editorTab = 'basic';
+  private editorReturnId: number | null = null;
   @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
@@ -557,6 +559,12 @@ export class InstancesPage extends LitElement {
       this.instances = await res.json();
       this.metricRefreshVersion++;
       this.loading = false;
+      const url = new URL(window.location.href), editId = Number(url.searchParams.get('edit'));
+      const edit = this.instances.find(i => i.id === editId);
+      if (edit && !this.showEditDialog) {
+        this._editInstance(edit); this.editorTab = 'collection';
+        url.searchParams.delete('edit'); window.history.replaceState({}, '', url);
+      }
     } catch (err: any) {
       this.error = err.message;
       this.loading = false;
@@ -630,6 +638,7 @@ export class InstancesPage extends LitElement {
   }
 
   override render() {
+    if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑资源' : '添加资源', this.showEditDialog);
     if (this.loading) {
       return html`<div class="loading">加载中...</div>`;
     }
@@ -701,7 +710,7 @@ export class InstancesPage extends LitElement {
               searchValues: [inst.name, inst.host, inst.health_status, ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[inst.health_status] ?? "未知"],
               name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
               address: `${inst.host}:${inst.port}`, health: this._renderStatusBadge(inst.health_status),
-              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -768,13 +777,16 @@ export class InstancesPage extends LitElement {
     this.hostRelationLoading = false;
     this.hostRelationError = null;
     this.pendingCreatedInstanceId = null;
+    this.editorTab = 'basic'; this.editorReturnId = null;
     this.showAddDialog = true;
+    void this.focusEditorHeading();
   }
 
   private _editInstance(inst: DatabaseInstance) {
     this.connectionPending = false;
     this.hostRelationRequestVersion += 1;
     this.editingInstance = inst;
+    this.editorTab = 'basic'; this.editorReturnId = inst.id;
     this.formData = {
       name: inst.name,
       environment: inst.environment || "development",
@@ -793,7 +805,13 @@ export class InstancesPage extends LitElement {
     this.hostRelationError = null;
     this.pendingCreatedInstanceId = null;
     this.showEditDialog = true;
+    void this.focusEditorHeading();
     if (this.canViewHostRelations) void this._loadInstanceHosts(inst.id);
+  }
+
+  private async focusEditorHeading() {
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.resource-editor h1')?.focus();
   }
 
   private async _loadInstanceHosts(instanceId: number) {
@@ -949,14 +967,35 @@ export class InstancesPage extends LitElement {
     this.pendingCreatedInstanceId = null;
   }
 
+  private _confirmEditorLeave(action: () => void) {
+    const section = this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section');
+    // The confirmation belongs to the collection editor, whose panel must be
+    // visible for its dialog and focused controls to be accessible.
+    if (section) this.editorTab = 'collection';
+    if (section) section.confirmDiscard(action); else action();
+  }
   private _closeDialogs() {
     if (this.isSubmitting) return;
+    this._confirmEditorLeave(() => this._finishCloseDialogs());
+  }
+  private _finishCloseDialogs() {
     const abandonedCreatedInstance = this.pendingCreatedInstanceId !== null;
+    const focusId = this.editorReturnId;
     this._resetDialogs();
+    void this.restoreEditorFocus(focusId);
     if (abandonedCreatedInstance) {
       showToast("实例已创建但主机关联未保存", "warning");
       void this.loadInstances();
     }
+  }
+  private async restoreEditorFocus(id: number | null) {
+    await this.updateComplete;
+    if (id === null) { this.renderRoot.querySelector<HTMLButtonElement>('.resource-action--add')?.focus(); return; }
+    const table = this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table');
+    await table?.updateComplete;
+    const data = table?.renderRoot.querySelector<LitElement>('app-data-table');
+    await data?.updateComplete;
+    table?.renderRoot.querySelector<HTMLButtonElement>(`button[data-resource-edit-id="${id}"]`)?.focus();
   }
 
   private async _handleSubmit(isEdit: boolean, configureCollection = false) {
@@ -1028,13 +1067,13 @@ export class InstancesPage extends LitElement {
       }
 
       this.pendingCreatedInstanceId = null;
-      this._resetDialogs();
+      if (!configureCollection || !isEdit) this._resetDialogs();
       await this.loadInstances();
       showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
       if (configureCollection) {
         const saved = this.instances.find(i => i.id === instanceId);
         if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
-        this._editInstance(saved); await this.updateComplete;
+        this._editInstance(saved); this.editorTab = 'collection'; await this.updateComplete;
         this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
       }
     } catch (err: any) {
@@ -1120,15 +1159,27 @@ export class InstancesPage extends LitElement {
     const relationUnavailable = canManageHostRelations
       && (this.hostRelationLoading || this.instanceHosts === null);
     return html`
-      <app-dialog
-        .open=${true}
-        size="lg"
-        .closable=${!this.isSubmitting}
-        .closeOnOverlay=${false}
-        title="${title}"
-        @app-dialog-close=${this._closeDialogs}
-      >
-        <div class="instance-form">
+      <section aria-label="资源编辑" class="resource-editor">
+        <style>
+          .resource-editor{max-width:1360px;margin:auto}.resource-editor [hidden]{display:none!important}
+          .resource-editor h1{font-size:26px;color:var(--text-strong);margin:var(--space-lg) 0 var(--space-sm)}
+          .resource-editor .editor-head{display:flex;justify-content:space-between;gap:var(--space-lg);align-items:center;margin-bottom:var(--space-xl)}
+          .resource-editor .editor-head p{margin:0;color:var(--muted);font-size:12px}
+          .resource-editor .editor-tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);margin-bottom:var(--space-xl)}
+          .resource-editor .editor-tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:0 0 13px;font:inherit;cursor:pointer}
+          .resource-editor .editor-tabs button[aria-selected=true]{color:var(--accent-text);border-color:var(--accent);font-weight:600}
+          .resource-editor .basic-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-sm);margin-top:var(--space-lg)}
+          @media(max-width:700px){.resource-editor .editor-head{align-items:flex-start;flex-direction:column}}
+        </style>
+        <button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${this._closeDialogs}>返回资源列表</button>
+        <div class="editor-head"><div><h1 tabindex="-1">${title}</h1><p>${this.formData.name || '新资源'} · ${this.formData.db_type} · ${this.formData.host}:${this.formData.port}</p></div>
+          ${this.editingInstance ? html`<button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${() => this._confirmEditorLeave(() => this._viewDetail(this.editingInstance!))}>查看资源详情 ↗</button>` : nothing}</div>
+        <div class="editor-tabs" role="tablist" aria-label="资源编辑页签">
+          ${['basic', 'collection'].map((tab, index) => html`<button id=${`resource-edit-tab-${tab}`} role="tab" aria-selected=${this.editorTab === tab} aria-controls=${`resource-edit-panel-${tab}`} tabindex=${this.editorTab === tab ? 0 : -1} @keydown=${(e: KeyboardEvent) => { if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { e.preventDefault(); const next = e.key === 'Home' ? 'basic' : e.key === 'End' ? 'collection' : index ? 'basic' : 'collection'; this.editorTab = next; void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`#resource-edit-tab-${next}`)?.focus()); } }} @click=${() => { this.editorTab = tab; }}>${index ? '监控与采集' : '基本信息'}</button>`)}
+        </div>
+        <div id="resource-edit-panel-basic" role="tabpanel" aria-labelledby="resource-edit-tab-basic" ?hidden=${this.editorTab !== 'basic'}>
+        <app-card><h2 slot="header">连接与识别</h2><div class="instance-form">
+
         <div class="form-row">
           <app-form-field label="实例名称" required .inline=${true}>
             <input class="form-input" type="text" .value=${this.formData.name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
@@ -1200,10 +1251,9 @@ export class InstancesPage extends LitElement {
           ></instance-host-field>
         </div>` : nothing}
 
-        <resource-collection-section resourceType="instance" .resourceId=${isEdit ? this.editingInstance?.id ?? 0 : this.pendingCreatedInstanceId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
         </div>
-        <div slot="footer" style="display:flex;justify-content:flex-end;align-items:center;gap:var(--space-md)">
+        <div slot="footer" class="basic-actions">
           <button class="btn" @click=${this._handleTestConnection} .disabled=${this.testStatus === 'testing' || this.isSubmitting || baseFieldsLocked}>
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
@@ -1211,11 +1261,16 @@ export class InstancesPage extends LitElement {
           <button class="btn" .disabled=${this.isSubmitting || relationUnavailable} @click=${() => this._handleSubmit(isEdit, true)}>保存连接并配置采集</button>
           <button
             class="btn-primary"
-            @click=${() => this._handleSubmit(isEdit)}
+            @click=${() => this._confirmEditorLeave(() => void this._handleSubmit(isEdit))}
             .disabled=${this.isSubmitting || relationUnavailable}
           >${this.isSubmitting ? '保存中...' : baseFieldsLocked ? '重试关联' : isEdit ? '保存修改' : '添加实例'}</button>
         </div>
-      </app-dialog>
+        </app-card></div>
+        <div id="resource-edit-panel-collection" role="tabpanel" aria-labelledby="resource-edit-tab-collection" ?hidden=${this.editorTab !== 'collection'}>
+          <resource-collection-section mode="edit" resourceType="instance" .resourceId=${isEdit ? this.editingInstance?.id ?? 0 : this.pendingCreatedInstanceId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
+          ${this.connectionPending ? html`<button class="btn-primary" .disabled=${this.isSubmitting || relationUnavailable} @click=${() => this._handleSubmit(isEdit, true)}>保存连接并配置采集</button>` : nothing}
+        </div>
+      </section>
     `;
   }
 

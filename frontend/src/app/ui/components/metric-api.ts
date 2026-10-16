@@ -36,7 +36,7 @@ export interface CollectionStatus {
   blockers: string[];
   coverage: Array<{ metric: { id: string; semantic_version: string }; state: string; reason: string | null }>;
 }
-export interface Recommendation { package: Pin; status: string; recommended: boolean; applicability: Applicability[]; metrics: string[] }
+export interface Recommendation { package: Pin; status: string; recommended: boolean; applicability: Applicability[]; metrics: string[]; missing_core_metrics?: string[] }
 export interface RecommendationResult {
   resource: { type: string; id: number }; evaluated_at: string;
   packages: Array<{ release: Catalog['packages'][number]; compatibility: 'compatible' | 'incompatible' | 'unknown';
@@ -45,7 +45,7 @@ export interface RecommendationResult {
 /** Adapt recommendations once; no compatibility is inferred from package ordering. */
 export const recommendationOptions = (data: RecommendationResult): Recommendation[] => data.packages.map(p => ({
   package: p.release.package, status: p.compatibility === 'compatible' ? 'supported' : p.compatibility === 'incompatible' ? 'unsupported' : 'unknown',
-  recommended: p.recommended, applicability: p.checks, metrics: p.coverage.map(m => m.id),
+  recommended: p.recommended, applicability: p.checks, metrics: p.coverage.map(m => m.id), missing_core_metrics: p.missing_core_metrics ?? [],
 }));
 /** A missing template metric is a version limitation only when every release that
  * provides it is explicitly rejected for this resource version. */

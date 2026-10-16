@@ -86,7 +86,7 @@ test('MySQL resource editor → check → trial → activate → formal query an
   await page.goto(site + '/instances-db');
   await page.getByRole('button', { name: '添加实例', exact: true }).click();
   // Form controls are slotted light DOM, outside the native dialog's DOM subtree.
-  const form = page.locator('app-dialog[title="添加数据库实例"]');
+  const form = page.getByRole('region', { name: '资源编辑', exact: true });
   const field = (label: string) => form.getByLabel(label, { exact: true });
   await field('实例名称').fill('MAX-190 实采 MySQL 9.6'); await field('主机地址').fill(targetHost);
   await field('端口').fill('23390'); await field('用户名').fill('root'); await field('密码').fill(rootPassword);
@@ -100,6 +100,7 @@ test('MySQL resource editor → check → trial → activate → formal query an
   await expect(editor.getByLabel('采集包 / 模板版本', { exact: true })).toHaveValue(pack.digest);
   await editor.getByLabel('采集间隔（秒）覆盖方式', { exact: true }).selectOption('set');
   await editor.getByLabel('采集间隔（秒）', { exact: true }).fill('5');
+  await editor.getByRole('button', { name: '检查并启用', exact: true }).click();
   await editor.getByRole('button', { name: '预检与影响预览' }).click(); await expect(editor).toContainText('影响 1 个资源');
   await editor.getByRole('button', { name: '试采', exact: true }).click(); await expect(editor).toContainText('试采成功，可以发布');
   await page.screenshot({ path: `${output}/mysql-check-trial.png`, fullPage: true });

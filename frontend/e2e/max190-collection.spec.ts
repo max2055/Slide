@@ -34,7 +34,7 @@ async function setup(page: Page, scenario: Scenario, theme: string) {
     if (path.endsWith('/recommendations')) return route.fulfill({ json: recommendations });
     if (path.endsWith('/groups')) return route.fulfill({ json: { groups: [{ id: 'production-east', revision: 1 }, { id: 'development', revision: 2 }] } });
     if (path.endsWith('/access')) return route.fulfill({ json: { can_manage: true } });
-    if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
+    if (path.endsWith('/attempts') || path.endsWith('/audit')) return route.fulfill({ json: [] });
     if (path.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, requests_per_hour_before: 0, requests_per_hour_after: 60, resources: [{ resolved }] } });
     if (path.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', samples: [{ value: 1000 }], attempts: [{ status: 'succeeded' }] } });
     if (path.endsWith('/activate')) return route.fulfill({ json: { published: true, status } });
@@ -59,34 +59,12 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`su
     else if (['failed', 'forbidden'].includes(scenario)) {
       await expect(section.getByRole('alert')).toBeVisible();
       await expect(section).not.toContainText('未绑定');
-    } else await expect(section.locator('.collection-facts')).toBeVisible();
+    } else await expect(section.locator('.fact-strip')).toBeVisible();
     if (scenario === 'global-paused') await expect(section).toContainText('全局采集已关闭');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`${scenario}.png`), fullPage: true });
     release();
-    if (scenario !== 'normal' && scenario !== 'unbound') continue;
-    const edit = section.getByRole('button', { name: '编辑采集配置', exact: true });
-    await edit.click();
-    const editor = page.locator('metric-configuration');
-    await expect(editor.getByLabel('采集包 / 模板版本', { exact: true })).toHaveValue('mysql96');
-    await expect(editor.locator('option[value="mysql8"]')).toBeDisabled();
-    await expect(editor).toContainText('模板覆盖：数据库运行时长');
-    await page.screenshot({ path: info.outputPath(`${scenario}-editor-top.png`), fullPage: true });
-    await editor.getByLabel('搜索策略组', { exact: true }).fill('production');
-    await expect(editor.getByLabel('策略组', { exact: true }).locator('option')).toHaveCount(2);
-    await editor.getByLabel('策略组', { exact: true }).selectOption('production-east');
-    await expect(editor.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
-    await editor.getByRole('button', { name: '预检与影响预览' }).click();
-    await editor.getByRole('button', { name: '试采', exact: true }).click();
-    await expect(editor).toContainText('试采成功，可以发布');
-    await page.screenshot({ path: info.outputPath(`${scenario}-editor.png`), fullPage: true });
-    await page.keyboard.press('Escape');
-    await expect(page.getByText('放弃未发布的修改？', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '继续编辑', exact: true }).click();
-    await expect(editor).toBeVisible();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '放弃修改并继续', exact: true }).click();
-    await expect(editor).toHaveCount(0); await expect(edit).toBeFocused();
+
   }
   expect(errors).toEqual([]);
 });

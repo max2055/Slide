@@ -9,9 +9,12 @@ import './app-empty-state.js';
 import './app-dialog.js';
 import { metricName, packageName } from './resource-metric-summary.js';
 import { renderCollectionStatus, collectionFactsStyles } from './metric-collection-status.js';
+import { collectionLayoutStyles } from './collection-layout-styles.js';
+import { icons } from '../../../icons.js';
+import './app-badge.js';
 import { showToast } from './app-toast-container.js';
 
-import { metricRequest, metricError, MetricRequestError, recommendationOptions, coverageAvailability, readCollectionStatus,
+import { metricRequest, metricError, MetricRequestError, recommendationOptions, coverageAvailability, readCollectionStatus, statusLabel,
   type Catalog, type Applicability, type Resolved, type Published, type CollectionStatus, type Recommendation, type RecommendationResult, type PolicyGroup } from './metric-api.js';
 export { metricRequest, metricError } from './metric-api.js';
 export type { Catalog } from './metric-api.js';
@@ -27,6 +30,7 @@ const label = (value: string | undefined) => value ? labels[value] ?? '待确认
 export class MetricConfiguration extends LitElement {
   @property() resourceType = 'instance';
   @property({ type: Number }) resourceId = 0;
+  @property({ type: Boolean }) connectionPending = false;
   @state() private catalog: Catalog | null = null;
   @state() private published: Published | null = null;
   @state() private effective: Resolved | null = null;
@@ -57,13 +61,15 @@ export class MetricConfiguration extends LitElement {
     this.generation++; this.stopPolling(); this.canManage = false; this.busy = false;
     this.catalog = null; this.published = null; this.effective = null; this.collection = null;
     this.preview = null; this.trial = null; this.attempts = []; this.overrides = {}; this.groups = [];
-    this.recommendations = []; this.selected = ''; this.groupId = ''; this.dirty = false;
+    this.recommendations = []; this.selected = ''; this.groupId = ''; this.dirty = false; this.loaded = false;
     this.error = '权限或登录状态已变更，请重新打开资源后读取配置';
   };
   private editVersion = 0;
   @state() private loaded = false;
   @state() private dirty = false;
   @state() private discardPending = false;
+  @state() private flowOpen = false;
+  @state() private activationStep = 0;
   private afterDiscard: (() => void) | null = null;
   confirmDiscard(action: () => void) {
     if (!this.dirty) { action(); return; }
@@ -87,6 +93,7 @@ export class MetricConfiguration extends LitElement {
     p { overflow-wrap:anywhere; } .error { color:var(--danger); }
   `];
   override willUpdate(changes: Map<string, unknown>) {
+    if (changes.has('connectionPending') && this.connectionPending) this.invalidate();
     if (changes.has('resourceId') || changes.has('resourceType')) void this.load();
   }
   override disconnectedCallback() { this.stopPolling(); clearTimeout(this.groupSearchTimer); this.groupSearchVersion++; this.generation++; window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('slide-navigate', this.navigate, true); window.removeEventListener('slide-permissions-loaded', this.accessChanged); window.removeEventListener('slide-session-expired', this.accessChanged); super.disconnectedCallback(); }
@@ -109,7 +116,7 @@ export class MetricConfiguration extends LitElement {
     }, 250);
   }
   private root() { return `resources/${this.resourceType}/${this.resourceId}`; }
-  private invalidate() { this.editVersion++; this.dirty = true; this.preview = null; this.trial = null; this.error = ''; }
+  private invalidate() { this.editVersion++; this.dirty = true; this.preview = null; this.trial = null; this.activationStep = 0; this.error = ''; }
   private async load() {
     this.stopPolling();
     clearTimeout(this.groupSearchTimer); this.groupSearchVersion++; this.groupSearch = ''; this.groupError = '';
@@ -171,8 +178,13 @@ export class MetricConfiguration extends LitElement {
     return trialPassed(this.trial) || (!!this.trial && !this.trial.error && this.trial.decision === 'disabled'
       && this.preview?.resources[0]?.resolved.settings.enabled === false);
   }
+  private globalBlocksCandidate() {
+    return this.collection?.effective_enabled.global_enabled === false
+      && this.preview?.resources[0]?.resolved.settings.enabled !== false;
+  }
   private async execute(operation: 'preview' | 'trial' | 'publish') {
-    if (this.busy || !this.canManage) return;
+    if (this.busy || !this.canManage || this.connectionPending) return;
+    if (operation !== 'preview' && this.globalBlocksCandidate()) return;
     if (operation === 'trial' && !this.preview || operation === 'publish' && (!this.preview || !this.publishReady())) return;
     const generation = this.generation, editVersion = this.editVersion;
     this.busy = true; this.error = '';
@@ -180,12 +192,13 @@ export class MetricConfiguration extends LitElement {
       const path = operation === 'publish' ? `config/${this.root()}/activate` : `${operation === 'trial' ? 'config' : 'policy'}/${this.root()}/${operation}`;
       const result = await metricRequest<Preview & Trial>(path, this.candidate());
       if (generation !== this.generation || editVersion !== this.editVersion) return;
-      if (operation === 'preview') this.preview = result;
-      if (operation === 'trial') this.trial = result;
+      if (operation === 'preview') { this.trial = null; this.preview = result; this.activationStep = 1; }
+      if (operation === 'trial') { this.trial = result; if (this.publishReady()) this.activationStep = 2; }
       if (operation === 'publish') {
         this.dirty = false; this.preview = null; this.trial = null;
         showToast('采集配置已发布，正在确认应用与正式数据状态', 'success');
         await this.load();
+        this.activationStep = 3;
       }
     } catch (error) { if (generation === this.generation) { this.invalidate(); this.error = metricError(error); } }
     finally { if (generation === this.generation) this.busy = false; }
@@ -216,50 +229,87 @@ export class MetricConfiguration extends LitElement {
     </p>`);
   }
   private toggle(value: Toggle, update: (value: Toggle) => void) {
-    return html`<select aria-label="指标覆盖" .value=${value} .disabled=${this.busy || !this.canManage} @change=${(e: Event) => { update((e.target as HTMLSelectElement).value as Toggle); this.invalidate(); }}>
+    return html`<select aria-label="指标覆盖" .value=${value} .disabled=${this.busy || !this.canManage || this.connectionPending} @change=${(e: Event) => { update((e.target as HTMLSelectElement).value as Toggle); this.invalidate(); }}>
       <option value="inherit">继承</option><option value="enable">启用</option><option value="disable">停用</option></select>`;
   }
-  render() {
-    const resolved = this.preview?.resources[0]?.resolved ?? this.effective;
-    const packages = this.catalog?.packages.filter(p => p.package.resource_type === this.resourceType) ?? [];
+  private renderCoverage() {
     const recommendation = this.recommendations.find(r => r.package.digest === this.selected);
-    return html`<style>${sharedFieldStyles}${collectionFactsStyles}${MetricConfiguration.componentStyles.map(style => style.cssText).join("\n")}</style><app-card><h2 slot="header">监控与采集</h2>
-      <p>采集包不改变标准指标定义。预检仅验证配置与已有能力证据；目标权限需试采验证。</p>
-      ${!this.loaded && !this.error ? html`<p role="status">正在读取采集配置…</p>` : nothing}
-      ${this.collection ? renderCollectionStatus(this.collection) : nothing}
+    const metrics = [...new Set([...(recommendation?.metrics ?? []), ...(recommendation?.missing_core_metrics ?? [])])];
+    return html`<app-card><div class="section-title"><h2>指标覆盖</h2><span class="muted">候选模板 · 缺口单独说明</span></div>
+      <div class="coverage-table">${metrics.map(id => {
+        const covered = recommendation?.metrics.includes(id);
+        const evidence = this.selected === this.collection?.binding.package?.digest ? this.collection?.coverage.find(c => c.metric.id === id) : undefined;
+        return html`<div><strong>${metricName(id)}</strong><app-badge variant=${covered ? 'ok' : 'muted'}>${covered ? '已覆盖' : evidence?.state === 'unsupported' ? '版本不支持' : '模板未覆盖'}</app-badge><span>${covered ? '由候选模板提供；正式数据状态单独确认' : evidence?.state === 'unsupported' ? '当前版本能力未提供' : '绑定不表示所有指标都有值'}</span></div>`;
+      })}</div>${!metrics.length ? html`<p class="muted">尚无可核实的覆盖信息，请先选择兼容模板。</p>` : nothing}</app-card>`;
+  }
+  private renderFlow() {
+    const steps = ['检查兼容性与权限', '执行试采', '发布并应用配置', '等待正式采集'];
+    return html`<app-dialog .open=${this.flowOpen} title="检查并启用采集" size="xl" @app-dialog-close=${(e: Event) => { e.stopPropagation(); this.flowOpen = false; }}>
+      <p class="muted">${packageName(this.catalog?.packages.find(p => p.package.digest === this.selected)?.package.id ?? '')} · 配置与正式采集分别确认</p>
+      <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', '本次试采验证通过', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
+      ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
+      ${this.globalBlocksCandidate() ? html`<p class="notice" role="status">全局采集已关闭，不能继续启用；请联系平台运维。</p>` : nothing}
+      ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before ?? '未知'} → ${this.preview.requests_per_hour_after ?? '未知'}</p>${this.applicabilityMessage(this.preview.resources[0]?.resolved.applicability)}` : nothing}
+      ${this.trial ? html`<h3>本次试采（不写正式观测）</h3><p>${this.trialMessage()}</p>${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
+      ${this.activationStep === 3 && this.collection ? renderCollectionStatus(this.collection) : nothing}
+      <div slot="footer" class="actions"><button class="btn" @click=${() => { this.flowOpen = false; }}>关闭</button>
+        ${this.canManage ? html`<button class="btn" .disabled=${this.busy || this.connectionPending || !this.selected} @click=${() => this.execute('preview')}>预检与影响预览</button>
+        <button class="btn" .disabled=${this.busy || this.connectionPending || this.globalBlocksCandidate() || !this.preview} @click=${() => this.execute('trial')}>试采</button>
+        <button class="btn-primary" .disabled=${this.busy || this.connectionPending || this.globalBlocksCandidate() || !this.preview || !this.publishReady()} @click=${() => this.execute('publish')}>发布</button>` : nothing}</div>
+    </app-dialog>`;
+  }
+  render() {
+    const resolved = this.preview?.resources[0]?.resolved ?? (this.selected === this.published?.binding.package.digest ? this.effective : null);
+    const packages = this.catalog?.packages.filter(p => p.package.resource_type === this.resourceType) ?? [];
+    const selectedPackage = packages.find(p => p.package.digest === this.selected);
+    const recommendation = this.recommendations.find(r => r.package.digest === this.selected);
+    const status = this.collection;
+    const globalBlocked = status?.effective_enabled.global_enabled === false;
+    return html`<style>${sharedFieldStyles}${collectionFactsStyles}${collectionLayoutStyles}
+      .scroll{overflow:auto;max-width:100%} .scroll app-data-table{min-width:36rem}
+      .group-picker input{margin-bottom:var(--space-sm)}
+      .state-card .collection-facts{grid-template-columns:1fr;gap:var(--space-md)}
+      .state-card .collection-facts>div{display:flex;gap:var(--space-sm);justify-content:space-between}.state-card dd{text-align:right;font-size:12px;margin:0}
+      .state-card .collection-facts dt{flex-shrink:0} .state-card .collection-facts dd{max-width:65%}
+      ${sharedBtnStyles}
+    </style>
+    ${!this.loaded && !this.error ? html`<div class="notice" role="status">正在读取采集配置…</div>` : nothing}
+    ${this.loaded && !this.canManage ? html`<p class="notice">只读：未获得此资源的管理权限。</p>` : nothing}
+    ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
+    ${globalBlocked ? html`<p class="notice" role="status">全局采集已关闭；本资源发布不能解除全局暂停，请联系平台运维。</p>` : nothing}
+    <div class="edit-grid"><section class="stack">
+      <app-card><div class="section-title"><div><span class="eyebrow">采集配置</span><h2>选择适合此对象的采集模板</h2></div><app-badge variant=${this.dirty ? 'warn' : 'muted'}>${this.dirty ? '有未保存修改' : !this.loaded || !status ? '等待确认' : statusLabel(status.binding.state)}</app-badge></div>
+        <p class="section-description">按引擎与版本匹配。模板版本表示能力变化，与指标体系无关。</p>
+        ${this.loaded && status?.binding.state === 'unbound' ? html`<p class="muted">首次绑定：此资源尚未发布采集策略。</p>` : nothing}
+        <app-form-field label="采集模板"><select aria-label="采集包 / 模板版本" .value=${this.selected} .disabled=${this.busy || !this.canManage || this.connectionPending} @change=${(e: Event) => { this.selected = (e.target as HTMLSelectElement).value; this.invalidate(); }}>
+          <option value="">请选择已验证兼容的模板</option>
+          ${packages.map(p => { const r = this.recommendations.find(r => r.package.digest === p.package.digest); return html`<option value=${p.package.digest} ?disabled=${r?.status !== 'supported'} .selected=${p.package.digest === this.selected}>${packageName(p.package.id)} · ${p.package.version}${r?.recommended ? '（推荐）' : ''}${r?.status !== 'supported' ? ` · ${label(r?.status)}` : ''}</option>`; })}
+        </select></app-form-field>
+        ${recommendation ? html`<div class="template-preview"><div class="template-heading"><div class="template-icon">${icons[this.resourceType === 'server' ? 'server' : 'database']}</div><div><h3>${packageName(recommendation.package.id)}</h3><p class="muted">${recommendation.applicability.map(c => `${c.value ?? '未知'} · ${label(c.status)}`).join(' / ') || '按服务端兼容性证据匹配'}</p></div><app-badge variant=${recommendation.status === 'supported' ? 'ok' : 'warn'}>${recommendation.status === 'supported' ? '兼容' : label(recommendation.status)}</app-badge></div>
+          <div class="coverage-line"><span>本模板覆盖</span><strong>${recommendation.metrics.map(metricName).join('、') || '未提供指标覆盖'}</strong></div>
+          <div class="coverage-line"><span>仍有缺口</span><span>${recommendation.missing_core_metrics?.length ? recommendation.missing_core_metrics.map(metricName).join('、') : '未报告核心指标缺口；实际覆盖与样本质量单独确认'}</span></div>
+        </div>` : nothing}
+        <div class="section-divider"></div>
+        <metric-policy-fields .compact=${true} .overrides=${this.overrides} .values=${resolved?.settings ?? selectedPackage?.recommendations ?? {}} .sources=${resolved?.sources ?? {}} .disabled=${this.busy || !this.canManage || this.connectionPending} @policy-change=${(e: CustomEvent<Overrides>) => { this.overrides = e.detail; this.invalidate(); }}>
+        <div slot="group" class="group-picker"><app-form-field label="策略组（可选）" .error=${this.groupError}><input type="search" aria-label="搜索策略组" placeholder="搜索或选择策略组" ?disabled=${!this.loaded} .value=${this.groupSearch} @input=${(e: Event) => this.searchGroups((e.target as HTMLInputElement).value)}><select aria-label="策略组" .value=${this.groupId} ?disabled=${this.busy || !this.canManage || this.connectionPending} @change=${(e: Event) => { this.groupId = (e.target as HTMLSelectElement).value; this.invalidate(); }}>
+          <option value="">不继承策略组</option>${this.groupId && !this.groups.some(g => g.id === this.groupId) ? html`<option value=${this.groupId}>已有策略组（当前不可选择其他不可见组）</option>` : nothing}
+          ${this.groups.filter(g => g.id === this.groupId || `${g.label ?? ''} ${g.id}`.toLowerCase().includes(this.groupSearch.trim().toLowerCase())).map(g => html`<option value=${g.id} .selected=${g.id === this.groupId}>${g.label || g.id}</option>`)}</select></app-form-field></div></metric-policy-fields>
+        <p class="muted">策略组用于统一管理；对象停用设置优先。修改候选后需重新检查与试采。</p>
+        <details class="advanced"><summary>模板兼容性与覆盖说明</summary>${this.recommendations.map(r => html`<p>${packageName(r.package.id)} · ${r.package.version}：${label(r.status)}</p>${this.applicabilityMessage(r.applicability)}`)}
+          ${resolved ? html`<h3>高级指标覆盖与能力依据</h3>${resolved.metric_templates.map(t => { const key = `${t.metric.id}@${t.metric.semantic_version}`; return html`<app-form-field label=${metricName(t.metric.id)} hint=${`${label(t.decision)} · ${label(t.capability.status)} · 来源 ${label(resolved.metric_sources[key]?.layer)}`}>${this.toggle(this.overrides.metrics?.[key] ?? 'inherit', value => { this.overrides = { ...this.overrides, metrics: { ...this.overrides.metrics, [key]: value } }; })}<details><summary>能力依据与有效期</summary><p>判定 ${t.capability.evaluated_at} · 有效至 ${t.capability.valid_until}</p><pre>${JSON.stringify(t.capability.basis, null, 2)}</pre></details></app-form-field>`; })}` : nothing}
+        </details>
+        <div class="editor-actions"><span class="muted">${this.dirty ? '修改后将重新检查与试采' : `配置版本 ${this.published?.binding.revision ?? '—'} · 无未保存修改`}</span><div class="actions"><button class="btn" .disabled=${this.busy || !this.dirty} @click=${() => this.confirmDiscard(() => void this.load())}>放弃修改</button><button class="btn-primary" .disabled=${this.busy || !this.canManage || this.connectionPending || !this.selected} @click=${() => { this.flowOpen = true; }}>检查并启用</button></div></div>
+      </app-card>${this.renderCoverage()}
+    </section><aside class="stack"><app-card class="state-card"><span class="eyebrow">当前运行状态</span>${status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>${status.formal_visibility.state === 'pending' ? '等待正式数据' : statusLabel(status.formal_visibility.state)}</app-badge>` : nothing}<p class="muted">已生效的配置与证据；主列候选修改尚未发布。</p>
+      ${status ? renderCollectionStatus(status) : html`<p>采集状态未知</p>`}
+      <div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => void this.refreshStatus()}>刷新采集状态</button></div>
       ${this.statusError ? html`<p role="alert">${this.statusError}</p>` : nothing}
       ${this.polling ? html`<p role="status">正在确认：发布 → 应用 → 来源验证 → 正式可见（最多刷新 15 次）</p>` : nothing}
-      ${this.pollLimitReached ? html`<p role="status">本次自动刷新已结束，采集尚未确认正式可见。请检查阻塞或稍后重试。</p>` : nothing}
-      ${this.statusError || this.pollLimitReached || this.collection?.binding.application === 'failed' ? html`<button class="btn" @click=${() => { this.startPolling(); }}>重试状态检查</button>` : nothing}
-      ${this.loaded && !this.published ? html`<p>首次绑定：此资源尚未发布采集策略，可选择采集包后预检与试采。</p>` : nothing}
-      ${this.loaded && !this.canManage ? html`<p>只读：未获得此资源的管理权限。</p>` : nothing}
-      ${this.error ? html`<p role="alert" class="error">${this.error}</p>` : nothing}
-      <div class="fields">
-        <app-form-field label="采集包 / 模板版本"><select aria-label="采集包 / 模板版本" .value=${this.selected} .disabled=${this.busy || !this.canManage} @change=${(e: Event) => { this.selected = (e.target as HTMLSelectElement).value; this.invalidate(); }}>
-          <option value="">请选择已验证兼容的模板</option>
-          ${packages.map(p => { const r = this.recommendations.find(r => r.package.digest === p.package.digest); return html`<option value=${p.package.digest} ?disabled=${r?.status !== 'supported'} .selected=${p.package.digest === this.selected}>${packageName(p.package.id)} · ${p.package.version}${r?.recommended ? ' · 推荐' : ''}${r?.status !== 'supported' ? ` · ${label(r?.status)}` : ''}</option>`; })}
-        </select></app-form-field>
-        <app-form-field label="搜索策略组" .error=${this.groupError}><input type="search" aria-label="搜索策略组" ?disabled=${!this.loaded} .value=${this.groupSearch} @input=${(e: Event) => this.searchGroups((e.target as HTMLInputElement).value)}></app-form-field>
-        <app-form-field label="策略组"><select aria-label="策略组" .value=${this.groupId} ?disabled=${this.busy || !this.canManage} @change=${(e: Event) => { this.groupId = (e.target as HTMLSelectElement).value; this.invalidate(); }}>
-          <option value="">不继承策略组</option>${this.groupId && !this.groups.some(g => g.id === this.groupId) ? html`<option value=${this.groupId}>已有策略组（当前不可选择其他不可见组）</option>` : nothing}
-          ${this.groups.filter(g => g.id === this.groupId || `${g.label ?? ''} ${g.id}`.toLowerCase().includes(this.groupSearch.trim().toLowerCase())).map(g => html`<option value=${g.id}>${g.label || g.id}</option>`)}</select></app-form-field>
-      </div>
-      ${recommendation ? html`<p>模板覆盖：${recommendation.metrics.map(metricName).join('、') || '未提供指标覆盖'}。核心列表列可能仅部分覆盖。</p>${this.applicabilityMessage(recommendation.applicability)}` : nothing}
-      <details><summary>模板兼容性与覆盖说明</summary>${this.recommendations.map(r => html`<p>${packageName(r.package.id)} · ${r.package.version}：${label(r.status)}</p>${this.applicabilityMessage(r.applicability)}`)}</details>
-      <metric-policy-fields .overrides=${this.overrides} .values=${resolved?.settings ?? this.catalog?.packages.find(p => p.package.digest === this.selected)?.recommendations ?? {}} .sources=${resolved?.sources ?? {}} .disabled=${this.busy || !this.canManage} @policy-change=${(e: CustomEvent<Overrides>) => { this.overrides = e.detail; this.invalidate(); }}></metric-policy-fields>
-      <p>检查 → 试采 → 发布 → 应用 → 正式可见。试采限制执行时间与读取量，不写入正式指标；发布时服务会复核试采后启用调度。</p><div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => this.confirmDiscard(() => void this.load())}>重新加载</button>
-        ${this.canManage ? html`<button class="btn" .disabled=${this.busy || !this.selected} @click=${() => this.execute('preview')}>预检与影响预览</button>
-          <button class="btn" .disabled=${this.busy || !this.preview} @click=${() => this.execute('trial')}>试采</button>
-          <button class="btn-primary" .disabled=${this.busy || !this.preview || !this.publishReady()} @click=${() => this.execute('publish')}>发布</button>` : nothing}
-      </div>
-      ${this.applicabilityMessage(resolved?.applicability)}
-      ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before} → ${this.preview.requests_per_hour_after}</p>` : nothing}
-      ${resolved ? html`<details><summary>高级指标覆盖与能力依据</summary>${resolved.metric_templates.map(t => { const key = `${t.metric.id}@${t.metric.semantic_version}`; return html`<app-form-field label=${metricName(t.metric.id)} hint=${`${label(t.decision)} · ${label(t.capability.status)} · 来源 ${label(resolved.metric_sources[key]?.layer)}`}>
-        ${this.toggle(this.overrides.metrics?.[key] ?? 'inherit', value => { this.overrides = { ...this.overrides, metrics: { ...this.overrides.metrics, [key]: value } }; })}
-        <details><summary>能力依据与有效期</summary><p>判定 ${t.capability.evaluated_at} · 有效至 ${t.capability.valid_until}</p><pre>${JSON.stringify(t.capability.basis, null, 2)}</pre></details>
-      </app-form-field>`; })}</details>` : nothing}
-      ${this.trial ? html`<h3>本次试采（不写正式观测）</h3>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<p>${this.trialMessage()}</p>${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p><details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
-      <h3>最近正式采集尝试</h3><div class="scroll"><app-data-table .loading=${this.busy} .columns=${[{ key: 'collector_id', label: '采集器' }, { key: 'config_revision', label: '配置版本' }, { key: 'status', label: '状态' }, { key: 'error', label: '错误码' }, { key: 'started_at', label: '开始时间' }]} .rows=${this.attempts.map(a => ({ ...a, status: label(String(a.status)), error: a.error ? '采集失败，请检查权限、连接或重新试采' : '—' }))}></app-data-table></div>
-    </app-card><app-dialog .open=${this.discardPending} title="放弃未发布的修改？" @app-dialog-close=${(e: Event) => { e.stopPropagation(); this.discardPending = false; this.afterDiscard = null; }}><p>离开后需要重新编辑、预检和试采。</p><div slot="footer"><button class="btn" @click=${() => { this.discardPending = false; this.afterDiscard = null; }}>继续编辑</button><button class="btn-primary" @click=${() => { this.discardPending = false; this.dirty = false; const action = this.afterDiscard; this.afterDiscard = null; action?.(); }}>放弃修改并继续</button></div></app-dialog>`;
+      ${this.pollLimitReached ? html`<p role="status">本次自动刷新已结束，采集尚未确认正式可见。</p>` : nothing}
+      ${this.statusError || this.pollLimitReached || status?.binding.application === 'failed' ? html`<button class="btn" @click=${() => this.startPolling()}>重试状态检查</button>` : nothing}
+    </app-card><section class="quiet-panel"><h3>从配置到正式数据</h3><p class="muted">步骤指示对应本次编辑；当前生效状态见上方。</p><ol class="vertical-steps">${['检查兼容性', '执行试采', '发布并应用', '等待正式数据'].map((text, i) => html`<li data-step=${i + 1} class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}>${text}<span>${['确认引擎、版本与采集权限', '检查连接与本次样本', '使配置在此对象生效', '试采成功不等于持续采集就绪'][i]}</span></li>`)}</ol></section></aside></div>
+    <details class="technical"><summary>最近正式采集尝试与技术证据</summary><div class="scroll"><app-data-table .loading=${this.busy} .columns=${[{ key: 'collector_id', label: '采集器' }, { key: 'config_revision', label: '配置版本' }, { key: 'status', label: '状态' }, { key: 'error', label: '错误码' }, { key: 'started_at', label: '开始时间' }]} .rows=${this.attempts.map(a => ({ ...a, status: label(String(a.status)), error: a.error ? '采集失败，请检查权限、连接或重新试采' : '—' }))}></app-data-table></div><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => this.confirmDiscard(() => void this.load())}>重新加载</button></details>
+    ${this.renderFlow()}
+    <app-dialog .open=${this.discardPending} title="放弃未发布的修改？" @app-dialog-close=${(e: Event) => { e.stopPropagation(); this.discardPending = false; this.afterDiscard = null; }}><p>离开后需要重新编辑、预检和试采。</p><div slot="footer"><button class="btn" @click=${() => { this.discardPending = false; this.afterDiscard = null; }}>继续编辑</button><button class="btn-primary" @click=${() => { this.discardPending = false; this.dirty = false; const action = this.afterDiscard; this.afterDiscard = null; action?.(); }}>放弃修改并继续</button></div></app-dialog>`;
   }
 }
