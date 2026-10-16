@@ -126,6 +126,8 @@ test.afterAll(async()=>{
   try {await expect.poll(async()=>{const [rows]=await pool.query('SELECT id,session_id,lifecycle FROM investigations');report.investigations=rows;const [runs]=await pool.query('SELECT id,session_id,state,result_json FROM agent_runs');report.agentRuns=runs;await save();return runs.some((r:any)=>r.state==='completed')?'completed':runs.some((r:any)=>['failed','unknown','partial','cancelled','timed_out'].includes(r.state))?'failed':'pending';},{timeout:160000}).not.toBe('pending');report.checks.agentCompleted=report.agentRuns.some((r:any)=>r.state==='completed');}catch{report.checks.agentCompleted=false;}
   report.results=(await pool.query('SELECT * FROM investigation_results'))[0];report.evidence=(await pool.query('SELECT * FROM investigation_evidence'))[0];report.requests=(await pool.query('SELECT * FROM investigation_requests'))[0];
   report.checks.agentEvidenceRead=report.evidence.some((r:any)=>r.raw_json?.data?.observations?.length>0);
+  const agentObservations=report.evidence.flatMap((r:any)=>r.raw_json?.data?.observations??[]);
+  report.checks.agentObservationTimesValid=agentObservations.length>0&&agentObservations.every((r:any)=>typeof r.observedAt==='string'&&Number.isFinite(Date.parse(r.observedAt)));
   report.checks.agentResultPersisted=report.results.length>0;report.checks.modelMeterCaptured=budget().requests>report.baselineBudget.requests;
   if(report.checks.agentCompleted){
     await page.getByRole('button',{name:'查看证据与成果',exact:true}).click();
@@ -145,7 +147,7 @@ test.afterAll(async()=>{
   const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_v2_attempts'))[0][0].n);
   const before=await count(),jobsBefore=await jobs(),stoppedAt=new Date().toISOString();await new Promise(ok=>setTimeout(ok,11000));report.stop={stoppedAt,before,after:await count(),jobsBefore,jobs:await jobs()};
   report.checks.stopNoCollection=report.stop.after===before;report.checks.stopNoNewTasks=report.stop.jobs.length===jobsBefore.length;await save();
-  expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
+  expect.soft(report.checks.agentObservationTimesValid,'Observation timestamps must survive Agent evidence serialization').toBe(true);expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
   expect(report.checks.twoCycles,'Two real scheduler cycles are required; independent Agent and permission evidence is retained on failure').toBe(true);
 });
 
