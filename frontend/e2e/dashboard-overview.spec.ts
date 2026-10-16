@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 async function fixture(page: Page, options: { emptyNetwork?: boolean; overviewFailure?: boolean; longName?: boolean; relations?: 'empty' | 'failed'; permissions?: string[] } = {}) {
   await page.addInitScript((permissions) => {
@@ -295,5 +296,5 @@ test('R1.1 typography and user density across the viewport and theme matrix', as
     await view.evaluate((element: any) => { element.scrollingParent().scrollTop = 0; });
     await page.screenshot({ path: testInfo.outputPath(`controlled-${width}-${mode}-${density}.png`), animations: 'disabled' });
   }
-  await testInfo.attach('layout-measurements', { body: JSON.stringify(measurements, null, 2), contentType: 'application/json' });
+  await writeFile(testInfo.outputPath('layout-measurements.json'), JSON.stringify(measurements, null, 2));
 });

@@ -18,7 +18,7 @@ const base = `http://127.0.0.1:${frontendPort}`;
 test.skip(process.env.MAX186_ISOLATED_MYSQL !== '1', 'Requires task-owned isolated MySQL on 33186');
 const processes: ChildProcess[] = [];
 let pool: any, token: string, permissions: string[], password = randomBytes(24).toString('hex');
-let instanceId: number, serverId: number, serverSwitchId: number, networkId: number;
+let serverId: number;
 async function ready(url: string, child: ChildProcess) {
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
@@ -46,15 +46,12 @@ test.beforeAll(async () => {
   await pool.query('UPDATE llm_providers SET enabled=0');
   await pool.query("UPDATE users SET password_hash=?,status='active' WHERE username='admin'", [await bcrypt.hash(password, 10)]);
   await pool.query("INSERT IGNORE INTO user_roles(user_id,role_id) SELECT u.id,r.id FROM users u JOIN roles r ON r.name='admin' WHERE u.username='admin'");
-  const [insert] = await pool.query("INSERT INTO database_instances(name,db_type,host,port,username,password_encrypted,environment,status,health_status) VALUES ('MAX-186 订单数据库 · 隔离服务测试资源','mysql','127.0.0.1',33186,'root',?,'testing','inactive','unknown')", [encryptData('unused-isolated-target',env.ENCRYPTION_KEY)]);
-  instanceId = insert.insertId;
+  await pool.query("INSERT INTO database_instances(name,db_type,host,port,username,password_encrypted,environment,status,health_status) VALUES ('MAX-186 订单数据库 · 隔离服务测试资源','mysql','127.0.0.1',33186,'root',?,'testing','inactive','unknown')", [encryptData('unused-isolated-target',env.ENCRYPTION_KEY)]);
 
   const [server] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max186-no-target.invalid',22,'MAX-186 隔离服务器 · 长名称与未知状态验收','rhel','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
   serverId = server.insertId;
-  const [serverSwitch] = await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max186-second-no-target.invalid',22,'MAX-186 切换服务器','rhel','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
-  serverSwitchId = serverSwitch.insertId;
-  const [network] = await pool.query("INSERT INTO network_devices(name,label,host,vendor,collection_enabled,status) VALUES ('max186-network','MAX-186 隔离网络设备','max186-network.invalid','huawei',0,'unknown')");
-  networkId = network.insertId;
+  await pool.query("INSERT INTO servers(host,port,label,os_type,credential_type,credential_encrypted,status,collection_enabled) VALUES ('max186-second-no-target.invalid',22,'MAX-186 切换服务器','rhel','password',?,'offline',0)",[encryptData(JSON.stringify({username:'unused',password:'unused'}),env.ENCRYPTION_KEY)]);
+  await pool.query("INSERT INTO network_devices(name,label,host,vendor,collection_enabled,status) VALUES ('max186-network','MAX-186 隔离网络设备','max186-network.invalid','huawei',0,'unknown')");
   const api = await launch(['--import','tsx','server.ts'], resolve('../apps/db-ops-api'), env, 'api.log');
   await ready(`http://127.0.0.1:${apiPort}/api/health/ready`, api);
   const vite = await launch([resolve('node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port',String(frontendPort),'--strictPort'], resolve('.'), { ...env,VITE_API_PROXY_TARGET:`http://127.0.0.1:${apiPort}`,VITE_AGENT_WS_PROXY_TARGET:'http://127.0.0.1:29886' }, 'vite.log');
