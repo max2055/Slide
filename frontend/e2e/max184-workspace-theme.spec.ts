@@ -225,3 +225,47 @@ test('theme/density compatibility and controlled loading/failure/denied states',
     }
   }
 });
+
+test('breadcrumb: delayed Chinese load, same-route switches, appearance UI and refresh',async({page})=>{
+  await prefs({locale:'zh-CN',accentColor:'#409eff',themeMode:'light',fontDensity:'standard'});
+  await login(page,{locale:'zh-CN'});
+  let release!:()=>void, delayedLoads=0;
+  const hold=new Promise<void>(resolve=>release=resolve);
+  await page.route('**/src/app/i18n/locales/zh-CN.ts*',async route=>{delayedLoads++;await hold;await route.continue();});
+  try {
+    await page.goto(`${base}/investigations`,{waitUntil:'domcontentloaded'});
+    const breadcrumb=page.locator('.dashboard-header__breadcrumb-current');
+    await expect(breadcrumb).toHaveText('AI Workspace');
+    await expect.poll(()=>delayedLoads).toBeGreaterThan(0);
+    await page.evaluate(()=>{(window as any).__max184Header=document.querySelector('dashboard-header');});
+    release();
+    await expect(breadcrumb).toHaveText('AI 工作空间');await loaded(page);
+    await expect(page.locator('investigations-page h1')).toHaveText('AI 工作空间');
+    for(const width of [1280,390]) {await page.setViewportSize({width,height:900});await shot(page,`breadcrumb-async-zh-${width}`);}
+    await page.setViewportSize({width:1280,height:900});
+    // The existing settings event path changes language without replacing the
+    // route or header. No DOM text or component property is patched by the test.
+    for(const [locale,label] of [['en','AI Workspace'],['zh-CN','AI 工作空间']] as const) {
+      const saved=page.waitForResponse(r=>r.url().endsWith('/api/user/preferences')&&r.request().method()==='PUT');
+      await page.evaluate(locale=>window.dispatchEvent(new CustomEvent('slide-settings-change',{detail:{locale}})),locale);
+      await saved;await expect(breadcrumb).toHaveText(label);
+      await expect(page.locator('investigations-page h1')).toHaveText('AI 工作空间');
+      expect(new URL(page.url()).pathname).toBe('/investigations');
+      expect(await page.evaluate(()=>(window as any).__max184Header===document.querySelector('dashboard-header'))).toBe(true);
+      await shot(page,`breadcrumb-same-route-${locale}`);
+    }
+    await page.unroute('**/src/app/i18n/locales/zh-CN.ts*');
+    await page.reload();await loaded(page);await expect(breadcrumb).toHaveText('AI 工作空间');
+    await shot(page,'breadcrumb-refresh-zh-1280');
+    await page.goto(`${base}/settings/platform/appearance`);
+    const language=page.locator('appearance-settings app-select-field').first().locator('select');
+    const saved=page.waitForResponse(r=>r.url().endsWith('/api/user/preferences')&&r.request().method()==='PUT');
+    await language.selectOption('en');await saved;
+    await expect(breadcrumb).toHaveText('Settings');
+    expect((await request('/api/user/preferences')).preferences.locale).toBe('en');
+    await page.goto(`${base}/investigations`);await loaded(page);await expect(breadcrumb).toHaveText('AI Workspace');
+    await page.reload();await loaded(page);await expect(breadcrumb).toHaveText('AI Workspace');
+    await expect(page.locator('investigations-page h1')).toHaveText('AI 工作空间');
+    await shot(page,'breadcrumb-refresh-en-1280');
+  } finally {release();}
+});
