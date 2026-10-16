@@ -113,6 +113,7 @@ describe('generated public API contract', () => {
       '/api/llm/models',
       '/api/llm/test',
       '/api/metrics/config/resources/{type}/{id}/activate',
+      '/api/metrics/config/resources/{type}/{id}/migration',
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
       '/api/metrics/policy/groups',
