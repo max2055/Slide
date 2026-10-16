@@ -105,11 +105,16 @@ test('representative application shell: full-width connection, first model, sele
   await select.selectOption(String(result.providerId));
   await expect(view.locator('.model-row')).toHaveCount(1);
   await page.screenshot({ path: `${out}/single-real-1280-light.png`, animations: 'disabled' });
-  for (const state of ['empty', 'loading', 'error', 'forbidden']) {
+  const providers = await (await request.get('/api/llm/configs', { headers })).json();
+  const fixture = providers.find((provider: any) => provider.id === result.providerId);
+  for (const state of ['single-provider', 'long-provider', 'empty', 'loading', 'error', 'forbidden']) {
     for (const width of [1280, 1440, 768, 390]) for (const theme of ['light', 'dark']) {
       let release: (() => void) | undefined;
       await page.route('**/api/llm/configs', async route => {
         if (state === 'loading') await new Promise<void>(resolve => { release = resolve; });
+        if (state === 'single-provider' || state === 'long-provider') {
+          await route.fulfill({ json: [{ ...fixture, display_name: state === 'long-provider' ? '隔离验收的长名称提供商_'.repeat(12) : fixture.display_name }] }); return;
+        }
         await route.fulfill(state === 'empty' || state === 'loading' ? { json: [] } : {
           status: state === 'forbidden' ? 403 : 503,
           json: { error: state === 'forbidden' ? '当前没有查看权限（受控验收）' : '读取失败，请重试（受控验收）' },
@@ -120,6 +125,10 @@ test('representative application shell: full-width connection, first model, sele
       await page.evaluate(theme => document.documentElement.dataset.themeMode = theme, theme);
       if (state === 'loading') await expect(view.locator('.loading')).toBeVisible();
       else if (state === 'empty') await expect(view).toContainText('新建提供商');
+      else if (state.endsWith('provider')) {
+        await expect(view.locator('.provider-count')).toHaveText('共 1 个');
+        await expect(view.locator('.model-row')).toHaveCount(1);
+      }
       else await expect(view.getByRole('alert')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `${out}/controlled-${state}-${width}-${theme}.png`, animations: 'disabled' });
