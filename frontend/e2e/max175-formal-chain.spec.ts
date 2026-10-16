@@ -19,7 +19,7 @@ const encryption=randomBytes(32).toString('hex'),password=randomBytes(24).toStri
 const targetHost=process.env.MAX175_TARGET_HOST!,targetRoot=randomBytes(32).toString('hex'),targetName=`max175-r10-target-${process.pid}`;
 let pool:any,targetPool:any,token='',permissions:string[]=[],instanceId:number,targetStarted=false;
 const report:any={version:1,mode:'production Fastify/JWT/worker/scheduler/Agent; isolated MySQL 9.6',checks:{},http:[]};
-async function save(){await writeFile(`${output}/formal-chain.json`,JSON.stringify(report,null,2));}
+async function save(){await writeFile(`${output}/formal-chain-${process.pid}.json`,JSON.stringify(report,null,2));}
 async function request(path:string,body?:any,authorization=token,method=body===undefined?'GET':'POST') {
   const r=await fetch(api+path,{method,headers:{'Content-Type':'application/json',...(authorization?{Authorization:`Bearer ${authorization}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const value=await r.json();report.http.push({at:new Date().toISOString(),path,method,status:r.status});return {status:r.status,value};
@@ -93,8 +93,7 @@ test.afterAll(async()=>{
   }
   await save();
 });
-test('production binding, scheduler, resource UI and real readonly Agent',async({page})=>{
-  test.skip(process.env.MAX175_PERMISSIONS_ONLY==='1','Independent permissions-only recovery; no model requests');
+(process.env.MAX175_PERMISSIONS_ONLY==='1'?test.skip:test)('production binding, scheduler, resource UI and real readonly Agent',async({page})=>{
   test.setTimeout(300000);
   const created=await request('/api/database/instances',{name:'MAX-175 R10 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
   expect(created.status).toBe(200);instanceId=created.value.id;report.resource={type:'instance',id:instanceId,dataSchema,readonlyUser:reader};
@@ -120,12 +119,13 @@ test('production binding, scheduler, resource UI and real readonly Agent',async(
   await page.getByRole('link',{name:'查看此资源的全部调查'}).click();
   await page.getByRole('button',{name:'创建手动调查',exact:true}).click();
   const form=page.locator('investigation-create');await form.getByLabel('调查标题',{exact:true}).fill('MAX-175 R10 真实只读调查');
-  await form.getByLabel('调查目标',{exact:true}).fill('对所选 MySQL 只做一次只读调查：仅调用一次 get_resource_observations 获取所选实例已保存的观测证据，然后立即用简短文字报告这次返回的事实与证据缺口。无需调用其他工具，不执行 SQL、SSH 或写操作，不推断根因。');
+  await form.getByLabel('调查目标',{exact:true}).fill(`目标为 resourceType=instance、resourceId=${instanceId} 的 MySQL。只做一次只读调查：仅调用一次 get_resource_observations，参数 resourceType=instance、resourceId=${instanceId}、metricIds=[connections]、limit=1，获取已保存的观测证据，然后立即用简短文字报告返回的事实、来源、时间及缺口。无需调用其他工具，不执行 SQL、SSH 或写操作，不推断根因。`);
   await form.getByRole('checkbox',{name:'MAX-175 R10 readonly MySQL · 数据库实例',exact:true}).check();
   const admitted=page.waitForResponse(r=>r.url().endsWith('/api/investigations')&&r.request().method()==='POST');
   await form.getByRole('button',{name:'提交调查',exact:true}).click();const response=await admitted;report.agentAdmission={status:response.status(),value:await response.json()};await save();expect(response.status()).toBe(202);
   try {await expect.poll(async()=>{const [rows]=await pool.query('SELECT id,session_id,lifecycle FROM investigations');report.investigations=rows;const [runs]=await pool.query('SELECT id,session_id,state,result_json FROM agent_runs');report.agentRuns=runs;await save();return runs.some((r:any)=>r.state==='completed')?'completed':runs.some((r:any)=>['failed','unknown','partial','cancelled','timed_out'].includes(r.state))?'failed':'pending';},{timeout:160000}).not.toBe('pending');report.checks.agentCompleted=report.agentRuns.some((r:any)=>r.state==='completed');}catch{report.checks.agentCompleted=false;}
   report.results=(await pool.query('SELECT * FROM investigation_results'))[0];report.evidence=(await pool.query('SELECT * FROM investigation_evidence'))[0];report.requests=(await pool.query('SELECT * FROM investigation_requests'))[0];
+  report.checks.agentEvidenceRead=report.evidence.some((r:any)=>r.raw_json?.data?.observations?.length>0);
   report.checks.agentResultPersisted=report.results.length>0;report.checks.modelMeterCaptured=budget().requests>report.baselineBudget.requests;
   if(report.checks.agentCompleted){
     await page.getByRole('button',{name:'查看证据与成果',exact:true}).click();
@@ -145,12 +145,11 @@ test('production binding, scheduler, resource UI and real readonly Agent',async(
   const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_v2_attempts'))[0][0].n);
   const before=await count(),jobsBefore=await jobs(),stoppedAt=new Date().toISOString();await new Promise(ok=>setTimeout(ok,11000));report.stop={stoppedAt,before,after:await count(),jobsBefore,jobs:await jobs()};
   report.checks.stopNoCollection=report.stop.after===before;report.checks.stopNoNewTasks=report.stop.jobs.length===jobsBefore.length;await save();
-  expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
+  expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
   expect(report.checks.twoCycles,'Two real scheduler cycles are required; independent Agent and permission evidence is retained on failure').toBe(true);
 });
 
-test('independent real failure and revocation without model calls',async()=>{
-  test.skip(process.env.MAX175_PERMISSIONS_ONLY!=='1','Only for focused permission recovery');
+(process.env.MAX175_PERMISSIONS_ONLY==='1'?test:test.skip)('independent real failure and revocation without model calls',async()=>{
   test.setTimeout(120000);
   const created=await request('/api/database/instances',{name:'MAX-175 R10 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
   expect(created.status).toBe(200);instanceId=created.value.id;
