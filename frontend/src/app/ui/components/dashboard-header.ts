@@ -1,8 +1,11 @@
 import { LitElement, html } from "lit";
 import { property } from "lit/decorators.js";
+import { I18nController } from "../../i18n/index.ts";
 import { titleForTab, type Tab } from "../navigation.js";
 
 export class DashboardHeader extends LitElement {
+  private readonly _i18n = new I18nController(this);
+
   override createRenderRoot() {
     return this;
   }

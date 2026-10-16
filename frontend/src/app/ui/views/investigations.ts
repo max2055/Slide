@@ -38,7 +38,7 @@ export class InvestigationsPage extends LitElement {
   @state() private resource = '';
   @state() private draft = '';
   @state() private resources: string[] = new URL(location.href).searchParams.getAll('resource');
-  @state() private resourceFilterOpen = false;
+  @state() private resourceFilterOpen = !!(this.profile || this.resources.length);
   controller = new InvestigationsController(() => this.refreshControllerView(), null);
   private refreshControllerView() {
     if (this.controller.forbidden) { this.draft = ''; this.evidenceOpen = false; this.createOpen = false; }
@@ -110,6 +110,7 @@ export class InvestigationsPage extends LitElement {
   render() {
     const c = this.controller;
     const filtered = !!(this.query.trim() || this.lifecycle || this.profile || this.resources.length || this.resource.trim());
+    const advancedCount = Number(!!this.profile) + this.resources.length + Number(!!this.resource.trim());
     const firstUse = c.listLoaded && !c.loading && !c.listError && !c.error && !c.list.items.length && !filtered && !c.detail && !c.detailLoading;
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles}
       investigations-page { display:block; min-width:0; }
@@ -117,17 +118,28 @@ export class InvestigationsPage extends LitElement {
       investigations-page .workspace > * { min-width:0; }
       investigations-page .workspace-main { display:grid; gap:var(--space-md); }
       investigations-page .workspace-header, investigations-page .workspace-actions { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); }
-      investigations-page h1 { margin:0; font-size:24px; color:var(--text-strong); }
-      investigations-page h2 { font-size:24px; line-height:1.4; margin:var(--space-sm) 0 var(--space-md); color:var(--text-strong); }
-      investigations-page h3 { font-size:14px; color:var(--text-strong); margin:0 0 var(--space-sm); }
+      investigations-page h1 { margin:0; font-size:calc(var(--text-lg) * 1.5); font-weight:600; line-height:1.35; color:var(--text-strong); }
+      investigations-page h2 { font-size:calc(var(--text-lg) * 1.5); font-weight:600; line-height:1.4; margin:var(--space-sm) 0 var(--space-md); color:var(--text-strong); }
+      investigations-page h3 { font-size:var(--text-md); font-weight:600; color:var(--text-strong); margin:0 0 var(--space-sm); }
       investigations-page .workspace-header { margin-bottom:var(--space-lg); }
       investigations-page .workspace-header p { color:var(--muted); font-size:14px; margin:var(--space-xs) 0 0; }
-      investigations-page .workspace-filters { display:flex; align-items:end; flex-wrap:wrap; gap:var(--space-sm); margin-bottom:var(--space-md); }
-      investigations-page .workspace-filters app-form-field:first-child { flex:1 1 260px; }
-      investigations-page .workspace-filters app-form-field { flex:0 1 160px; min-width:0; }
-      investigations-page .workspace-filter-resources { flex-basis:100%; min-width:0; }
-      investigations-page summary { cursor:pointer; font-size:14px; }
-      investigations-page .workspace-filter-resources investigation-resource-picker { max-width:720px; margin:var(--space-md) 0; }
+      investigations-page .workspace-filters { margin-bottom:var(--space-md); }
+      investigations-page .workspace-filter-common { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); padding-bottom:var(--space-lg); }
+      investigations-page .workspace-search { flex:1 1 180px; max-width:380px; min-width:0; }
+      investigations-page .workspace-status { flex:0 1 150px; min-width:0; }
+      investigations-page .workspace-filter-common input, investigations-page .workspace-filter-common select { min-height:36px; }
+      investigations-page .workspace-filter-common .btn, investigations-page .workspace-filter-common .btn-ghost { min-height:36px; font-size:var(--text-sm); }
+      investigations-page .workspace-advanced-toggle { gap:var(--space-xs); }
+      investigations-page .workspace-advanced-toggle svg { width:14px; height:14px; transition:transform .15s; }
+      investigations-page .workspace-advanced-toggle[aria-expanded=true] svg { transform:rotate(90deg); }
+      investigations-page .workspace-filter-advanced { padding:var(--space-lg); margin-bottom:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); background:var(--panel); }
+      investigations-page .workspace-filter-advanced app-form-field { max-width:720px; margin-bottom:var(--space-md); }
+      investigations-page .workspace-filter-advanced app-form-field:last-child { margin-bottom:0; }
+      investigations-page .workspace-filter-advanced .workspace-profile { max-width:220px; }
+      investigations-page .workspace-filter-advanced investigation-resource-picker { max-width:720px; margin:var(--space-md) 0; }
+      investigations-page .workspace-filter-advanced h3 { font-size:var(--text-sm); }
+      investigations-page .workspace-filter-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+      investigations-page app-card::part(header) { font-size:var(--text-lg); font-weight:600; }
       investigations-page .workspace-start { display:grid; grid-template-columns:minmax(0,1fr) 276px; gap:var(--space-lg); align-items:start; }
       investigations-page .workspace-start app-card::part(footer), investigations-page .start-intro::part(header) { display:none; }
       investigations-page .start-panel { padding:calc(var(--space-xl) + var(--space-md)) calc(var(--space-xl) + var(--space-sm)); max-width:720px; }
@@ -140,10 +152,11 @@ export class InvestigationsPage extends LitElement {
       investigations-page .start-steps p, investigations-page .start-note p { color:var(--muted); font-size:12px; line-height:1.7; margin:0; }
       investigations-page .start-steps p { margin:var(--space-md) 0 var(--space-lg); }
       investigations-page .start-note + .start-note { border-top:1px solid var(--border); margin-top:var(--space-md); padding-top:var(--space-md); }
-      investigations-page .workspace-list-count { font-size:12px; color:var(--muted); margin:var(--space-sm) 0; }
+      investigations-page .workspace-list-count { font-size:12px; color:var(--muted); margin:0; }
       @media(max-width:850px) { investigations-page .workspace-start { grid-template-columns:minmax(0,1fr); } }
-      @media(max-width:600px) { investigations-page h1, investigations-page h2 { font-size:22px; } investigations-page .start-panel { padding:var(--space-xl) 0; } investigations-page .workspace-filters app-form-field { flex:1 1 100%; } }
-      investigations-page input, investigations-page select, investigations-page textarea { box-sizing:border-box; width:100%; min-width:0; background:var(--input); color:var(--text); padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); }
+      @media(max-width:600px) { investigations-page .start-panel { padding:var(--space-xl) 0; } investigations-page .workspace-search { flex-basis:100%; max-width:none; } investigations-page .workspace-status { flex:1 1 130px; } }
+      investigations-page input, investigations-page select, investigations-page textarea { box-sizing:border-box; width:100%; min-width:0; background:var(--input-bg); color:var(--text); font:inherit; font-size:var(--text-md); padding:var(--space-sm); border:1px solid var(--border-strong); border-radius:var(--radius-sm); }
+      investigations-page input:focus-visible, investigations-page select:focus-visible, investigations-page textarea:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
       investigations-page .investigation-list { display:grid; gap:var(--space-sm); }
       investigations-page .investigation-list button { display:block; white-space:normal; text-align:left; width:100%; overflow-wrap:anywhere; }
       investigations-page .investigation-list [aria-current=true] { border-color:var(--accent); }
@@ -163,17 +176,21 @@ export class InvestigationsPage extends LitElement {
       <div class="workspace-header"><div><h1>AI 工作空间</h1><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
       ${c.error ? html`<div class="workspace-error" role="alert">${c.error}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       <form class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
-        <app-form-field label="搜索调查"><input aria-label="搜索调查" placeholder="按调查名称查找" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></app-form-field>
-        <app-form-field label="调查状态"><select aria-label="调查状态" .value=${this.lifecycle} @change=${(e: Event) => { this.lifecycle = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部状态</option><option value="open">开放</option><option value="waiting">等待处理</option><option value="closed">已关闭</option><option value="archived">归档</option></select></app-form-field>
-        <app-form-field label="Profile 筛选"><select aria-label="Profile 筛选" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部 Profile</option><option value="ops">Ops</option><option value="system">System</option></select></app-form-field>
-        <button class="btn" type="submit" ?disabled=${c.loading}>筛选</button>
-        ${filtered ? html`<button class="btn-ghost" type="button" @click=${() => { this.query = ''; this.lifecycle = ''; this.profile = ''; this.resources = []; this.resource = ''; void this.filter(); }}>清除筛选</button>` : nothing}
-        <details class="workspace-filter-resources" .open=${this.resourceFilterOpen} @toggle=${(e: Event) => this.resourceFilterOpen = (e.target as HTMLDetailsElement).open}><summary>按资源名称 / 类型筛选${this.resources.length ? ` · 已选 ${this.resources.length} 项（匹配任一）` : ''}</summary>
+        <div class="workspace-filter-common">
+          <label class="workspace-search"><span class="workspace-filter-label">搜索调查</span><input aria-label="搜索调查" placeholder="按调查名称查找" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></label>
+          <label class="workspace-status"><span class="workspace-filter-label">调查状态</span><select aria-label="调查状态" .value=${this.lifecycle} @change=${(e: Event) => { this.lifecycle = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部状态</option><option value="open">开放</option><option value="waiting">等待处理</option><option value="closed">已关闭</option><option value="archived">归档</option></select></label>
+          <button class="btn" type="submit" ?disabled=${c.loading}>筛选</button>
+          <button class="btn-ghost workspace-advanced-toggle" type="button" aria-expanded=${this.resourceFilterOpen} aria-controls="workspace-advanced-filters" @click=${() => this.resourceFilterOpen = !this.resourceFilterOpen}>${icons['chevron-right']}高级筛选${advancedCount ? ` · ${advancedCount}` : ''}</button>
+          ${filtered ? html`<button class="btn-ghost" type="button" @click=${() => { this.query = ''; this.lifecycle = ''; this.profile = ''; this.resources = []; this.resource = ''; void this.filter(); }}>清除筛选</button>` : nothing}
+          <p class="workspace-list-count" aria-live="polite">${c.loading ? '正在加载调查…' : c.listError ? '调查列表读取失败' : !c.listLoaded ? '等待读取调查' : c.multiResourceFilter ? `已加载 ${c.list.items.length} 项匹配调查${c.list.nextCursor ? '，可继续加载' : ''}（多资源去重）` : `${c.list.authorizedCounts.total} 项可访问调查`}</p>
+        </div>
+        <div id="workspace-advanced-filters" class="workspace-filter-advanced" ?hidden=${!this.resourceFilterOpen}>
+          <app-form-field class="workspace-profile" label="Profile 筛选"><select aria-label="Profile 筛选" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部 Profile</option><option value="ops">Ops</option><option value="system">System</option></select></app-form-field>
+          <h3>按资源名称 / 类型筛选${this.resources.length ? ` · 已选 ${this.resources.length} 项（匹配任一）` : ''}</h3>
           ${this.resourceFilterOpen ? html`<investigation-resource-picker .value=${this.resources} @resource-selection-change=${(e: CustomEvent<{ value: string[] }>) => { this.resources = e.detail.value; void this.filter(); }}></investigation-resource-picker>` : nothing}
           <app-form-field label="高级资源筛选" hint="instance:ID / server:ID / network_device:ID，逗号分隔；与所选资源合并。"><input aria-label="资源筛选" .value=${this.resource} @input=${(e: Event) => this.resource = (e.target as HTMLInputElement).value}></app-form-field>
-        </details>
+        </div>
       </form>
-      <p class="workspace-list-count" aria-live="polite">${c.loading ? '正在加载调查…' : c.listError ? '调查列表读取失败' : !c.listLoaded ? '等待读取调查' : c.multiResourceFilter ? `已加载 ${c.list.items.length} 项匹配调查${c.list.nextCursor ? '，可继续加载' : ''}（多资源去重）` : `${c.list.authorizedCounts.total} 项可访问调查`}</p>
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
         <div class="start-signature">${icons.activity}<span>从一个具体问题开始</span></div>
         <h2>让资源证据，汇成可追溯的调查。</h2><p>选择需要关注的资源，描述你观察到的现象。调查将保留执行过程、证据与结论，便于后续核对。</p>

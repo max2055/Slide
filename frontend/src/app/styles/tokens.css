@@ -39,6 +39,8 @@
   --border-strong: #d1d1d6;
   --border-hover: #aeaeb2;
   --input: #e5e5ea;
+  /* Input surface is separate from the legacy input border token. */
+  --input-bg: var(--bg);
   --ring: #409eff;
 
   /* Accent - Database blue (D-01) */

@@ -15,6 +15,27 @@ beforeEach(async () => {
 });
 afterEach(() => { view.remove(); vi.restoreAllMocks(); });
 describe('MAX-178 model editing boundary', () => {
+  it('keeps the selected Provider and dirty fields until a select change is explicitly discarded', async () => {
+    view.providers = [structuredClone(provider), { ...structuredClone(provider), id: 185, name: 'other', display_name: 'Other' }];
+    view.form = { ...view.form, display_name: 'Dirty connection' };
+    await view.updateComplete;
+    const select = view.shadowRoot.querySelector('#provider-select') as HTMLSelectElement;
+    select.value = '185'; select.dispatchEvent(new Event('change', { bubbles: true }));
+    await view.updateComplete;
+    expect(select.value).toBe('178');
+    expect(view.discardOpen).toBe(true);
+    expect(view.form.display_name).toBe('Dirty connection');
+    const keep = Array.from(view.shadowRoot.querySelectorAll('app-dialog button')).find((el: any) => el.textContent.includes('继续编辑')) as HTMLButtonElement;
+    keep.click(); await view.updateComplete;
+    expect(select.value).toBe('178');
+    select.value = '185'; select.dispatchEvent(new Event('change', { bubbles: true }));
+    await view.updateComplete;
+    const discard = Array.from(view.shadowRoot.querySelectorAll('app-dialog button')).find((el: any) => el.textContent.includes('放弃并离开')) as HTMLButtonElement;
+    discard.click(); await view.updateComplete;
+    expect(select.value).toBe('185');
+    expect(view.form.display_name).toBe('Other');
+    expect(put).not.toHaveBeenCalled();
+  });
   it('browses multiple models without rendering per-model forms and collapses advanced fields', () => {
     expect(view.shadowRoot.querySelectorAll('.model-row')).toHaveLength(2);
     expect(view.shadowRoot.querySelector('.advanced').open).toBe(false);

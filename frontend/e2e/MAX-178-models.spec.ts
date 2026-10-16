@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -9,6 +9,11 @@ const mysql = require('mysql2/promise');
 test.describe.configure({ mode: 'serial' });
 test.skip(!process.env.MAX178_ISOLATED_MYSQL, 'Use scripts/qualification/run-MAX-178.sh');
 const out = 'test-results/MAX-178-evidence';
+async function selectProvider(view: Locator, name: string) {
+  const select = view.getByLabel('提供商', { exact: true });
+  const value = await select.locator('option').filter({ hasText: name }).getAttribute('value');
+  await select.selectOption(value!);
+}
 let pool: any, token: string, user: any, id: number, origin: string, server: Server;
 const calls: { path: string; savedCredential: boolean }[] = [];
 const model = { id: 'max178-controlled-model', name: 'MAX178 隔离运维模型', contextWindow: 64000, maxTokens: 8192, cost: { input: 0 }, supportsFunctionCall: true, opaque_extension: { preserved: true }, parameterSource: 'manual' };
@@ -47,7 +52,7 @@ async function harness(page: Page) {
   await page.route('**/MAX-178-harness', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/src/app/styles/tokens.css"><style>body{margin:0;padding:24px;background:var(--bg);font:14px system-ui;box-sizing:border-box;height:100vh}@media(max-width:600px){body{padding:16px}}llm-config-page{height:100%}</style><body><llm-config-page></llm-config-page><script type="module">import '/src/app/ui/views/llm-config.ts';</script></body></html>` }));
   await page.goto('/MAX-178-harness');
   const view = page.locator('llm-config-page');
-  await view.locator('.sidebar-item').filter({ hasText: 'MAX178 隔离 Provider' }).click();
+  await selectProvider(view, 'MAX178 隔离 Provider');
   return view;
 }
 async function capture(page: Page, name: string, source = 'real service / isolated MySQL') {
@@ -69,12 +74,12 @@ test('F1: real application shell keeps model summary readable and actions reacha
   const models = [model, { id: longId, name: 'MAX178 长默认模型', contextWindow: 96000 }, { id: 'max178-unknown', name: 'MAX178 未知参数模型' }];
   for (const defaultId of [model.id, longId]) {
     await pool.query('UPDATE llm_providers SET models_supported=?,default_model=? WHERE id=?', [JSON.stringify(models), defaultId, id]);
-    for (const width of [768, 390, 1440]) for (const theme of ['light', 'dark']) {
+    for (const width of [1280, 1440, 768, 390]) for (const theme of ['light', 'dark']) {
       await page.setViewportSize({ width, height: 1000 });
       await page.goto('/settings/ai/models?view=providers');
       await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme);
       const view = page.locator('llm-config-page');
-      await view.locator('.sidebar-item').filter({ hasText: 'MAX178 隔离 Provider' }).click();
+      await selectProvider(view, 'MAX178 隔离 Provider');
       const toolbar = view.locator('.model-toolbar');
       await toolbar.scrollIntoViewIfNeeded();
       await expect(toolbar.locator('.scope-hint')).toHaveText(`3 个模型 · 默认 ${defaultId}`);
@@ -132,7 +137,7 @@ test('representative first: real single model read/edit/save/refresh and credent
   await expect(view.locator('.model-feedback')).toContainText('已保存');
   let row = await persisted(); expect(row.models[0]).toMatchObject({ name: 'MAX178 单模型真实保存', contextWindow: 96000, cost: { input: 0 }, opaque_extension: { preserved: true } });
   expect(row.api_key_encrypted).toBe(before.api_key_encrypted); expect(row.max_tokens).toBe(2048);
-  await page.reload(); await view.locator('.sidebar-item').filter({ hasText: 'MAX178 隔离 Provider' }).click();
+  await page.reload(); await selectProvider(view, 'MAX178 隔离 Provider');
   await expect(view.locator('.model-row')).toContainText('96,000');
   await view.getByLabel('显示名称', { exact: true }).fill('MAX178 连接真实保存');
   await view.getByRole('button', { name: '保存配置', exact: true }).click();
@@ -150,7 +155,7 @@ test('multiple models: isolated saves, unknown semantics, keyboard, responsive t
   const longName = 'MAX178 长模型名称_'.repeat(18);
   const models = [...base.models, { id: 'max178-unknown', name: longName, parameterSource: 'unknown', opaque: { retained: 'unknown' } }, { id: 'max178-third', contextWindow: 32768, maxTokens: 8192 }];
   await pool.query('UPDATE llm_providers SET models_supported=? WHERE id=?', [JSON.stringify(models), id]);
-  await page.reload(); await view.locator('.sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click();
+  await page.reload(); await selectProvider(view, 'MAX178 连接真实保存');
   await expect(view.locator('.model-row')).toHaveCount(3);
   const trigger = view.getByRole('button', { name: `编辑模型 ${longName}`, exact: true });
   await view.getByLabel('显示名称', { exact: true }).fill('尚未提交的连接草稿');
@@ -163,7 +168,7 @@ test('multiple models: isolated saves, unknown semantics, keyboard, responsive t
   expect((await persisted()).display_name).toBe('MAX178 连接真实保存');
   await view.locator('.add-btn').click(); await expect(view.getByText('放弃未保存修改？', { exact: true })).toBeVisible();
   await view.getByRole('button', { name: '继续编辑', exact: true }).click();
-  await page.reload(); await view.locator('.sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click();
+  await page.reload(); await selectProvider(view, 'MAX178 连接真实保存');
   for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 1000 }); await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme);
     await capture(page, `multiple-${width}-${theme}`);
@@ -184,14 +189,14 @@ test('multiple models: isolated saves, unknown semantics, keyboard, responsive t
   for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 1000 }); await page.goto('/settings/ai/models?view=providers');
     await page.evaluate(t => document.documentElement.dataset.themeMode = t, theme);
-    await page.locator('llm-config-page .sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click();
+    await selectProvider(page.locator('llm-config-page'), 'MAX178 连接真实保存');
     await capture(page, `application-shell-${width}-${theme}`);
   }
 });
 async function harnessAfterRename(page: Page) {
   await page.route('**/MAX-178-harness', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/src/app/styles/tokens.css"><style>body{margin:0;padding:16px;background:var(--bg);font:14px system-ui;height:100vh;box-sizing:border-box}</style><body><llm-config-page></llm-config-page><script type="module">import '/src/app/ui/views/llm-config.ts';</script></body></html>` }));
   await page.goto('/MAX-178-harness'); const view = page.locator('llm-config-page');
-  await view.locator('.sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click(); return view;
+  await selectProvider(view, 'MAX178 连接真实保存'); return view;
 }
 test('real add/cancel/remove, saved discovery credential and current permission rejection', async ({ page, request }) => {
   const view = await harnessAfterRename(page);
@@ -216,7 +221,7 @@ test('real add/cancel/remove, saved discovery credential and current permission 
   await expect(view.locator('.model-row')).toHaveCount(2);
   expect(calls.at(-1)).toEqual({ path: '/v1/models', savedCredential: true });
   expect((await persisted()).models).toHaveLength(3); // Discovery is staged until configuration save.
-  await page.reload(); await view.locator('.sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click();
+  await page.reload(); await selectProvider(view, 'MAX178 连接真实保存');
   const login = await request.post('/api/auth/login', { data: { username: 'qualification-viewer', password: process.env.QUALIFICATION_ADMIN_PASSWORD } });
   expect(login.status()).toBe(200); const viewer = await login.json();
   await page.evaluate(value => localStorage.setItem('token', value), viewer.token);
@@ -246,7 +251,7 @@ test('supplemental controlled loading, failure, forbidden, empty and model-save 
     }
     await page.unroute('**/api/llm/configs');
   }
-  await page.reload(); await view.locator('.sidebar-item').filter({ hasText: 'MAX178 连接真实保存' }).click();
+  await page.reload(); await selectProvider(view, 'MAX178 连接真实保存');
   await view.getByRole('button', { name: '编辑模型 MAX178 单模型真实保存', exact: true }).click();
   const dialog = view.locator('app-dialog').first(); await dialog.getByLabel('模型显示名称').fill('失败草稿应保留');
   await page.route(`**/api/llm/configs/${id}`, route => route.fulfill({ status: 403, json: { error: 'MAX178 受控管理权限受限' } }));
