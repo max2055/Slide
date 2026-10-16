@@ -145,7 +145,7 @@ export class RelationService {
     const root = parse(resourceRefSchema, input), actor = freezeInvestigationCaller(caller), now = this.clock();
     const { hops = 2, maxEdges = 100, factsOnly = true } = parse(z.strictObject({ hops: z.number().int().min(1).max(2).optional(),
       maxEdges: z.number().int().min(1).max(100).optional(), factsOnly: z.boolean().optional() }), options);
-    return this.store.transaction(async session => {
+    const result = await this.store.transaction(async session => {
       await this.authorize(session, actor, [root]);
       let partial = false, scanned = 0;
       const seenNodes = new Set([resourceKey(root)]), seenEdges = new Set<string>();
@@ -205,29 +205,32 @@ export class RelationService {
             ...current.evidence.map(item => Date.parse(item.validUntil))) : Infinity);
       }
       await this.authorize(session, actor, [root]);
-      // All asynchronous reads are over. Recheck time synchronously so an
-      // evidence lookup spanning the expiry boundary cannot release old facts.
-      const responseAt = +this.clock();
-      const validVisible = visible.filter(edge => +edge.validFrom <= responseAt
-        && (!edge.validUntil || +edge.validUntil > responseAt) && proofExpiry.get(edge.relationId)! > responseAt);
-      // A late invalidation can disconnect an already-traversed subtree. Only
-      // retain edges reachable from the root through the remaining valid path.
-      const reachable = new Set([resourceKey(root)]), retained = new Set<string>();
-      let frontier = [root];
-      for (let depth = 0; depth < hops && frontier.length; depth++) {
-        const next: ResourceRef[] = [];
-        for (const ref of frontier) for (const edge of validVisible) {
-          const key = resourceKey(ref);
-          if (resourceKey(edge.source) !== key && resourceKey(edge.target) !== key) continue;
-          retained.add(edge.relationId);
-          const other = resourceKey(edge.source) === key ? edge.target : edge.source;
-          if (!reachable.has(resourceKey(other))) { reachable.add(resourceKey(other)); next.push(other); }
-        }
-        frontier = next;
-      }
-      if (retained.size < visible.length) partial = true;
-      return { resource: root, edges: validVisible.filter(edge => retained.has(edge.relationId)), partial };
+      return { visible, proofExpiry, partial };
     });
+    // All asynchronous work, including commit, is over. Recheck time so no
+    // lookup or transaction completion spanning expiry can release old facts.
+    const { visible, proofExpiry } = result;
+    let { partial } = result;
+    const responseAt = +this.clock();
+    const validVisible = visible.filter(edge => +edge.validFrom <= responseAt
+      && (!edge.validUntil || +edge.validUntil > responseAt) && proofExpiry.get(edge.relationId)! > responseAt);
+    // A late invalidation can disconnect an already-traversed subtree. Only
+    // retain edges reachable from the root through the remaining valid path.
+    const reachable = new Set([resourceKey(root)]), retained = new Set<string>();
+    let frontier = [root];
+    for (let depth = 0; depth < hops && frontier.length; depth++) {
+      const next: ResourceRef[] = [];
+      for (const ref of frontier) for (const edge of validVisible) {
+        const key = resourceKey(ref);
+        if (resourceKey(edge.source) !== key && resourceKey(edge.target) !== key) continue;
+        retained.add(edge.relationId);
+        const other = resourceKey(edge.source) === key ? edge.target : edge.source;
+        if (!reachable.has(resourceKey(other))) { reachable.add(resourceKey(other)); next.push(other); }
+      }
+      frontier = next;
+    }
+    if (retained.size < visible.length) partial = true;
+    return { resource: root, edges: validVisible.filter(edge => retained.has(edge.relationId)), partial };
   }
 
   /** Called by source/resource lifecycle composition in P10. No new approval
