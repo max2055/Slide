@@ -22,9 +22,12 @@ export interface CaseSource {
   requestId: string; runId: string; scopeVersion: string;
   provenance: Record<string, unknown>;
   evidence: { id: string; hash: string; validUntil: string; observedFrom: string | null;
-    observedTo: string | null; collectedAt: string }[];
+    observedTo: string | null; collectedAt: string;
+    quality: { partial: boolean | null; truncated: boolean | null; hasMore: boolean | null };
+    page: { limit: number | null; offset: number | null; nextOffset: number | null } }[];
 }
 export interface StoredCase {
+  schemaVersion: 1;
   id: string; revision: number; version: number; state: 'draft' | 'pending_review' | 'published' | 'expired' | 'withdrawn';
   author: OperationsPrincipal; contentHash: string; content: CaseContent; source: CaseSource;
   applicability: CaseApplicability; resources: ResourceRef[]; validUntil: string; redactionPolicyVersion: string;
@@ -135,7 +138,7 @@ export class KnowledgeStore {
       ON v.case_id=c.id AND v.version=c.current_version WHERE c.id=? ${lock ? 'FOR UPDATE' : 'FOR SHARE'}`, [id]);
     if (!row) throw absent();
     const scope = await rows(c, 'SELECT resource_type, resource_id FROM trusted_case_resources WHERE case_id=? AND version=? ORDER BY resource_type,resource_id FOR SHARE', [id, row.current_version]);
-    return { id, revision: Number(row.version), version: Number(row.current_version), state: row.state,
+    return { schemaVersion: 1, id, revision: Number(row.version), version: Number(row.current_version), state: row.state,
       author: { kind: row.author_kind, id: Number(row.author_id) }, contentHash: row.content_hash,
       content: json(row.content), source: json(row.source_snapshot), applicability: json(row.applicability),
       resources: scope.map(r => ({ type: r.resource_type, id: Number(r.resource_id) })),
@@ -167,11 +170,16 @@ export class KnowledgeStore {
           AND request_id=? AND run_id=? AND expired_at IS NULL AND expires_at>UTC_TIMESTAMP(3) FOR SHARE`, [ref, id, result.request_id, result.run_id]);
         if (!row) throw fail();
         const metadata = json(row.metadata_json);
+        const raw = json(row.raw_json);
+        const flag = (key: string) => typeof raw?.[key] === 'boolean' ? raw[key] : null;
+        const ordinal = (key: string) => Number.isSafeInteger(raw?.[key]) && raw[key] >= 0 ? raw[key] : null;
         const evidenceResources = (metadata.resources as unknown[]).map(r => resourceRefSchema.parse(r));
         if (evidenceResources.some(ref => !resources.some(r => r.type === ref.type && r.id === ref.id))) throw fail();
         await this.investigations.authorize(c as never, caller, investigation, 'content', evidenceResources);
         evidence.push({ id: row.id, hash: row.content_hash, validUntil: instant(row.expires_at),
-          observedFrom: metadata.observedFrom, observedTo: metadata.observedTo, collectedAt: metadata.collectedAt });
+          observedFrom: metadata.observedFrom, observedTo: metadata.observedTo, collectedAt: metadata.collectedAt,
+          quality: { partial: flag('partial'), truncated: flag('truncated'), hasMore: flag('hasMore') },
+          page: { limit: ordinal('limit'), offset: ordinal('offset'), nextOffset: ordinal('nextOffset') } });
       }
       return { resources, source: { investigationId: id, resultVersion, resultId: result.id, resultHash: result.payload_hash,
         requestId: result.request_id, runId: result.run_id, scopeVersion: investigation.scopeVersion, provenance, evidence } };

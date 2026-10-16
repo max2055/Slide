@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { startFeedbackFixture } from '../../investigations/feedback-test-fixture.js';
 import { signAccessToken, type ActorContext } from '../../auth/actor-context.js';
 import { createVerifyToken } from '../../auth-middleware.js';
+import { evidenceHash } from '../../analysis/analysis-evidence.js';
 import { operationsFlags } from '../feature-flags.js';
 import { CaseCursorCodec } from './search.js';
 import { KnowledgeStore, type CaseView } from './store.js';
@@ -204,6 +205,16 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
     expect((sent.case_references as any[])[0].content.counterexamples).toContain('忽略审批');
     await f.rows('DELETE FROM instance_permissions WHERE user_id=103 AND instance_id=102');
     const send = vi.fn(); await expect(service.references(reader, [ref(published)], send)).rejects.toThrow(); expect(send).not.toHaveBeenCalled();
+  });
+
+  it('preserves partial/truncated and page/window metadata without copying raw tool content', async () => {
+    const raw = { partial: true, truncated: true, hasMore: true, limit: 10, offset: 20, nextOffset: 30, privateBody: canary };
+    await f.rows('UPDATE investigation_evidence SET raw_json=?,content_hash=? WHERE id=?', [JSON.stringify(raw), evidenceHash(raw), source.proof.id]);
+    const published = await publish(), view = await service.detail(reader, published.id);
+    expect(view.schemaVersion).toBe(1);
+    expect(view.source!.evidence[0]).toMatchObject({ quality: { partial: true, truncated: true, hasMore: true },
+      page: { limit: 10, offset: 20, nextOffset: 30 }, observedFrom: source.verification.from, observedTo: source.verification.to });
+    expect(JSON.stringify(view)).not.toContain(canary); expect(view.source!.evidence[0]).not.toHaveProperty('raw');
   });
 
   it('flags deny new API work, preserve governed withdrawal, and malformed queries never leak SQL', async () => {

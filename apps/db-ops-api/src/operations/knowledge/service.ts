@@ -68,7 +68,7 @@ export class KnowledgeService {
       await this.store.authorization.authorize(c as never, actor, source.resources, 'cases:manage');
       const validUntil = new Date(Math.min(Date.parse(input.validUntil), ...source.source.evidence.map(e => Date.parse(e.validUntil)))).toISOString();
       if (Date.parse(validUntil) <= Date.now()) throw precondition();
-      const item: StoredCase = { id: randomUUID(), revision: 1, version: 1, state: 'draft', author: { kind: 'user', id: actor.userId },
+      const item: StoredCase = { schemaVersion: 1, id: randomUUID(), revision: 1, version: 1, state: 'draft', author: { kind: 'user', id: actor.userId },
         content: sanitized(input.content, this.secrets), applicability: sanitized(input.applicability, this.secrets),
         ...source, validUntil, redactionPolicyVersion: CASE_REDACTION_POLICY, contentHash: '' };
       // Provenance is structured metadata, but its textual version labels are
