@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT_COLOR, accentForeground } from "./accent-color.ts";
 import { roleScopesAllow } from "../src/shared/operator-scope-compat.ts";
 import { refreshChat } from "./app-chat.ts";
 import { scheduleChatScroll } from "./app-scroll.ts";
@@ -296,7 +297,7 @@ export function syncThemeWithSettings(host: SettingsHost) {
   host.themeMode = host.settings.themeMode ?? "system";
   applyResolvedTheme(host, resolveTheme(host.theme, host.themeMode));
   applyBorderRadius(host.settings.borderRadius ?? 50);
-  applyAccentColor(host.settings.accentColor ?? "#409eff");
+  applyAccentColor(host.settings.accentColor ?? DEFAULT_ACCENT_COLOR);
   applyDensity(host.settings.fontDensity ?? "standard");
   applySidebarPosition(host.settings.sidebarPosition ?? "left");
   applyReduceAnimations(host.settings.reduceAnimations ?? false);
@@ -354,8 +355,11 @@ export function applyAccentColor(hex: string) {
   root.style.setProperty("--accent", hex);
   root.style.setProperty("--accent-solid", primaryFill(hex));
   root.style.setProperty("--primary", hex);
-  root.style.setProperty("--ring", hex);
-  root.style.setProperty("--accent-hover", hex + "cc");
+  // Preserve existing custom text colors; the new default is already a text blue.
+  root.style.setProperty("--accent-text-light", hex.toLowerCase() === DEFAULT_ACCENT_COLOR
+    ? DEFAULT_ACCENT_COLOR : "color-mix(in srgb, var(--accent) 60%, black)");
+  root.style.setProperty("--accent-foreground", accentForeground(hex));
+  root.style.setProperty("--accent-hover", "color-mix(in srgb, var(--accent) 90%, black)");
   root.style.setProperty("--accent-subtle", hex + "26");
   root.style.setProperty("--accent-glow", hex + "40");
   root.style.setProperty("--accent-muted", hex + "cc");

@@ -19,7 +19,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('theme preference sources and cross-tab propagation', () => {
   it('uses prototype blue for new/missing preferences and preserves explicitly saved indigo', async () => {
-    expect(loadSettings().accentColor).toBe('#409eff');
+    expect(loadSettings().accentColor).toBe('#265f99');
     localStorage.setItem(UI_SETTINGS_STORAGE_KEY, JSON.stringify({ accentColor: '#6366f1' }));
     expect(loadSettings().accentColor).toBe('#6366f1');
     api.getPreferences.mockResolvedValue({ preferences: { accentColor: '#409eff' } });

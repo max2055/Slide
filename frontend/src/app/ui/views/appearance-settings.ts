@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT_COLOR } from "../accent-color.ts";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Appearance Settings — comprehensive visual personalization.
@@ -24,7 +25,7 @@ const TIMEZONES = [
 ];
 
 const ACCENT_PRESETS: { name: string; hex: string }[] = [
-  { name: "defaultBlue", hex: "#409eff" },
+  { name: "defaultBlue", hex: DEFAULT_ACCENT_COLOR },
   { name: "cyan", hex: "#22d3ee" },
   { name: "emerald", hex: "#34d399" },
   { name: "amber", hex: "#fbbf24" },
@@ -92,7 +93,7 @@ function readSettingsField<T>(key: string, fallback: T): T {
 
 @customElement("appearance-settings")
 export class AppearanceSettings extends LitElement {
-  @state() private accent: string = "#409eff";
+  @state() private accent: string = DEFAULT_ACCENT_COLOR;
   @state() private radius: number = 50;
   @state() private density: Density = "standard";
   @state() private sidebarPos: "left" | "right" = "left";
@@ -214,7 +215,7 @@ export class AppearanceSettings extends LitElement {
 
   private readPersistedSettings = () => {
     // Read persisted settings from unified localStorage key
-    this.accent = readSettingsField("accentColor", "#409eff");
+    this.accent = readSettingsField("accentColor", DEFAULT_ACCENT_COLOR);
     this.radius = readSettingsField("borderRadius", 50);
     this.density = readSettingsField("fontDensity", "standard");
     this.sidebarPos = readSettingsField("sidebarPosition", "left");

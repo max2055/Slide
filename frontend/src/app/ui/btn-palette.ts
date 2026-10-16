@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT_COLOR } from "./accent-color.ts";
 /**
  * Button color palette — applies button color tokens to CSS custom properties.
  * Called from appearance-settings and app-settings initialization.
@@ -19,9 +20,9 @@ export interface ButtonPalette {
 }
 
 export const DEFAULT_PALETTE: ButtonPalette = {
-  primaryBg: "#1870c9",
+  primaryBg: DEFAULT_ACCENT_COLOR,
   primaryColor: "#ffffff",
-  primaryBorder: "#1870c9",
+  primaryBorder: DEFAULT_ACCENT_COLOR,
   secondaryBg: "#f1f3f5",
   secondaryColor: "#3c3c43",
   secondaryBorder: "#e5e5ea",
