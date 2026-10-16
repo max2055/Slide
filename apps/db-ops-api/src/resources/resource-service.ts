@@ -13,7 +13,7 @@ const relationTypes = new Set<ResourceRelationType>([
   'runs_on', 'hosts', 'replicates_to', 'depends_on', 'connected_to', 'serves',
 ]);
 
-function hasValidTopology(relation: ResourceRelation): boolean {
+export function hasValidTopology(relation: Pick<ResourceRelation, 'source' | 'target' | 'relationType'>): boolean {
   if (relation.relationType === 'runs_on') {
     return relation.source.type === 'instance' && relation.target.type === 'server';
   }
@@ -52,6 +52,11 @@ export function canReadResource(actor: ActorContext, ref: ResourceRef): boolean 
 }
 
 export function canManageResource(actor: ActorContext, ref: ResourceRef): boolean {
+  if (actor.resourceBoundary) {
+    const ids = ref.type === 'instance' ? actor.resourceBoundary.instanceIds
+      : ref.type === 'server' ? actor.resourceBoundary.serverIds : actor.resourceBoundary.networkDeviceIds;
+    if (!ids.includes(ref.id)) return false;
+  }
   if (ref.type === 'server') return hasPermission(actor, 'servers:manage');
   if (ref.type === 'network_device') return hasPermission(actor, 'network_devices:manage');
   if (actor.permissions.includes('*') || actor.permissions.includes('instance:*')) return true;
