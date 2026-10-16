@@ -32,6 +32,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     store: ActionExecutionStore;
   let author: ActorContext, reviewer: ActorContext, worker: ActionExecutor;
   let flags: OperationsFlags, sends: number, remoteReceipt: unknown;
+  let receiptReads = 0;
   let preflight: (() => Promise<void>) | undefined,
     send: ((invocation: ActionInvocation) => Promise<unknown>) | undefined;
   const database = `operations_p07_${randomUUID().replaceAll('-', '')}`;
@@ -120,7 +121,10 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       remoteReceipt = receipt(i);
       return send ? send(i) : remoteReceipt;
     },
-    receipt: async () => remoteReceipt,
+    receipt: async () => {
+      receiptReads++;
+      return remoteReceipt;
+    },
   };
   const state = (e: ExecutionRecord) => store.get(reviewer, e.id);
   const expireLease = (e: ExecutionRecord) =>
@@ -224,6 +228,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       dispatch: true,
     };
     sends = 0;
+    receiptReads = 0;
     remoteReceipt = null;
     preflight = undefined;
     send = undefined;
@@ -624,5 +629,20 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     }
     expect(sends).toBe(1);
     expect((await state(e)).state).toBe('succeeded');
+  });
+  it('requires current execute permission before any remote reconciliation read', async () => {
+    const e = await queued();
+    send = async () => {
+      throw new Error('reply lost');
+    };
+    await worker.run(e.id, 'worker');
+    await sql(
+      "DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='operations:actions:execute'",
+    );
+    await expect(worker.reconcile(reviewer, e.id)).rejects.toMatchObject({
+      code: 'OPERATIONS_FORBIDDEN',
+    });
+    expect(receiptReads).toBe(0);
+    expect((await state(e)).state).toBe('outcome_unknown');
   });
 });

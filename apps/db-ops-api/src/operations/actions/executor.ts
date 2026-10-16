@@ -289,7 +289,11 @@ export class ActionExecutor {
     id: string,
   ): Promise<ExecutionRecord> {
     actor = freezeInvestigationCaller(actor);
-    const e = await this.store.get(actor, id);
+    const e = await this.store.transaction(async (c) => {
+      const current = await this.store.load(c, id);
+      await this.store.authorize(c, actor, current, true);
+      return current;
+    });
     if (!['dispatching', 'outcome_unknown'].includes(e.state)) return e;
     const plan = await this.store.transaction((c) => this.store.historicalPlan(c, e));
     const receipt = checkedActionReceipt(await this.adapter.receipt(plan, e.operationId), e, plan);
