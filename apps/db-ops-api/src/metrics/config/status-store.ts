@@ -1,3 +1,4 @@
+import { legacyConfigurationMigration } from './migration.js';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { refKey } from '../policy/model.js';
 import { assetCollectionEnabled } from './effective-state.js';
@@ -6,7 +7,7 @@ import { metricCollectionEnabled } from '../scheduler/lifecycle.js';
 import type { ConfigurationReader } from './status.js';
 
 export function configurationReader(pool: () => Pool): ConfigurationReader {
-  return { inventory: configurationInventory, async evidence(ref, revision) {
+  return { migration: ref => legacyConfigurationMigration(pool(),ref), inventory: configurationInventory, async evidence(ref, revision) {
     const connection = pool();
     const asset_enabled = await assetCollectionEnabled(connection, ref);
     const [jobs] = await connection.execute<RowDataPacket[]>(`SELECT j.state FROM metric_schedule s

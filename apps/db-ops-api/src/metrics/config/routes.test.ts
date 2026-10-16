@@ -27,7 +27,7 @@ describe('configuration HTTP routes', () => {
         calls++; if (pending) await pending(); if (fail) throw new AdapterError('timeout');
         return [[{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }], []];
       } } }),
-    }); } }, {inventory: testResources.inventory, evidence: async () => ({asset_enabled:true,global_enabled:true,in_flight:false,
+    }); } }, {inventory: testResources.inventory, migration: async () => [{kind:'custom_sql',source_id:'tenant_queue',source_digest:'sha256:fixture',state:'blocked',code:'CUSTOM_SQL_REVIEW_REQUIRED',package:null,actions:['Export original definition and review immutable SQL manifest']}], evidence: async () => ({asset_enabled:true,global_enabled:true,in_flight:false,
       formal:{state:'pending',last_observed_at:null,generation:null}})});
     app = Fastify();
     await registerMetricConfigurationRoutes(app, async request => { (request as any).user = actor; }, implementation);
@@ -47,6 +47,19 @@ describe('configuration HTTP routes', () => {
     actor = { ...admin, permissions: ['instance:view'], instanceScopes: { 1: 'read-only' } };
     expect((await trial()).statusCode).toBe(403);
     actor = admin; expect((await trial({ ...payload, credential_ref: 'secret' } as any)).statusCode).toBe(400);
+    expect(calls).toBe(0);
+  });
+  it('shows actionable custom migration blocks and denies a read-only actor before exposing them', async () => {
+    const endpoint=`${base}/resources/instance/1/migration`;
+    const migration=await app.inject(endpoint);
+    expect(migration.statusCode).toBe(200);
+    expect(migration.json()).toMatchObject({items:[{state:'blocked',code:'CUSTOM_SQL_REVIEW_REQUIRED'}]});
+    const status=await app.inject(`${base}/resources/instance/1/status`);
+    expect(status.json().blockers).toContain('LEGACY_CONFIGURATION_REVIEW_REQUIRED');
+    expect(status.json().legacy_configuration[0].actions.length).toBeGreaterThan(0);
+    actor = {...admin,permissions:['instance:view'],instanceScopes:{1:'read-only'}};
+    expect((await app.inject(endpoint)).statusCode).toBe(403);
+    expect((await app.inject(`${base}/resources/instance/1/status`)).json().legacy_configuration).toBeUndefined();
     expect(calls).toBe(0);
   });
   it('timeout is a failed attempt with unknown capability, never unsupported', async () => {

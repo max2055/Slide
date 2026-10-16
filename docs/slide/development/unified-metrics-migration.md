@@ -20,6 +20,12 @@
 
 JWT加密封装、Agent协议、SNMP v2c/v3等无关协议版本不属于本次名称迁移。
 
+## 自定义定义与诊断能力
+
+Chief预审后的逐字段证据和自定义SQL审核/迁移操作见 `unified-metrics-compatibility-review-2026-10-17.md`。新增diagnostics@1.1.0不改1.0.0内容；旧绑定不自动升级。迁移status中的reviewed不是已执行或正式可见。
+
+Compose和生产env示例现使用中性collection/retention变量；升级时显式复制经核实的旧值到新名，不读取旧名作为fallback。`startup-readiness.test.ts`验证实际Compose注入。
+
 ## 上线前备份与停写
 
 1. 核对目标平台数据库、连接配置、分支/commit、进程PID→端口→cwd→命令→日志。不要对当前任务以外服务按端口强杀。

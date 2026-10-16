@@ -16,6 +16,7 @@ export interface ConfigurationEvidence {
   formal: { state: 'pending' | 'validating' | 'available' | 'failed'; last_observed_at: string | null; generation: number | null };
 }
 export interface ConfigurationReader {
+  migration?(ref: Ref): Promise<NonNullable<MetricConfigurationStatus['legacy_configuration']>>;
   inventory(ref: Ref): Promise<Resource>;
   evidence(ref: Ref, revision: number | null): Promise<ConfigurationEvidence>;
 }
@@ -74,7 +75,13 @@ export class MetricConfigurationReader {
     try { effective = await this.policy.effective(actor, ref); }
     catch(e) { if (!(e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND')) throw e; }
     const evidence = await this.reader.evidence(ref, effective?.published_revision ?? null);
-    return configurationStatus(ref, effective, await this.attempts(ref), evidence, await this.reader.inventory(ref), canManageResource(actor, ref), this.clock());
+    const result=configurationStatus(ref, effective, await this.attempts(ref), evidence, await this.reader.inventory(ref), canManageResource(actor, ref), this.clock());
+    // Pending custom configurations must remain visible; never imply that preserving a row executes it.
+    if(canManageResource(actor,ref)&&this.reader.migration){
+      result.legacy_configuration=await this.reader.migration(ref);
+      if(result.legacy_configuration.some(c=>c.state==='blocked'))result.blockers.push('LEGACY_CONFIGURATION_REVIEW_REQUIRED');
+    }
+    return MetricConfigurationStatusSchema.parse(result);
   }
   async recommendations(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);

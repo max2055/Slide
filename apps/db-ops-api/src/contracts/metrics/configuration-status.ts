@@ -19,8 +19,13 @@ export const MetricConfigurationStatusSchema = z.strictObject({
     source: z.enum(['none', 'semantic']), last_observed_at: timestamp, generation: revision,
     freshness: z.enum(['fresh', 'stale', 'unknown']) }),
   coverage: z.array(z.strictObject({ metric, state: z.enum(['covered', 'not_covered', 'unsupported', 'unknown', 'disabled']), reason: z.string().nullable() })),
+  legacy_configuration: z.array(z.strictObject({
+    kind:z.enum(['custom_sql','deprecated_template']),source_id:z.string(),source_digest:z.string().nullable(),
+    state:z.enum(['blocked','reviewed']),code:z.string(),
+    package:z.strictObject({id:z.string(),version:z.string(),digest:z.string()}).nullable(),actions:z.array(z.string()),
+  })).optional(),
   blockers: z.array(z.enum(['UNBOUND', 'GLOBAL_COLLECTION_DISABLED', 'ASSET_COLLECTION_DISABLED', 'POLICY_COLLECTION_DISABLED',
     'APPLICATION_PENDING', 'APPLICATION_FAILED', 'PACKAGE_INCOMPATIBLE', 'CAPABILITY_UNKNOWN', 'COLLECTION_FAILED',
-    'SOURCE_VALIDATION_PENDING', 'SOURCE_VALIDATION_FAILED', 'AWAITING_SAMPLE', 'STALE_SAMPLE'])),
+    'SOURCE_VALIDATION_PENDING', 'SOURCE_VALIDATION_FAILED', 'AWAITING_SAMPLE', 'STALE_SAMPLE', 'LEGACY_CONFIGURATION_REVIEW_REQUIRED'])),
 });
 export type MetricConfigurationStatus = z.infer<typeof MetricConfigurationStatusSchema>;

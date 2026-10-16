@@ -9,6 +9,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { dbConnection, encryptData } from '../../db-connection.js';
+import { diagnosticReleases, diagnosticReads } from '../database/diagnostics.js';
+import { sourceDigest } from '../database/reviewed-sql.js';
+import { reviewedSqlCatalog } from '../database/reviewed-sql-catalog.js';
 import { MySQLProvider } from '../../collectors/mysql.provider.js';
 import { metricRegistry } from '../../metric-registry.js';
 import { databaseService } from '../../database-service.js';
@@ -34,7 +37,11 @@ import { JobRegistry } from '../../workflows/job-registry.js';
 
 // Explicit opt-in. Writes only to a disposable platform schema; real managed targets receive fixed read-only commands.
 describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and authorized VM formal collection', () => {
-  const database=`max189_real_${process.pid}`, packages=createConfigurationRegistry();
+  const database=`max189_real_${process.pid}`;
+  let packages:ReturnType<typeof createConfigurationRegistry>;
+  const custom=process.env.UNIFIED_METRICS_CUSTOM==='true';
+  const customSource={id:'visible_schema_count',target_type:'instance',unit:'count',value_type:'gauge',default_interval:60,collection_sqls:{mysql:'SELECT COUNT(*) FROM information_schema.SCHEMATA'},compute_expr:null};
+  const customId='mysql-custom-visible-schemas';
   const refs=([{type:'instance' as const,id:18901},{type:'server' as const,id:18902}]).slice(0,process.env.UNIFIED_METRICS_VM==='false'?1:2);
   let root:Pool,pool:Pool,target:Pool,app:ReturnType<typeof Fastify>,base:string,service:MetricConfigurationService,scheduler:MetricScheduler,worker:WorkerRuntime,jobs:JobRegistry;
   const evidence:Record<string,unknown>={},artifacts=process.env.UNIFIED_METRICS_EVIDENCE;
@@ -48,6 +55,13 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
   const query=(i:number)=>request('query',{resource:refs[i],view:'all',from:new Date(Date.now()-60000).toISOString(),to:new Date().toISOString(),bucket_ms:5000});
   beforeAll(async()=>{
     vi.stubEnv('METRICS_COLLECTION_ENABLED','true');
+    if(custom){
+      const {id,version,digest}=diagnosticReleases().find(r=>r.package.id==='mysql-diagnostics'&&r.package.version==='1.1.0')!.package;
+      reviewedSqlCatalog.push({id:customId,version:'1.0.0',base:{id,version,digest},engine:'mysql',source_id:customSource.id,source_digest:sourceDigest(customSource,'mysql'),sql:customSource.collection_sqls.mysql,
+        definition:{...diagnosticReads.find(r=>r.name==='active_transactions'&&r.engine==='mysql')!.fields[0].definition,namespace:'custom',id:'custom.visible_schema_count',meaning:'Visible information_schema.SCHEMATA count under the authorized database account.'},
+        permissions:['SELECT information_schema.SCHEMATA'],review:{reference:'MAX189 isolated real-service fixture, not deployment approval',reviewed_by:'automated qualification'}});
+    }
+    packages=createConfigurationRegistry();
     const configured=parse(readFileSync(process.env.SLIDE_DEBUG_ENV_FILE!));
     vi.stubEnv('ENCRYPTION_KEY',configured.ENCRYPTION_KEY);
     const config={host:configured.DB_HOST||'127.0.0.1',port:Number(configured.DB_PORT||3306),user:configured.DB_USER||'root',password:configured.DB_PASSWORD||''};
@@ -91,11 +105,12 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
   afterAll(async()=>{
     await app?.close();await databaseService.removeConnection(refs[0].id);sshSessionPool.closeAll();poolSpy?.mockRestore();
     await target?.end();await pool?.end();if(root){await root.query(`DROP DATABASE IF EXISTS ${database}`);await root.end();}
+    if(custom){const index=reviewedSqlCatalog.findIndex((m:any)=>m.id===customId);if(index>=0)reviewedSqlCatalog.splice(index,1);}
     vi.unstubAllEnvs();
     if(artifacts){await mkdir(artifacts,{recursive:true});await writeFile(`${artifacts}/real-flow-${refs.length===1?'mysql':'mysql-vm'}.json`,JSON.stringify(evidence,null,2));}
   },30000);
   it('normal activation, at least three real formal cycles, asset pause, restart and resume',async()=>{
-    const pins=[packages.list().find(r=>r.package.id==='mysql-diagnostics'&&r.package.version==='1.0.0')!.package,packages.list().find(r=>r.package.id==='linux-host'&&r.package.version==='1.1.0')!.package];
+    const pins=[packages.list().find(r=>r.package.id===(custom?customId:'mysql-diagnostics')&&r.package.version===(custom?'1.0.0':'1.1.0'))!.package,packages.list().find(r=>r.package.id==='linux-host'&&r.package.version==='1.1.0')!.package];
     for(let i=0;i<refs.length;i++){
       expect((await status(i)).binding.state).toBe('unbound');
       const p=pins[i],ref=refs[i];
@@ -122,7 +137,9 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
     evidence.formal_api=await Promise.all(refs.map((_,i)=>query(i)));
     for(const response of evidence.formal_api as any[])expect(response.metrics.some((m:any)=>m.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null)))).toBe(true);
     const mysqlMetrics=(evidence.formal_api as any[])[0].metrics;
-    for(const id of ['db.uptime_seconds','mysql.processlist.count','mysql.connections.limit','mysql.threads.connected','mysql.files.open'])expect(mysqlMetrics.find((m:any)=>m.definition.id===id)?.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null))).toBe(true);
+    for(const id of ['db.uptime_seconds','mysql.processlist.count','mysql.connections.limit','mysql.threads.connected','mysql.files.open','mysql.innodb.row_lock_average_ms','mysql.thread_cache.hit_percent','mysql.transactions.active',...(custom?['custom.visible_schema_count']:[])])expect(mysqlMetrics.find((m:any)=>m.definition.id===id)?.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null))).toBe(true);
+    evidence.code_head=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+    evidence.reviewed_custom_fixture=custom;
     const last=refs.length-1,ref=refs[last],binding=`${ref.type}:${ref.id}`;
     const pause=ref.type==='server'?'UPDATE servers SET collection_enabled=0 WHERE id=?':"UPDATE database_instances SET status='inactive' WHERE id=?";
     const resume=ref.type==='server'?'UPDATE servers SET collection_enabled=1 WHERE id=?':"UPDATE database_instances SET status='active' WHERE id=?";

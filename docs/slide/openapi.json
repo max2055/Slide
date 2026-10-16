@@ -12643,6 +12643,122 @@
         ],
         "type": "object"
       },
+      "MetricConfigurationMigration": {
+        "$id": "MetricConfigurationMigration",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "custom_sql",
+                    "deprecated_template"
+                  ],
+                  "type": "string"
+                },
+                "package": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "digest": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "digest"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "blocked",
+                    "reviewed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "source_id",
+                "source_digest",
+                "state",
+                "code",
+                "package",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "resource",
+          "items"
+        ],
+        "type": "object"
+      },
       "MetricConfigurationStatus": {
         "$id": "MetricConfigurationStatus",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -12743,7 +12859,8 @@
                 "SOURCE_VALIDATION_PENDING",
                 "SOURCE_VALIDATION_FAILED",
                 "AWAITING_SAMPLE",
-                "STALE_SAMPLE"
+                "STALE_SAMPLE",
+                "LEGACY_CONFIGURATION_REVIEW_REQUIRED"
               ],
               "type": "string"
             },
@@ -12959,6 +13076,87 @@
               "freshness"
             ],
             "type": "object"
+          },
+          "legacy_configuration": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "custom_sql",
+                    "deprecated_template"
+                  ],
+                  "type": "string"
+                },
+                "package": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "digest": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "digest"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "blocked",
+                    "reviewed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "source_id",
+                "source_digest",
+                "state",
+                "code",
+                "package",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "resource": {
             "additionalProperties": false,
@@ -21963,6 +22161,68 @@
           },
           "422": {
             "description": "Incompatible package or trial failed; not published"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/migration": {
+      "get": {
+        "description": "Requires live resource management permission. Returns pending custom-SQL/retained-template migration codes and actionable steps, without SQL or secrets. Reviewed means awaiting activation, not formal visibility.",
+        "operationId": "getMetricConfigurationMigration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricConfigurationMigration"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
           },
           "503": {
             "description": "Configuration facts unavailable"

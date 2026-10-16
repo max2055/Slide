@@ -3478,6 +3478,1916 @@
           "discovery": "IF-MIB ifTable + ifXTable + uptime bracket; bounded resource-scoped rediscovery; no enterprise OIDs"
         }
       ]
+    },
+    {
+      "package": {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "contract_version": "1.0.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+        "resource_type": "instance",
+        "applicability": [
+          {
+            "attribute": "db.engine",
+            "values": [
+              "mysql"
+            ]
+          },
+          {
+            "attribute": "db.version",
+            "values": [
+              "5.7",
+              "8.0",
+              "8.4",
+              "9.6"
+            ]
+          }
+        ],
+        "collectors": [
+          {
+            "id": "diagnostics_connections",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostics_connections.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.processlist.count",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "connections",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostics_limit",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostics_limit.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.connections.limit",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "capacity",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostics_transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostics_transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.transaction_commands.commit_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Com_commit",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.transaction_commands.rollback_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Com_rollback",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostics_size",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostics_size.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.tables.estimated_allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostics_queries",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostics_queries.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.queries.total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Queries",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostic_counters",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.slow_queries.total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Slow_queries",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.protocol.received_bytes_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Bytes_received",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.protocol.sent_bytes_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Bytes_sent",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.handler.read_next_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Handler_read_rnd_next",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.connections.aborted_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Aborted_connects",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "buffer_pages",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.buffer_pages.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.buffer_pool.pages_used_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "used",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "uptime_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.uptime_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "db.uptime_seconds",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Uptime",
+                "input_unit": "s",
+                "output_unit": "s",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostic_gauges",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.threads.running",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Threads_running",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.threads.connected",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Threads_connected",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.files.open",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Open_files",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.key_cache.used_blocks",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Key_blocks_used",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.key_cache.unused_blocks",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Key_blocks_unused",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "diagnostic_ratios",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.diagnostic_ratios.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.buffer_pool.read_hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "buffer_hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.table_cache.hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "table_hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.key_cache.used_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "key_usage",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "innodb_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.innodb_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.innodb.row_lock_average_ms",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Innodb_row_lock_time_avg",
+                "input_unit": "ms",
+                "output_unit": "ms",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.innodb.deadlocks_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Innodb_deadlocks",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.temporary.disk_tables_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "Created_tmp_disk_tables",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "thread_cache",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.thread_cache.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.thread_cache.hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "active_transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.active_transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.transactions.active",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "active",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "replication_channels",
+            "method": "sql",
+            "implementation_ref": "builtin:database.mysql.replication_channels.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "mysql.replication.behind_source_seconds",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "lag",
+                "input_unit": "s",
+                "output_unit": "s",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.replication.io_running",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "io_running",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "mysql.replication.sql_running",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "sql_running",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "documentation": [
+        {
+          "collector_id": "diagnostics_connections",
+          "permissions": [
+            "PROCESS for all sessions"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostics_limit",
+          "permissions": [
+            "read global max_connections"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostics_transactions",
+          "permissions": [
+            "SHOW GLOBAL STATUS"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostics_size",
+          "permissions": [
+            "metadata visibility for all non-system schemas"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostics_queries",
+          "permissions": [
+            "SHOW GLOBAL STATUS",
+            "authoritative counter epoch"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostic_counters",
+          "permissions": [
+            "SHOW GLOBAL STATUS",
+            "authoritative lifecycle epoch for counter use"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "buffer_pages",
+          "permissions": [
+            "SELECT performance_schema.global_status"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "uptime_diagnostics",
+          "permissions": [
+            "SHOW GLOBAL STATUS"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostic_gauges",
+          "permissions": [
+            "SHOW GLOBAL STATUS"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "diagnostic_ratios",
+          "permissions": [
+            "SELECT performance_schema.global_status"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "innodb_diagnostics",
+          "permissions": [
+            "SHOW GLOBAL STATUS"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "thread_cache",
+          "permissions": [
+            "SELECT performance_schema.global_status"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "active_transactions",
+          "permissions": [
+            "PROCESS",
+            "SELECT information_schema.INNODB_TRX"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "replication_channels",
+          "permissions": [
+            "REPLICATION CLIENT"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        }
+      ]
+    },
+    {
+      "package": {
+        "id": "postgresql-diagnostics",
+        "version": "1.1.0",
+        "contract_version": "1.0.0",
+        "digest": "sha256:d4c4852a8ff8a1b93481a49da55f9c48b1010b8bdd1c3dd214529e6288b8d09d",
+        "resource_type": "instance",
+        "applicability": [
+          {
+            "attribute": "db.engine",
+            "values": [
+              "postgresql"
+            ]
+          },
+          {
+            "attribute": "db.version",
+            "values": [
+              "16.4"
+            ]
+          }
+        ],
+        "collectors": [
+          {
+            "id": "postgresql-connections",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.connections.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.activity.count",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "connections",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "postgresql-limit",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.limit.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.connections.limit",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "capacity",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "postgresql-transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.transactions.commit_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "commits",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.transactions.rollback_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "rollbacks",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "postgresql-size",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.size.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "high",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.database.disk_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "table_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.table_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.tables.estimated_dead_rows",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "dead",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.tables.index_scan_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "index_ratio",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.tables.manually_vacuumed",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "vacuum_tables",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.tables.autovacuumed",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "autovacuum_tables",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "cache_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.cache_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.database.block_hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "replay_age",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.replay_age.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.replication.last_replay_age_seconds",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "age",
+                "input_unit": "s",
+                "output_unit": "s",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "database_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.database_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.database.tuples_returned_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "tup_returned",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.tuples_fetched_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "tup_fetched",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.tuples_inserted_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "tup_inserted",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.tuples_updated_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "tup_updated",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.tuples_deleted_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "tup_deleted",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.blocks_read_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "blks_read",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.blocks_hit_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "blks_hit",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.temp_files_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "temp_files",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              },
+              {
+                "metric": {
+                  "id": "postgresql.database.deadlocks_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "deadlocks",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "active_transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.active_transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.transactions.active",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "active",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "waiting_locks",
+            "method": "sql",
+            "implementation_ref": "builtin:database.postgresql.waiting_locks.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "postgresql.backends.waiting_for_lock",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "waiting",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "documentation": [
+        {
+          "collector_id": "postgresql-connections",
+          "permissions": [
+            "read pg_stat_activity"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "postgresql-limit",
+          "permissions": [
+            "read max_connections"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "postgresql-transactions",
+          "permissions": [
+            "read pg_stat_database",
+            "driver startup and stats_reset evidence"
+          ],
+          "discovery": "one row for the bound current database; database name required"
+        },
+        {
+          "collector_id": "postgresql-size",
+          "permissions": [
+            "pg_database_size for bound database"
+          ],
+          "discovery": "one row for the bound current database; database name required"
+        },
+        {
+          "collector_id": "table_diagnostics",
+          "permissions": [
+            "SELECT pg_stat_user_tables in bound database"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "cache_diagnostics",
+          "permissions": [
+            "SELECT pg_stat_database"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "replay_age",
+          "permissions": [
+            "pg_last_xact_replay_timestamp"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "database_diagnostics",
+          "permissions": [
+            "SELECT pg_stat_database",
+            "driver startup and stats_reset evidence"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "active_transactions",
+          "permissions": [
+            "SELECT pg_stat_activity"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "waiting_locks",
+          "permissions": [
+            "SELECT pg_stat_activity"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        }
+      ]
+    },
+    {
+      "package": {
+        "id": "oracle-diagnostics",
+        "version": "1.1.0",
+        "contract_version": "1.0.0",
+        "digest": "sha256:c862db390c0120e9764581fa4c1947991eb4f105ce0c082a0d7da855d2f9760f",
+        "resource_type": "instance",
+        "applicability": [
+          {
+            "attribute": "db.engine",
+            "values": [
+              "oracle"
+            ]
+          },
+          {
+            "attribute": "db.version",
+            "values": [
+              "19.3"
+            ]
+          }
+        ],
+        "collectors": [
+          {
+            "id": "oracle-connections",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.connections.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.sessions.count",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "connections",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "oracle-limit",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.limit.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.processes.limit",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "capacity",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "oracle-transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.transactions.commit_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "commits",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "tablespace_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.tablespace_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.tablespaces.max_allocated_used_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "usage",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "executions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.executions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.sql.executions_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "executes",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "active_sessions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.active_sessions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.sessions.active",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "count",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "sga_bytes",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.sga_bytes.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.sga.allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "pga_bytes",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.pga_bytes.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.pga.allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "sga_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.sga_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.buffer_cache.hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "blocking_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.blocking_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.locks.blocking",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "blocking",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "library_cache",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.library_cache.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.library_cache.pin_hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "user_tablespaces",
+            "method": "sql",
+            "implementation_ref": "builtin:database.oracle.user_tablespaces.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "oracle.tablespaces.user_max_allocated_used_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "usage",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "documentation": [
+        {
+          "collector_id": "oracle-connections",
+          "permissions": [
+            "SELECT V_$SESSION"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "oracle-limit",
+          "permissions": [
+            "SELECT V_$PARAMETER"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "oracle-transactions",
+          "permissions": [
+            "SELECT V_$SYSSTAT",
+            "driver instance startup evidence"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "tablespace_diagnostics",
+          "permissions": [
+            "SELECT DBA_DATA_FILES",
+            "SELECT DBA_FREE_SPACE"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "executions",
+          "permissions": [
+            "SELECT V_$SYSSTAT",
+            "authoritative startup epoch"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "active_sessions",
+          "permissions": [
+            "SELECT V_$SESSION"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "sga_bytes",
+          "permissions": [
+            "SELECT V_$SGA"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "pga_bytes",
+          "permissions": [
+            "SELECT V_$PGASTAT"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "sga_diagnostics",
+          "permissions": [
+            "SELECT V_$SYSSTAT"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "blocking_diagnostics",
+          "permissions": [
+            "SELECT V_$LOCK"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "library_cache",
+          "permissions": [
+            "SELECT V_$LIBRARYCACHE"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "user_tablespaces",
+          "permissions": [
+            "SELECT DBA_DATA_FILES",
+            "SELECT DBA_FREE_SPACE"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        }
+      ]
+    },
+    {
+      "package": {
+        "id": "dameng-diagnostics",
+        "version": "1.1.0",
+        "contract_version": "1.0.0",
+        "digest": "sha256:a4b143ad38c77e7c46b9e3bf185f994e9339b937cbadd2610344f72097e3d305",
+        "resource_type": "instance",
+        "applicability": [
+          {
+            "attribute": "db.engine",
+            "values": [
+              "dameng"
+            ]
+          },
+          {
+            "attribute": "db.version",
+            "values": [
+              "8.1"
+            ]
+          }
+        ],
+        "collectors": [
+          {
+            "id": "dameng-connections",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.connections.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.sessions.count",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "connections",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "dameng-limit",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.limit.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.sessions.limit",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "capacity",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "dameng-transactions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.transactions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.transactions.commit_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "commits",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "executions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.executions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.sql.executions_total",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "executes",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "memory_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.memory_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.memory_pool.used_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "usage",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "buffer_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.buffer_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.buffer_pool.hit_percent",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "hit",
+                "input_unit": "%",
+                "output_unit": "%",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "blocking_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.blocking_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.locks.blocking",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "blocking",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "deadlock_diagnostics",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.deadlock_diagnostics.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.deadlock_history.rows",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "events",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "memory_pool_bytes",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.memory_pool_bytes.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.memory_pool.allocated_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "os_memory_bytes",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.os_memory_bytes.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.os.allocated_memory_bytes",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "bytes",
+                "input_unit": "By",
+                "output_unit": "By",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "active_sessions",
+            "method": "sql",
+            "implementation_ref": "builtin:database.dameng.active_sessions.v1",
+            "timeout_ms": 5000,
+            "estimated_cost": "low",
+            "mappings": [
+              {
+                "metric": {
+                  "id": "dameng.sessions.active",
+                  "semantic_version": "1.0.0"
+                },
+                "raw_field": "active",
+                "input_unit": "count",
+                "output_unit": "count",
+                "transform_version": "1.0.0",
+                "steps": [
+                  "decode",
+                  "normalize"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "documentation": [
+        {
+          "collector_id": "dameng-connections",
+          "permissions": [
+            "SELECT V$SESSIONS"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "dameng-limit",
+          "permissions": [
+            "SELECT V$PARAMETER"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "dameng-transactions",
+          "permissions": [
+            "SELECT V$SYSSTAT",
+            "driver instance startup evidence"
+          ],
+          "discovery": "singleton in the authorized instance/container; no schema enumeration"
+        },
+        {
+          "collector_id": "executions",
+          "permissions": [
+            "SELECT V$SYSSTAT",
+            "authoritative startup epoch"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "memory_diagnostics",
+          "permissions": [
+            "SELECT V$MEM_POOL"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "buffer_diagnostics",
+          "permissions": [
+            "SELECT V$BUFFERPOOL"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "blocking_diagnostics",
+          "permissions": [
+            "SELECT V$LOCK"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "deadlock_diagnostics",
+          "permissions": [
+            "SELECT V$DEADLOCK_HISTORY"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "memory_pool_bytes",
+          "permissions": [
+            "SELECT V$SYSSTAT"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "os_memory_bytes",
+          "permissions": [
+            "SELECT V$SYSSTAT"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        },
+        {
+          "collector_id": "active_sessions",
+          "permissions": [
+            "SELECT V$SESSIONS"
+          ],
+          "discovery": "Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch."
+        }
+      ]
     }
   ],
   "references": [
@@ -9209,6 +11119,969 @@
       "lifecycle": "active",
       "category": "extension",
       "namespace": "snmp"
+    },
+    {
+      "id": "mysql.innodb.row_lock_average_ms",
+      "semantic_version": "1.0.0",
+      "meaning": "Native InnoDB average row-lock acquisition time in milliseconds; not an interval average.",
+      "unit": "ms",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.innodb.deadlocks_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Cumulative Innodb_deadlocks since engine lifecycle; rate requires trusted epoch.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.temporary.disk_tables_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Cumulative internal on-disk temporary tables; not a ratio.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.thread_cache.hit_percent",
+      "semantic_version": "1.0.0",
+      "meaning": "Cumulative 1 - Threads_created/Connections; NULL without connections.",
+      "unit": "%",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.transactions.active",
+      "semantic_version": "1.0.0",
+      "meaning": "Current InnoDB transactions in INNODB_TRX, including waiting transactions.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.replication.behind_source_seconds",
+      "semantic_version": "1.0.0",
+      "meaning": "Native Seconds_Behind_Source per channel; NULL remains unavailable, not zero or measured end-to-end lag.",
+      "unit": "s",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "channel",
+            "meaning": "Replication channel name; default channel is named default.",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.replication.io_running",
+      "semantic_version": "1.0.0",
+      "meaning": "Per-channel receiver reports Yes=1, No/Connecting=0; missing status unavailable.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "channel",
+            "meaning": "Replication channel name; default channel is named default.",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "mysql.replication.sql_running",
+      "semantic_version": "1.0.0",
+      "meaning": "Per-channel applier reports Yes=1, No=0; missing status unavailable.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "channel",
+            "meaning": "Replication channel name; default channel is named default.",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 100,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "mysql"
+    },
+    {
+      "id": "postgresql.database.tuples_returned_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database pg_stat_database.tup_returned; stats_reset epoch required.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.tuples_fetched_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database pg_stat_database.tup_fetched; stats_reset epoch required.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.tuples_inserted_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database pg_stat_database.tup_inserted; stats_reset epoch required.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.tuples_updated_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database pg_stat_database.tup_updated; stats_reset epoch required.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.tuples_deleted_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database pg_stat_database.tup_deleted; stats_reset epoch required.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.blocks_read_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database cumulative disk blocks read, not bytes.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.blocks_hit_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database cumulative shared-buffer block hits.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.temp_files_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database cumulative temporary files created.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.database.deadlocks_total",
+      "semantic_version": "1.0.0",
+      "meaning": "Current database cumulative detected deadlocks.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "counter",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "cumulative",
+      "monotonic": true,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [
+          {
+            "name": "database",
+            "meaning": "Bound current database name",
+            "required": true
+          }
+        ],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "rate"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.transactions.active",
+      "semantic_version": "1.0.0",
+      "meaning": "Cluster visible backends with non-NULL xact_start; includes idle-in-transaction.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "postgresql.backends.waiting_for_lock",
+      "semantic_version": "1.0.0",
+      "meaning": "Current visible backends waiting on Lock; not cumulative lock_wait_count (no stock pg_stat_database column).",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "postgresql"
+    },
+    {
+      "id": "oracle.library_cache.pin_hit_percent",
+      "semantic_version": "1.0.0",
+      "meaning": "Cumulative library cache PINHITS/PINS; NULL without pins.",
+      "unit": "%",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "oracle"
+    },
+    {
+      "id": "oracle.tablespaces.user_max_allocated_used_percent",
+      "semantic_version": "1.0.0",
+      "meaning": "Maximum permanent allocated tablespace used ratio excluding SYSTEM/SYSAUX; NULL without user tablespaces.",
+      "unit": "%",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "float64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "oracle"
+    },
+    {
+      "id": "dameng.memory_pool.allocated_bytes",
+      "semantic_version": "1.0.0",
+      "meaning": "Native memory pool size in bytes; missing row is unavailable.",
+      "unit": "By",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "dameng"
+    },
+    {
+      "id": "dameng.os.allocated_memory_bytes",
+      "semantic_version": "1.0.0",
+      "meaning": "Native memory used bytes from OS, not host total memory utilization.",
+      "unit": "By",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "dameng"
+    },
+    {
+      "id": "dameng.sessions.active",
+      "semantic_version": "1.0.0",
+      "meaning": "DM active sessions, not active transaction count.",
+      "unit": "count",
+      "resource_type": "instance",
+      "scope": "resource",
+      "kind": "gauge",
+      "roles": [
+        "diagnostic"
+      ],
+      "temporality": "instant",
+      "monotonic": false,
+      "value_type": "uint64",
+      "dimensions": {
+        "keys": [],
+        "max_series_per_resource": 1,
+        "max_value_length": 128,
+        "overflow": "reject"
+      },
+      "aggregation": {
+        "time": [
+          "last",
+          "min",
+          "max",
+          "mean"
+        ],
+        "space": [
+          "none"
+        ],
+        "missing": "preserve_null",
+        "min_coverage": 1,
+        "quantiles": "not_applicable"
+      },
+      "lifecycle": "active",
+      "category": "extension",
+      "namespace": "dameng"
     }
-  ]
+  ],
+  "compatibility_review": "unified-metrics-compatibility-review-2026-10-17.md"
 }

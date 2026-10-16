@@ -147,11 +147,13 @@
 - 数据库 cpu_usage 多为会话比例或带基数估算，disk_usage 包含固定10GiB分母/常数45，memory_usage 多为复合估计。不得映射 Host CPU、主机内存或文件系统容量；原 health_score 和动态阈值须复核，缺失为 unknown。
 - Linux：原 CPU user+system、free 内存、uptime/load1/5/15、swap、进程数、top20 CPU样本的最大CPU/内存、逐挂载bytes/available/inode纳入 linux-host@1.1.0。filesystem used_ratio 是 used/size，区别 df 舍入百分比；fs_type/mount/device 为序列身份，拒绝无维度阈值猜选。network bytes/errors/drops 区分 interface、rx/tx和事件；block bytes/io time 需要可信 boot/device epoch，不导入旧 Number 累计与 in/out 维度。os_type 是 inventory。
 - SNMP：uptime、admin/oper状态、速度及逐接口/方向的octets/errors/discards和对应速率纳入 snmp-standard。旧 state 枚举不自动等同布尔 up；合并双方向错误/丢包阈值需复核。默认 vendor enterprise OID 为空时 CPU/内存/温度原本没有可用来源，保持 unsupported。reachability 是资产连接探测，不伪造正式数值指标。服务器旧“超过十分钟不可达”由单个旧status时间推断，不能证明连续窗口；兼容hook停用该推断，既有告警保留，不自动恢复。
-- 原 CustomSQL/自定义模板保留数据与策略，不能自动转成不可变固定查询包，也不能重新启用历史周期；需审核查询、权限、单位、scope与定义后发布包。MongoDB/Redis/Elasticsearch 有资产类型，不代表此 registry 已有这些引擎的固定SQL指标包。
+- 原CustomSQL经可信catalog审核后编译为不可变包，在唯一runner内执行；GET config/resources/instance/:id/migration及status给出未审核/不安全/表达式/旧模板宏的稳定阻塞码和迁移步骤。审核、激活与正式可见分开，详见专项兼容记录。MongoDB/Redis/Elasticsearch有资产类型，不代表已有固定SQL指标包。
 
-## 非周期旧诊断 DTO 字段差异
+## 非周期旧诊断 DTO 字段兼容整改
 
-原 database-service 还曾直接返回以下非注册字段：MySQL innodb_row_lock_time_avg、innodb_deadlocks、tmp_table_on_disk、thread_cache_hit_rate、active_transactions、replication_lag/status；PG tup_returned/fetched/inserted/updated/deleted、blk_read/hit、temp_files、deadlock_count、lock_wait_count、active_transactions；Oracle library_cache_hit_rate、pga_cache_hit_rate、shared_pool_hit_rate、enqueue_deadlocks、tablespace_usage_percent；DM dm_paged_memory_usage、dm_os_memory_usage、active_transactions。这些不作为已验收的正式定义：包括缓存公式混合字节与计数、首值fallback、版本不存在列、错误补零及命名scope问题。公开兼容入口现在返回同一正式 evidence envelope，不再远端补读；私有旧解析仅供历史比较测试。若需原生新增口径，必须另行冻结定义/包及真实适配验证，不能从旧 DTO 声明推定支持。版本、db_type、replication字符串保留为元数据/结构化诊断，不当数值指标。
+Chief预审后的逐字段原实现证据、有效能力/错误来源/不兼容语义分类、唯一实现与验证见 `unified-metrics-compatibility-review-2026-10-17.md`。不能再将这些字段整批声明为错误或未来新增能力。
+
+MySQL行锁平均ms、死锁/临时磁盘表累计、线程缓存、活动事务、分通道复制lag与IO/SQL状态；PG当前库元组/块/temp/deadlock累计、活动事务及独立当前锁等待定义；Oracle library-cache和不含SYSTEM/SYSAUX的原表空间口径；DM两项原生内存字节和活动会话，已纳入diagnostics@1.1.0。四个1.0.0保持原digest。PG累计通过单语句绑定stats_reset/startup和database_oid；未知epoch不虚构。Oracle伪PGA比例、PG非标准lock_wait_count、DM把活动会话称事务等逐项保留语义差异与迁移动作。版本、db_type等元数据不混入数值指标。
 
 ## 唯一执行与消费者
 

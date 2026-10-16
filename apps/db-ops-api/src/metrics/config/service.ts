@@ -26,6 +26,11 @@ export class MetricConfigurationService {
     rule(this.reader, 'CONFIGURATION_STATUS_UNAVAILABLE', 503);
     return new MetricConfigurationReader(this.policy, this.registry, this.reader, ref => this.store.attempts(ref));
   }
+  async migration(actor: ActorContext, ref: Ref) {
+    await this.policy.assertAccess(actor, ref, true);
+    rule(this.reader?.migration, 'MIGRATION_STATUS_UNAVAILABLE', 503);
+    return {resource:ref,items:await this.reader.migration(ref)};
+  }
   status(actor: ActorContext, ref: Ref) { return this.statusReader().status(actor, ref); }
   recommendations(actor: ActorContext, ref: Ref) { return this.statusReader().recommendations(actor, ref); }
   async activate(actor: ActorContext, ref: Ref, input: unknown) {

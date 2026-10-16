@@ -26,7 +26,7 @@ export function createTrialStore(pool: () => Pool, registry: PackageRegistry): T
 export const metricConfigurationService = new MetricConfigurationService(policyService, registry, createTrialStore(pool, registry), trialAccess, configurationReader(pool));
 export async function registerMetricConfigurationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
   implementation = metricConfigurationService): Promise<void> {
-  for (const operation of ['catalog', 'access', 'attempts', 'trial', 'status', 'recommendations', 'activate'] as const) {
+  for (const operation of ['catalog', 'access', 'attempts', 'trial', 'status', 'recommendations', 'activate', 'migration'] as const) {
     app.route({ method: operation === 'trial' || operation === 'activate' ? 'POST' : 'GET',
       url: operation === 'catalog' ? '/api/metrics/config/catalog' : `/api/metrics/config/resources/:type/:id/${operation}`,
       preHandler: [verifyToken], bodyLimit: 65536, handler: async (request, reply) => {
@@ -40,6 +40,7 @@ export async function registerMetricConfigurationRoutes(app: FastifyInstance, ve
           const ref = RefSchema.parse({ type: params.type, id: Number(params.id) });
           if (operation === 'access') return await implementation.resource(actor, ref);
           if (operation === 'attempts') return await implementation.attempts(actor, ref);
+          if (operation === 'migration') return await implementation.migration(actor, ref);
           if (operation === 'status') return await implementation.status(actor, ref);
           if (operation === 'recommendations') return await implementation.recommendations(actor, ref);
           if (operation === 'activate') return await implementation.activate(actor, ref, request.body);

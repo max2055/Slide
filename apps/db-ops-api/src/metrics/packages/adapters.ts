@@ -120,6 +120,10 @@ async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, comman
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
 export async function collectFixed(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number, maxRows: number): Promise<DecodedRow[]> {
+  if (id.startsWith('reviewed:sql.')) {
+    const { collectReviewedSql } = await import('../database/reviewed-sql.js');
+    return collectReviewedSql(id, transport, timeoutMs);
+  }
   if (id.startsWith('builtin:snmp.') && transport.method === 'snmp' && evidence.snmp) {
     return evidence.snmp.collect(id, transport, timeoutMs, maxRows);
   }

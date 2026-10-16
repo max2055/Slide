@@ -18,6 +18,7 @@ export const MetricPolicyGroupsSchema = z.strictObject({ groups: z.array(z.stric
 })) });
 export const metricPublicSchemas = {
   MetricConfigurationStatus: MetricConfigurationStatusSchema,
+  MetricConfigurationMigration: z.strictObject({resource:RefSchema,items:MetricConfigurationStatusSchema.shape.legacy_configuration.unwrap()}),
   MetricBindingChange: BindingChangeSchema,
   MetricRecommendations: MetricRecommendationsSchema,
   MetricPolicyGroups: MetricPolicyGroupsSchema,
@@ -32,6 +33,9 @@ const response = (name: string) => ({ description: 'Authorized live configuratio
 const errors = { '400': { description: 'Invalid input' }, '401': { description: 'Authentication required' },
   '403': { description: 'Live resource permission denied' }, '404': { description: 'Resource not found' }, '503': { description: 'Configuration facts unavailable' } };
 export const metricPublicPaths = {
+  '/api/metrics/config/resources/{type}/{id}/migration': { get: { operationId: 'getMetricConfigurationMigration', security: [{ bearerAuth: [] }], parameters,
+    description: 'Requires live resource management permission. Returns pending custom-SQL/retained-template migration codes and actionable steps, without SQL or secrets. Reviewed means awaiting activation, not formal visibility.',
+    responses: { '200': response('MetricConfigurationMigration'), ...errors } } },
   '/api/metrics/config/resources/{type}/{id}/status': { get: { operationId: 'getMetricConfigurationStatus', security: [{ bearerAuth: [] }], parameters,
     description: 'Binding, effective switch, execution, formal visibility and per-metric coverage are independent. Read failures never become unbound.',
     responses: { '200': response('MetricConfigurationStatus'), ...errors } } },
