@@ -12,12 +12,19 @@ test.skip(process.env.MAX175_FORMAL_CHAIN!=='1','Explicit isolated full-chain op
 const require=createRequire(resolve('../apps/db-ops-api/package.json'));
 const mysql=require('mysql2/promise'),bcrypt=require('bcrypt'),dotenv=require('dotenv');
 const output=process.env.MAX175_OUTPUT_DIR!;
-const schema=`db_ops_ai_qualification_max175_r10_${process.pid}`, dataSchema=`max175_data_${process.pid}`, reader=`max175_${process.pid}`;
+const schema=`db_ops_ai_qualification_max175_r11_${process.pid}`, dataSchema=`max175_data_${process.pid}`, reader=`max175_${process.pid}`;
 const api='http://127.0.0.1:3175',site='http://127.0.0.1:5195';
 const children:ChildProcess[]=[];
 const encryption=randomBytes(32).toString('hex'),password=randomBytes(24).toString('hex'),readerPassword=randomBytes(24).toString('hex');
-const targetHost=process.env.MAX175_TARGET_HOST!,targetRoot=randomBytes(32).toString('hex'),targetName=`max175-r10-target-${process.pid}`;
+const targetHost=process.env.MAX175_TARGET_HOST!,targetRoot=randomBytes(32).toString('hex'),targetName=`max175-r11-target-${process.pid}`;
 let pool:any,targetPool:any,token='',permissions:string[]=[],instanceId:number,targetStarted=false;
+let apiProcess:ChildProcess,apiEnvironment:NodeJS.ProcessEnv;
+async function startApi(name:string){
+  apiProcess=await launch(['--import',resolve('../scripts/qualification/max175-model-meter.mjs'),'--import','tsx','server.ts'],resolve('../apps/db-ops-api'),apiEnvironment,name);
+  report.apiRestarts??=[];report.apiRestarts.push({pid:apiProcess.pid,at:new Date().toISOString(),commit:report.candidate});
+  await expect.poll(async()=>{if(apiProcess.exitCode!==null)throw Error('API exited');try{return(await fetch(api+'/api/health/ready')).status;}catch{return 0;}},{timeout:90000}).toBe(200);
+  return apiProcess;
+}
 const report:any={version:1,mode:'production Fastify/JWT/worker/scheduler/Agent; isolated MySQL 9.6',checks:{},http:[]};
 async function save(){await writeFile(`${output}/formal-chain-${process.pid}.json`,JSON.stringify(report,null,2));}
 async function request(path:string,body?:any,authorization=token,method=body===undefined?'GET':'POST') {
@@ -26,7 +33,7 @@ async function request(path:string,body?:any,authorization=token,method=body===u
 }
 async function launch(args:string[],cwd:string,env:NodeJS.ProcessEnv,name:string){const f=await open(`${output}/${name}.private.log`,'w',0o600);const c=spawn(process.execPath,args,{cwd,env,stdio:['ignore',f.fd,f.fd]});children.push(c);await f.close();return c;}
 test.beforeAll(async()=>{
-  test.setTimeout(420000);expect(output).toMatch(/^\/Users\/max\/Coding\/40-Slide\/outputs\/MAX-175-R10\//);report.baselineBudget=budget();await mkdir(output,{recursive:true});
+  test.setTimeout(420000);expect(output).toMatch(/^\/Users\/max\/Coding\/40-Slide\/outputs\/MAX-175-R11\//);report.baselineBudget=budget();await mkdir(output,{recursive:true});
   expect(targetHost).toMatch(/^192\.168\.1\.\d+$/);
   report.candidate=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
   report.main=execFileSync('git',['rev-parse','origin/main'],{encoding:'utf8'}).trim();
@@ -64,7 +71,7 @@ test.beforeAll(async()=>{
     report.provider={id:row.id,name:row.name,model:chosen.model??row.default_model,max_tokens:row.max_tokens,scene:'fault_diagnosis',source:chosen.source,sharedWrites:0};
     Object.assign(env,{MAX175_METER:'1',MAX175_MODEL_ORIGIN:new URL(row.api_base_url).origin,MAX175_OUTPUT_CEILING:String(row.max_tokens)});
   } finally{await shared.end();}
-  const child=await launch(['--import',resolve('../scripts/qualification/max175-model-meter.mjs'),'--import','tsx','server.ts'],resolve('../apps/db-ops-api'),env,'api');
+  apiEnvironment=env;const child=await startApi('api');
   report.api={pid:child.pid,cwd:resolve('../apps/db-ops-api'),port:3175,ws:29775,command:'node --import max175-model-meter.mjs --import tsx server.ts',commit:report.candidate};
   await expect.poll(async()=>{if(child.exitCode!==null)throw Error('API exited');try{return(await fetch(api+'/api/health/ready')).status;}catch{return 0;}},{timeout:90000}).toBe(200);
   const login=await request('/api/auth/login',{username:'admin',password},'');expect(login.status).toBe(200);token=login.value.token;
@@ -95,7 +102,7 @@ test.afterAll(async()=>{
 });
 (process.env.MAX175_PERMISSIONS_ONLY==='1'?test.skip:test)('production binding, scheduler, resource UI and real readonly Agent',async({page})=>{
   test.setTimeout(300000);
-  const created=await request('/api/database/instances',{name:'MAX-175 R10 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
+  const created=await request('/api/database/instances',{name:'MAX-175 R11 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
   expect(created.status).toBe(200);instanceId=created.value.id;report.resource={type:'instance',id:instanceId,dataSchema,readonlyUser:reader};
   const connected=await request(`/api/database/instances/${instanceId}/reload`,{});report.connection=connected;expect(connected.status).toBe(200);expect(connected.value.success).toBe(true);
   const catalog=(await request('/api/metrics-v2/config/catalog')).value;
@@ -114,20 +121,20 @@ test.afterAll(async()=>{
   report.schedule=(await pool.query('SELECT * FROM metric_v2_schedule'))[0];report.events=(await pool.query('SELECT * FROM metric_v2_schedule_events'))[0];
   report.effective=(await request(policy+'/effective')).value;await save();
   await page.addInitScript(({token,permissions})=>{localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));localStorage.setItem('slide.i18n.locale','zh-CN');},{token,permissions});
-  await page.goto(`${site}/instance-detail?id=${instanceId}`);await expect(page.locator('instance-detail-page')).toContainText('MAX-175 R10 readonly MySQL');
+  await page.goto(`${site}/instance-detail?id=${instanceId}`);await expect(page.locator('instance-detail-page')).toContainText('MAX-175 R11 readonly MySQL');
   await page.screenshot({path:`${output}/resource-real.png`,fullPage:true});
   await page.getByRole('link',{name:'查看此资源的全部调查'}).click();
   await page.getByRole('button',{name:'创建手动调查',exact:true}).click();
-  const form=page.locator('investigation-create');await form.getByLabel('调查标题',{exact:true}).fill('MAX-175 R10 真实只读调查');
+  const form=page.locator('investigation-create');await form.getByLabel('调查标题',{exact:true}).fill('MAX-175 R11 真实只读调查');
   await form.getByLabel('调查目标',{exact:true}).fill(`目标为 resourceType=instance、resourceId=${instanceId} 的 MySQL。只做一次只读调查：仅调用一次 get_resource_observations，参数 resourceType=instance、resourceId=${instanceId}、metricIds=[connections]、limit=1，获取已保存的观测证据，然后立即用简短文字报告返回的事实、来源、时间及缺口。无需调用其他工具，不执行 SQL、SSH 或写操作，不推断根因。`);
-  await form.getByRole('checkbox',{name:'MAX-175 R10 readonly MySQL · 数据库实例',exact:true}).check();
+  await form.getByRole('checkbox',{name:'MAX-175 R11 readonly MySQL · 数据库实例',exact:true}).check();
   const admitted=page.waitForResponse(r=>r.url().endsWith('/api/investigations')&&r.request().method()==='POST');
   await form.getByRole('button',{name:'提交调查',exact:true}).click();const response=await admitted;report.agentAdmission={status:response.status(),value:await response.json()};await save();expect(response.status()).toBe(202);
   try {await expect.poll(async()=>{const [rows]=await pool.query('SELECT id,session_id,lifecycle FROM investigations');report.investigations=rows;const [runs]=await pool.query('SELECT id,session_id,state,result_json FROM agent_runs');report.agentRuns=runs;await save();return runs.some((r:any)=>r.state==='completed')?'completed':runs.some((r:any)=>['failed','unknown','partial','cancelled','timed_out'].includes(r.state))?'failed':'pending';},{timeout:160000}).not.toBe('pending');report.checks.agentCompleted=report.agentRuns.some((r:any)=>r.state==='completed');}catch{report.checks.agentCompleted=false;}
   report.results=(await pool.query('SELECT * FROM investigation_results'))[0];report.evidence=(await pool.query('SELECT * FROM investigation_evidence'))[0];report.requests=(await pool.query('SELECT * FROM investigation_requests'))[0];
   report.checks.agentEvidenceRead=report.evidence.some((r:any)=>r.raw_json?.data?.observations?.length>0);
   const agentObservations=report.evidence.flatMap((r:any)=>r.raw_json?.data?.observations??[]);
-  report.checks.agentObservationTimesValid=agentObservations.length>0&&agentObservations.every((r:any)=>typeof r.observedAt==='string'&&Number.isFinite(Date.parse(r.observedAt)));
+  report.checks.agentObservationTimesValid=agentObservations.length>0&&agentObservations.every((r:any)=>typeof r.observedAt==='string'&&Number.isFinite(Date.parse(r.observedAt))&&r.observedAt===new Date(r.observedAt).toISOString()&&typeof r.validUntil==='string'&&Number.isFinite(Date.parse(r.validUntil)));
   report.checks.agentResultPersisted=report.results.length>0;report.checks.modelMeterCaptured=budget().requests>report.baselineBudget.requests;
   if(report.checks.agentCompleted){
     await page.getByRole('button',{name:'查看证据与成果',exact:true}).click();
@@ -147,13 +154,32 @@ test.afterAll(async()=>{
   const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_v2_attempts'))[0][0].n);
   const before=await count(),jobsBefore=await jobs(),stoppedAt=new Date().toISOString();await new Promise(ok=>setTimeout(ok,11000));report.stop={stoppedAt,before,after:await count(),jobsBefore,jobs:await jobs()};
   report.checks.stopNoCollection=report.stop.after===before;report.checks.stopNoNewTasks=report.stop.jobs.length===jobsBefore.length;await save();
+  // A fresh production process must honor persisted disabled application state.
+  const stoppedPid=apiProcess.pid;apiProcess.kill('SIGTERM');
+  await new Promise<void>((ok,fail)=>{const deadline=setTimeout(()=>fail(Error('Owned API shutdown timeout')),15000);apiProcess.once('exit',()=>{clearTimeout(deadline);ok();});});
+  await startApi('api-restarted');
+  const restartBefore=await jobs(),restartAttempts=await count(),restartAt=new Date().toISOString();
+  await new Promise(ok=>setTimeout(ok,11000));
+  report.restartStop={stoppedPid,restartAt,before:restartBefore,after:await jobs(),attemptsBefore:restartAttempts,attemptsAfter:await count()};
+  report.checks.restartNoTasks=report.restartStop.after.length===restartBefore.length&&report.restartStop.attemptsAfter===restartAttempts;
+  expect.soft(report.checks.restartNoTasks,'Reloaded scheduler must keep disabled revision stopped').toBe(true);
+  report.reenable=await request(policy+'/publish',{expected_revision:2,overrides});expect(report.reenable.status).toBe(200);
+  await expect.poll(async()=> (await jobs()).filter((j:any)=>j.state==='completed'&&j.payload.revision===3).length,{timeout:25000}).toBeGreaterThanOrEqual(1);
+  report.checks.newRevisionResumes=true;
+  report.finalDisable=await request(policy+'/publish',{expected_revision:3,overrides:{...overrides,enabled:'disable'}});expect(report.finalDisable.status).toBe(200);
+  await expect.poll(async()=>((await request(policy)).value.application.applied_revision),{timeout:15000}).toBe(4);
+  const finalJobs=await jobs(),finalAttempts=await count(),finalAt=new Date().toISOString();await new Promise(ok=>setTimeout(ok,11000));
+  report.finalStop={at:finalAt,before:finalJobs,after:await jobs(),attemptsBefore:finalAttempts,attemptsAfter:await count()};
+  report.checks.finalStop=report.finalStop.after.length===finalJobs.length&&report.finalStop.attemptsAfter===finalAttempts;
+  expect.soft(report.checks.finalStop,'New disabled revision also stops after application').toBe(true);
+  report.finalBinding=(await request(policy)).value;await save();
   expect.soft(report.checks.agentObservationTimesValid,'Observation timestamps must survive Agent evidence serialization').toBe(true);expect.soft(report.checks.agentEvidenceRead,'Actual observation tool evidence is required').toBe(true);expect.soft(report.checks.agentCompleted,'Real Agent must complete').toBe(true);expect.soft(report.checks.agentRefresh,'Agent result must survive refresh').toBe(true);expect.soft(report.checks.failurePermissions,'Real failure and permissions checks').toBe(true);expect.soft(report.checks.stopNoCollection,'Disabled binding causes no collection').toBe(true);expect.soft(report.checks.stopNoNewTasks,'Contract requires no new jobs after disable').toBe(true);
   expect(report.checks.twoCycles,'Two real scheduler cycles are required; independent Agent and permission evidence is retained on failure').toBe(true);
 });
 
 (process.env.MAX175_PERMISSIONS_ONLY==='1'?test:test.skip)('independent real failure and revocation without model calls',async()=>{
   test.setTimeout(120000);
-  const created=await request('/api/database/instances',{name:'MAX-175 R10 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
+  const created=await request('/api/database/instances',{name:'MAX-175 R11 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
   expect(created.status).toBe(200);instanceId=created.value.id;
   report.resource={type:'instance',id:instanceId,dataSchema,readonlyUser:reader};
   report.connection=await request(`/api/database/instances/${instanceId}/reload`,{});expect(report.connection.status).toBe(200);
