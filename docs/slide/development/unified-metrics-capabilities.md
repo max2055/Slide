@@ -4,7 +4,7 @@
 
 ## 包覆盖
 
-| 包 | 语义版本 | 输出定义数 |
+| 包 | 语义版本 | 目录定义数（含公共定义，非全部执行输出） |
 |---|---|---|
 | mysql-basic | 1.0.0 | 7 |
 | linux-basic | 1.0.0 | 7 |
@@ -24,6 +24,10 @@
 | dameng-diagnostics | 1.0.0 | 14 |
 | linux-host | 1.1.0 | 24 |
 | snmp-standard | 1.0.0 | 20 |
+| mysql-diagnostics | 1.1.0 | 37 |
+| postgresql-diagnostics | 1.1.0 | 30 |
+| oracle-diagnostics | 1.1.0 | 18 |
+| dameng-diagnostics | 1.1.0 | 17 |
 
 ## 原注册项及 Provider 额外入口逐项映射
 

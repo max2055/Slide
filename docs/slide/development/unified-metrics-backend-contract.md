@@ -26,3 +26,9 @@
 `src/metrics-v2` → `src/metrics`；`src/contracts/metrics-v2` → `src/contracts/metrics`；`metric_v2_*` → `metric_*`。历史 SQL migration 不改 checksum；新增迁移检测新旧重名，原子 RENAME，不 drop/复制用户表，备份和回退另有操作证据。原 API 只允许有期限的路由转发，退出条件为 MAX-190 集成及调用方引用清零；不能继续第二采集器或读写实现。
 
 原 monitor/server/network 周期入口停止独立调度，手动动作保留明确诊断语义。原指标和策略通过显式能力映射迁移；单位、维度、epoch 或口径无已证明等价项维持 unknown/待复核。已冻结的 mysql-basic@2.0.0 仍仅 uptime；MySQL9.6 的额外原生能力由新 mysql-diagnostics@1.0.0 包提供，不改旧包 digest，也不虚报容量分母。部分 collector 失败或 epoch 未知可以与其他正式 good 指标可见同时存在，五层状态分别报告，不用历史成功掩盖当前失败。
+
+## 兼容配置迁移补充（Chief预审后）
+
+status新增可选 `legacy_configuration`，每项含kind/source_id/source_digest/state/code/package/actions；资源管理者可读，普通只读用户不返回管理详情。未审核旧配置/宏返回 `LEGACY_CONFIGURATION_REVIEW_REQUIRED`，它表示迁移工作未完成，不会冒充正式来源/成功采样，也不启动历史执行器。
+
+GET `/api/metrics/config/resources/:type/:id/migration` 需要实时资源管理权限，返回相同items，不返回SQL或凭据、不触发远端采集。reviewed仅表示不可变SQL条目已审核，code仍为 `CUSTOM_SQL_ACTIVATION_REQUIRED`；其后须使用现有trial/activate精确pin、CAS和来源门禁。未审核、不安全SQL、表达式和废弃模板宏分别使用专项兼容记录中的稳定码与操作步骤。公开schema及OpenAPI已同步，前端手写展示继续归MAX-190。
