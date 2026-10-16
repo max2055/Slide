@@ -17,7 +17,8 @@ export function operationsFlags(env: Readonly<Record<string, string | undefined>
     throw new Error('OPERATIONS_FLAG_INVALID');
   };
   const flags = Object.fromEntries(Object.entries(keys).map(([name, key]) => [name, enabled(key)])) as unknown as OperationsFlags;
-  flags.dispatch = flags.dispatch && flags.plans && !enabled('OPERATIONS_STOP_NEW_DISPATCH');
+  const stopNewDispatch = enabled('OPERATIONS_STOP_NEW_DISPATCH');
+  flags.dispatch = flags.dispatch && flags.plans && !stopNewDispatch;
   return Object.freeze(flags);
 }
 export function assertOperationsEnabled(flags: Readonly<OperationsFlags>, feature: keyof OperationsFlags): void {
