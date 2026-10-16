@@ -147,8 +147,8 @@ test.beforeAll(async () => {
       const definitions=registry.catalog(job.pin);
       for(const {observation} of result.observations) {
         const series=JSON.stringify([observation.resource_type,observation.resource_id,observation.metric,observation.dimensions]);
-        const ticket={source:'v2',generation:1,revision:1};
-        if(!published.has(series)) { await control.initialize(observation,{source:'v2',read:'v2',package:job.pin,revision:1}); await control.applied(observation,ticket); published.add(series); }
+        const ticket={source:'semantic',generation:1,revision:1};
+        if(!published.has(series)) { await control.initialize(observation,{source:'semantic',read:'semantic',package:job.pin,revision:1}); await control.applied(observation,ticket); published.add(series); }
         await control.publish(observation,definitions.find(d=>d.id===observation.metric.id)!,ticket);
       }
       await policyStore.reportCapabilities({type:job.type,id:job.id},1,result.capabilities,null);

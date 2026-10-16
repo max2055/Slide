@@ -96,8 +96,8 @@ async function seed(kind: 'instance' | 'server', at: string, reset = false) {
     ...(kind === 'instance' ? { value: { encoding: 'float64' as const, value: uptime } } : {}),
     versions: { ...sample(definition.id).versions, package_id: id, package_version: version },
   });
-  const ticket = { source: 'v2', generation: 1, revision: 1 };
-  if (reset) { await control.initialize(observation, { source: 'v2', read: 'v2', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
+  const ticket = { source: 'semantic', generation: 1, revision: 1 };
+  if (reset) { await control.initialize(observation, { source: 'semantic', read: 'semantic', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
   await control.publish(observation, definition, ticket);
   await readMetrics(kind);
 }

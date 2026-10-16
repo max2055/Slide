@@ -96,8 +96,8 @@ test.beforeAll(async () => {
       expect(result.attempts.every(a=>a.status==='succeeded'),JSON.stringify(result.attempts)).toBe(true);
       expect(result.observations.length).toBeGreaterThan(0);
       for(const {observation} of result.observations) {
-        const key=JSON.stringify([observation.metric,observation.dimensions]), ticket={source:'v2',generation:1,revision:1};
-        if(!published.has(key)) {await control.initialize(observation,{source:'v2',read:'v2',package:pin,revision:1});await control.applied(observation,ticket);published.add(key);}
+        const key=JSON.stringify([observation.metric,observation.dimensions]), ticket={source:'semantic',generation:1,revision:1};
+        if(!published.has(key)) {await control.initialize(observation,{source:'semantic',read:'semantic',package:pin,revision:1});await control.applied(observation,ticket);published.add(key);}
         await control.publish(observation,registry.catalog(pin).find(d=>d.id===observation.metric.id)!,ticket);
       }
       await policyStore.reportCapabilities({type:'server',id:serverId},1,result.capabilities,null); previous=result;

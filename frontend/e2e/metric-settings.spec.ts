@@ -103,7 +103,9 @@ for (const width of [1280, 375]) test(`package names/IDs, combined type filter, 
   // Filtering must not reuse an expanded entry for a different package.
   await page.keyboard.press('Escape');
   await search.fill('PostgreSQL');
-  await expect(entries(page)).toHaveCount(1);
+  // A name can match several immutable releases; each result must still match.
+  await expect(entries(page).first()).toBeVisible();
+  await expect(entries(page).filter({ hasNotText: 'PostgreSQL' })).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: '采集模板详情' })).toHaveCount(0);
 });
 

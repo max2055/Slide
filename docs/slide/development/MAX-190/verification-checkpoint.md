@@ -37,11 +37,19 @@ R1 外层设计审阅壳不是产品导航。截图直接挂载实际产品组�
 
 ## 真实业务及集成仍未完成
 
-MAX-189 当前仍在开发；本次检索 `agent/15astra/max-189` 未找到可核验的 PR、独立审查或 merge SHA。不拿未审定工作树快照作最终后端。此前隔离 MySQL 9.6 提前联调止于 status HTTP 500、新实例 `db_version=null`；没有发布／三周期／唯一正式值，也未替代指定 mysql3306 验收。本次未重放该未知后端路径，未改 A 源码或共享服务。
+MAX-189 已提交草稿 PR #202；本轮准确候选为 `8208d1d2ee939d9f0bcd7d8471461f1afea535ea`。Chief 完整审查尚未通过，无 merge SHA。允许隔离组合验证前端兼容；组合候选不等于审定集成，A 提交不混入 B 交付分支。此前隔离 MySQL 9.6 提前联调止于 status HTTP 500、新实例 `db_version=null`；没有发布／三周期／唯一正式值，也未替代指定 mysql3306 验收。未改 A 源码或共享服务。
 
 PR 旧 head `61e1920a` CI 已结束：frontend/backend/security 等通过；browser 与 browser-qualification 缺后端新路径 `src/metrics/config/registry.js`，investigation-api-qualification 的旧后端 flow 测试仍按旧界面操作；release-artifact / ci-gate 连带失败。原 run：<https://github.com/max2055/Slide/actions/runs/38923371822>。这些依赖在 A 审定集成后复验，不保留双 API 或伪填资源版本绕过。
 
 接续：读取 A 实际 PR/head、Chief 独立审查及实际 merge SHA，整合审定提交，运行新契约／受影响 gate，以 mysql3306 完成真实 UI 检查→试采→发布→应用→至少三周期→正式查询值与列表／详情／设置一致性；对照批准 R1 后推广其余资源入口。完整证据前保持草稿，不置 in_review。每次 push 配置当前子任务 checks / 30m / on-timeout wake，目标15astra，交付线程不变。
+
+## 独立 fixture 兼容修复（2026-10-17）
+
+- `max157-business` 保留旧 history 中的 92.4 作为反例，验证真实 JWT/SQL/HTTP evidence API 返回无正式事实和明确缺口，UI 显示暂无证据且不回读旧值；没有伪填 publication 或来源门禁。
+- 三个正式观测 fixture 的读取模式、发布 ticket source 对齐 A 的 `semantic` 契约；保留真实 publication store 写入／读取路径。`metric-settings` 按多个不可变 PostgreSQL 版本验证搜索，不再假定名称唯一。
+- 隔离候选为 A `8208d1d2` 加本 B 前端；MySQL 8.4 单独容器、随机 schema、回环临时端口。修复前已复现旧值断言、旧读取模式及单版本假设失败；修复后 max157 7项、详情观测4项、查询5项、模板11项、列表/流程8项及网络2项通过（37个不同用例，复用未变用例结果）。B typecheck、diff check 通过。两份 MAX-175 实采脚本仅发现3项，未重试VM或宣称实采通过。
+- A 所有的 `flow.mysql.test.ts` 仍需传入新 `ConfigurationReader`（当前构造省略第五参数，status/recommendations 会503），并按 R1 先打开连续弹窗、展开技术证据、使用模板表格/详情及五层状态断言。只读入口应验证禁用，不能用旧布局倒逼修改产品。该文件未在本轮修改。
+- 详细组合 SHA、环境和日志随本轮 Issue 附件交付；这些受控/隔离验证不替代指定 mysql3306 三周期与实服务 R1 验收。
 
 ## 历史记录与产物
 
