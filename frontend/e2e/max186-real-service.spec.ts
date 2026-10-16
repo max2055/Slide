@@ -199,8 +199,8 @@ test('feedback: readable actions, consistent resource gutters, inset selects and
         const gutter = await table.evaluate(el => parseFloat(getComputedStyle(el).paddingLeft));
         expect(gutter).toBeGreaterThanOrEqual(8);
         expect(gutter).toBe(await view.locator('.resource-toolbar').evaluate(el => parseFloat(getComputedStyle(el).paddingLeft)));
-        const tools = table.locator('.toolbar'), scroll = table.locator('.scroll');
-        expect((await scroll.boundingBox())!.y - ((await tools.boundingBox())!.y + (await tools.boundingBox())!.height)).toBeGreaterThanOrEqual(8);
+        await expect(table.locator('.toolbar')).toHaveCount(0);
+        await expect(view.locator('.resource-toolbar').getByRole('button', { name: '列设置', exact: true })).toBeVisible();
       } else if (path === 'attention') {
         await expect(view.getByText('MAX-186 待处理事项 · 长标题用于间距复核')).toBeVisible();
         const gap = await view.evaluate(el => {
@@ -267,4 +267,78 @@ test('feedback: readable actions, consistent resource gutters, inset selects and
   expect(errors).toEqual([]);
   expect(Number((await pool.query('SELECT COUNT(*) AS n FROM agent_runs'))[0][0].n)).toBe(0);
   await writeFile(`${output}/feedback-measurements.json`, JSON.stringify({ source: 'formal HTTP/JWT + task-owned SQL synthetic inventory and events; no shared sessions or model calls', measurements, errors }, null, 2));
+});
+
+
+test('resource feedback: unified stored refresh, compact columns, neutral names, unique hosts and row numbers', async ({ page }) => {
+  test.setTimeout(150_000);
+  page.setDefaultTimeout(10_000);
+  await pool.query("UPDATE servers SET label=host WHERE id=?", [serverId]);
+  await page.addInitScript(({ token, permissions }) => {
+    localStorage.setItem('token', token); localStorage.setItem('permissions', JSON.stringify(permissions));
+    localStorage.setItem('slide.i18n.locale', 'zh-CN');
+  }, { token, permissions });
+  const measurements: unknown[] = [], errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  for (const [width, mode] of [[1920, 'light'], [1440, 'dark'], [390, 'light'], [390, 'dark']] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    const saved = await fetch(`http://127.0.0.1:${apiPort}/api/user/preferences`, { method:'PUT', headers:{authorization:`Bearer ${token}`, 'content-type':'application/json'}, body:JSON.stringify({preferences:{locale:'zh-CN',theme:'claw',themeMode:mode,accentColor:'#265f99',fontDensity:'standard'}}) });
+    expect(saved.ok).toBe(true);
+    for (const [path, tag, endpoint] of [
+      ['instances-db', 'instances-page', '/api/database/instances'],
+      ['servers', 'servers-page', '/api/servers'],
+      ['network-devices', 'network-devices-page', '/api/network-devices'],
+    ]) {
+      await page.goto(`${base}/${path}`);
+      const view = page.locator(tag), table = view.locator('resource-metrics-table');
+      const refresh = view.getByRole('button', { name:'刷新', exact:true });
+      await expect(refresh).toHaveCount(1); await expect(refresh).toBeEnabled();
+      await expect(view.getByRole('button', {name:'刷新指标', exact:true})).toHaveCount(0);
+      const columns = view.locator('.resource-toolbar').getByRole('button', {name:'列设置',exact:true});
+      await expect(columns).toBeVisible();
+      await columns.focus(); await page.keyboard.press('Enter');
+      const dialog = table.locator('app-dialog[title="列设置"]');
+      await expect(dialog.getByRole('dialog', {name:'列设置',exact:true})).toBeVisible();
+      const choice = dialog.getByRole('checkbox').first(), name = await choice.evaluate(el=>el.parentElement!.textContent!.trim());
+      await choice.uncheck(); await dialog.getByRole('button',{name:'完成',exact:true}).click();
+      await expect(columns).toBeFocused();
+      await expect(table.getByRole('columnheader',{name,exact:true})).toHaveCount(0);
+      await columns.click(); await dialog.getByRole('button',{name:'恢复默认',exact:true}).click();
+      await page.keyboard.press('Escape'); await expect(columns).toBeFocused();
+      await expect(table.getByRole('columnheader',{name:'序号',exact:true})).toBeVisible();
+      expect(await table.locator('tbody tr td:first-child').allTextContents()).toEqual(path === 'servers' ? ['1','2'] : ['1']);
+      if (path === 'servers') {
+        const host = table.locator('tbody tr').filter({hasText:'max186-no-target.invalid'}).locator('td').nth(1);
+        expect((await host.innerText()).match(/max186-no-target\.invalid/g)).toHaveLength(1);
+      }
+      const nameButton = table.locator('tbody tr').first().locator('td').nth(1).getByRole('button').first();
+      const nameColor = await nameButton.evaluate(el=>getComputedStyle(el).color);
+      // Names on all three pages use the same shared ghost button palette.
+      await expect(nameButton).toHaveCSS('color', await nameButton.evaluate(el=>{
+        const span=document.createElement('span');span.style.color='var(--btn-ghost-color)';el.append(span);const value=getComputedStyle(span).color;span.remove();return value;
+      }));
+      const reads: string[] = [], writes: string[] = [];
+      const listener = (request: import('@playwright/test').Request) => {
+        const url=new URL(request.url());if(!url.pathname.startsWith('/api/'))return;
+        if(request.method()==='GET' || url.pathname==='/api/metrics-v2/query') reads.push(url.pathname); else writes.push(url.pathname);
+      };
+      page.on('request',listener);
+      await refresh.focus(); await page.keyboard.press('Enter'); await expect(refresh).toBeEnabled();
+      await expect.poll(()=>reads.filter(p=>p===endpoint).length).toBe(1);
+      await expect.poll(()=>reads.filter(p=>p==='/api/metrics-v2/query').length).toBe(path === 'servers' ? 2 : 1);
+      await expect(refresh).toBeEnabled(); page.off('request', listener);
+      expect(writes).toEqual([]);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      if(width===1920) {
+        const search = view.locator('.resource-toolbar input').first();
+        expect(Math.abs((await search.boundingBox())!.y-(await columns.boundingBox())!.y)).toBeLessThan(10);
+      }
+      await page.mouse.move(0,0);
+      await page.screenshot({path:`${output}/resource-${path}-${width}-${mode}.png`,fullPage:true,animations:'disabled'});
+      measurements.push({path,width,mode,nameColor,reads,writes});
+    }
+  }
+  expect(errors).toEqual([]);
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM agent_runs'))[0][0].n)).toBe(0);
+  await writeFile(`${output}/resource-feedback.json`,JSON.stringify({source:'formal Fastify/HTTP/JWT and isolated persisted synthetic inventory, no business HTTP mocks or collection/model calls',measurements,errors},null,2));
 });

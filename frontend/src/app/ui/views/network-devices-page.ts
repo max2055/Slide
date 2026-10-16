@@ -1,4 +1,5 @@
 import "../components/resource-metrics-table.js";
+import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
@@ -71,6 +72,12 @@ export class NetworkDevicesPage extends LitElement {
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
 
+  @state() private metricRefreshVersion = 0;
+  @state() private metricsLoading = false;
+  private openColumnSettings() {
+    this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
+  }
+
   override firstUpdated() { void this.loadDevices(); }
 
   async loadDevices(): Promise<void> {
@@ -84,6 +91,7 @@ export class NetworkDevicesPage extends LitElement {
       }
       const value = await response.json();
       this.devices = Array.isArray(value) ? value as NetworkDevice[] : [];
+      this.metricRefreshVersion++;
     } catch (error) {
       this.error = error instanceof Error ? error.message : "加载网络设备失败";
     } finally {
@@ -342,7 +350,7 @@ export class NetworkDevicesPage extends LitElement {
     return this.filteredDevices().map((device) => ({
       id: device.id, type: null, model: device.model, version: device.os_version,
       searchValues: [device.name, device.label, device.host, device.site, device.status, this.statusLabel(device.status)],
-      device: html`<button class="link-button" type="button" @click=${() => this.navigate(device.id)}>${device.label || device.name}</button>`,
+      device: html`<button class="btn-ghost" type="button" @click=${() => this.navigate(device.id)}>${device.label || device.name}</button>`,
       host: device.host,
       site: device.site || "--",
       status: html`<app-badge variant=${this.statusVariant(device.status)}>${this.statusLabel(device.status)}</app-badge>`,
@@ -456,7 +464,7 @@ export class NetworkDevicesPage extends LitElement {
         .dialog-actions > .dialog-spacer { display:none; }
       }
     </style>
-    ${this.loading ? html`<div class="loading" role="status">正在加载网络设备…</div>` : this.error ? html`<app-card><div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadDevices}>重试</button></div></app-card>` : html`
+    ${this.loading && this.devices.length === 0 ? html`<div class="loading" role="status">正在加载网络设备…</div>` : this.error ? html`<app-card><div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadDevices}>重试</button></div></app-card>` : html`
       <app-card .compact=${true}>
         <div class="resource-toolbar">
           <div class="resource-search">
@@ -466,8 +474,9 @@ export class NetworkDevicesPage extends LitElement {
           <select class="resource-filter" aria-label="站点筛选" .value=${this.siteFilter} @change=${(e: Event) => (this.siteFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部站点</option>${sites.map((site) => html`<option value=${site}>${site}</option>`)}</select>
           <select class="resource-filter" aria-label="状态筛选" .value=${this.statusFilter} @change=${(e: Event) => (this.statusFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option></select>
           <div class="toolbar-actions">
+              <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${filtered.length === 0}>列设置</button>
             ${this.activeFilterCount > 0 ? html`<button class="btn-ghost resource-filter-reset" type="button" @click=${this.resetFilters}>重置筛选</button>` : nothing}
-            <button aria-busy=${String(this.loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading} @click=${this.loadDevices}> 刷新</button>
+            <button aria-busy=${String(this.loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading || this.metricsLoading} @click=${this.loadDevices}> 刷新</button>
             <button class="btn-primary resource-action resource-action--add" type="button" @click=${this.openCreate}>${icons.plus} 添加设备</button>
           </div>
         </div>
@@ -475,7 +484,7 @@ export class NetworkDevicesPage extends LitElement {
           <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
           ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
     ${this.renderDialog()}
     ${this.renderDeleteDialog()}`;

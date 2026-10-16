@@ -1,4 +1,5 @@
 import "../components/resource-metrics-table.js";
+import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
@@ -228,6 +229,12 @@ export class ServersPage extends LitElement {
   @state() private _environmentFilter = "all";
   @state() private _relationFilter = "all";
 
+  @state() private metricRefreshVersion = 0;
+  @state() private metricsLoading = false;
+  private openColumnSettings() {
+    this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
+  }
+
   override firstUpdated() {
     this._loadServers();
   }
@@ -243,6 +250,7 @@ export class ServersPage extends LitElement {
       }
       if (!serversRes.ok) throw new Error("加载服务器列表失败");
       this._servers = await serversRes.json();
+      this.metricRefreshVersion++;
     } catch (err: any) {
       showToast(err.message || "网络错误", "error");
     } finally {
@@ -504,7 +512,7 @@ export class ServersPage extends LitElement {
         searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
         host: html`
           <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">
-            <button class="btn-ghost" @click=${() => this._navigateToDetail(srv.id)}>${srv.label || srv.host}</button><small>${srv.host}</small>
+            <button class="btn-ghost" @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button>${srv.label?.trim() && srv.label.trim() !== srv.host ? html`<small>${srv.host}</small>` : nothing}
           </div>`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
@@ -536,7 +544,7 @@ export class ServersPage extends LitElement {
   }
 
   override render() {
-    if (this._loading) {
+    if (this._loading && this._servers.length === 0) {
       return html`<div class="page"><div class="loading">加载中...</div></div>`;
     }
 
@@ -546,7 +554,7 @@ export class ServersPage extends LitElement {
           <div class="card">
             <div class="toolbar resource-toolbar">
               <div class="toolbar-actions">
-                <button aria-busy=${String(this._loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+                <button aria-busy=${String(this._loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading || this.metricsLoading} @click=${this._loadServers}>
                    刷新
                 </button>
                 <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
@@ -606,10 +614,11 @@ export class ServersPage extends LitElement {
               <option value="unlinked">未关联数据库</option>
             </select>
             <div class="toolbar-actions">
+              <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${rows.length === 0}>列设置</button>
               ${this._activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this._resetFilters}>重置筛选</button>`
                 : nothing}
-              <button aria-busy=${String(this._loading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading} @click=${this._loadServers}>
+              <button aria-busy=${String(this._loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading || this.metricsLoading} @click=${this._loadServers}>
                  刷新
               </button>
               <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
@@ -624,7 +633,7 @@ export class ServersPage extends LitElement {
               : nothing}
           </div>
           ${rows.length > 0
-            ? html`<resource-metrics-table resourceType="server" .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
+            ? html`<resource-metrics-table resourceType="server" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 

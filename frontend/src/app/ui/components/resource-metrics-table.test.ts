@@ -93,3 +93,18 @@ it('combines search terms across metadata and ignores obsolete saved filters', a
   el.page = 2; el.search = ''; await el.updateComplete;
   expect(el.page).toBe(1);
 });
+
+it('numbers filtered rows continuously across pages and keeps the number column fixed', async () => {
+  authFetch.mockResolvedValue(response({}, 503));
+  const el = await mount(25);
+  await vi.waitFor(() => expect(el.pending).toBe(false));
+  let table = el.shadowRoot.querySelector('app-data-table');
+  expect(table.rows.map((r: any) => r.row_number)).toEqual(Array.from({length: 20}, (_, i) => i + 1));
+  el.page = 2; await el.load(); await el.updateComplete;
+  expect(table.rows.map((r: any) => r.row_number)).toEqual([21, 22, 23, 24, 25]);
+  el.search = 'mysql'; await el.updateComplete; await el.updateComplete;
+  expect(table.rows.map((r: any) => r.row_number)).toEqual(Array.from({length: 13}, (_, i) => i + 1));
+  expect(table.rows.map((r: any) => r.id)).toEqual(Array.from({length: 13}, (_, i) => 2 * i + 1));
+  el.openColumnSettings(); await el.updateComplete;
+  expect([...el.shadowRoot.querySelectorAll('.column-choice')].some((label: any) => label.textContent.includes('序号'))).toBe(false);
+});
