@@ -86,21 +86,24 @@ describe.skipIf(!port)('operations draft schema / real MySQL', () => {
   it('checks live SQL role/scope/session/resource revocation and independent human approval', async () => {
     const auth = new OperationsAuthorization();
     const contexts = new ActorContextService();
-    const caller = await contexts.loadInvestigationActorFrom(db, 2, 'user', 1, 'p01');
+    // mysql2 v3's narrower ExecuteValues signature needs an adapter to the
+    // existing ActorContext SQL port, without changing shared auth source.
+    const executor = { execute: (sql: string, values?: unknown[]) => db.execute(sql, values as any[]) };
+    const caller = await contexts.loadInvestigationActorFrom(executor, 2, 'user', 1, 'p01');
     const refs = [{ type: 'instance' as const, id: 1 }, { type: 'server' as const, id: 1 }];
-    await expect(auth.authorize(db, caller, refs, 'context:manage')).resolves.toMatchObject({ userId: 2 });
-    await expect(auth.authorize(db, caller, refs, 'actions:approve', { author: { kind: 'user', id: 2 }, requester: { kind: 'user', id: 1 } }))
+    await expect(auth.authorize(executor, caller, refs, 'context:manage')).resolves.toMatchObject({ userId: 2 });
+    await expect(auth.authorize(executor, caller, refs, 'actions:approve', { author: { kind: 'user', id: 2 }, requester: { kind: 'user', id: 1 } }))
       .rejects.toMatchObject({ statusCode: 403 });
-    await expect(auth.authorize(db, caller, refs, 'actions:approve', { author: { kind: 'user', id: 1 }, requester: { kind: 'user', id: 1 } }))
+    await expect(auth.authorize(executor, caller, refs, 'actions:approve', { author: { kind: 'user', id: 1 }, requester: { kind: 'user', id: 1 } }))
       .resolves.toMatchObject({ userId: 2 });
     await db.query('DELETE FROM instance_permissions WHERE user_id=2');
-    await expect(auth.authorize(db, caller, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(auth.authorize(executor, caller, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
     await db.query("INSERT INTO instance_permissions VALUES(2,1,'read-only',NULL)");
-    await expect(auth.authorize(db, caller, refs, 'context:manage')).rejects.toMatchObject({ statusCode: 403 });
+    await expect(auth.authorize(executor, caller, refs, 'context:manage')).rejects.toMatchObject({ statusCode: 403 });
     await db.query('UPDATE users SET session_version=2 WHERE id=2');
-    await expect(auth.authorize(db, caller, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
-    const fresh = await contexts.loadInvestigationActorFrom(db, 2, 'user', 2, 'p01');
+    await expect(auth.authorize(executor, caller, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
+    const fresh = await contexts.loadInvestigationActorFrom(executor, 2, 'user', 2, 'p01');
     await db.query('DELETE FROM role_permissions WHERE permission_id=3');
-    await expect(auth.authorize(db, fresh, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(auth.authorize(executor, fresh, refs, 'cases:read')).rejects.toMatchObject({ statusCode: 404 });
   });
 });

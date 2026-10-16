@@ -39,7 +39,11 @@ export class OperationsAuthorization {
   async authorize(connection: Executor, caller: ActorContext, resources: readonly ResourceRef[], action: OperationsAction,
     independence?: { author: OperationsPrincipal; requester?: OperationsPrincipal }): Promise<ActorContext> {
     const ceiling = freezeInvestigationCaller(caller);
-    const refs = resources.map(ref => resourceRefSchema.parse(ref));
+    const parsed = resources.map(ref => resourceRefSchema.safeParse(ref));
+    if (parsed.some(result => !result.success)) throw new OperationsError('OPERATIONS_INPUT_INVALID');
+    const refs = parsed.map(result => result.data!);
+    const identities = independence && { author: { ...independence.author },
+      requester: independence.requester && { ...independence.requester } };
     if (!refs.length || refs.length > 100 || !Object.hasOwn(OPERATIONS_PERMISSIONS, action)) throw new OperationsError('OPERATIONS_INPUT_INVALID');
     const write = !action.endsWith(':read');
     const denied = () => new OperationsError(write ? 'OPERATIONS_FORBIDDEN' : 'OPERATIONS_NOT_FOUND');
@@ -54,9 +58,9 @@ export class OperationsAuthorization {
       if (!permission(actor, OPERATIONS_PERMISSIONS[action]) || refs.some(ref => !resourceAllowed(actor, ref, write))) throw denied();
     }
     if (action === 'cases:review' || action === 'actions:approve') {
-      if (!independence || current.principalKind === 'service' || !principalSchema.safeParse(independence.author).success
-        || action === 'actions:approve' && !principalSchema.safeParse(independence.requester).success
-        || [independence.author, independence.requester].some(principal => principal?.id === current.userId)) throw denied();
+      if (!identities || current.principalKind === 'service' || !principalSchema.safeParse(identities.author).success
+        || action === 'actions:approve' && !principalSchema.safeParse(identities.requester).success
+        || [identities.author, identities.requester].some(principal => principal?.id === current.userId)) throw denied();
     }
     // Resource checks are current locking reads; missing/deleted objects reveal no content.
     for (const ref of [...new Map(refs.map(ref => [`${ref.type}:${ref.id}`, ref])).values()]
@@ -64,8 +68,17 @@ export class OperationsAuthorization {
       const [rows] = await connection.execute(`SELECT id FROM ${types[ref.type].table} WHERE id = ?${ref.type === 'instance' ? " AND lifecycle_state = 'available'" : ''} FOR SHARE`, [ref.id]);
       if (!Array.isArray(rows) || rows.length !== 1) throw denied();
     }
-    // Do not return a broader live actor after promotion; consumers retain the
-    // original ceiling and must call authorize again, rather than caching a grant.
-    return ceiling;
+    // Return exact permissions/resources needed for this operation, never an
+    // admin wildcard or an old grant revoked since the original ceiling.
+    const permissions = new Set<string>([OPERATIONS_PERMISSIONS[action]]);
+    const boundary = { instanceIds: [] as number[], serverIds: [] as number[], networkDeviceIds: [] as number[] };
+    for (const ref of refs) {
+      permissions.add(types[ref.type].read);
+      if (write) permissions.add(types[ref.type].manage);
+      if (!boundary[types[ref.type].boundary].includes(ref.id)) boundary[types[ref.type].boundary].push(ref.id);
+    }
+    return freezeInvestigationCaller({ ...current, username: `operations-actor-${current.userId}`, roles: [],
+      permissions: [...permissions], resourceBoundary: boundary,
+      instanceScopes: Object.fromEntries(boundary.instanceIds.map(id => [id, write ? 'read-write' : 'read-only'])) });
   }
 }

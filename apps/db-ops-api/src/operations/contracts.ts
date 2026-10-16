@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { ResourceRef } from '../resources/types.js';
 
 export const OPERATIONS_SCHEMA_VERSION = 1 as const;
+export const ACTION_PLAN_VALIDITY = Object.freeze({ defaultMs: 15 * 60_000, maximumMs: 30 * 60_000 });
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const key = z.string().min(1).max(128);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);

@@ -13,7 +13,9 @@ describe('operations live authority', () => {
     const auth = new OperationsAuthorization(contexts);
     const caller = actor({ resourceBoundary: { instanceIds: [1], serverIds: [1], networkDeviceIds: [] }, instanceScopes: { 1: 'read-only' } });
     const refs = [{ type: 'instance' as const, id: 1 }, { type: 'server' as const, id: 1 }];
-    await expect(auth.authorize(connection, caller, refs, 'context:read')).resolves.toMatchObject({ userId: 2 });
+    const bounded = await auth.authorize(connection, caller, refs, 'context:read');
+    expect(bounded).toMatchObject({ userId: 2, roles: [], resourceBoundary: caller.resourceBoundary, instanceScopes: { 1: 'read-only' } });
+    expect(bounded.permissions).not.toContain('*');
     current = actor({ permissions: ['instance:view', OPERATIONS_PERMISSIONS['context:read']], instanceScopes: { 1: 'read-only' } });
     await expect(auth.authorize(connection, caller, refs, 'context:read')).rejects.toMatchObject({ statusCode: 404 });
     current = actor();
@@ -45,5 +47,6 @@ describe('operations live authority', () => {
     contexts.loadInvestigationActorFrom.mockRejectedValueOnce(new ActorAuthenticationError());
     await expect(auth.authorize(connection, actor(), refs, 'actions:read')).rejects.toMatchObject({ statusCode: 404 });
     await expect(auth.authorize(connection, actor(), [], 'actions:execute')).rejects.toThrow('OPERATIONS_INPUT_INVALID');
+    await expect(auth.authorize(connection, actor(), [{ type: 'server', id: -1 }], 'actions:read')).rejects.toThrow('OPERATIONS_INPUT_INVALID');
   });
 });
