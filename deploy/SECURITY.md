@@ -16,6 +16,10 @@ must use the HTTPS origin. Both proxy hops preserve `Host`, append
 `X-Forwarded-For`, set the real external `X-Forwarded-Proto`, and carry the
 HTTP/1.1 WebSocket upgrade for `/agent-ws`.
 
+For an existing HTTP deployment, follow [HTTPS / WSS cutover and rollback](HTTPS.md)
+to configure certificate trust, switch only affected services, and verify the
+real Edge chat connection. The guide also includes a local two-proxy transport check.
+
 Do not mount the repository, the rootful `/var/run/docker.sock`, or arbitrary host directories into the API or sandbox jobs.
 
 Oracle 11g requires node-oracledb Thick mode. If Oracle 11g support is needed,
