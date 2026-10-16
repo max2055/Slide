@@ -39,7 +39,7 @@ test.beforeAll(async () => {
   await mkdir(output, { recursive: true });
   const env = { ...process.env, DB_HOST:'127.0.0.1', DB_PORT:'33175', DB_USER:'root', DB_PASSWORD:'', DB_NAME:taskSchema,
     JWT_SECRET_KEY:randomBytes(32).toString('hex'), ENCRYPTION_KEY:randomBytes(32).toString('hex'),
-    PORT:String(apiPort), AGENT_WS_PORT:'29775', SLIDE_MEMORY_PIPELINE_ENABLED:'false', METRICS_V2_COLLECTION_ENABLED:'false' };
+    PORT:String(apiPort), AGENT_WS_PORT:'29775', SLIDE_MEMORY_PIPELINE_ENABLED:'false', METRICS_COLLECTION_ENABLED:'false' };
   const migration = execFileSync(process.execPath, ['--import','tsx','init-db.ts'], { cwd:resolve('../apps/db-ops-api'), env, encoding:'utf8', timeout:90_000 });
   await writeFile(`${output}/migration.log`, migration);
   pool = mysql.createPool({ host:env.DB_HOST, port:Number(env.DB_PORT), user:env.DB_USER, password:env.DB_PASSWORD, database:env.DB_NAME, timezone:'Z' });
@@ -88,7 +88,7 @@ test('database representative: real routes, reading times, metrics and log brows
   const reads: {path:string;status:number}[] = [], writes: string[] = [], errors: string[] = [], batches: unknown[] = [];
   page.on('response', response => { if(new URL(response.url()).pathname.startsWith('/api/')) reads.push({path:new URL(response.url()).pathname,status:response.status()}); });
   page.on('pageerror', error => errors.push(error.message));
-  page.on('request', request => { if (request.method()==='POST' && !request.url().includes('/metrics-v2/query') && !request.url().includes('/auth/')) writes.push(new URL(request.url()).pathname); });
+  page.on('request', request => { if (request.method()==='POST' && !request.url().includes('/metrics/query') && !request.url().includes('/auth/')) writes.push(new URL(request.url()).pathname); });
   await page.addInitScript(({token,permissions}) => {
     localStorage.setItem('token',token); localStorage.setItem('slide.control.session_token.v1',token);
     localStorage.setItem('permissions',JSON.stringify(permissions)); localStorage.setItem('slide.i18n.locale','zh-CN');
@@ -199,7 +199,7 @@ test('controlled metrics interactions and log context isolation',async({page})=>
     {definition:{id:'db.connections.active',category:'extension',unit:'count',meaning:'受控扩展'},state:'temporary_failure',series:[]}
   ]};
   let metricStatus=200;
-  await page.route('**/api/metrics-v2/query',route=>route.fulfill({status:metricStatus,json:metricStatus===200?data:{error:'controlled'}}));
+  await page.route('**/api/metrics/query',route=>route.fulfill({status:metricStatus,json:metricStatus===200?data:{error:'controlled'}}));
   for(const width of [1440,768,390]) for(const theme of ['light','dark']) {
     await page.setViewportSize({width,height:1000});await page.goto(`${base}/instance-detail?id=${instanceId}`);
     await page.evaluate(theme=>document.documentElement.dataset.themeMode=theme,theme);
@@ -254,7 +254,7 @@ test('server and network real service inventory, semantic tabs, interfaces and p
     diagnosticRequests.push(route.request().url()); return route.abort();
   });
   page.on('response',r=>{const path=new URL(r.url()).pathname;if(path.startsWith('/api/')) reads.push({path,status:r.status()});});
-  page.on('request',r=>{if(['POST','PUT','DELETE'].includes(r.method())&&!r.url().includes('/metrics-v2/query')) writes.push(new URL(r.url()).pathname);});
+  page.on('request',r=>{if(['POST','PUT','DELETE'].includes(r.method())&&!r.url().includes('/metrics/query')) writes.push(new URL(r.url()).pathname);});
   page.on('pageerror',e=>errors.push(e.message));
   for(const width of [1440,768,390]) for(const theme of ['light','dark']) {
     await page.setViewportSize({width,height:1000});
@@ -394,7 +394,7 @@ test('MAX-175 performance: cold and warm authenticated resource journeys', async
         const metrics=view.locator('semantic-metrics');
         dimensions[journey.kind]=await metrics.evaluate((el:any)=>({metrics:el.result.metrics.length,series:el.result.metrics.reduce((n:number,m:any)=>n+m.series.length,0),states:[...new Set(el.result.metrics.map((m:any)=>m.state))]}));
         for (const hours of ['6','1']) await measure('metric-range-filter',async()=>{
-          const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/metrics-v2/query' && r.request().method()==='POST');
+          const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/metrics/query' && r.request().method()==='POST');
           await metrics.getByLabel('时间范围',{exact:true}).selectOption(hours);
           expect((await response).status()).toBe(200);
           await page.waitForFunction(()=>{
@@ -450,5 +450,5 @@ test('MAX-175 performance: cold and warm authenticated resource journeys', async
   await writeFile(`${output}/performance.json`,JSON.stringify({sourceHead,browser:browser.version(),environment:{platform:platform(),release:release(),arch:arch(),cpu:cpus()[0]?.model,cpuCount:cpus().length,memoryBytes:totalmem(),viewport:'1440x1000',server:'Vite development + complete formal Fastify/JWT/MySQL 8.4, loopback, no CPU/network throttling'},method:'Sequential single-user browser journeys. Cold = new context + browser HTTP cache disabled; backend/DB/OS remain warm. Warm = reused context per resource, first iteration retained. Times include Playwright actionability/polling and two requestAnimationFrame callbacks; not INP, Web Vitals, load capacity or production SLA. No before/after baseline or acceptance threshold.',data:{logs:55,logBatchSize:50,warningLogs:19,interfaces:2,dimensions,source:'Task-owned persisted inventory/log fixtures via real APIs; metrics unconfigured; server diagnostics absent. No live collection, response interception or product model.'},samples,groups,responses,errors},null,2));
   expect(errors).toEqual([]);
   expect(responses.filter(r=>/\/diagnostics|\/collect-diagnostics/.test(r.path))).toEqual([]);
-  expect(responses.filter(r=>r.path==='/api/metrics-v2/query' || r.path==='/api/logs' || r.path.endsWith('/interfaces')).every(r=>r.status===200)).toBe(true);
+  expect(responses.filter(r=>r.path==='/api/metrics/query' || r.path==='/api/logs' || r.path.endsWith('/interfaces')).every(r=>r.status===200)).toBe(true);
 });

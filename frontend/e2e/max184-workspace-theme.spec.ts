@@ -75,7 +75,7 @@ test.beforeAll(async () => {
   await expect.poll(async () => { try {const c=await mysql.createConnection({host:'127.0.0.1',port:mysqlPort,user:'root',connectTimeout:500});await c.end();return true;}catch{return false;} },{timeout:120_000}).toBe(true);
   const env={...process.env,DB_HOST:'127.0.0.1',DB_PORT:String(mysqlPort),DB_USER:'root',DB_PASSWORD:'',DB_NAME:schema,
     JWT_SECRET_KEY:randomBytes(32).toString('hex'),ENCRYPTION_KEY:randomBytes(32).toString('hex'),PORT:'3184',AGENT_WS_PORT:'29884',
-    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_V2_COLLECTION_ENABLED:'false'};
+    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_COLLECTION_ENABLED:'false'};
   await writeFile(`${output}/migration.log`,execFileSync(process.execPath,['--import','tsx','init-db.ts'],{cwd:resolve('../apps/db-ops-api'),env,encoding:'utf8',timeout:90_000}));
   pool=mysql.createPool({host:'127.0.0.1',port:mysqlPort,user:'root',database:schema,timezone:'Z'});
   await pool.query('UPDATE llm_providers SET enabled=0');

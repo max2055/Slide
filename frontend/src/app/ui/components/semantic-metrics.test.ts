@@ -10,7 +10,7 @@ afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.useR
 const mount = async () => { const el = new SemanticMetrics(); el.resourceId = 1; document.body.append(el); await settle(); return el; };
 it('uses standard API, renders exact integers and preserves quality metadata', async () => {
   authFetch.mockResolvedValue({ ok: true, json: async () => result }); const el = await mount();
-  expect(authFetch.mock.calls[0][0]).toBe('/api/metrics-v2/query');
+  expect(authFetch.mock.calls[0][0]).toBe('/api/metrics/query');
   expect(JSON.parse(authFetch.mock.calls[0][1].body)).toMatchObject({ resource: { type: 'instance', id: 1 }, view: 'all' });
   const table = el.shadowRoot!.querySelector('app-data-table') as any;
   expect(table.rows[0].metric).toBeDefined(); expect(el.result).toEqual(result);

@@ -1,3 +1,4 @@
+import "../components/resource-collection-section.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { LitElement, html, nothing } from "lit";
@@ -72,6 +73,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
 
+  @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -152,6 +154,7 @@ export class NetworkDevicesPage extends LitElement {
       vendor: device.vendor === "cisco" ? "cisco" : "huawei",
     };
     this.formError = null;
+    this.connectionPending = false;
     this.showDialog = true;
   }
 
@@ -160,6 +163,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private updateForm<K extends keyof DeviceForm>(key: K, value: DeviceForm[K]) {
+    this.connectionPending = true;
     this.form = { ...this.form, [key]: value };
   }
 
@@ -203,7 +207,7 @@ export class NetworkDevicesPage extends LitElement {
     };
   }
 
-  private async saveDevice() {
+  private async saveDevice(configureCollection = false) {
     if (this.saving) return;
     if (!this.form.name.trim() || !this.form.host.trim()) {
       this.formError = "名称和主机不能为空";
@@ -230,9 +234,16 @@ export class NetworkDevicesPage extends LitElement {
         const body = await responseBody(response);
         throw new Error(String(body.error || "保存网络设备失败"));
       }
+      const savedId = this.editingId ?? Number((await response.json()).id);
       this.showDialog = false;
       await this.loadDevices();
-      showToast(this.editingId ? "网络设备已更新" : "网络设备已添加", "success");
+      showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
+      if (configureCollection) {
+        const saved = this.devices.find(d => d.id === savedId);
+        if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
+        this.openEdit(saved); await this.updateComplete;
+        this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
+      }
     } catch (error) {
       this.formError = error instanceof Error ? error.message : "保存网络设备失败";
     } finally {
@@ -403,9 +414,10 @@ export class NetworkDevicesPage extends LitElement {
           <app-form-field label="SSH 用户名" .inline=${true}><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
           <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"} .inline=${true}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field></div>
         </section>
+        <resource-collection-section resourceType="network_device" .resourceId=${this.editingId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>
-      <div slot="footer" class="dialog-actions"><div class="dialog-test-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing || this.testingSsh}>${this.testing ? "探测中…" : `测试 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"}`}</button><button class="btn" type="button" @click=${this.testSshConnection} .disabled=${this.testing || this.testingSsh}>${this.testingSsh ? "测试中…" : "测试 SSH"}</button></div><span class="dialog-spacer" aria-hidden="true"></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn-primary" type="button" @click=${this.saveDevice} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
+      <div slot="footer" class="dialog-actions"><div class="dialog-test-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing || this.testingSsh}>${this.testing ? "探测中…" : `测试 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"}`}</button><button class="btn" type="button" @click=${this.testSshConnection} .disabled=${this.testing || this.testingSsh}>${this.testingSsh ? "测试中…" : "测试 SSH"}</button></div><span class="dialog-spacer" aria-hidden="true"></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn" type="button" @click=${() => this.saveDevice(true)} .disabled=${this.saving}>保存连接并配置采集</button><button class="btn-primary" type="button" @click=${() => this.saveDevice()} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
     </app-dialog>`;
   }
 
