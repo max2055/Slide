@@ -48,6 +48,18 @@ describe('appearance labels and stored-value compatibility', () => {
     } finally { window.removeEventListener('slide-settings-change', changed); }
   });
 
+  it('selects the new default without migrating explicit old blue or custom colors', async () => {
+    await mount({ accentColor: '#409eff', btnPalette: { primaryBg: '#123456' } });
+    const swatch = view.shadowRoot!.querySelector<HTMLButtonElement>('.color-swatch')!;
+    expect(swatch.getAttribute('aria-pressed')).toBe('false');
+    const changed = vi.fn(); window.addEventListener('slide-settings-change', changed);
+    try {
+      swatch.click();
+      expect(changed.mock.calls[0][0].detail).toEqual({ accentColor: '#265f99' });
+      expect(JSON.parse(localStorage.getItem(storageKey)!).btnPalette.primaryBg).toBe('#123456');
+    } finally { window.removeEventListener('slide-settings-change', changed); }
+  });
+
   it.each([undefined, {}, { locale: 'unsupported' }, { locale: 'en' }])('uses the effective language for missing, invalid or stale locale: %j', async settings => {
     await i18n.setLocale('zh-CN');
     const fields = await mount(settings);

@@ -169,17 +169,17 @@ test('server/local defaults, custom colors, multi-tab propagation, refresh and l
   let otherPreferenceWrites=0;other.on('request',r=>{if(r.url().endsWith('/api/user/preferences')&&r.method()==='PUT')otherPreferenceWrites++;});
   await page.goto(`${base}/settings/platform/appearance`);
   const blue=page.getByRole('button',{name:/默认蓝|Default blue/i});await expect(blue).toBeVisible();await blue.click();
-  await expect.poll(()=>other.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#409eff');
+  await expect.poll(()=>other.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#265f99');
   expect(otherPreferenceWrites).toBe(0);
-  await expect.poll(async()=>(await request('/api/user/preferences')).preferences.accentColor).toBe('#409eff');
-  await other.reload();await loaded(other);expect(await other.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#409eff');
+  await expect.poll(async()=>(await request('/api/user/preferences')).preferences.accentColor).toBe('#265f99');
+  await other.reload();await loaded(other);expect(await other.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#265f99');
   // Fresh browser session authenticates through the production login endpoint.
   const response=await fetch(`${api}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'admin',password})});expect(response.ok).toBe(true);
   const fresh=await browser.newPage();await login(fresh);await fresh.goto(`${base}/investigations`);await loaded(fresh);
-  await expect.poll(()=>fresh.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#409eff');await fresh.close();
+  await expect.poll(()=>fresh.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#265f99');await fresh.close();
   const custom='#14b8a6';await prefs({accentColor:custom});await other.reload();await loaded(other);
   await expect.poll(()=>other.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe(custom);
-  await shot(other,'custom-theme');await other.close();await prefs({accentColor:'#409eff'});
+  await shot(other,'custom-theme');await other.close();await prefs({accentColor:'#265f99'});
 });
 
 test('theme/density compatibility and controlled loading/failure/denied states',async({page,browser})=>{

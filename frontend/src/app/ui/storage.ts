@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT_COLOR } from "./accent-color.ts";
 const SETTINGS_KEY_PREFIX = "slide.control.settings.v1:";
 export const UI_SETTINGS_STORAGE_KEY = SETTINGS_KEY_PREFIX + "default";
 const LEGACY_SETTINGS_KEY = "slide.control.settings.v1";
@@ -176,7 +177,7 @@ export function loadSettings(): UiSettings {
     fontDensity: "standard",
     sidebarPosition: "left",
     reduceAnimations: false,
-    accentColor: "#409eff",
+    accentColor: DEFAULT_ACCENT_COLOR,
     // Layer 2 — Layout
     defaultTab: "dashboard",
     visibleTabs: [],

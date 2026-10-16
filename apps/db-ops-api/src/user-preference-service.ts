@@ -48,7 +48,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   fontDensity: 'standard',
   sidebarPosition: 'left',
   reduceAnimations: false,
-  accentColor: '#409eff',
+  accentColor: '#265f99',
   borderRadius: 50,
 
   defaultTab: 'dashboard',

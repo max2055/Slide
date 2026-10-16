@@ -1,6 +1,6 @@
 import { css } from 'lit';
 export const dashboardStyles = css`
-  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: color-mix(in srgb, var(--accent) 55%, var(--text-strong)); --btn-primary-bg: var(--overview-action); --btn-primary-color: var(--card); --btn-primary-border: var(--overview-action); --btn-ghost-color: var(--muted-strong); --btn-ghost-hover-color: var(--overview-action); --btn-secondary-border: var(--border); }
+  :host { display: block; min-width: 0; color: var(--text); container-type: inline-size; --overview-action: var(--accent-text); --btn-ghost-color: var(--muted-strong); --btn-ghost-hover-color: var(--overview-action); --btn-secondary-border: var(--border); }
   * { box-sizing: border-box; }
   .dashboard-grid { display: grid; gap: var(--space-md); padding-bottom: var(--space-xl); min-width: 0; }
   h1 { font-size: var(--text-xl); margin: 0; color: var(--text-strong); }

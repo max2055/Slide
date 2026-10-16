@@ -1,3 +1,4 @@
+import { DEFAULT_ACCENT_COLOR, accentForeground } from "../accent-color.ts";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
  * Appearance Settings — comprehensive visual personalization.
@@ -24,7 +25,7 @@ const TIMEZONES = [
 ];
 
 const ACCENT_PRESETS: { name: string; hex: string }[] = [
-  { name: "defaultBlue", hex: "#409eff" },
+  { name: "defaultBlue", hex: DEFAULT_ACCENT_COLOR },
   { name: "cyan", hex: "#22d3ee" },
   { name: "emerald", hex: "#34d399" },
   { name: "amber", hex: "#fbbf24" },
@@ -92,7 +93,7 @@ function readSettingsField<T>(key: string, fallback: T): T {
 
 @customElement("appearance-settings")
 export class AppearanceSettings extends LitElement {
-  @state() private accent: string = "#409eff";
+  @state() private accent: string = DEFAULT_ACCENT_COLOR;
   @state() private radius: number = 50;
   @state() private density: Density = "standard";
   @state() private sidebarPos: "left" | "right" = "left";
@@ -110,7 +111,7 @@ export class AppearanceSettings extends LitElement {
   @state() private notifySeverity: string[] = ["critical", "warning"];
   @state() private defaultModel: string = "";
 
-  @state() private btnPalPrimaryBg: string = "#409eff";
+  @state() private btnPalPrimaryBg: string = DEFAULT_ACCENT_COLOR;
   @state() private btnPalPrimaryColor: string = DEFAULT_PALETTE.primaryColor;
   @state() private btnPalSecondaryBg: string = "#f1f3f5";
   @state() private btnPalDangerBg: string = DEFAULT_PALETTE.dangerBg;
@@ -216,7 +217,7 @@ export class AppearanceSettings extends LitElement {
 
   private readPersistedSettings = () => {
     // Read persisted settings from unified localStorage key
-    this.accent = readSettingsField("accentColor", "#409eff");
+    this.accent = readSettingsField("accentColor", DEFAULT_ACCENT_COLOR);
     this.radius = readSettingsField("borderRadius", 50);
     this.density = readSettingsField("fontDensity", "standard");
     this.sidebarPos = readSettingsField("sidebarPosition", "left");
@@ -237,7 +238,7 @@ export class AppearanceSettings extends LitElement {
     // Apply visual state from current settings
     const savedPalette = readSettingsField<Partial<ButtonPalette>>("btnPalette", {});
     this.btnPalPrimaryBg = savedPalette.primaryBg || this.accent;
-    this.btnPalPrimaryColor = savedPalette.primaryColor || DEFAULT_PALETTE.primaryColor;
+    this.btnPalPrimaryColor = savedPalette.primaryColor || accentForeground(this.accent);
     this.btnPalSecondaryBg = savedPalette.secondaryBg || "#f1f3f5";
     this.btnPalDangerBg = savedPalette.dangerBg || DEFAULT_PALETTE.dangerBg;
     this.btnPalGhostColor = savedPalette.ghostColor || DEFAULT_PALETTE.ghostColor;

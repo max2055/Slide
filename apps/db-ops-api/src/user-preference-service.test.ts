@@ -9,12 +9,16 @@ vi.mock('./db-connection.js', () => ({
   dbConnection: { getPool: mocks.getPool },
 }));
 
-import { userPreferenceService } from './user-preference-service.js';
+import { DEFAULT_PREFERENCES, userPreferenceService } from './user-preference-service.js';
 
 describe('user preference persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getPool.mockReturnValue({ execute: mocks.execute });
+  });
+
+  it('uses the approved text blue for new preference records', () => {
+    expect(DEFAULT_PREFERENCES.accentColor).toBe('#265f99');
   });
 
   it('returns null when the user has no saved preferences', async () => {
@@ -27,6 +31,12 @@ describe('user preference persistence', () => {
     mocks.execute.mockResolvedValue([[{ preferences: JSON.stringify({ themeMode: 'dark' }) }], undefined]);
 
     await expect(userPreferenceService.getPreferences(7)).resolves.toEqual({ themeMode: 'dark' });
+  });
+
+  it('persists the new default for a first partial save', async () => {
+    mocks.execute.mockResolvedValueOnce([[], undefined]).mockResolvedValueOnce([{ affectedRows: 1 }, undefined]);
+    await expect(userPreferenceService.savePreferences(7, { locale: 'zh-CN' })).resolves.toEqual({ success: true });
+    expect(JSON.parse(mocks.execute.mock.calls[1][1][1]).accentColor).toBe('#265f99');
   });
 
   it('stores accent and button palette preferences', async () => {
