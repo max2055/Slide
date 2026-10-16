@@ -291,6 +291,49 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     expect(resolve).not.toHaveBeenCalled(); expect(s.collect).not.toHaveBeenCalled();
     expect((await policies.binding(admin, ref)).application.applied_revision).toBe(2);
   });
+  it('MAX-175 stops applied disabled revisions across concurrent scans/restart and resumes only a new revision', async () => {
+    await create(); const enabled = await policies.binding(admin, ref);
+    await policies.changeBinding(admin, ref, { expected_revision: 1, overrides: { enabled: 'disable' } }, true);
+    const disabled = await policies.binding(admin, ref), s = setup();
+    expect(disabled.application.status).toBe('pending');
+    expect(await enqueue(s.scheduler)).toBe(1);
+    expect(await Promise.all([s.scheduler.tick(), s.scheduler.tick()])).toEqual([0, 0]);
+    expect(await s.run(s.worker('max175-disable'))).toBe('completed');
+    expect((await policies.binding(admin, ref)).application).toMatchObject({ status: 'applied', applied_revision: 2 });
+    const before = await rows('SELECT id FROM workflow_jobs');
+    for (let cycle = 0; cycle < 2; cycle++) {
+      now += 60000;
+      store = new MysqlScheduleStore(pool, packages);
+      const restarted = setup();
+      // Include a stale pending snapshot: the transaction must read persisted application state.
+      expect(await Promise.all([restarted.scheduler.tick(), store.enqueue(disabled, now), store.enqueue(enabled, now)]))
+        .toEqual([0, false, false]);
+    }
+    expect(await rows('SELECT id FROM workflow_jobs')).toEqual(before);
+    expect(await outputs()).toHaveLength(0); expect(s.collect).not.toHaveBeenCalled();
+    await policies.changeBinding(admin, ref, { expected_revision: 2, overrides: { enabled: 'enable' } }, true);
+    const restarted = setup();
+    expect(await store.enqueue(disabled, now)).toBe(false);
+    expect(await restarted.scheduler.tick()).toBe(1); await ready();
+    expect(await restarted.run(restarted.worker('max175-enable'))).toBe('completed');
+    expect(restarted.collect).toHaveBeenCalledTimes(1);
+    expect((await policies.binding(admin, ref)).application.applied_revision).toBe(3);
+  });
+  it('MAX-175 retries an unapplied disabled revision after cancelled/dead-letter work without fake application', async () => {
+    await create(); await policies.changeBinding(admin, ref, { expected_revision: 1, overrides: { enabled: 'disable' } }, true);
+    const s = setup(); expect(await enqueue(s.scheduler)).toBe(1);
+    for (const state of ['cancelled', 'dead_letter']) {
+      await pool.query('UPDATE workflow_jobs SET state = ? WHERE state = ?', [state, 'queued']);
+      expect((await policies.binding(admin, ref)).application.applied_revision).toBeNull();
+      expect(await s.scheduler.tick()).toBe(0);
+      now += 60000;
+      expect(await s.scheduler.tick()).toBe(1);
+    }
+    await ready(); expect(await s.run(s.worker('max175-recovered-disable'))).toBe('completed');
+    expect((await policies.binding(admin, ref)).application.applied_revision).toBe(2);
+    now += 120000; expect(await s.scheduler.tick()).toBe(0);
+    expect(s.collect).not.toHaveBeenCalled();
+  });
   it('instantiates discovered dimension identities through binding validation', async () => {
     const r = builtinReleases()[2], p = { id: r.package.id, version: r.package.version, digest: r.package.digest };
     const network = { type: 'network_device' as const, id: 3 };

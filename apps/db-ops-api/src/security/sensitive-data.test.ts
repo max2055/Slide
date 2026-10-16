@@ -16,6 +16,18 @@ describe('Agent security data handling', () => {
     });
   });
 
+  it('MAX-175 preserves nested Date evidence as ISO and invalid dates as null while redacting secrets', () => {
+    const observedAt = new Date('2026-10-16T00:41:54.123Z');
+    const value = { observations: [{ observedAt, validUntil: new Date('2026-10-16T00:42:54.123Z'),
+      invalid: new Date(NaN), password: observedAt, detail: 'token=abc123xyz' }] };
+    expect(redactSensitiveData(value)).toEqual({ observations: [{
+      observedAt: '2026-10-16T00:41:54.123Z', validUntil: '2026-10-16T00:42:54.123Z',
+      invalid: null, password: '[REDACTED]', detail: 'token=[REDACTED]',
+    }] });
+    expect(value.observations[0].observedAt).toBe(observedAt);
+    expect(Number.isNaN(value.observations[0].invalid.getTime())).toBe(true);
+  });
+
   it('canonicalizes object keys for deterministic approval binding', () => {
     expect(stableJson({ b: 2, a: { d: 4, c: 3 } }))
       .toBe(stableJson({ a: { c: 3, d: 4 }, b: 2 }));
