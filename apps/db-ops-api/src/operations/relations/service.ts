@@ -195,7 +195,23 @@ export class RelationService {
         visible.push(edge);
       }
       await this.authorize(session, actor, [root]);
-      return { resource: root, edges: visible, partial };
+      // A late invalidation can disconnect an already-traversed subtree. Only
+      // retain edges reachable from the root through the remaining valid path.
+      const reachable = new Set([resourceKey(root)]), retained = new Set<string>();
+      let frontier = [root];
+      for (let depth = 0; depth < hops && frontier.length; depth++) {
+        const next: ResourceRef[] = [];
+        for (const ref of frontier) for (const edge of visible) {
+          const key = resourceKey(ref);
+          if (resourceKey(edge.source) !== key && resourceKey(edge.target) !== key) continue;
+          retained.add(edge.relationId);
+          const other = resourceKey(edge.source) === key ? edge.target : edge.source;
+          if (!reachable.has(resourceKey(other))) { reachable.add(resourceKey(other)); next.push(other); }
+        }
+        frontier = next;
+      }
+      if (retained.size < visible.length) partial = true;
+      return { resource: root, edges: visible.filter(edge => retained.has(edge.relationId)), partial };
     });
   }
 

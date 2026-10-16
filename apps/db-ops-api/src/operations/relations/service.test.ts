@@ -3,7 +3,8 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import { canManageResource } from '../../resources/resource-service.js';
 import { projectResourceRelation } from '../../resources/types.js';
 import { RelationService } from './service.js';
-import type { RelationStore } from './store.js';
+import { OperationsAuthorization } from '../authorization.js';
+import type { RelationSession, RelationStore, StoredRelation } from './store.js';
 
 const actor: ActorContext = { userId: 1, username: 'test', roles: [], permissions: ['*'],
   instanceScopes: {}, sessionVersion: 1, requestId: 'test' };
@@ -38,5 +39,28 @@ describe('relation input and compatibility boundaries', () => {
       relationType: 'runs_on' as const, provenance: 'old', validFrom: new Date(0) };
     expect(projectResourceRelation(value, value.target)).toMatchObject({ source: value.target, target: value.source, relationType: 'hosts' });
     expect(projectResourceRelation(value, value.source)).toBe(value); expect(value.relationType).toBe('runs_on');
+  });
+
+  it('removes an orphaned downstream edge when its upstream source is withdrawn before send', async () => {
+    const now = new Date('2026-10-16T00:00:00.000Z');
+    const edge = (id: string, source: number, target: number): StoredRelation => ({ id, relationId: id, version: 2, schemaVersion: 1,
+      source: { type: 'server', id: source }, target: { type: 'server', id: target }, relationType: 'depends_on',
+      state: 'confirmed', origin: 'manual', author: { kind: 'user', id: 1 }, contentHash: id.repeat(64), legacyProvenance: null,
+      observedAt: now.toISOString(), validFrom: now.toISOString(), validUntil: null, confirmedBy: 1, confirmedAt: now.toISOString(),
+      evidence: [{ id: 'source', version: 1, hash: 'a'.repeat(64), validUntil: '2026-10-17T00:00:00.000Z' }], withdrawalReason: null });
+    const values = [edge('1', 1, 2), edge('2', 2, 3)];
+    const session: RelationSession = {
+      connection: { execute: async () => [[{ id: 1 }]] } as any,
+      lockResources: async () => {}, lockHead: async () => {}, legacyActive: async () => true,
+      head: async id => values.find(value => value.id === id) ?? null,
+      adjacent: async ref => values.filter(value => value.source.id === ref.id || value.target.id === ref.id),
+      history: async () => [], append: async () => {},
+    };
+    let upstreamReads = 0;
+    const liveAuth = new OperationsAuthorization({ loadInvestigationActorFrom: async () => actor });
+    const graphService = new RelationService({ transaction: work => work(session) }, liveAuth,
+      { check: async (_session, _actor, relation) => relation.id === '1' && ++upstreamReads > 1 ? 'withdrawn' : 'valid' },
+      undefined, () => now);
+    expect(await graphService.graph(actor, { type: 'server', id: 1 })).toMatchObject({ edges: [], partial: true });
   });
 });
