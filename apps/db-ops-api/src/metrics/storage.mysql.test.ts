@@ -13,11 +13,12 @@ import { MysqlObservationStore, ObservationService } from '../migrations/metric-
 // Opt-in disposable localhost MySQL. Never reads application .env or an existing database.
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 describe.skipIf(!port)('Metrics isolated MySQL', () => {
-  let admin: Pool, pool: Pool, upgrade: Pool;
+  let admin: Pool, pool: Pool, upgrade: Pool, fault: Pool;
   let storage: MysqlMetricStorage;
-  let directory: string;
+  let directory: string, faultDirectory: string;
   const database = `max65_${process.pid}`;
   const upgradeDatabase = `${database}_upgrade`;
+  const faultDatabase = `${database}_fault`;
   let now = new Date('2026-09-01T00:02:00Z');
   const runner = (p: Pool, dir?: string) => new MigrationRunner(p as unknown as MigrationPool, dir);
 
@@ -25,24 +26,35 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
     admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
     await admin.query(`CREATE DATABASE ${database}`);
     await admin.query(`CREATE DATABASE ${upgradeDatabase}`);
+    await admin.query(`CREATE DATABASE ${faultDatabase}`);
     const options = { host: '127.0.0.1', port, user: 'root', password: '', connectionLimit: 8, timezone: 'Z' };
     pool = mysql.createPool({ ...options, database });
     upgrade = mysql.createPool({ ...options, database: upgradeDatabase });
+    fault = mysql.createPool({ ...options, database: faultDatabase });
     directory = await mkdtemp(join(tmpdir(), 'max65-migrations-'));
+    faultDirectory = await mkdtemp(join(tmpdir(), 'max189-historical-repair-'));
     // Full empty-install migration chain, not a mock or manually fabricated schema.
     await runner(pool).run();
-    for (const migration of (await loadMigrations()).filter(m => m.id < '098_')) await writeFile(join(directory, migration.id), migration.sql);
+    for (const migration of (await loadMigrations()).filter(m => m.id < '098_')) {
+      await writeFile(join(directory, migration.id), migration.sql);
+      await writeFile(join(faultDirectory, migration.id), migration.sql);
+    }
     await runner(upgrade, directory).run();
+    // A complete pre-098 install is fixture setup, not the repair assertion.
+    // Keep its real DDL under this hook budget, outside the default 5s test window.
+    await runner(fault, faultDirectory).run();
   }, 120000);
 
   afterAll(async () => {
-    await pool?.end(); await upgrade?.end();
+    await pool?.end(); await upgrade?.end(); await fault?.end();
     if (admin) {
       await admin.query(`DROP DATABASE IF EXISTS ${database}`);
       await admin.query(`DROP DATABASE IF EXISTS ${upgradeDatabase}`);
+      await admin.query(`DROP DATABASE IF EXISTS ${faultDatabase}`);
       await admin.end();
     }
     if (directory) await rm(directory, { recursive: true, force: true });
+    if (faultDirectory) await rm(faultDirectory, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -93,31 +105,26 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
 
   it('partial historical DDL failure blocks rerun; checksum-bound repair remains valid before neutral rename', async () => {
     const migrations=await loadMigrations(),migration=migrations.find(m=>m.id==='098_metric_v2_storage.sql')!;
-    const faultDb=`${database}_fault`,dir=await mkdtemp(join(tmpdir(),'max189-historical-repair-'));
-    await admin.query(`CREATE DATABASE ${faultDb}`);
-    const fault=mysql.createPool({host:'127.0.0.1',port,user:'root',password:'',database:faultDb});
-    try {
-      for(const m of migrations.filter(m=>m.id<'098_'))await writeFile(join(dir,m.id),m.sql);
-      await runner(fault,dir).run();await writeFile(join(dir,migration.id),migration.sql);
-      await fault.query('CREATE TABLE metric_v2_attempts (fault INT)');
-      await expect(runner(fault,dir).run()).rejects.toThrow('failed');
-      expect((await runner(fault,dir).inspect()).find(m=>m.migration_id===migration.id)?.statement_index).toBe(1);
-      await expect(runner(fault,dir).run()).rejects.toThrow('explicit repair');
-      await fault.query('DROP TABLE metric_v2_attempts');
-      for(const statement of splitSqlStatements(migration.sql).slice(1))await fault.query(statement);
-      await expect(runner(fault,dir).acknowledgeExternallyRepairedMigration(migration.id,'test','repair')).rejects.toThrow('checksum-bound');
-      const repaired=new MigrationRunner(fault as unknown as MigrationPool,dir,{[migration.id]:{checksum:migration.checksum,verify:async c=>{
-        for(const name of ['observations','attempts','inventory']){
-          const [columns]=await c.query(`SHOW FULL COLUMNS FROM metric_v2_${name}`);
-          expect(columns).toEqual((await pool.query<RowDataPacket[]>(`SHOW FULL COLUMNS FROM metric_${name}`))[0].filter(c=>c.Field!=='tombstone'));
-          const [indexes]=await c.query<RowDataPacket[]>(`SHOW INDEX FROM metric_v2_${name}`);
-          const shape=(rows:RowDataPacket[])=>rows.map(({Cardinality:_cardinality,Table:_table,...row})=>({...row,Key_name:String(row.Key_name).replace('metric_v2_','metric_')}));
-          expect(shape(indexes)).toEqual(shape((await pool.query<RowDataPacket[]>(`SHOW INDEX FROM metric_${name}`))[0]));
-        }
-      }}});
-      await repaired.acknowledgeExternallyRepairedMigration(migration.id,'isolated-test','verified historical schema against neutral schema');
-      await repaired.run();expect((await repaired.inspect()).find(m=>m.migration_id===migration.id)?.status).toBe('completed');
-    }finally{await fault.end();await admin.query(`DROP DATABASE ${faultDb}`);await rm(dir,{recursive:true,force:true});}
+    const dir = faultDirectory;
+    await writeFile(join(dir, migration.id), migration.sql);
+    await fault.query('CREATE TABLE metric_v2_attempts (fault INT)');
+    await expect(runner(fault,dir).run()).rejects.toThrow('failed');
+    expect((await runner(fault,dir).inspect()).find(m=>m.migration_id===migration.id)?.statement_index).toBe(1);
+    await expect(runner(fault,dir).run()).rejects.toThrow('explicit repair');
+    await fault.query('DROP TABLE metric_v2_attempts');
+    for(const statement of splitSqlStatements(migration.sql).slice(1))await fault.query(statement);
+    await expect(runner(fault,dir).acknowledgeExternallyRepairedMigration(migration.id,'test','repair')).rejects.toThrow('checksum-bound');
+    const repaired=new MigrationRunner(fault as unknown as MigrationPool,dir,{[migration.id]:{checksum:migration.checksum,verify:async c=>{
+      for(const name of ['observations','attempts','inventory']){
+        const [columns]=await c.query(`SHOW FULL COLUMNS FROM metric_v2_${name}`);
+        expect(columns).toEqual((await pool.query<RowDataPacket[]>(`SHOW FULL COLUMNS FROM metric_${name}`))[0].filter(c=>c.Field!=='tombstone'));
+        const [indexes]=await c.query<RowDataPacket[]>(`SHOW INDEX FROM metric_v2_${name}`);
+        const shape=(rows:RowDataPacket[])=>rows.map(({Cardinality:_cardinality,Table:_table,...row})=>({...row,Key_name:String(row.Key_name).replace('metric_v2_','metric_')}));
+        expect(shape(indexes)).toEqual(shape((await pool.query<RowDataPacket[]>(`SHOW INDEX FROM metric_${name}`))[0]));
+      }
+    }}});
+    await repaired.acknowledgeExternallyRepairedMigration(migration.id,'isolated-test','verified historical schema against neutral schema');
+    await repaired.run();expect((await repaired.inspect()).find(m=>m.migration_id===migration.id)?.status).toBe('completed');
   });
 
   it('roundtrips all MAX-64 canonical/extension fixtures, exact integers, lineage and provenance', async () => {
