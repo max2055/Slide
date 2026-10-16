@@ -4,7 +4,7 @@ import { PackageRegistry, sealRelease, type ImplementationSpec, type PackageRele
 
 export type Engine = 'mysql' | 'postgresql' | 'oracle' | 'dameng';
 interface Field { name: string; definition: MetricDefinition; estimated?: boolean }
-export interface DatabaseRead { engine: Engine; name: string; sql: string; shape: 'status' | 'object' | 'array'; fields: Field[]; database?: boolean; cost?: 'high'; permissions: string[] }
+export interface DatabaseRead { engine: Engine; name: string; sql: string; shape: 'status' | 'object' | 'array' | 'replication'; fields: Field[]; database?: boolean; cost?: 'high'; permissions: string[] }
 const dimensions = (names: string[]) => ({ keys: names.map(name => ({ name, meaning: `${name} stable resource-local identity`, required: true })), max_series_per_resource: 100, max_value_length: 128, overflow: 'reject' as const });
 function metric(id: string, meaning: string, unit: MetricDefinition['unit'] = 'count', counter = false, dims: string[] = []): MetricDefinition {
   return { category: 'extension', namespace: id.split('.')[0], id, semantic_version: '1.0.0', meaning, resource_type: 'instance', scope: 'resource', unit,

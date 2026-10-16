@@ -16,7 +16,7 @@ function counterField(name:string,id:string,meaning:string,unit:MetricDefinition
   const f=field(name,id,meaning,unit);f.definition.kind='counter';f.definition.monotonic=true;f.definition.temporality='cumulative';f.definition.aggregation.time=['last','rate'];return f;
 }
 // Fixed reads only. Unlike the historical providers these never invent zero/100 on NULL or errors.
-export const diagnosticReads: DatabaseRead[] = [
+const frozenDiagnosticReads: DatabaseRead[] = [
   ...databaseReads.filter(r=>r.engine==='mysql'&&['connections','limit','size','transactions'].includes(r.name)).map(r=>({...r,name:`diagnostics_${r.name}`})),
   {engine:'mysql',name:'diagnostics_queries',shape:'status',sql:"SHOW GLOBAL STATUS WHERE Variable_name='Queries'",permissions:['SHOW GLOBAL STATUS','authoritative counter epoch'],fields:[{name:'Queries',definition:builtinReleases()[0].extensions.find(d=>d.id==='mysql.queries.total')!}]},
   {engine:'mysql',name:'diagnostic_counters',shape:'status',sql:"SHOW GLOBAL STATUS WHERE Variable_name IN ('Slow_queries','Bytes_received','Bytes_sent','Handler_read_rnd_next','Aborted_connects')",
@@ -91,6 +91,36 @@ export const diagnosticReads: DatabaseRead[] = [
   { engine: 'dameng', name: 'deadlock_diagnostics', shape: 'array', sql: 'SELECT COUNT(*) FROM V$DEADLOCK_HISTORY',
     permissions: ['SELECT V$DEADLOCK_HISTORY'], fields: [field('events', 'dameng.deadlock_history.rows', 'Current retained V$DEADLOCK_HISTORY row count; not monotonic events since startup.')] },
 ];
+// Additive releases: do not change the contents/digests of diagnostics@1.0.0.
+const compatibilityReads: DatabaseRead[] = [
+  {engine:'mysql',name:'innodb_diagnostics',shape:'status',sql:"SHOW GLOBAL STATUS WHERE Variable_name IN ('Innodb_row_lock_time_avg','Innodb_deadlocks','Created_tmp_disk_tables')",permissions:['SHOW GLOBAL STATUS'],fields:[
+    field('Innodb_row_lock_time_avg','mysql.innodb.row_lock_average_ms','Native InnoDB average row-lock acquisition time in milliseconds; not an interval average.','ms'),
+    counterField('Innodb_deadlocks','mysql.innodb.deadlocks_total','Cumulative Innodb_deadlocks since engine lifecycle; rate requires trusted epoch.'),
+    counterField('Created_tmp_disk_tables','mysql.temporary.disk_tables_total','Cumulative internal on-disk temporary tables; not a ratio.'),
+  ]},
+  {engine:'mysql',name:'thread_cache',shape:'object',sql:"SELECT 100*(1-MAX(CASE WHEN VARIABLE_NAME='Threads_created' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END)/NULLIF(MAX(CASE WHEN VARIABLE_NAME='Connections' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END),0)) AS hit FROM performance_schema.global_status WHERE VARIABLE_NAME IN ('Threads_created','Connections')",permissions:['SELECT performance_schema.global_status'],fields:[field('hit','mysql.thread_cache.hit_percent','Cumulative 1 - Threads_created/Connections; NULL without connections.','%',true)]},
+  {engine:'mysql',name:'active_transactions',shape:'object',sql:'SELECT COUNT(*) AS active FROM information_schema.INNODB_TRX',permissions:['PROCESS','SELECT information_schema.INNODB_TRX'],fields:[field('active','mysql.transactions.active','Current InnoDB transactions in INNODB_TRX, including waiting transactions.')]},
+  {engine:'mysql',name:'replication_channels',shape:'replication',sql:'SHOW REPLICA STATUS',permissions:['REPLICATION CLIENT'],fields:[
+    field('lag','mysql.replication.behind_source_seconds','Native Seconds_Behind_Source per channel; NULL remains unavailable, not zero or measured end-to-end lag.','s',true),
+    field('io_running','mysql.replication.io_running','Per-channel receiver reports Yes=1, No/Connecting=0; missing status unavailable.'),
+    field('sql_running','mysql.replication.sql_running','Per-channel applier reports Yes=1, No=0; missing status unavailable.'),
+  ].map(f=>({...f,definition:{...f.definition,dimensions:{...f.definition.dimensions,max_series_per_resource:100,keys:[{name:'channel',meaning:'Replication channel name; default channel is named default.',required:true}]}}}))},
+  {engine:'postgresql',name:'database_diagnostics',shape:'object',database:true,sql:'SELECT datname AS database, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted, blks_read, blks_hit, temp_files, deadlocks FROM pg_stat_database WHERE datname=current_database()',permissions:['SELECT pg_stat_database','driver startup and stats_reset evidence'],fields:[
+    ...['returned','fetched','inserted','updated','deleted'].map(n=>counterField(`tup_${n}`,`postgresql.database.tuples_${n}_total`,`Current database pg_stat_database.tup_${n}; stats_reset epoch required.`)),
+    counterField('blks_read','postgresql.database.blocks_read_total','Current database cumulative disk blocks read, not bytes.'),
+    counterField('blks_hit','postgresql.database.blocks_hit_total','Current database cumulative shared-buffer block hits.'),
+    counterField('temp_files','postgresql.database.temp_files_total','Current database cumulative temporary files created.'),
+    counterField('deadlocks','postgresql.database.deadlocks_total','Current database cumulative detected deadlocks.'),
+  ].map(f=>({...f,definition:{...f.definition,dimensions:{...f.definition.dimensions,keys:[{name:'database',meaning:'Bound current database name',required:true}]}}}))},
+  {engine:'postgresql',name:'active_transactions',shape:'object',sql:'SELECT COUNT(*) AS active FROM pg_stat_activity WHERE xact_start IS NOT NULL',permissions:['SELECT pg_stat_activity'],fields:[field('active','postgresql.transactions.active','Cluster visible backends with non-NULL xact_start; includes idle-in-transaction.')]},
+  {engine:'postgresql',name:'waiting_locks',shape:'object',sql:"SELECT COUNT(*) AS waiting FROM pg_stat_activity WHERE wait_event_type='Lock'",permissions:['SELECT pg_stat_activity'],fields:[field('waiting','postgresql.backends.waiting_for_lock','Current visible backends waiting on Lock; not cumulative lock_wait_count (no stock pg_stat_database column).')]},
+  {engine:'oracle',name:'library_cache',shape:'array',sql:'SELECT 100*SUM(PINHITS)/NULLIF(SUM(PINS),0) FROM V$LIBRARYCACHE',permissions:['SELECT V_$LIBRARYCACHE'],fields:[field('hit','oracle.library_cache.pin_hit_percent','Cumulative library cache PINHITS/PINS; NULL without pins.','%',true)]},
+  {engine:'oracle',name:'user_tablespaces',shape:'array',sql:"SELECT MAX((1-NVL(f.free_bytes,0)/NULLIF(d.bytes,0))*100) FROM (SELECT TABLESPACE_NAME,SUM(BYTES) AS bytes FROM DBA_DATA_FILES WHERE TABLESPACE_NAME NOT IN ('SYSTEM','SYSAUX') GROUP BY TABLESPACE_NAME) d LEFT JOIN (SELECT TABLESPACE_NAME,SUM(BYTES) AS free_bytes FROM DBA_FREE_SPACE GROUP BY TABLESPACE_NAME) f ON d.TABLESPACE_NAME=f.TABLESPACE_NAME",permissions:['SELECT DBA_DATA_FILES','SELECT DBA_FREE_SPACE'],fields:[field('usage','oracle.tablespaces.user_max_allocated_used_percent','Maximum permanent allocated tablespace used ratio excluding SYSTEM/SYSAUX; NULL without user tablespaces.','%',true)]},
+  {engine:'dameng',name:'memory_pool_bytes',shape:'array',sql:"SELECT CAST(STAT_VAL AS VARCHAR(20)) FROM V$SYSSTAT WHERE NAME='memory pool size in bytes'",permissions:['SELECT V$SYSSTAT'],fields:[field('bytes','dameng.memory_pool.allocated_bytes','Native memory pool size in bytes; missing row is unavailable.','By')]},
+  {engine:'dameng',name:'os_memory_bytes',shape:'array',sql:"SELECT CAST(STAT_VAL AS VARCHAR(20)) FROM V$SYSSTAT WHERE NAME='memory used bytes from os'",permissions:['SELECT V$SYSSTAT'],fields:[field('bytes','dameng.os.allocated_memory_bytes','Native memory used bytes from OS, not host total memory utilization.','By')]},
+  {engine:'dameng',name:'active_sessions',shape:'array',sql:"SELECT COUNT(*) FROM V$SESSIONS WHERE STATE='ACTIVE'",permissions:['SELECT V$SESSIONS'],fields:[field('active','dameng.sessions.active','DM active sessions, not active transaction count.')]},
+];
+export const diagnosticReads = [...frozenDiagnosticReads, ...compatibilityReads];
 export const diagnosticSpecs: ImplementationSpec[] = diagnosticReads.map(read => ({
   id: implementationId(read), method: 'sql', resource_type: 'instance',
   applicability: [{ attribute: 'db.engine', values: [read.engine] }, { attribute: 'db.version', values: read.engine === 'mysql' ? [...databaseVersions.mysql, '9.6'] : databaseVersions[read.engine] }],
@@ -98,15 +128,15 @@ export const diagnosticSpecs: ImplementationSpec[] = diagnosticReads.map(read =>
   discovery: 'Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch.',
 }));
 export function diagnosticReleases(): PackageRelease[] {
-  return (Object.keys(databaseVersions) as Engine[]).map(engine => {
-    const base = databaseReleases().find(r => r.package.id === `${engine}-representative`) !;
-    const specs = diagnosticSpecs.filter(s => s.applicability[0].values[0] === engine);
-    // Gauges remain available independently; cumulative counter mappings require authoritative epoch evidence.
-    return sealRelease({ ...base, package: { ...base.package, id: `${engine}-diagnostics`, version: '1.0.0', applicability: specs[0].applicability,
+  return (Object.keys(databaseVersions) as Engine[]).flatMap(engine => ['1.0.0','1.1.0'].map(version => {
+    const base = databaseReleases().find(r => r.package.id === `${engine}-representative`)!;
+    const reads = version === '1.0.0' ? frozenDiagnosticReads : diagnosticReads;
+    const specs = diagnosticSpecs.filter(s => reads.some(r => implementationId(r)===s.id) && s.applicability[0].values[0] === engine);
+    return sealRelease({ ...base, package: { ...base.package, id: `${engine}-diagnostics`, version, applicability: specs[0].applicability,
       collectors: [...(engine === 'mysql' ? [] : base.package.collectors), ...specs.map(s => ({ id: s.id.split('.').at(-2)!, implementation_ref: s.id, method: 'sql' as const,
         timeout_ms: 5000, estimated_cost: 'low' as const, mappings: s.outputs.map(o => ({ metric: { id: o.definition.id, semantic_version: o.definition.semantic_version },
           raw_field: o.raw_field, input_unit: o.input_unit, output_unit: o.definition.unit, transform_version: '1.0.0', steps: ['decode', 'normalize'] as Array<'decode' | 'normalize'> })) }))] },
       extensions: [...new Map([...base.extensions,...specs.flatMap(s=>s.outputs.map(o=>o.definition)).filter((d):d is Extract<MetricDefinition,{category:'extension'}>=>d.category==='extension')].map(d=>[d.id,d])).values()],
       documentation: [...(engine === 'mysql' ? [] : base.documentation), ...specs.map(s => ({collector_id:s.id.split('.').at(-2)!, permissions:s.permissions, discovery:s.discovery}))] });
-  });
+  }));
 }
