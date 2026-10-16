@@ -170,3 +170,31 @@ describe('capacity total scope', () => {
     dashboard.search = 'absent'; dashboard.normalizeSelection(); authFetch.mockClear(); await dashboard.loadTrend(); expect(authFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('overview evidence hierarchy', () => {
+  it('keeps expired risks actionable with observation provenance and full-width details', async () => {
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [item({ status: 'offline', freshness: 'stale', unresolvedAlerts: 2, alertIds: ['1', '2'], impactScope: [{ type: 'instance', id: 9 }] })] }) });
+    const dashboard = document.createElement('dashboard-page') as any;
+    document.body.append(dashboard); await new Promise(done => setTimeout(done, 0)); await dashboard.updateComplete;
+    const root = dashboard.shadowRoot;
+    expect(root.querySelector('#resource-details').parentElement.id).toBe('overview-panel');
+    const risk = root.querySelector('.risk-row');
+    expect(risk.querySelectorAll('a')).toHaveLength(2);
+    expect(risk.querySelector('.risk-next').href).toContain('/resource-diagnosis?');
+    expect(risk.querySelector('time').title).toBe(item().observedAt);
+    expect(risk.querySelector('details').open).toBe(false);
+    risk.querySelector('.relation-select').click(); await dashboard.updateComplete;
+    expect(root.querySelector('#risk-relations').textContent).toContain('#9');
+    const table = root.querySelector('app-data-table'); await table.updateComplete;
+    expect(table.querySelector('.more-actions a').href).toContain('/server-detail?');
+    expect(table.querySelector('.more-actions a:last-child').href).toContain('/resource-diagnosis?');
+  });
+  it('clears resource content on a revoked overview response', async () => {
+    const dashboard = document.createElement('dashboard-page') as any;
+    dashboard.resourceOverview = { items: [item({ status: 'offline' })] };
+    authFetch.mockResolvedValue({ ok: false, status: 403 });
+    await dashboard.loadDashboardData();
+    expect(dashboard.resourceOverview).toBeNull();
+    expect(dashboard.error).not.toBe('');
+  });
+});
