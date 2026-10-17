@@ -15,6 +15,7 @@ import { PolicyService } from '../policy/service.js';
 import { registerMetricPolicyRoutes } from '../policy/routes.js';
 import { MysqlMetricStorage } from '../storage.js';
 import { admin, pin, resource } from '../policy/test-support.js';
+import { sealRelease } from '../packages/model.js';
 import { installHistoricalMetricRoutes } from '../legacy-routes.js';
 import { createConfigurationRegistry } from './registry.js';
 import { MetricConfigurationService } from './service.js';
@@ -27,8 +28,15 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
   const database = `max74_${process.pid}`;
   let root: Pool, pool: Pool, app: ReturnType<typeof Fastify>, vite: ViteDevServer, browser: Browser;
   let base: string, web: string;
+  let remoteHasRows = true;
   let poolSpy: ReturnType<typeof vi.spyOn>;
   const registry = createConfigurationRegistry();
+  // Same MySQL 8 transport and applicability, without the first-sample rate.
+  // This test-only immutable package exercises the all-good UI branch.
+  const baseline = registry.get(pin);
+  const scalarsOnly = sealRelease({ ...baseline, package: { ...baseline.package, version: '1.0.1' },
+    derived: [], extensions: baseline.extensions.filter(d => d.id !== 'mysql.queries.per_second') });
+  registry.install(scalarsOnly);
   const auth = async (request: any) => { request.user = request.headers.authorization === 'Bearer readonly'
     ? { ...admin, permissions: ['metric:view', 'instance:view'], instanceScopes: { 1: 'read-only' } } : admin; };
   beforeAll(async () => {
@@ -46,7 +54,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const service = new MetricConfigurationService(policy, registry, createTrialStore(() => pool, registry), { resolve: async ref => ({ resource: resource(ref.id), credential_ref: 'credential:isolated-target',
       evidence: { counter: { bits: '64', start_at: '2026-09-01T00:00:00.000Z' } },
       // Fixed simulated remote target; HTTP, policy persistence, CAS and reservation are real.
-      resolve: async () => ({ method: 'sql', pool: { query: async () => [[{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }], []] } }),
+      resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }] : [], []] } }),
     }) }, configurationReader(() => pool));
     app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy); await registerMetricConfigurationRoutes(app, auth, service);
     base = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -147,7 +155,18 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       expect(trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status))).toBe(true);
       await writeFile(`${artifacts}/trial-${width}.json`, JSON.stringify(trial, null, 2));
       await browserExpect(flow.getByRole('heading', { name: '本次试采（不写正式观测）' })).toBeVisible();
-      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toBeVisible();
+      expect(trial.samples).toEqual(expect.arrayContaining([
+        expect.objectContaining({ metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' },
+          value: { encoding: 'uint64', value: '9007199254740993' }, quality: { status: 'good', reason: 'none' } }),
+        expect.objectContaining({ metric: { id: 'mysql.queries.per_second', semantic_version: '1.0.0' },
+          value: null, quality: { status: 'unknown', reason: 'counter_baseline' } }),
+      ]));
+      await browserExpect(flow.getByText('可发布有效指标，部分指标仍失败/待验证。请逐项核对下方采集结果；发布不代表全部指标可用。', { exact: true })).toBeVisible();
+      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toHaveCount(0);
+      const resultItems = flow.getByRole('list', { name: '逐项采集结果' });
+      await browserExpect(resultItems).toContainText('mysql-status：成功');
+      await browserExpect(resultItems).toContainText('待验证 · counter_baseline');
+      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
       const activation = page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/activate') && r.request().method() === 'POST');
       await flow.getByRole('button', { name: '发布', exact: true }).click();
       expect((await activation).status()).toBe(200);
@@ -221,4 +240,44 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     await browserExpect(mysqlPackage.getByRole('button', { name: '查看模板', exact: true })).toBeFocused();
     await settings.close();
   }, 60000);
+  it('shows full success only for all-good trial evidence and blocks a trial without valid samples', async () => {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    try {
+      await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
+      await page.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(scalarsOnly.package.digest);
+      await page.getByRole('button', { name: '检查并启用', exact: true }).click();
+      const flow = page.locator('app-dialog[title="检查并启用采集"]');
+      const [previewResponse] = await Promise.all([
+        page.waitForResponse(r => r.url().endsWith('/policy/resources/instance/1/preview') && r.request().method() === 'POST'),
+        flow.getByRole('button', { name: '预检与影响预览' }).click(),
+      ]);
+      expect(previewResponse.status(), await previewResponse.text()).toBe(200);
+      const trial = async () => {
+        const [response] = await Promise.all([
+          page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/trial') && r.request().method() === 'POST'),
+          flow.getByRole('button', { name: '试采', exact: true }).click(),
+        ]);
+        expect(response.status()).toBe(200);
+        return await response.json() as Awaited<ReturnType<MetricConfigurationService['trial']>>;
+      };
+      const complete = await trial();
+      expect(complete).toMatchObject({ decision: 'attempted', persisted: false });
+      expect(complete.attempts.length).toBeGreaterThan(0);
+      expect(complete.attempts.every(a => a.status === 'succeeded' && !a.error)).toBe(true);
+      expect(complete.samples).toHaveLength(2);
+      expect(complete.samples.every(s => s.value !== null && s.quality.status === 'good')).toBe(true);
+      expect(complete.samples[0]).toMatchObject({ metric: { id: 'db.uptime_seconds' },
+        value: { encoding: 'float64', value: 1000 }, quality: { status: 'good', reason: 'none' } });
+      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toBeVisible();
+      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
+      remoteHasRows = false;
+      const invalid = await trial();
+      expect(invalid.samples.some(s => s.value !== null && s.quality.status === 'good')).toBe(false);
+      expect(invalid.attempts).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'failed', error: 'parse_error' })]));
+      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toHaveCount(0);
+      await browserExpect(flow.getByText('数据格式或字段不符合采集包要求，请核对目标版本和采集包后重试。', { exact: true })).toBeVisible();
+      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
+    } finally { remoteHasRows = true; await page.close(); }
+  }, 30000);
 });
