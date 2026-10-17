@@ -102,6 +102,16 @@ test.beforeAll(async () => {
   if (history.length) await pool.query('INSERT INTO metrics_history SET ?', [history[0]]);
   report.target = { id: 1, name: instance.name, version: instance.db_version, host: instance.host, port: instance.port, source_configuration_digest: sourceDigest };
   report.fixture = { schema, container, platform: 'MySQL 8.4 disposable copy', sourceDefinitionIds: definitions.map((r: any) => r.id), sourceTemplateIds: templates.map((r: any) => r.id), syntheticPublications: 0 };
+  const diagnostic = `import { dbConnection } from './src/db-connection.ts';
+    import { metricConfigurationService } from './src/metrics/config/routes.ts';
+    import { admin } from './src/metrics/policy/test-support.ts';
+    await dbConnection.initialize();
+    try { const result = await metricConfigurationService.status(admin, {type:'instance',id:1}); console.log('MAX190_STATUS_DIAGNOSTIC='+JSON.stringify({ok:true,binding:result.binding})); }
+    catch(error) { console.log('MAX190_STATUS_DIAGNOSTIC='+JSON.stringify({ok:false,name:error.name,code:error.code,message:error.message,stack:error.stack?.split('\\n').slice(1,7)})); }
+    finally { await dbConnection.close(); }`;
+  const diagnosticLog = execFileSync(process.execPath, ['--import','tsx','--input-type=module','-e',diagnostic], {cwd:apiDirectory,env,encoding:'utf8',timeout:30000});
+  report.directStatus = JSON.parse(diagnosticLog.split('\n').find((line: string) => line.startsWith('MAX190_STATUS_DIAGNOSTIC='))!.slice('MAX190_STATUS_DIAGNOSTIC='.length));
+  await save();
   const backend = await launch(['--import', 'tsx', 'server.ts'], apiDirectory, env, 'api'); await ready(api + '/api/health/ready', backend);
   const vite = await launch([resolve('node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '5196', '--strictPort'], resolve('.'), { ...env, VITE_API_PROXY_TARGET: api, VITE_AGENT_WS_PROXY_TARGET: 'http://127.0.0.1:29990' }, 'vite'); await ready(site, vite);
   await save();
@@ -134,7 +144,9 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   await page.getByRole('tab', { name: '监控与采集', exact: true }).click();
   const editor = page.locator('metric-configuration'); await stage('resource editor');
+  await page.screenshot({ path: `${output}/editor-initial.png`, fullPage: true });
   const catalog = await request('/api/metrics/config/catalog');
+  report.httpStatus = await request('/api/metrics/config/resources/instance/1/status'); await save();
   const pin = catalog.packages.find((r: any) => r.package.id === 'mysql-custom-existing-scalars').package;
   await editor.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(pin.digest); await stage('custom SQL package selected');
   await editor.getByLabel('采集间隔（秒）覆盖方式', { exact: true }).selectOption('set');
