@@ -96,6 +96,38 @@ export class AttentionStore {
       } catch (error) { if (error instanceof InvestigationStoreError) throw absent(); throw error; }
     }
   }
+  /** Row locks prevent concurrent revocation, but cannot freeze time. Capture
+   * the live SQL grant horizon before projection IO. Anchor each TTL BEFORE its
+   * query using a monotonic clock, so slow SQL/network IO only shortens access.
+   * Conservatively reject the whole response if any captured grant expires;
+   * counts, cursor, overrides and recorded explanations share this fence. */
+  private async deliveryExpiryFence(c: PoolConnection, actor: ActorContext, investigationIds: string[]) {
+    let deadline = Infinity;
+    const capture = async (sql: string, values: any[]) => {
+      const started = performance.now();
+      for (const row of await rows(c, sql, values)) if (row.remaining !== null)
+        deadline = Math.min(deadline, started + Number(row.remaining));
+    };
+    for (const table of ['user_roles', 'instance_permissions']) await capture(`SELECT
+      TIMESTAMPDIFF(MICROSECOND,CURRENT_TIMESTAMP(3),grant_expiry)/1000 remaining FROM ${table}
+      WHERE user_id=? AND (grant_expiry IS NULL OR grant_expiry>CURRENT_TIMESTAMP(3)) FOR SHARE`, [actor.userId]);
+    if (investigationIds.length) await capture(`SELECT
+      TIMESTAMPDIFF(MICROSECOND,CURRENT_TIMESTAMP(3),expires_at)/1000 remaining FROM investigation_members
+      WHERE user_id=? AND investigation_id IN (${investigationIds.map(() => '?').join(',')})
+      AND (expires_at IS NULL OR expires_at>CURRENT_TIMESTAMP(3)) FOR SHARE`, [actor.userId, ...investigationIds]);
+    return () => { if (performance.now() >= deadline) throw absent(); };
+  }
+  private assertDeliveryResources(actor: ActorContext, resources: readonly ResourceRef[]) {
+    const types = { instance: ['instanceIds', 'instance:view'], server: ['serverIds', 'servers:view'],
+      network_device: ['networkDeviceIds', 'network_devices:view'] } as const;
+    for (const ref of resources) {
+      const [boundary, permission] = types[ref.type];
+      if (!hasPermission(new Set(actor.permissions), permission)
+        || actor.resourceBoundary && !actor.resourceBoundary[boundary].includes(ref.id)
+        || ref.type === 'instance' && !actor.instanceScopes[ref.id]
+          && (actor.resourceBoundary || !actor.permissions.some(p => p === '*' || p === 'instance:*'))) throw absent();
+    }
+  }
   private async loadEvents(c: PoolConnection, actor: ActorContext, resources: readonly ResourceRef[], from: string, until: string): Promise<AttentionEvent[]> {
     await this.readable(c, actor, resources, []);
     const current = await this.principal(c, actor), scopeValues: any[] = [], scopeTerms: string[] = [];
@@ -277,6 +309,7 @@ export class AttentionStore {
   }
   private async page(c: PoolConnection, actor: ActorContext, value: AttentionSnapshot,
     options: { limit: number; cursor?: string }, deliver?: (page: AttentionPage) => void): Promise<AttentionPage> {
+    const checkExpiry = await this.deliveryExpiryFence(c, actor, [...new Set(value.events.flatMap(e => e.investigationId ? [e.investigationId] : []))]);
     const visible: AttentionGroup[] = [];
     for (const group of value.groups) {
       try { await this.readable(c, actor, group.resources, group.investigationIds); visible.push(group); }
@@ -298,8 +331,22 @@ export class AttentionStore {
     }
     // All asynchronous authorization/source reads precede the final time/flag
     // projection. Locks remain held through synchronous delivery and commit.
+    const deliveryResources = [...permitted.flatMap(g => g.resources), ...facts.edges.flatMap(e => [e.source, e.target]),
+      ...value.edges.filter(e => historicalEdges.has(e.id)).flatMap(e => [e.source, e.target])];
+    const investigations = [];
+    for (const id of [...new Set(permitted.flatMap(g => g.investigationIds))].sort(compareId)) {
+      const investigation = await this.investigations.load(c as never, id);
+      investigations.push(investigation); deliveryResources.push(...investigation.resources);
+    }
     for (const group of permitted) await this.readable(c, actor, group.resources, group.investigationIds);
-    await this.principal(c, actor);
+    const current = await this.principal(c, actor);
+    // The last async principal result is part of the decision, never discarded.
+    // No further IO may occur before this projection's synchronous delivery.
+    for (const principal of [actor, current]) {
+      this.assertDeliveryResources(principal, deliveryResources);
+      if (investigations.length && !hasPermission(new Set(principal.permissions), 'chat:view')
+        || investigations.some(i => i.profileId === 'system') && !hasPermission(new Set(principal.permissions), 'config:view')) throw absent();
+    }
     for (const reference of facts.baselines) if (Date.parse(reference.validUntil) <= +this.clock()) facts.baseline[resourceKey(reference.resource)] = null;
     const items = permitted.map(group => {
       const missing: string[] = [];
@@ -335,6 +382,7 @@ export class AttentionStore {
       items: selected, authorizedCounts: { total: items.length }, modelCalls: 0, partial: value.partial || facts.partial,
       override: permitted.length === value.groups.length && value.override?.partitions.flat().every(id => permitted.some(g => g.eventIds.includes(id))) ? value.override : null,
       nextCursor: after + 1 + selected.length < items.length ? Buffer.from(JSON.stringify({ fingerprint, after: selected[selected.length - 1].id })).toString('base64url') : null };
+    checkExpiry();
     deliver?.(page); return page;
   }
 }

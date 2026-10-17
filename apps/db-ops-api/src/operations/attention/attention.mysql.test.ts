@@ -1,6 +1,7 @@
 /** Synthetic event/proof/window inputs; production event ingest, migrations,
  * MySQL transactions, ACL, JWT and listening HTTP. No Provider or VM actions. */
 import { randomUUID } from 'node:crypto';
+import Fastify from 'fastify';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from 'vitest';
 import { startFeedbackFixture } from '../../investigations/feedback-test-fixture.js';
@@ -113,11 +114,170 @@ describe.skipIf(!port)('P05 B08 production MySQL/JWT/listening HTTP (synthetic i
     for (const table of ['investigation_event_links', 'operational_events', 'investigation_trigger_keys', 'resource_relation_revisions', 'resource_relations', 'behavior_baseline_versions']) await f.rows(`DELETE FROM ${table}`);
     await f.rows("UPDATE p05_fixture_proof SET state='valid'");
     await f.rows('UPDATE users SET session_version=1 WHERE id IN (101,102,103)');
+    await f.rows('UPDATE user_roles SET grant_expiry=NULL WHERE user_id=101');
     await f.rows("UPDATE database_instances SET lifecycle_state='available',host='fixture.invalid',status='active' WHERE id IN (101,102,104)");
     await f.rows("INSERT IGNORE INTO instance_permissions(user_id,instance_id,access_level) VALUES(101,101,'read-write'),(101,102,'read-write'),(101,104,'read-write')");
     await f.rows("UPDATE instance_permissions SET access_level='read-write',grant_expiry=NULL WHERE user_id=101");
     for (const code of ['operations:context:view', 'operations:context:manage', 'instance:manage']) await f.rows('INSERT IGNORE INTO role_permissions(role_id,permission_id) SELECT 101,id FROM permissions WHERE code=?', [code]);
     actor = await f.contexts.loadActiveActor(101);
+  });
+  it('R1 rejects resource expiry during the last principal reload without delivering content', async () => {
+    await emit(); const saved = await store.compute(actor, input([101]));
+    await f.rows("UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=101");
+    let principalReads = 0; let finalActor: ActorContext | undefined;
+    const slowContexts = new Proxy(f.contexts, { get(target, name) {
+      if (name === 'loadInvestigationActorFrom') return async (...args: Parameters<typeof target.loadInvestigationActorFrom>) => {
+        const direct = new Error().stack?.split('\n')[2]?.includes('AttentionStore.principal');
+        if (direct && ++principalReads === 3) await args[0].execute('SELECT SLEEP(2.2)');
+        const current = await target.loadInvestigationActorFrom(...args);
+        if (direct && principalReads === 3) finalActor = current;
+        return current;
+      };
+      const value = Reflect.get(target, name); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const slow = new AttentionStore(() => f.pool, slowContexts, evidence, signatures,
+      () => ({ ...operationsFlags({}), attention: true, context: true }), () => new Date(now));
+    const delivered = vi.fn();
+    const result = await slow.read(actor, saved.id, {}, delivered).then(page => ({ page, error: null }), error => ({ page: null, error }));
+    expect(principalReads).toBe(3); expect(finalActor!.instanceScopes).not.toHaveProperty('101');
+    expect((await f.rows('SELECT grant_expiry<=UTC_TIMESTAMP(3) expired FROM instance_permissions WHERE user_id=101 AND instance_id=101'))[0].expired).toBe(1);
+    expect(result.error).toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(result.page).toBeNull(); expect(delivered).not.toHaveBeenCalled();
+  });
+  it('R1 uses the last principal resource scope after same-transaction revocation', async () => {
+    await emit(); const saved = await store.compute(actor, input([101]));
+    let directReads = 0; let finalActor: ActorContext | undefined;
+    const contexts = new Proxy(f.contexts, { get(target, name) {
+      if (name === 'loadInvestigationActorFrom') return async (...args: Parameters<typeof target.loadInvestigationActorFrom>) => {
+        const direct = new Error().stack?.split('\n')[2]?.includes('AttentionStore.principal');
+        if (direct && ++directReads === 3) await args[0].execute('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
+        const current = await target.loadInvestigationActorFrom(...args);
+        if (direct && directReads === 3) finalActor = current;
+        return current;
+      };
+      const value = Reflect.get(target, name); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const changed = new AttentionStore(() => f.pool, contexts, evidence, signatures,
+      () => ({ ...operationsFlags({}), attention: true, context: true }), () => new Date(now));
+    const delivered = vi.fn();
+    await expect(changed.read(actor, saved.id, {}, delivered)).rejects.toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(directReads).toBe(3); expect(finalActor!.instanceScopes).not.toHaveProperty('101'); expect(delivered).not.toHaveBeenCalled();
+    // The injected mutation belongs to the failed read transaction and rolls back.
+    expect(await f.rows('SELECT instance_id FROM instance_permissions WHERE user_id=101 AND instance_id=101')).toHaveLength(1);
+  });
+  // Delay AFTER the real final actor query too: its grants may still look live
+  // while membership/role/resource TTL expires before the callback is reached.
+  const delayedProjection = (afterRead: (actor: ActorContext) => void = () => {}) => {
+    let directReads = 0;
+    const contexts = new Proxy(f.contexts, { get(target, name) {
+      if (name === 'loadInvestigationActorFrom') return async (...args: Parameters<typeof target.loadInvestigationActorFrom>) => {
+        const direct = new Error().stack?.split('\n')[2]?.includes('AttentionStore.principal');
+        const current = await target.loadInvestigationActorFrom(...args);
+        if (direct && ++directReads === 3) { afterRead(current); await args[0].execute('SELECT SLEEP(2.2)'); }
+        return current;
+      };
+      const value = Reflect.get(target, name); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    return new AttentionStore(() => f.pool, contexts, evidence, signatures,
+      () => ({ ...operationsFlags({}), attention: true, context: true }), () => new Date(now));
+  };
+  it.each(['resource', 'role', 'investigation_member', 'investigation_scope'])('R1 rejects %s expiry after final actor query, with no late callback', async kind => {
+    const event = await emit();
+    let investigationId: string | undefined;
+    if (kind.startsWith('investigation_')) {
+      const source = await f.seed(); investigationId = source.inv.id;
+      await f.rows('UPDATE operational_events SET investigation_id=? WHERE id=?', [investigationId, event]);
+      if (kind === 'investigation_member') {
+        await f.rows('UPDATE investigations SET owner_id=103 WHERE id=?', [investigationId]);
+        await f.rows("INSERT INTO investigation_members(investigation_id,user_id,role,granted_by) VALUES(?,101,'viewer',103)", [investigationId]);
+      }
+    }
+    const saved = await store.compute(actor, input([101])); expect(saved.items).toHaveLength(1);
+    if (kind === 'role') await f.rows('UPDATE user_roles SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101');
+    else if (kind === 'investigation_member') await f.rows('UPDATE investigation_members SET expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND investigation_id=?', [investigationId]);
+    else await f.rows('UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=?', [kind === 'investigation_scope' ? 102 : 101]);
+    let observed: ActorContext | undefined; const delayed = delayedProjection(current => { observed = current; });
+    const delivered = vi.fn();
+    await expect(delayed.read(actor, saved.id, {}, delivered)).rejects.toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(observed!.instanceScopes).toHaveProperty('101'); expect(observed!.permissions).toContain('operations:context:view');
+    expect(delivered).not.toHaveBeenCalled();
+    if (kind === 'investigation_member') expect((await f.rows('SELECT expires_at<=UTC_TIMESTAMP(3) expired FROM investigation_members WHERE investigation_id=? AND user_id=101', [investigationId]))[0].expired).toBe(1);
+    else if (kind === 'role') expect((await f.rows('SELECT grant_expiry<=UTC_TIMESTAMP(3) expired FROM user_roles WHERE user_id=101'))[0].expired).toBe(1);
+    else expect((await f.rows('SELECT grant_expiry<=UTC_TIMESTAMP(3) expired FROM instance_permissions WHERE user_id=101 AND instance_id=?', [kind === 'investigation_scope' ? 102 : 101]))[0].expired).toBe(1);
+    // A fresh read projects remaining authority consistently instead of keeping
+    // stale counts or the saved investigation scope.
+    const fresh = await store.read(actor, saved.id).catch(error => { expect(error.code).toBe('OPERATIONS_NOT_FOUND'); return null; });
+    if (fresh) { expect(fresh.items).toEqual([]); expect(fresh.authorizedCounts.total).toBe(0); expect(fresh.nextCursor).toBeNull(); expect(fresh.override).toBeNull(); }
+  });
+  it('R1 fences expiry across multiple groups, stable cursor and retained override history', async () => {
+    const a = await emit(), b = await emit(102), c = await emit(104);
+    const saved = await store.compute(actor, input([101, 102, 104]));
+    const overridden = await store.override(actor, saved.id, { expectedVersion: saved.version, reason: 'Retained synthetic split', partitions: [[a], [b], [c]] });
+    const first = await store.read(actor, saved.id, { version: overridden.version, limit: 1 });
+    expect(first.authorizedCounts.total).toBe(3); expect(first.nextCursor).not.toBeNull(); expect(first.override).not.toBeNull();
+    const before = await f.rows('SELECT snapshot FROM attention_correlation_snapshots WHERE id=? ORDER BY version', [saved.id]);
+    await f.rows('UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=101');
+    const delivered = vi.fn();
+    await expect(delayedProjection().read(actor, saved.id, { version: overridden.version, limit: 1, cursor: first.nextCursor! }, delivered))
+      .rejects.toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(delivered).not.toHaveBeenCalled();
+    await expect(store.read(actor, saved.id, { version: overridden.version, limit: 1, cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'OPERATIONS_VERSION_CONFLICT' });
+    const fresh = await store.read(actor, saved.id, { version: overridden.version });
+    expect(fresh.authorizedCounts.total).toBe(2); expect(fresh.override).toBeNull(); expect(JSON.stringify(fresh)).not.toContain(a);
+    expect(await f.rows('SELECT snapshot FROM attention_correlation_snapshots WHERE id=? ORDER BY version', [saved.id])).toEqual(before);
+  });
+  it('R1 fences an intermediate resource expiring after historical path validation', async () => {
+    await emit(); await emit(102);
+    for (const [source, target] of [[101, 104], [104, 102]]) {
+      const proposed = await relations.suggest(actor, { source: ref(source), target: ref(target), relationType: 'depends_on', origin: 'manual',
+        observedAt: new Date(now - 60_000).toISOString(), validFrom: new Date(now - 60_000).toISOString(), validUntil: new Date(now + 120_000).toISOString(),
+        evidence: [{ id: 'synthetic-proof', version: 1, hash: 'a'.repeat(64), validUntil: new Date(now + 120_000).toISOString() }] });
+      await relations.transition(actor, proposed.relationId, { expectedVersion: proposed.version, action: 'confirm' });
+    }
+    const saved = await store.compute(actor, input()); expect(saved.items[0].recordedReasons[0].relationIds).toHaveLength(2);
+    await f.rows('UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=104');
+    const delivered = vi.fn();
+    await expect(delayedProjection().read(actor, saved.id, {}, delivered)).rejects.toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(delivered).not.toHaveBeenCalled();
+    const fresh = await store.read(actor, saved.id);
+    expect(fresh.items[0]).toMatchObject({ currentValidity: 'unknown', reasons: [], recordedReasons: [] });
+    for (const id of saved.items[0].recordedReasons[0].relationIds) expect(JSON.stringify(fresh)).not.toContain(id);
+  });
+  it('R1 listening HTTP returns only 404 after expiry during the final query callback', async () => {
+    await emit(); const saved = await store.compute(actor, input([101]));
+    await f.rows('UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=101');
+    const app = Fastify();
+    try {
+      await registerAttentionRoutes(app, createVerifyToken(f.secret, f.contexts), delayedProjection());
+      const address = await app.listen({ host: '127.0.0.1', port: 0 });
+      const response = await fetch(`${address}/api/operations/attention/${saved.id}`, { headers: { authorization: `Bearer ${signAccessToken(actor, f.secret)}` } });
+      const body = await response.json();
+      expect((await f.rows('SELECT grant_expiry<=UTC_TIMESTAMP(3) expired FROM instance_permissions WHERE user_id=101 AND instance_id=101'))[0].expired).toBe(1);
+      expect(response.status).toBe(404); expect(body).toEqual({ error: 'OPERATIONS_NOT_FOUND' });
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+    } finally { await app.close(); }
+  });
+  it('R1 checks the SQL expiry horizon immediately before delivery, after synchronous page assembly', async () => {
+    await emit(); const saved = await store.compute(actor, input([101]));
+    await f.rows('UPDATE instance_permissions SET grant_expiry=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE user_id=101 AND instance_id=101');
+    let directReads = 0, armed = false, delayed = false;
+    const contexts = new Proxy(f.contexts, { get(target, name) {
+      if (name === 'loadInvestigationActorFrom') return async (...args: Parameters<typeof target.loadInvestigationActorFrom>) => {
+        const direct = new Error().stack?.split('\n')[2]?.includes('AttentionStore.principal');
+        const current = await target.loadInvestigationActorFrom(...args);
+        if (direct && ++directReads === 3) armed = true;
+        return current;
+      };
+      const value = Reflect.get(target, name); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const slow = new AttentionStore(() => f.pool, contexts, evidence, signatures, () => {
+      if (armed && !delayed) { delayed = true; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2200); }
+      return { ...operationsFlags({}), attention: true, context: true };
+    }, () => new Date(now));
+    const delivered = vi.fn();
+    await expect(slow.read(actor, saved.id, {}, delivered)).rejects.toMatchObject({ code: 'OPERATIONS_NOT_FOUND' });
+    expect(delayed).toBe(true); expect(delivered).not.toHaveBeenCalled();
+    expect((await f.rows('SELECT grant_expiry<=UTC_TIMESTAMP(3) expired FROM instance_permissions WHERE user_id=101 AND instance_id=101'))[0].expired).toBe(1);
   });
   it('consumes production ingested events read-only, records immutable explanations and zero additional runs', async () => {
     const a = await emit(), b = await emit(101, 60);
