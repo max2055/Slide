@@ -202,7 +202,7 @@ export class MetricConfiguration extends LitElement {
       const result = await metricRequest<Preview & Trial>(path, this.candidate());
       if (generation !== this.generation || editVersion !== this.editVersion) return;
       if (operation === 'preview') { this.trial = null; this.preview = result; this.activationStep = 1; }
-      if (operation === 'trial') { this.trial = result; if (this.publishReady()) this.activationStep = 2; }
+      if (operation === 'trial') { this.trial = result; this.activationStep = this.publishReady() ? 2 : 1; }
       if (operation === 'publish') {
         this.dirty = false; this.preview = null; this.trial = null;
         showToast('采集配置已发布，正在确认应用与正式数据状态', 'success');
@@ -256,7 +256,7 @@ export class MetricConfiguration extends LitElement {
     const steps = ['检查兼容性与权限', '执行试采', '发布并应用配置', '等待正式采集'];
     return html`<app-dialog .open=${this.flowOpen} title="检查并启用采集" size="xl" @app-dialog-close=${(e: Event) => { e.stopPropagation(); this.flowOpen = false; }}>
       <p class="muted">${packageName(this.catalog?.packages.find(p => p.package.digest === this.selected)?.package.id ?? '')} · 配置与正式采集分别确认</p>
-      <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', this.trial && !trialComplete(this.trial) ? '有效指标可发布，部分指标仍失败/待验证' : '本次试采验证通过', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
+      <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', this.trial && !trialComplete(this.trial) ? '有效指标可发布，部分指标仍失败/待验证' : '有效样本门禁通过，完整性以正式证据为准', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
       ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
       ${this.globalBlocksCandidate() ? html`<p class="notice" role="status">全局采集已关闭，不能继续启用；请联系平台运维。</p>` : nothing}
       ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before ?? '未知'} → ${this.preview.requests_per_hour_after ?? '未知'}</p>${this.applicabilityMessage(this.preview.resources[0]?.resolved.applicability)}` : nothing}
