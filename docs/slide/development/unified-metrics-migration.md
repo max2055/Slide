@@ -1,6 +1,6 @@
 # 唯一指标升级、兼容与恢复
 
-本说明适用于 MAX-189；能力及非等价口径见 `unified-metrics-capabilities.md`，前端/API 契约见 `unified-metrics-backend-contract.md`。这是迁移操作说明，不表示当前生产平台已经升级。
+本说明适用于 MAX-189 及 MAX-192 最终集成；能力及非等价口径见 `unified-metrics-capabilities.md`，前端/API 契约见 `unified-metrics-backend-contract.md`。这是迁移操作说明，不表示当前生产平台已经升级。
 
 ## 改名与兼容边界
 
@@ -36,6 +36,7 @@ Compose和生产env示例现使用中性collection/retention变量；升级时�
 ## 迁移与修复
 
 - 使用现有 MigrationRunner 的命名锁与checksum账本顺序执行121—125。121单条 RENAME TABLE 原子改16表；其后同步FK/索引。122持久来源接受，123来源名称，124语义基线，125实测来源对照。历史SQL001—120不改checksum。
+- 最终集成继续执行126（持久化批量配置队列）和127（只中性化三个表及一个列的注释）。127不改变列类型、排序规则、默认值或业务数据；不修改既有迁移checksum。备份与恢复必须包含 `metric_bulk_jobs` 的payload、独立 `cancel_requested`、owner/key唯一约束及迁移账本，不能仅备份前述16表。
 - 原子rename遇重名应整条拒绝，旧证据保持可读。普通成功重跑不重复搬数据，并发runner由现有锁串行。
 - MySQL DDL不能依赖事务回滚。若rename已完成而后续DDL或账本未完成，先保留完整错误和当前schema，逐项验证旧表消失、新表结构、索引/FK、行数与原payload/hash/lineage/revision。不得盲目改checksum或删除failed记录。
 - 外部修复只有在针对该迁移的准确checksum、验证函数和操作说明齐备时，使用现有 `acknowledgeExternallyRepairedMigration` 接口登记，再重跑剩余迁移。测试覆盖的是明确构造的外部rename及此修复流程，不表示任意损坏均可自动恢复。
@@ -54,3 +55,4 @@ Compose和生产env示例现使用中性collection/retention变量；升级时�
 - 将升级前备份恢复到**独立恢复schema**，验证账本、原表、payload/hash、lineage/revision及业务数据；在隔离环境用原commit/配置验证兼容后，再由发布负责人执行连接切换。
 - 不在用户原schema上批量DROP/反向rename以赌恢复；不让旧程序连接已仅含新表名的schema。原环境和升级后新数据保留，待确认是否需要专门回填方案。
 - 实库证据覆盖隔离MySQL8.4：升级前dump与校验和、重名原子拒绝、显式修复、并发/重跑和独立恢复；没有对真实生产平台schema执行迁移或回退。
+- 批量回退先停止新提交，取消未发布项并排空在途；保留队列表、已经发布的配置和精确request_id审计。恢复升级后备份时保留取消fence和幂等约束，不把恢复等同于重放全部任务。旧二进制回退仍使用升级前独立恢复schema，不连接只有中性表名的新schema。

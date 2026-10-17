@@ -87,4 +87,13 @@ describe.skipIf(!port||!container)('unified metric names: data preserving upgrad
       }
     }finally{await root.query(`DROP DATABASE ${recovery}`);}
   },30000);
+  it('has no generation names in active metric tables, columns, indexes or constraints',async()=>{
+    const [tables]=await pool.query<any[]>("SELECT TABLE_NAME AS name,TABLE_COMMENT AS description FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME LIKE 'metric%'");
+    const [columns]=await pool.query<any[]>("SELECT CONCAT(TABLE_NAME,'.',COLUMN_NAME) AS name,COLUMN_COMMENT AS description FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME LIKE 'metric%'");
+    const [indexes]=await pool.query<any[]>("SELECT DISTINCT CONCAT(TABLE_NAME,'.',INDEX_NAME) AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME LIKE 'metric%'");
+    const [constraints]=await pool.query<any[]>("SELECT CONCAT(TABLE_NAME,'.',CONSTRAINT_NAME) AS name FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME LIKE 'metric%'");
+    const residuals=[...tables,...columns,...indexes,...constraints].filter(row=>/\bv[12]\b|metric[_-]v[12]/i.test(`${row.name} ${row.description??''}`));
+    if(artifacts)await writeFile(join(artifacts,'active-schema-names.json'),JSON.stringify({database,tables:tables.length,columns:columns.length,indexes:indexes.length,constraints:constraints.length,residuals},null,2));
+    expect(residuals).toEqual([]);
+  });
 });
