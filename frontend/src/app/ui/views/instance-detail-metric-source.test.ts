@@ -4,7 +4,7 @@ import { resolve } from 'path';
 
 const source = readFileSync(resolve(import.meta.dirname, 'instance-detail.ts'), 'utf8');
 
-describe('instance detail Metrics V2 source', () => {
+describe('instance detail formal metrics source', () => {
   it('renders semantic metrics without a legacy metric fallback', () => {
     expect(source).toContain('<semantic-metrics resourceType="instance"');
     expect(source).not.toContain('metricSource');

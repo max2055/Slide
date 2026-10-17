@@ -3,6 +3,8 @@ const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import { ResourceMetricsTable } from './resource-metrics-table.js';
 import { collectionState, metricSummary, diskSummary } from './resource-metric-summary.js';
+import { collectionStatus } from './metric-test-fixtures.js';
+import { coverageAvailability } from './metric-api.js';
 const sample = (value: number | null = 0, state = 'available'): any => ({ profile: { columns: [] }, window: { from: '2026-09-20T00:00:00Z', to: '2026-09-20T00:01:00Z' }, metrics: [{ definition: { id: 'db.uptime_seconds', unit: 's' }, state, series: [{ dimensions: {}, buckets: [{ value: value == null ? null : { value }, unit: 's', quality: { status: 'good' }, coverage: 1, freshness: 'fresh' }] }] }] });
 const response = (data: unknown, status = 200) => ({ ok: status === 200, status, json: async () => data });
 const mount = async (count = 1) => { const el = new ResourceMetricsTable(); el.entries = Array.from({ length: count }, (_, i) => ({ id: i + 1, type: i % 2 ? null : 'MySQL', version: '8' })); document.body.append(el); await el.updateComplete; return el as any; };
@@ -24,7 +26,7 @@ it('does not turn counters into rates or unknown interfaces into healthy interfa
 it('bounds visible-page work, updates independent rows, and discards old page responses', async () => {
   let release!: (r: unknown) => void;
   authFetch.mockImplementation(async (url: string, init: any) => {
-    if (url.endsWith('/attempts')) return response([]);
+    if (url.endsWith('/status')) return response({});
     const id = JSON.parse(init.body).resource.id;
     if (id === 1) return new Promise(resolve => { release = resolve; });
     return response(sample(id));
@@ -38,20 +40,31 @@ it('bounds visible-page work, updates independent rows, and discards old page re
   expect(el.rows.has(1)).toBe(false); expect(el.rows.has(25)).toBe(true);
 });
 it('keeps failures visible, clears revoked values and leaves health untouched', async () => {
-  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/attempts') ? [] : sample()));
+  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? [] : sample()));
   const el = await mount(); await vi.waitFor(() => expect(el.rows.get(1)?.result).toBeDefined());
   el.entries[0].health = '健康'; authFetch.mockResolvedValue(response({}, 403)); await el.load(true);
   expect(el.rows.get(1)).toEqual({ state: 'forbidden' }); expect(el.visible).toHaveLength(1); expect(el.entries[0].health).toBe('健康');
 });
 it('unknown type and collection filters cover all pages, including failed rows', async () => {
-  authFetch.mockImplementation(async (url: string, init: any) => url.endsWith('/attempts') ? response([]) : JSON.parse(init.body).resource.id === 24 ? response({}, 503) : response(sample()));
+  authFetch.mockImplementation(async (url: string, init: any) => url.endsWith('/status') ? response([]) : JSON.parse(init.body).resource.id === 24 ? response({}, 503) : response(sample()));
   const el = await mount(25); await vi.waitFor(() => expect(el.pending).toBe(false));
   el.search = '指标加载失败'; await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
   el.search = '未知 指标加载失败'; await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.filtered.map((r: any) => r.id)).toEqual([24]);
 });
 it('success-time transport errors do not erase successful metric evidence', async () => {
-  authFetch.mockImplementation(async (url: string) => { if (url.endsWith('/attempts')) throw new Error('network'); return response(sample()); });
+  authFetch.mockImplementation(async (url: string) => { if (url.endsWith('/status')) throw new Error('network'); return response(sample()); });
   const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); expect(el.rows.get(1).state).toBe('available'); expect(el.rows.get(1).timeUnavailable).toBe(true);
+});
+it('clears cached values immediately when permissions change and rejects in-flight responses', async () => {
+  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? collectionStatus() : sample()));
+  const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false));
+  expect(el.rows.get(1).result).toBeDefined();
+  let release!: (value: unknown) => void;
+  authFetch.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const loading = el.load(true);
+  window.dispatchEvent(new Event('slide-permissions-loaded'));
+  release(response(sample(999))); await loading;
+  expect(el.rows.get(1)).toEqual({ state: 'forbidden' });
 });
 it('requests stored latest capacity and renders its own timestamp independently of uptime', async () => {
   const data = sample();
@@ -60,7 +73,7 @@ it('requests stored latest capacity and renders its own timestamp independently 
   size.observed_at = '2026-09-19T23:59:00Z'; size.series[0].dimensions = { database: 'orders' };
   size.series[0].buckets[0].value.value = '8192'; size.series[0].buckets[0].unit = 'By'; size.series[0].buckets[0].freshness = 'stale';
   data.metrics.push(size);
-  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/attempts') ? [] : data));
+  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? [] : data));
   const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
   const table = el.shadowRoot.querySelector('app-data-table');
   expect(table.columns.some((c: any) => c.key === 'database_size')).toBe(true);
@@ -107,4 +120,25 @@ it('numbers filtered rows continuously across pages and keeps the number column 
   expect(table.rows.map((r: any) => r.id)).toEqual(Array.from({length: 13}, (_, i) => 2 * i + 1));
   el.openColumnSettings(); await el.updateComplete;
   expect([...el.shadowRoot.querySelectorAll('.column-choice')].some((label: any) => label.textContent.includes('序号'))).toBe(false);
+});
+
+it('keeps an actually bound linux-basic object bound when its core columns are not covered', async () => {
+  const status = collectionStatus(); status.resource.type = 'server'; status.binding.package!.id = 'linux-basic';
+  status.coverage = [{ metric: { id: 'host.filesystem.used_bytes', semantic_version: '1.0.0' }, state: 'not_covered', reason: 'PACKAGE_NOT_COVERED' }];
+  const result = sample(null, 'not_configured'); result.metrics[0].definition.id = 'host.filesystem.used_bytes';
+  authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? status : result));
+  const el = await mount(); el.resourceType = 'server'; await el.updateComplete;
+  await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
+  const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
+  expect(table.textContent).toContain('已绑定'); expect(table.textContent).toContain('当前模板未覆盖'); expect(table.textContent).not.toContain('未绑定');
+});
+
+it('marks capacity unsupported only when all providers reject the actual version', () => {
+  const status = collectionStatus(); const metric = { id: 'mysql.tables.estimated_allocated_bytes', semantic_version: '1.0.0' };
+  status.coverage = [{ metric, state: 'not_covered', reason: 'PACKAGE_NOT_COVERED' }];
+  const data: any = { packages: [{ compatibility: 'incompatible', coverage: [metric], checks: [{ attribute: 'db.version', status: 'unsupported' }] }] };
+  expect(coverageAvailability(status, data).coverage[0].state).toBe('unsupported');
+  data.packages[0].compatibility = 'unknown'; expect(coverageAvailability(status, data).coverage[0].state).toBe('not_covered');
+  data.packages[0].compatibility = 'compatible'; expect(coverageAvailability(status, data).coverage[0].state).toBe('not_covered');
+  expect(status.coverage[0].state).toBe('not_covered');
 });

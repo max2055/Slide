@@ -90,9 +90,10 @@ describe('database instance edit connection validation', () => {
     page._addInstance();
     document.body.append(page);
     await page.updateComplete;
-    const dialog = page.shadowRoot.querySelector('app-dialog[title="添加数据库实例"]');
-    const fields = [...dialog.querySelectorAll('.instance-form app-form-field')] as any[];
-    expect(dialog.getAttribute('size')).toBe('lg');
+    const editor = page.shadowRoot.querySelector('section[aria-label="资源编辑"]');
+    const fields = [...editor.querySelectorAll('.instance-form app-form-field')] as any[];
+    expect(editor.querySelectorAll('[role=tab]')).toHaveLength(2);
+    expect(editor.querySelector('[role=tabpanel]:not([hidden])')?.id).toBe('resource-edit-panel-basic');
     expect(fields.length).toBeGreaterThan(0);
     expect(fields.every((field) => field.inline)).toBe(true);
   });
