@@ -19,6 +19,13 @@ export interface TrialStore {
   reserve(ref: Ref): Promise<{ release(): Promise<void>; connection: { ping(): Promise<unknown> } } | null>;
   attempts(ref: Ref): Promise<CollectionAttempt[]>;
 }
+export interface ActivationGuard {
+  candidate?: string;
+  signal?: AbortSignal;
+  /** Re-read live grants and cancellation at each boundary, including before publication. */
+  check?(): Promise<ActorContext>;
+  published?(revision: number): void;
+}
 export class MetricConfigurationService {
   constructor(private policy: PolicyService, private registry: PackageRegistry, private store: TrialStore,
     private access: CollectorAccess, private reader?: ConfigurationReader) {}
@@ -33,16 +40,21 @@ export class MetricConfigurationService {
   }
   status(actor: ActorContext, ref: Ref) { return this.statusReader().status(actor, ref); }
   recommendations(actor: ActorContext, ref: Ref) { return this.statusReader().recommendations(actor, ref); }
-  async activate(actor: ActorContext, ref: Ref, input: unknown) {
-    const preview = await this.policy.changeBinding(actor, ref, input, false);
+  async activate(actor: ActorContext, ref: Ref, input: unknown, guard: ActivationGuard = {}) {
+    guard.signal?.throwIfAborted();
+    actor = await guard.check?.() ?? actor;
+    const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
     rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
     const candidate = candidateFingerprint(preview.resources[0]);
-    const trial = await this.trial(actor, ref, input, candidate);
+    const trial = await this.trial(actor, ref, input, candidate, guard);
     const disabled = !preview.resources[0].resolved.settings.enabled;
     rule(disabled || trial.samples.some(s => s.value !== null && s.quality.status === 'good')
       && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status)), 'CONFIGURATION_TRIAL_FAILED', 422);
     // Revalidates live permission, inventory and policy/group CAS after remote IO.
+    guard.signal?.throwIfAborted();
+    actor = await guard.check?.() ?? actor;
     const result = await this.policy.changeBinding(actor, ref, input, true, candidate);
+    guard.published?.(result.resources[0].binding.revision);
     return { ...result, status: await this.status(actor, ref) };
   }
   catalog(actor: ActorContext) {
@@ -64,17 +76,19 @@ export class MetricConfigurationService {
     const current = await this.policy.effective(actor, ref);
     return this.trial(actor, ref, { expected_revision: current.published_revision });
   }
-  async trial(actor: ActorContext, ref: Ref, input: unknown, expectedCandidate?: string) {
+  async trial(actor: ActorContext, ref: Ref, input: unknown, expectedCandidate?: string, guard: ActivationGuard = {}) {
     const preview = await this.policy.changeBinding(actor, ref, input, false, expectedCandidate);
     const next = preview.resources[0], plan = compilePlan(this.registry, next.resolved);
     const reservation = await this.store.reserve(ref);
     rule(reservation, 'TRIAL_BUSY', 409);
     const controller = new AbortController();
-    const signal = ref.type === 'instance' ? AbortSignal.any([controller.signal, instanceAccessLifecycle.signal(ref.id)]) : controller.signal;
+    const signal = AbortSignal.any([controller.signal, ...(guard.signal ? [guard.signal] : []),
+      ...(ref.type === 'instance' ? [instanceAccessLifecycle.signal(ref.id)] : [])]);
     const timer = setTimeout(() => controller.abort(), Math.min(plan.timeoutMs, 30000));
     try {
       const check = async () => {
         signal.throwIfAborted();
+        actor = await guard.check?.() ?? actor;
         await reservation.connection.ping();
         const current = await this.policy.changeBinding(actor, ref, input, false, candidateFingerprint(next));
         rule(stable(current.resources[0].resolved.settings) === stable(next.resolved.settings)
