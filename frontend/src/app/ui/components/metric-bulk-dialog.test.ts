@@ -90,9 +90,16 @@ it("shows partial result counts and retries only through a fresh preview requiri
     state: "failed",
     code: "CONFIGURATION_TRIAL_FAILED",
   });
+  const failedOnly: any = job();
+  failedOnly.items[0].resource.id = 2;
+  failedOnly.requested_overrides = { interval_ms: { mode: "set", value: 5000 } };
   fetchMock.mockImplementation(async (url) =>
     response(
-      String(url).endsWith("/bulk") ? { jobs: [] } : String(url).endsWith("/retry") ? job() : mixed,
+      String(url).endsWith("/bulk")
+        ? { jobs: [] }
+        : String(url).endsWith("/retry")
+          ? failedOnly
+          : mixed,
     ),
   );
   const el = await mount();
@@ -104,6 +111,8 @@ it("shows partial result counts and retries only through a fresh preview requiri
   await el.retry();
   expect(el.step).toBe(1);
   expect(el.job.state).toBe("draft");
+  expect(el.resources.map((r: any) => r.id)).toEqual([2]);
+  expect(el.overrides).toEqual(failedOnly.requested_overrides);
   expect(fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/confirm"))).toHaveLength(0);
 });
 it("selection spans resource types and is cleared on account/permission changes", () => {

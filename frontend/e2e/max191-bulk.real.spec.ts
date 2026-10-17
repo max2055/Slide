@@ -4,6 +4,7 @@ import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { MetricBulkResultSchema } from "../../apps/db-ops-api/src/contracts/metrics/bulk.js";
 
 test.skip(
   process.env.MAX191_REAL !== "1",
@@ -112,6 +113,8 @@ async function request(path: string, body?: unknown, auth = token, expected = 20
   report.requests.push({ path, status: response.status });
   const result = await response.json();
   expect(response.status, `${path}: ${result.error ?? "unexpected status"}`).toBe(expected);
+  if (expected === 200 && result.items && path.includes("/bulk/"))
+    MetricBulkResultSchema.parse(result);
   return result;
 }
 const preview = (resources: any[], overrides: any = {}, auth = token) =>
@@ -470,6 +473,8 @@ test("real bulk workflow, mixed outcomes, retry, cancellation, live grants and r
     .poll(
       async () => {
         const status = await request("/api/metrics/config/resources/instance/1/status");
+        report.mysql_formal_status = status;
+        await save();
         return status.formal_visibility.state;
       },
       { timeout: 90000, intervals: [2000] },
@@ -510,6 +515,21 @@ test("real bulk workflow, mixed outcomes, retry, cancellation, live grants and r
   const mixed = await finished((await (await mixedQueued).json()).id);
   report.mixed = mixed;
   expect(mixed.items.find((i: any) => i.resource.type === "server").revision).toBe(1);
+  await expect
+    .poll(
+      async () => {
+        report.vm_formal_status = await request("/api/metrics/config/resources/server/3/status");
+        await save();
+        return report.vm_formal_status.formal_visibility.state;
+      },
+      { timeout: 120000, intervals: [2000] },
+    )
+    .toBe("available");
+  report.checks.vm_formal_available = true;
+  report.mixed_formal = await request(`/api/metrics/config/bulk/${mixed.id}`);
+  expect(report.mixed_formal.items.find((i: any) => i.resource.type === "server").state).toBe(
+    "succeeded",
+  );
   await dialog.getByRole("button", { name: "刷新逐对象状态", exact: true }).click();
   await capture(page, "mixed-results");
   await page.keyboard.press("Escape");

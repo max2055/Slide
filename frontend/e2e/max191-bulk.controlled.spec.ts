@@ -16,6 +16,7 @@ const makeJob = (resources: any[], overrides: any = {}) => ({
   expires_at: "2026-10-17T04:30:00Z",
   updated_at: "2026-10-17T04:00:00Z",
   retry_of: null,
+  requested_overrides: overrides,
   items: resources.map((r) => ({
     resource: r,
     state: r.type === "network_device" ? "unsupported" : "eligible",
@@ -76,6 +77,7 @@ for (const width of [390, 1440])
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       const writes: string[] = [];
+      const previews: any[] = [];
       let current: any;
       await page.route("**/api/**", (route) => {
         const path = new URL(route.request().url()).pathname;
@@ -123,6 +125,7 @@ for (const width of [390, 1440])
           return route.fulfill({ json: { servers: {} } });
         if (path.endsWith("/bulk/preview")) {
           const input = route.request().postDataJSON();
+          previews.push(input);
           current = makeJob(input.resources, input.overrides);
           return route.fulfill({ json: current });
         }
@@ -211,6 +214,13 @@ for (const width of [390, 1440])
         dialog.getByRole("button", { name: "确认并应用 1 个对象", exact: true }),
       ).toBeEnabled();
       expect(writes.filter((w) => w.endsWith("/confirm"))).toHaveLength(1);
+      await dialog.getByRole("button", { name: "上一步", exact: true }).click();
+      await dialog.getByText("修改字段（可选）", { exact: false }).click();
+      await expect(dialog.getByLabel("批量采集间隔（秒）", { exact: true })).toHaveValue("5");
+      await dialog.getByLabel("批量采集间隔（秒）", { exact: true }).fill("10");
+      await dialog.getByRole("button", { name: "重新匹配与预览 →", exact: true }).click();
+      await expect(dialog.getByRole("button", { name: "预览变更 →", exact: true })).toBeEnabled();
+      expect(previews.at(-1).resources).toEqual([{ type: "server", id: 2 }]);
       await page.keyboard.press("Escape");
       await expect(trigger).toBeFocused();
       expect(errors).toEqual([]);

@@ -121,7 +121,9 @@ export class MetricBulkDialog extends LitElement {
   }
   override updated(changed: PropertyValues) {
     if (changed.has("step")) {
-      const body = this.renderRoot.querySelector("app-dialog")?.shadowRoot?.querySelector(".dialog-body");
+      const body = this.renderRoot
+        .querySelector("app-dialog")
+        ?.shadowRoot?.querySelector(".dialog-body");
       if (body) body.scrollTop = 0;
     }
   }
@@ -235,6 +237,21 @@ export class MetricBulkDialog extends LitElement {
     )
       this.poll = setTimeout(() => void this.refresh(), 2000);
   }
+  private restoreDraft(data: MetricBulkResult) {
+    const labels = new Map(this.resources.map((r) => [resourceKey(r), r.label]));
+    this.resources = data.items.map((i) => ({
+      ...i.resource,
+      label: labels.get(resourceKey(i.resource)) ?? this.label(i),
+    }));
+    this.overrides = data.requested_overrides ?? {};
+    this.selections.clear();
+    data.items.forEach((i) => {
+      if (i.change?.package) this.selections.set(resourceKey(i.resource), i.change.package);
+    });
+    this.submissionKey = "";
+    this.retryKey = "";
+    this.dirty = false;
+  }
   async refresh(id = this.job?.id) {
     if (!id || this.busy) return;
     const generation = this.generation;
@@ -245,6 +262,7 @@ export class MetricBulkDialog extends LitElement {
       if (generation !== this.generation) return;
       this.job = data;
       this.step = data.state === "draft" ? 1 : 2;
+      if (data.state === "draft") this.restoreDraft(data);
       this.dirty = false;
       this.schedulePoll();
     } catch (e) {
@@ -287,8 +305,7 @@ export class MetricBulkDialog extends LitElement {
       if (generation !== this.generation) return;
       this.job = data;
       this.step = 1;
-      this.dirty = false;
-      this.retryKey = "";
+      this.restoreDraft(data);
       clearTimeout(this.poll);
     } catch (e) {
       if (generation === this.generation) this.error = this.describe(e);

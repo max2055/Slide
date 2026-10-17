@@ -357,6 +357,7 @@ export class BulkConfigurationService {
       updated_at: job.updated_at,
       expires_at: job.expires_at,
       cancel_requested: await this.store.cancelled(job.id),
+      requested_overrides: job.input.overrides ?? {},
       items,
       retry_of: job.retry_of,
     };
