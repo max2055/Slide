@@ -261,7 +261,7 @@ export class MetricConfiguration extends LitElement {
       ${this.globalBlocksCandidate() ? html`<p class="notice" role="status">全局采集已关闭，不能继续启用；请联系平台运维。</p>` : nothing}
       ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before ?? '未知'} → ${this.preview.requests_per_hour_after ?? '未知'}</p>${this.applicabilityMessage(this.preview.resources[0]?.resolved.applicability)}` : nothing}
       ${this.trial ? html`<h3>本次试采（不写正式观测）</h3><p role="status">${this.trialMessage()}</p>
-        <ul aria-label="逐项采集结果">${this.trial.attempts.map((attempt, i) => html`<li>${attempt.collector_id ?? `采集项 ${i + 1}`}：${label(attempt.status)}${attempt.error ? html` · ${attempt.error}` : nothing}</li>`) }
+        <ul aria-label="逐项采集结果">${this.trial.attempts.map((attempt, i) => html`<li>${attempt.collector_id ?? `采集项 ${i + 1}`}：${attempt.status === 'failed' ? '采集失败' : label(attempt.status)}${attempt.error ? html` · ${attempt.error}` : nothing}</li>`)}
         ${this.trial.samples.filter(sample => !goodSample(sample)).map(sample => html`<li>${metricName(sample.metric?.id ?? '未知指标')}：待验证${sample.quality?.reason ? html` · ${sample.quality.reason}` : nothing}</li>`)}</ul>
         ${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
       ${this.activationStep === 3 && this.collection ? renderCollectionStatus(this.collection) : nothing}

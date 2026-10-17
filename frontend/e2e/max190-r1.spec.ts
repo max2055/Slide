@@ -104,3 +104,40 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`R1
   await expect(page.getByText('没有符合条件的采集包', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`R1 mixed trial warning and unknown gate ${width} ${theme}`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 1000 }); await setup(page, theme);
+  let unknownOnly = false;
+  await page.route('**/api/metrics/**/trial', route => route.fulfill({ json: {
+    decision: 'attempted', lifecycle_evidence: 'unavailable',
+    attempts: unknownOnly ? [{ collector_id: 'mysql.status', status: 'unknown' }] : [
+      { collector_id: 'mysql.custom.connections', status: 'succeeded' },
+      { collector_id: 'mysql.status', status: 'failed', error: 'counter_epoch_unknown' },
+      { collector_id: 'mysql.diagnostics', status: 'partial' },
+    ],
+    samples: [...(unknownOnly ? [] : [{ metric: { id: 'custom.mysql.processlist_connections' }, value: { value: '0' }, quality: { status: 'good' } }]),
+      { metric: { id: 'mysql.qps' }, value: null, quality: { status: 'unknown', reason: 'counter_epoch_unknown' } }],
+  } }));
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.getByRole('tab', { name: '监控与采集', exact: true }).click();
+  const editor = page.locator('metric-configuration');
+  await editor.getByRole('button', { name: '检查并启用', exact: true }).click();
+  await editor.getByRole('button', { name: '预检与影响预览' }).click();
+  await editor.getByRole('button', { name: '试采', exact: true }).click();
+  await expect(editor.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
+  await expect(editor).toContainText('可发布有效指标，部分指标仍失败/待验证');
+  await expect(editor).not.toContainText('试采成功，可以发布');
+  const results = editor.getByRole('list', { name: '逐项采集结果' });
+  await expect(results).toContainText('mysql.status：采集失败');
+  await expect(results).toContainText('counter_epoch_unknown');
+  await expect(results).toContainText('mysql.diagnostics：部分成功');
+  await page.screenshot({ path: info.outputPath('mixed-trial.png'), fullPage: true });
+  unknownOnly = true;
+  await editor.getByRole('button', { name: '试采', exact: true }).click();
+  await expect(editor.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
+  await expect(editor).toContainText('试采缺少有效样本或成功采集尝试，不能发布');
+  await expect(results).toContainText('mysql.status：待验证');
+  await page.screenshot({ path: info.outputPath('unknown-trial-blocked.png'), fullPage: true });
+  await page.keyboard.press('Escape');
+  await expect(editor.getByRole('button', { name: '检查并启用', exact: true })).toBeFocused();
+});
