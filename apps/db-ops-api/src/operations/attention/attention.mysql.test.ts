@@ -232,10 +232,12 @@ describe.skipIf(!port)('P05 B08 production MySQL/JWT/listening HTTP (synthetic i
     const response = await request(); expect(response.body.items[0].eventIds).toEqual([a]);
   });
   it('checks relation proof expiry on cached snapshots and keeps the saved explanation score', async () => {
-    await emit(); await emit(102); await relation(); const observed = input(), initial = await request();
+    await emit(); await emit(102, 60); await relation(); const observed = input(), initial = await request();
     now += 120_001;
     const cached = await get(initial.body.id);
     expect(cached.body.items[0]).toMatchObject({ currentValidity: 'unknown', reasons: [], recordedScore: initial.body.items[0].recordedScore });
+    expect(cached.body.items[0].score.components.persistence).toBeNull();
+    expect(initial.body.items[0].recordedScore.components.persistence).toBeGreaterThan(0);
     expect((await request(undefined, 'POST', observed)).body.items).toHaveLength(2);
   });
   it('revocation during source IO prevents any response content or appended snapshot', async () => {

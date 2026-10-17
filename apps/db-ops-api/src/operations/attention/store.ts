@@ -16,7 +16,7 @@ import { BaselineStore } from '../baselines/store.js';
 import { MysqlRelationStore } from '../relations/store.js';
 import { RelationService, type RelationEvidence } from '../relations/service.js';
 import { buildGroup, correlate, observationWindow, type AttentionEdge, type AttentionEvent, type AttentionGroup, type CorrelationResult } from './correlator.js';
-import { compareAttention, compareId } from './scoring.js';
+import { compareAttention, compareId, scoreAttention } from './scoring.js';
 
 const key = z.string().regex(/^[a-f0-9]{64}$/), version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1);
 const requestSchema = z.strictObject({ observedAt: z.iso.datetime({ precision: 3 }), resources: z.array(resourceRefSchema).min(1).max(20) });
@@ -314,6 +314,8 @@ export class AttentionStore {
       if (+this.clock() >= Date.parse(value.until) + 15 * 60_000) missing.push('historical_observation_window');
       const members = value.events.filter(e => group.eventIds.includes(e.id));
       const projected = buildGroup(group.id, members, validReasons, facts.baseline);
+      if (missing.includes('relation_no_longer_valid')) projected.score = scoreAttention({ severity: projected.severity, impact: null,
+        persistence: null, baseline: projected.score.components.baseline === null ? null : projected.score.components.baseline / 15 });
       if (projected.score.components.baseline === null) missing.push('baseline_unknown');
       missing.push('confirmed_impact_unknown');
       return { ...projected, recordedScore: group.score, recordedReasons: group.reasons.filter(reason => reason.relationIds.every(id => historicalEdges.has(id))),
