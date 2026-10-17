@@ -73,7 +73,7 @@ test.beforeAll(async () => {
   const [templates] = await source.query('SELECT t.id,t.name,t.db_type,t.macro_defaults,t.metrics,t.enabled,i.macro_overrides,i.disabled_metrics FROM metric_templates t JOIN instance_templates i ON i.template_id=t.id WHERE i.instance_id=1');
   for (const [table, column] of [['metric_templates','metrics'],['instance_templates','disabled_metrics']]) {
     const [columns] = await pool.query('SHOW COLUMNS FROM ?? LIKE ?', [table,column]);
-    if (!columns.length) await pool.query('ALTER TABLE ?? ADD COLUMN ?? JSON NULL', [table,column]);
+    if (!columns.length) await pool.query("ALTER TABLE ?? ADD COLUMN ?? JSON NULL COMMENT 'Retained legacy configuration for migration validation'", [table,column]);
   }
   for (const row of templates) {
     const { macro_overrides, disabled_metrics, ...template } = row;
