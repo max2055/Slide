@@ -21,7 +21,7 @@ import { MYSQL_STATUS_SQL } from '../../metrics/packages/adapters.js';
 import { JobRegistry } from '../../workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../../workflows/worker-runtime.js';
 import { BaselineStore } from './store.js';
-import { FormalBaselineSource, HOUR, type BaselineSource, type BaselineInput } from './source-adapter.js';
+import { FormalBaselineSource, DAY, HOUR, type BaselineSource, type BaselineInput } from './source-adapter.js';
 import { syntheticInput, syntheticWindow } from './test-support.js';
 import { registerBaselineRoutes } from './routes.js';
 
@@ -71,7 +71,8 @@ describe.skipIf(!port)('P04 B06 real MySQL/HTTP with explicitly separated synthe
       value.from = shifted(value.from); value.until = shifted(value.until);
       for (const bucket of value.buckets) bucket.window = { from: shifted(bucket.window.from), to: shifted(bucket.window.to) };
       value.latest.observedAt = shifted(value.latest.observedAt!);
-      value.identity = { ...value.identity!, resource: current.resource, source: { ...value.identity!.source, version: targetVersion } };
+      value.identity = { ...value.identity!, resource: current.resource, metric: `${current.metric}@1.0.0`, dimensions: current.dimensions,
+        source: { ...value.identity!.source, version: targetVersion } };
       value.evaluatedAt = new Date(now).toISOString(); value.validUntil = new Date(now + 120_000).toISOString(); value.fence = fence;
       return value;
     } };
@@ -124,6 +125,89 @@ describe.skipIf(!port)('P04 B06 real MySQL/HTTP with explicitly separated synthe
     const repeated = await request();
     expect(repeated.body.result.reason).toBe('resource_changed_reaccumulating');
     expect(repeated.body.result.comparison.baselineAnomaly).toBeNull();
+  });
+  it.each([false, true])('P04-R1 persists replacement boundary across recomputation, series and reload (history=%s)', async history => {
+    const original = history ? await service.compute(actor, input) : null;
+    expect(await count()).toBe(history ? 1 : 0);
+    const retained = await f.rows('SELECT reference_bands FROM behavior_baseline_versions');
+    afterSource = async () => {
+      await f.rows("UPDATE database_instances SET host='replacement.invalid' WHERE id=101");
+      now += 1000;
+    };
+    const changed = await service.compute(actor, input);
+    expect(changed.result.reason).toBe('source_configuration_changed');
+    const boundary = new Date(now).toISOString();
+    afterSource = undefined;
+    const repeated = await service.compute(actor, input), third = await service.compute(actor, input);
+    for (const value of [repeated, third]) expect(value.result).toMatchObject({
+      status: 'unknown', reason: 'resource_changed_reaccumulating', comparison: { baselineAnomaly: null },
+    });
+    // A new process/store must recover resource-wide state from SQL, including
+    // different metric, dimensions and mode; no in-memory boundary is enough.
+    const reloaded = new BaselineStore(() => f.pool, () => source, authorization,
+      () => ({ ...operationsFlags({}), baselines: enabled }), () => new Date(now));
+    const weekly: BaselineInput = { ...input, metric: 'host.memory.used_ratio', dimensions: { scope: 'all' }, mode: 'weekly' };
+    const other = await reloaded.compute(actor, weekly);
+    expect(other.result.reason).toBe('resource_changed_reaccumulating');
+    expect((await reloaded.read(actor, repeated.id)).result.status).toBe('unknown');
+    expect((await request(`/api/operations/baselines/${other.id}`, 'GET')).body.result.status).toBe('unknown');
+    if (original) expect((await reloaded.read(actor, original.id)).result.status).toBe('unknown');
+
+    // Synthetic time advancement: 14/28 complete days start AFTER the observed
+    // replacement. It is an algorithm boundary test, not real data qualification.
+    now += 14 * DAY;
+    expect((await reloaded.compute(actor, input)).result.reason).toBe('resource_changed_reaccumulating');
+    now = Math.ceil(Date.parse(boundary) / HOUR) * HOUR + 14 * DAY;
+    expect((await reloaded.compute(actor, input)).result.status).toBe('known');
+    expect((await reloaded.compute(actor, weekly)).result.reason).toBe('resource_changed_reaccumulating');
+    now += 14 * DAY;
+    expect((await reloaded.compute(actor, weekly)).result).toMatchObject({ status: 'known', state: 'qualified' });
+    const rows = await f.rows('SELECT reference_bands FROM behavior_baseline_versions');
+    const envelopes = rows.map(r => typeof r.reference_bands === 'string' ? JSON.parse(r.reference_bands) : r.reference_bands);
+    expect(envelopes.filter(e => e.targetSince === boundary)).toHaveLength(rows.length - retained.length);
+    if (retained.length) expect(rows).toContainEqual(retained[0]);
+    expect(await f.rows("SELECT id FROM outbox_events WHERE event_type='operations.baseline.versioned'")).toHaveLength(rows.length);
+    if (process.env.P04_R1_REPORT) writeFileSync(`${process.env.P04_R1_REPORT}-${history ? 'history' : 'first'}.json`, JSON.stringify({
+      kind: 'real-isolated-mysql-production-store-and-authorization-synthetic-long-windows', history,
+      firstReason: changed.result.reason, repeatedReason: repeated.result.reason, crossSeriesReason: other.result.reason,
+      targetSince: boundary, persistedBoundaries: envelopes.map(e => e.targetSince), versions: rows.length,
+      actualLongTermQualification: false, productModelCalls: 0,
+    }, null, 2));
+  });
+  it('P04-R1 keeps resource ordering across series when SQL creation timestamps tie', async () => {
+    for (let i = 0; i < 3; i++) await service.compute(actor, input);
+    afterSource = async () => { await f.rows("UPDATE database_instances SET host='replacement.invalid' WHERE id=101"); };
+    await service.compute(actor, { ...input, mode: 'weekly' });
+    afterSource = undefined;
+    // created_at is DATETIME(3), while version is scoped to id, so neither can
+    // establish a total resource order across high/low-version metric series.
+    await f.rows('UPDATE behavior_baseline_versions SET created_at=?', [new Date(now)]);
+    const repeated = await service.compute(actor, input);
+    expect(repeated.result.reason).toBe('resource_changed_reaccumulating');
+    const [row] = await f.rows('SELECT reference_bands FROM behavior_baseline_versions WHERE id=? AND version=?', [repeated.id, repeated.version]);
+    const envelope = typeof row.reference_bands === 'string' ? JSON.parse(row.reference_bands) : row.reference_bands;
+    expect(envelope.targetSince).toBe(new Date(now).toISOString());
+  });
+  it('P04-R1 final snapshot and cached reads respect a boundary committed by interleaved series', async () => {
+    const original = await service.compute(actor, input);
+    const boundary = new Date(now).toISOString();
+    afterSource = async () => {
+      afterSource = undefined;
+      await f.rows("UPDATE database_instances SET host='replacement.invalid' WHERE id=101");
+      await service.compute(actor, { ...input, mode: 'weekly' });
+      await f.rows("UPDATE database_instances SET host='fixture.invalid' WHERE id=101");
+      await service.compute(actor, { ...input, mode: 'weekly' });
+    };
+    // The final fence equals the original again, but old windows are still
+    // disallowed after the persisted A -> B -> A identity transition.
+    expect((await service.compute(actor, { ...input, metric: 'host.memory.used_ratio' })).result.reason)
+      .toBe('resource_changed_reaccumulating');
+    expect((await service.read(actor, original.id)).result.reason).toBe('resource_changed_reaccumulating');
+    const rows = await f.rows('SELECT reference_bands FROM behavior_baseline_versions WHERE id<>?', [original.id]);
+    for (const row of rows) {
+      const envelope = typeof row.reference_bands === 'string' ? JSON.parse(row.reference_bands) : row.reference_bands;
+      expect(envelope.targetSince).toBe(boundary);
+    }
   });
   it('asset collection disable makes retained and newly calculated references unknown', async () => {
     const before = await request();
