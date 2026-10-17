@@ -2,6 +2,8 @@
 
 记录日期：2026-10-17（Asia/Shanghai）。这是候选实现的验证记录，不代表已合并、已部署或完成整体验收。
 
+当前有效的本轮源码、真实MySQL/VM和已有SQL迁移验收见 `unified-metrics-existing-sources-2026-10-17.md`。下文为各历史head的检查点；其中VM认证失败、catalog为空等结论不覆盖后续变化，不把历史结果当作最新集成候选的gate。
+
 ## 代码与环境
 
 - 交付分支：`agent/15astra/max-189-delivery`，从 `main/acd0e1b0` 建立；实现提交 `94a0a4de`，契约提交 `b6892635`。后续仅本记录更新时，源码证据保持适用。

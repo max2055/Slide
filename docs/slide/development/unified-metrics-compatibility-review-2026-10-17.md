@@ -1,5 +1,7 @@
 # MAX-189 能力不回退整改证据
 
+当前有效的已有用户SQL迁移、VM真实验收与UI阻塞见 `unified-metrics-existing-sources-2026-10-17.md`。以下为较早提交的兼容预审证据，空catalog和VM认证失败只描述当时状态。
+
 本记录回应 Chief 对 PR #202 / 6161fd26 的部分交付预审。实现仍在同一草稿 PR；本文不是独立审查批准、合并或真实 VM 验收。原私有 realtime 解析仍仅作历史比较，生产没有恢复第二周期。代码路径均相对仓库根目录。
 
 ## 非周期字段逐项核查
@@ -45,7 +47,7 @@ PG新增累计字段由 `postgres-counter.ts` 在**同一条语句**取得值、
 
 本次新增 `database/reviewed-sql.ts`：审核后的SQL、完整Extension定义、单位/种类/含义、固定源digest、SELECT授权、引擎版本和review引用，编译为不可变包/implementation ID。只允许 scalar 单条只读SELECT；延用同一资源授权凭据/目标策略/专用有界session和MetricScheduler→runner→raw/attempt→source gate→publication→唯一查询。没有新增scheduler、writer或远端fallback。NULL与精确整数保留，多行、多列、不可信数字拒绝；未知epoch仍unknown。
 
-可信审核产物入口是 `database/reviewed-sql-catalog.ts`，通过现有代码审查和部署流程安装，**不是HTTP任意SQL执行入口**。产品目录初始为空，没有替用户批准任何已有SQL。测试里的审核条目是隔离fixture，不是用户配置审批。包ID限定 `<engine>-custom-*`，继承准确引擎/版本的diagnostics base pin，不影响依赖现有包引擎约定的消费者。
+可信审核产物入口是 `database/reviewed-sql-catalog.ts`，通过现有代码审查和部署流程安装，**不是HTTP任意SQL执行入口**。早期目录为空，测试里的审核条目是隔离fixture，不是用户配置审批。现有用户SQL已按2026-10-17专项记录纳入待独立PR审查的可信产物，包含固定源digest和组合包；实现者审查不代表Chief批准。包ID限定 `<engine>-custom-*`，继承准确引擎/版本的diagnostics base pin，不影响依赖现有包引擎约定的消费者。
 
 已有配置迁移操作：
 

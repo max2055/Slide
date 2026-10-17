@@ -28,6 +28,9 @@
 | postgresql-diagnostics | 1.1.0 | 30 |
 | oracle-diagnostics | 1.1.0 | 18 |
 | dameng-diagnostics | 1.1.0 | 17 |
+| mysql-custom-processlist-connections | 1.0.0 | 38 |
+| mysql-custom-slow-query-snapshot | 1.0.0 | 38 |
+| mysql-custom-existing-scalars | 1.0.0 | 39 |
 
 ## 原注册项及 Provider 额外入口逐项映射
 
@@ -173,4 +176,8 @@ MySQL行锁平均ms、死锁/临时磁盘表累计、线程缓存、活动事务
 
 ## 验证边界
 
-MySQL 9.6 正常配置、旧来源对照、至少三正式周期、暂停/恢复及正式API已真实运行；迁移在独立MySQL8.4 schema验证。PG/Oracle/DM为固定响应/解析测试，不能称真实远端通过。Linux真实VM验收尚被SSH认证失败阻塞；fixture不能替代。人工读屏/VoiceOver听读不列为门禁。
+MySQL 9.6 正常配置、旧来源对照、至少三正式周期、暂停/恢复及正式API已真实运行；迁移在独立MySQL8.4 schema验证。PG/Oracle/DM为固定响应/解析测试，不能称真实远端通过。2026-10-17按最新授权读取既有纳管服务器配置后，麒麟V11/aarch64真实VM已完成停用、启用、至少三正式周期和重启恢复的后端验收；部分网络counter因未知生命周期仍失败，collection总状态并非全部成功。真实UI试采发布仍受前端部分成功判断阻塞；本轮准确提交、证据和边界见 `unified-metrics-existing-sources-2026-10-17.md`。人工读屏/VoiceOver听读不列为门禁。
+
+## 现有用户 SQL 迁移（2026-10-17）
+
+当前目录25个包版本、125个定义。mysql3306现有 `connections` 与 `slow_queries` 的实际SQL及源digest固定在可信catalog，经同一runner编译为两个单项包和显式组合包 `mysql-custom-existing-scalars@1.0.0`，避免单资源绑定时互相替换；仍需Chief独立PR审查。后者保留旧gauge对累计值快照的口径，不伪称区间慢查询或速率。`disk_usage` / `qps` 表达式和已废弃模板宏仍明确阻塞；不删除原定义，不自动转换阈值。已有用户配置仅复制到隔离schema验收，真实平台只读，见上述专项记录。
