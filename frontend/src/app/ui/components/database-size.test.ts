@@ -23,7 +23,7 @@ it('preserves small values, estimates and stale evidence', () => {
   expect(databaseSizeSummary(result(null))).toBe('暂无有效值');
   expect(databaseSizeSummary(result('0'))).toBe('0 B · 估算');
 });
-it.each([['disabled', '已停用'], ['not_configured', '未配置'], ['permission_denied', '采集权限不足'], ['unsupported', '不支持']])('does not expose a cached value for %s', (state, label) => {
+it.each([['disabled', '已停用'], ['not_configured', '当前模板未覆盖'], ['permission_denied', '采集权限不足'], ['unsupported', '该版本不支持']])('does not expose a cached value for %s', (state, label) => {
   expect(databaseSizeSummary(result('8192', state))).toBe(label);
 });
 it('labels a previous value after failed collection and does not fabricate an unsupported value', () => {

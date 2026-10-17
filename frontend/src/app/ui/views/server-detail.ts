@@ -1,6 +1,6 @@
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
-import "../components/metric-configuration.js";
+import "../components/resource-collection-section.js";
 import { freshness, runState, type Overview, type OverviewItem, returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
@@ -379,7 +379,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _setTab(tab: string) {
-    const configuration = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
+    const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
     if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
     this._applyTab(tab);
   }
@@ -473,7 +473,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
-    if (this.activeTab === "collection") return html`<metric-configuration resourceType="server" .resourceId=${this.serverId}></metric-configuration>`;
+    if (this.activeTab === "collection") return html`<resource-collection-section resourceType="server" .resourceId=${this.serverId}></resource-collection-section>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
       case "metrics": return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics>`;

@@ -150,7 +150,7 @@ describe("network-devices-page", () => {
     await settle(element);
     element.openCreate();
     await settle(element);
-    const fields = [...element.querySelectorAll('app-dialog[title="添加网络设备"] app-form-field')] as any[];
+    const fields = [...element.querySelectorAll('resource-editor-shell app-form-field')] as any[];
     expect(fields.length).toBeGreaterThan(0);
     expect(fields.every((field) => field.inline)).toBe(true);
     expect(element.querySelectorAll(".device-form-section")).toHaveLength(3);

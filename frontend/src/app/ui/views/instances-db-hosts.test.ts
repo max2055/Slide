@@ -111,7 +111,7 @@ describe('database instance host relation form', () => {
 
     await page.updateComplete;
     const root = page.shadowRoot as ShadowRoot;
-    const dialog = root.querySelector('app-dialog') as HTMLElement;
+    const dialog = root.querySelector('.resource-editor') as HTMLElement;
     const baseControls = Array.from(dialog.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea'));
     expect(baseControls.length).toBeGreaterThan(0);
     expect(baseControls.every((control) => control.disabled)).toBe(true);
@@ -366,7 +366,7 @@ describe('database instance host relation form', () => {
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT')).toHaveLength(0);
   });
 
-  it('keeps the dialog locked and submits the original host mapping during an in-flight edit', async () => {
+  it('keeps the editor locked and submits the original host mapping during an in-flight edit', async () => {
     let resolveBaseWrite!: (value: ReturnType<typeof response>) => void;
     const baseWrite = new Promise<ReturnType<typeof response>>((resolve) => { resolveBaseWrite = resolve; });
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
@@ -384,31 +384,30 @@ describe('database instance host relation form', () => {
     const submit = page._handleSubmit(true);
     await page.updateComplete;
     const root = page.shadowRoot as ShadowRoot;
-    const dialog = root.querySelector('app-dialog') as HTMLElement & { closable: boolean; closeOnOverlay: boolean };
+    const back = Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === '返回资源列表')!;
     const cancel = Array.from(root.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent?.trim() === '取消');
 
     page.formData = { ...page.formData, name: 'mutated-after-submit' };
     page.instanceHosts[0].role = 'replica';
-    dialog.dispatchEvent(new CustomEvent('app-dialog-close', { bubbles: true, composed: true }));
+    back.click();
     await page.updateComplete;
     const lockedState = {
       open: page.showEditDialog,
-      closable: dialog.closable,
-      closeOnOverlay: dialog.closeOnOverlay,
+      backDisabled: back.disabled,
       cancelDisabled: cancel?.disabled,
     };
 
     resolveBaseWrite(response({ ok: true }));
     await submit;
 
-    expect(lockedState).toEqual({ open: true, closable: false, closeOnOverlay: false, cancelDisabled: true });
+    expect(lockedState).toEqual({ open: true, backDisabled: true, cancelDisabled: true });
     const relationWrites = authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && options?.method === 'PUT');
     expect(relationWrites).toHaveLength(1);
     expect(JSON.parse(relationWrites[0][1].body)).toEqual({ hosts: [{ serverId: 7, role: 'primary' }] });
   });
 
-  it.each(['cancel', 'dialog close'])('refreshes instances and warns when %s abandons a partial create', async (closeMethod) => {
+  it.each(['cancel', 'back to list'])('refreshes instances and warns when %s abandons a partial create', async (closeMethod) => {
     let instanceReads = 0;
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
       if (url === '/api/database/instances' && !options?.method) {
@@ -434,7 +433,7 @@ describe('database instance host relation form', () => {
         .find((button) => button.textContent?.trim() === '取消')
         ?.click();
     } else {
-      root.querySelector('app-dialog')?.dispatchEvent(new CustomEvent('app-dialog-close', { bubbles: true, composed: true }));
+      Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === '返回资源列表')?.click();
     }
     await settle(page);
 
