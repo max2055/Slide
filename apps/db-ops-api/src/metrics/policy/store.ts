@@ -13,7 +13,7 @@ export interface PolicyTransaction {
   saveGroup(group: Group): Promise<void>;
   saveBinding(value: Published, resetCapabilities: boolean): Promise<void>;
   audit(value: Audit): Promise<void>;
-  audits(target: string): Promise<Audit[]>;
+  audits(target: string, requestId?: string): Promise<Audit[]>;
 }
 export interface PolicyStore { transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> }
 const decode = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
@@ -58,8 +58,11 @@ class MysqlTransaction implements PolicyTransaction {
   async audit(value: Audit): Promise<void> {
     await this.connection.execute('INSERT INTO metric_policy_audit (target, payload) VALUES (?, ?)', [value.target, JSON.stringify(value)]);
   }
-  async audits(target: string): Promise<Audit[]> {
-    return (await this.rows('SELECT payload FROM metric_policy_audit WHERE target = ? ORDER BY id DESC LIMIT 100', [target])).map(r => decode(r.payload));
+  async audits(target: string, requestId?: string): Promise<Audit[]> {
+    const rows = requestId === undefined
+      ? await this.rows('SELECT payload FROM metric_policy_audit WHERE target = ? ORDER BY id DESC LIMIT 100', [target])
+      : await this.rows("SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.request_id')) = ? ORDER BY id DESC LIMIT 1", [target,requestId]);
+    return rows.map(r => decode(r.payload));
   }
 }
 

@@ -24,6 +24,7 @@ export interface ActivationGuard {
   signal?: AbortSignal;
   /** Re-read live grants and cancellation at each boundary, including before publication. */
   check?(): Promise<ActorContext>;
+  published?(revision: number): void;
 }
 export class MetricConfigurationService {
   constructor(private policy: PolicyService, private registry: PackageRegistry, private store: TrialStore,
@@ -53,6 +54,7 @@ export class MetricConfigurationService {
     guard.signal?.throwIfAborted();
     actor = await guard.check?.() ?? actor;
     const result = await this.policy.changeBinding(actor, ref, input, true, candidate);
+    guard.published?.(result.resources[0].binding.revision);
     return { ...result, status: await this.status(actor, ref) };
   }
   catalog(actor: ActorContext) {

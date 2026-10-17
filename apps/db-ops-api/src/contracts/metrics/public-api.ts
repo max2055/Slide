@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { metricBulkSchemas, metricBulkPaths } from './bulk.js';
 import { MetricConfigurationStatusSchema } from './configuration-status.js';
 import { PackageReleaseSchema } from '../../metrics/packages/model.js';
 import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/policy/model.js';
@@ -17,6 +18,7 @@ export const MetricPolicyGroupsSchema = z.strictObject({ groups: z.array(z.stric
   overrides: OverridesSchema, can_manage: z.boolean(),
 })) });
 export const metricPublicSchemas = {
+  ...metricBulkSchemas,
   MetricConfigurationStatus: MetricConfigurationStatusSchema,
   MetricConfigurationMigration: z.strictObject({resource:RefSchema,items:MetricConfigurationStatusSchema.shape.legacy_configuration.unwrap()}),
   MetricBindingChange: BindingChangeSchema,
@@ -33,6 +35,7 @@ const response = (name: string) => ({ description: 'Authorized live configuratio
 const errors = { '400': { description: 'Invalid input' }, '401': { description: 'Authentication required' },
   '403': { description: 'Live resource permission denied' }, '404': { description: 'Resource not found' }, '503': { description: 'Configuration facts unavailable' } };
 export const metricPublicPaths = {
+  ...metricBulkPaths,
   '/api/metrics/config/resources/{type}/{id}/migration': { get: { operationId: 'getMetricConfigurationMigration', security: [{ bearerAuth: [] }], parameters,
     description: 'Requires live resource management permission. Returns pending custom-SQL/retained-template migration codes and actionable steps, without SQL or secrets. Reviewed means awaiting activation, not formal visibility.',
     responses: { '200': response('MetricConfigurationMigration'), ...errors } } },

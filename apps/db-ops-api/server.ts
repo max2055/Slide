@@ -179,6 +179,7 @@ import { configBackupScheduler } from './src/network-devices/config-backup-sched
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
 import { registerMetricConsumerRoutes } from './src/metrics/consumers/routes.js';
 import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.js';
+import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
@@ -430,6 +431,7 @@ async function start() {
     await registerMetricPolicyRoutes(app, verifyToken);
     await registerMetricRolloutRoutes(app, verifyToken);
     await registerMetricConfigurationRoutes(app, verifyToken);
+    await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,

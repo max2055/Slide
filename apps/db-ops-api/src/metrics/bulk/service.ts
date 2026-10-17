@@ -62,6 +62,7 @@ export class BulkConfigurationService {
       item.coverage=choice.metrics;item.missing=choice.missing;
       item.cost={before:preview.requests_per_hour_before,after:preview.requests_per_hour_after,unit:'logical_reads_per_hour',estimate:true};
       item.retained=Object.keys(item.before?.overrides??{}).filter(k=>!Object.hasOwn(input.overrides??{},k));
+      if(input.overrides?.metrics)item.retained.push(...Object.keys(item.before?.overrides.metrics??{}).filter(k=>!Object.hasOwn(input.overrides!.metrics!,k)).map(k=>`metrics.${k}`));
       item.changed=[...(!item.before||stable(item.before.package)!==stable(choice.package)?['package']:[]),...Object.keys(input.overrides??{})];
       return item;
     } catch(e){item.state='failed';item.code=bulkError(e);if(item.code==='POLICY_FORBIDDEN'||item.code==='POLICY_RESOURCE_NOT_FOUND')return this.redact(item);return item;}
@@ -103,12 +104,22 @@ export class BulkConfigurationService {
     rule(resources.length,'BULK_NO_FAILURES',409);
     return this.preview(actor,{...job.input,key,resources,packages:job.input.packages?.map(g=>({...g,resources:g.resources.filter(r=>resources.some(f=>refKey(f)===refKey(r)))})).filter(g=>g.resources.length)},id);
   }
-  async list(actor:ActorContext){return {jobs:await bounded(await this.store.list(actor.userId),async job=>({id:job.id,state:job.state,created_at:job.created_at,count:job.items.length}))};}
-  async get(actor:ActorContext,id:string){return this.view(actor,await this.owned(actor,id));}
-  private async view(actor:ActorContext,job:BulkJob) {
+  async list(actor:ActorContext){return {jobs:await bounded((await this.store.list(actor.userId)).filter(job=>stable(job.actor.resourceBoundary??null)===stable(actor.resourceBoundary??null)),async job=>({id:job.id,state:job.state,created_at:job.created_at,count:job.items.length}))};}
+  async get(actor:ActorContext,id:string){return this.view(actor,await this.owned(actor,id),true);}
+  private async view(actor:ActorContext,job:BulkJob,refresh=false) {
     actor=await this.revalidate(seed(actor),actor.requestId);
     const items=await bounded(job.items,async item=>{
-      try{await this.policy.assertAccess(actor,item.resource,true);}catch{item=this.redact(item);}
+      try{
+        await this.policy.assertAccess(actor,item.resource,true);
+        if(refresh&&['pending_takeover','succeeded'].includes(item.state)){
+          try{
+            item.status=await this.config.status(actor,item.resource);
+            item.state=item.status.binding.published_revision===item.revision && item.status.binding.application==='applied'
+              && item.status.formal_visibility.state==='available' && !item.status.blockers.length?'succeeded':'pending_takeover';
+            item.code=item.status.binding.published_revision===item.revision?null:'POLICY_REVISION_CHANGED';
+          }catch{item.status=null;item.state='pending_takeover';item.code='BULK_STATUS_UNAVAILABLE';}
+        }
+      }catch{item=this.redact(item);}
       const {candidate:_candidate,request_id:_request,...visible}=item;return visible;
     });
     return {id:job.id,digest:job.digest,state:job.state,created_at:job.created_at,updated_at:job.updated_at,expires_at:job.expires_at,
@@ -131,16 +142,21 @@ export class BulkConfigurationService {
         try {
           // Reconcile before cancellation: publication may have committed just before process death/cancel.
           const actor=await this.actor(job,item.request_id);await this.policy.assertAccess(actor,item.resource,true);
-          const published=(await this.policy.audits(actor,item.resource)).find(a=>a.request_id===item.request_id && a.action==='binding.publish');
+          const published=(await this.policy.audits(actor,item.resource,item.request_id)).find(a=>a.request_id===item.request_id && a.action==='binding.publish');
           if(published){item.revision=published.revision;item.status=await this.config.status(actor,item.resource);}
           else {
             await check();item.state='running';await persist();
-            const result=await this.config.activate(actor,item.resource,item.change,{candidate:item.candidate!,signal:this.stopping.signal,check});
+            const result=await this.config.activate(actor,item.resource,item.change,{candidate:item.candidate!,signal:this.stopping.signal,check,
+              published:revision=>{item.revision=revision;}});
             item.revision=result.resources[0].binding.revision;item.status=result.status;
           }
           item.state=item.status.binding.published_revision===item.revision && item.status.binding.application==='applied'
             && item.status.formal_visibility.state==='available' && !item.status.blockers.length?'succeeded':'pending_takeover';item.code=null;
         } catch(e) {
+          if(item.revision!==null){
+            item.state='pending_takeover';item.status=null;item.code='BULK_STATUS_UNAVAILABLE';
+            job.updated_at=this.clock();await persist();return;
+          }
           const cancelled=e instanceof PolicyError && e.code==='BULK_CANCELLED'||this.stopping.signal.aborted;
           // Shutdown returns uncommitted items to the queue; explicit cancellation is terminal.
           item.state=cancelled?this.stopping.signal.aborted?'queued':'cancelled':'failed';item.code=cancelled?'BULK_CANCELLED':bulkError(e);

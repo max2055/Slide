@@ -45,9 +45,9 @@ export class PolicyService {
     await this.assertAccess(actor, ref, false);
     return this.store.transaction(async tx => { const result = await tx.binding(ref); rule(result, 'POLICY_NOT_FOUND', 404); return result; });
   }
-  async audits(actor: ActorContext, ref: Ref) {
+  async audits(actor: ActorContext, ref: Ref, requestId?: string) {
     await this.assertAccess(actor, ref, true);
-    return this.store.transaction(tx => tx.audits(refKey(ref)));
+    return this.store.transaction(tx => tx.audits(refKey(ref), requestId));
   }
   async effective(actor: ActorContext, ref: Ref) {
     await this.assertAccess(actor, ref, false);

@@ -29,9 +29,9 @@ export class MemoryBulkStore implements BulkStore {
 
 describe('bulk collection configuration', () => {
   let jobs: MemoryBulkStore, policies: MemoryPolicyStore, policy: PolicyService, bulk: BulkConfigurationService;
-  let calls: number, denied: number[], fail: number[], hold: (() => Promise<void>) | undefined;
+  let calls: number, denied: number[], fail: number[], hold: (() => Promise<void>) | undefined, statusFailure:boolean;
   beforeEach(() => {
-    jobs = new MemoryBulkStore(); policies = new MemoryPolicyStore(); calls = 0; denied = []; fail = []; hold = undefined;
+    jobs = new MemoryBulkStore(); policies = new MemoryPolicyStore(); calls = 0; denied = []; fail = []; hold = undefined;statusFailure=false;
     const registry = createBuiltinRegistry();
     policy = new PolicyService(policies, registry, testResources);
     const config = new MetricConfigurationService(policy, registry, {
@@ -42,8 +42,8 @@ describe('bulk collection configuration', () => {
         if (fail.includes(ref.id)) throw new Error('secret must never appear');
         return [[{Variable_name:'Uptime',Value:'100'},{Variable_name:'Queries',Value:'10000'}],[]];
       }}}),
-    })}, {inventory:testResources.inventory,evidence:async()=>({asset_enabled:true,global_enabled:true,in_flight:false,
-      formal:{state:'pending',last_observed_at:null,generation:null}})});
+    })}, {inventory:testResources.inventory,evidence:async()=>{if(statusFailure)throw new Error('evidence unavailable');return {asset_enabled:true,global_enabled:true,in_flight:false,
+      formal:{state:'pending',last_observed_at:null,generation:null}};}});
     bulk = new BulkConfigurationService(policy, config, jobs, async seed => ({...admin, ...seed,
       permissions: denied.length ? ['instance:manage','instance:view'] : ['*'],
       instanceScopes: denied.length ? Object.fromEntries([1,2,3,4].filter(id=>!denied.includes(id)).map(id=>[id,'admin' as const])) : {},
@@ -116,5 +116,24 @@ describe('bulk collection configuration', () => {
     await bulk.run();
     expect((await bulk.get(admin,p.id)).items[0].state).toBe('pending_takeover');
     expect(calls).toBe(0);expect(policies.logs).toHaveLength(1);
+  });
+  it('does not retry a committed publication when the subsequent status read fails',async()=>{
+    const p=await confirmed([1]);statusFailure=true;await bulk.run();
+    const result=await bulk.get(admin,p.id);expect(result.items[0]).toMatchObject({state:'pending_takeover',revision:1,code:'BULK_STATUS_UNAVAILABLE'});
+    expect(policies.logs).toHaveLength(1);
+    await expect(bulk.retry(admin,p.id,{key:'retry-status'})).rejects.toThrow('BULK_NO_FAILURES');
+  });
+  it('rechecks revoked grants after the remote read before CAS publication',async()=>{
+    const p=await confirmed([1]);let release!:()=>void,entered!:()=>void;
+    const started=new Promise<void>(r=>entered=r);hold=async()=>{entered();await new Promise<void>(r=>release=r);};
+    const running=bulk.run();await started;denied=[1];release();await running;
+    expect((await bulk.get(admin,p.id)).items[0].state).toBe('failed');expect(policies.bindings.size).toBe(0);
+  });
+  it('bounds mixed work to three and cancels queued objects while in-flight reads drain',async()=>{
+    const p=await confirmed([1,2,3,4]);const releases:Array<()=>void>=[];let entered!:()=>void;
+    const started=new Promise<void>(r=>entered=r);
+    hold=async()=>{await new Promise<void>(r=>{releases.push(r);if(releases.length===3)entered();});};
+    const running=bulk.run();await started;expect(calls).toBe(3);await bulk.cancel(admin,p.id);releases.forEach(r=>r());await running;
+    expect((await bulk.get(admin,p.id)).items.every(i=>i.state==='cancelled')).toBe(true);expect(calls).toBe(3);expect(policies.logs).toHaveLength(0);
   });
 });
