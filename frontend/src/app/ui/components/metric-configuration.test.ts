@@ -80,7 +80,7 @@ it('a repeated preview requires a new trial before publishing', async () => {
 });
 it('publishing a successful trial sends the current revision and reloads application state', async () => {
   mock(); const el = await mount(); await el.execute('preview');
-  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1000 }] }) }));
+  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1000, quality: { status: 'good' } }] }) }));
   await el.execute('trial'); await el.execute('publish');
   const call = authFetch.mock.calls.find((c: any[]) => c[0].endsWith('/activate'))!;
   expect(JSON.parse(call[1].body).expected_revision).toBe(0);
@@ -212,4 +212,74 @@ it('clears prior status and proofs when a status refresh revokes access', async 
   authFetch.mockResolvedValue({ ok: false, status: 403, json: async () => ({ error: 'FORBIDDEN' }) });
   await el.refreshStatus();
   expect(el.collection).toBeNull(); expect(el.preview).toBeNull(); expect(el.canManage).toBe(false); expect(el.polling).toBe(false);
+});
+
+const goodSample = { value: 0, quality: { status: 'good' } };
+const mixedTrial = () => ({ decision: 'attempted', lifecycle_evidence: 'unavailable',
+  attempts: [{ status: 'succeeded' }, { status: 'failed', error: 'counter_epoch_unknown', collector_id: 'mysql.status' }, { status: 'partial' }],
+  samples: [goodSample, { value: null, quality: { status: 'unknown', reason: 'counter_epoch_unknown' } }],
+});
+it('publishes effective mixed trial results while retaining partial and unknown warnings', async () => {
+  mock(); const el = await mount(); await el.execute('preview'); el.flowOpen = true;
+  authFetch.mockImplementationOnce(async () => ({ ok: true, json: async () => mixedTrial() }));
+  await el.execute('trial'); await el.updateComplete;
+  const text = el.shadowRoot.textContent;
+  expect(text).toContain('可发布有效指标，部分指标仍失败/待验证');
+  expect(text).not.toContain('试采成功，可以发布');
+  expect(text).not.toContain('本次试采验证通过');
+  expect(text).toContain('累计计数能力待验证');
+  expect(text).toContain('mysql.status');
+  expect(text).toContain('counter_epoch_unknown');
+  const publish = [...el.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent === '发布') as HTMLButtonElement;
+  expect(publish.disabled).toBe(false);
+  await el.execute('publish');
+  expect(authFetch.mock.calls.some((c: any[]) => c[0].endsWith('/activate'))).toBe(true);
+});
+it.each([
+  ['all failed', [{ status: 'failed', error: 'connection_error' }], [goodSample]],
+  ['all unknown', [{ status: 'unknown' }], [goodSample]],
+  ['only null', [{ status: 'succeeded' }], [{ value: null, quality: { status: 'good' } }]],
+  ['only bad', [{ status: 'partial' }], [{ value: 42, quality: { status: 'bad' } }]],
+  ['missing quality', [{ status: 'succeeded' }], [{ value: 42 }]],
+  ['missing value', [{ status: 'succeeded' }], [{ quality: { status: 'good' } }]],
+])('blocks %s trials even when HTTP succeeded', async (_name, attempts, samples) => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { decision: 'attempted', attempts, samples }; await el.updateComplete;
+  const before = authFetch.mock.calls.length;
+  await el.execute('publish'); expect(authFetch.mock.calls.length).toBe(before);
+  expect(el.publishReady()).toBe(false);
+});
+it('permits a partial attempt with good non-null evidence including zero', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { decision: 'attempted', attempts: [{ status: 'partial' }], samples: [goodSample] };
+  expect(el.publishReady()).toBe(true);
+});
+it.each(['unsupported', 'capability_unknown', 'disabled'])('does not let good samples override decision %s', async decision => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { ...mixedTrial(), decision };
+  expect(el.publishReady()).toBe(false);
+});
+it('retains top-level failure and global pause guards with mixed evidence', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { ...mixedTrial(), error: 'permission_denied' };
+  expect(el.publishReady()).toBe(false);
+  el.trial = mixedTrial(); el.collection.effective_enabled.global_enabled = false;
+  const before = authFetch.mock.calls.length; await el.execute('publish');
+  expect(authFetch.mock.calls.length).toBe(before);
+});
+it('clears mixed trial proof after conflict and does not retry activation', async () => {
+  mock(); const el = await mount(); await el.execute('preview'); el.trial = mixedTrial();
+  authFetch.mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ error: 'POLICY_REVISION_CONFLICT' }) });
+  const before = authFetch.mock.calls.length; await el.execute('publish');
+  expect(authFetch.mock.calls.length).toBe(before + 1);
+  expect(el.trial).toBeNull(); expect(el.preview).toBeNull(); expect(el.error).toContain('重新加载');
+});
+it.each(['candidate', 'permission', 'connection'])('invalidates mixed proof after %s changes', async change => {
+  mock(); const el = await mount(); await el.execute('preview'); el.trial = mixedTrial();
+  if (change === 'permission') window.dispatchEvent(new Event('slide-permissions-loaded'));
+  else if (change === 'connection') el.connectionPending = true;
+  else el.shadowRoot.querySelector('metric-policy-fields').dispatchEvent(new CustomEvent('policy-change', { detail: { enabled: 'disable' } }));
+  await el.updateComplete;
+  const before = authFetch.mock.calls.length; await el.execute('publish');
+  expect(authFetch.mock.calls.length).toBe(before); expect(el.trial).toBeNull();
 });
