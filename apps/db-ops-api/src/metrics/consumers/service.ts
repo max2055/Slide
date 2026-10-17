@@ -87,7 +87,10 @@ export class MetricConsumerService {
       const collector = template?.source.kind === 'collector' ? template.source.collector_id : undefined;
       const attempt = attempts.filter(a => a.config_revision === catalog.effective?.published_revision && (!collector || a.collector_id === collector))
         .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null;
-      const state = definition.kind === 'counter' && !definition.aggregation.time.includes('rate') ? 'query_operation_unavailable' : !template ? 'not_covered' : !template.enabled || !settings?.enabled ? 'disabled'
+      // The rate query supports byte/count units. Retain other cumulative evidence
+      // (e.g. block I/O milliseconds) without making one unavailable operation fail
+      // the whole resource or relabelling its value as a byte/count rate.
+      const state = definition.kind === 'counter' && (!definition.aggregation.time.includes('rate') || !['By','count'].includes(definition.unit)) ? 'query_operation_unavailable' : !template ? 'not_covered' : !template.enabled || !settings?.enabled ? 'disabled'
         : attempt?.error === 'permission_denied' ? 'permission_denied'
         : template.capability.status === 'unsupported' ? 'unsupported'
         : attempt?.error || attempt && ['failed', 'partial', 'cancelled'].includes(attempt.status) ? 'temporary_failure' : template.capability.status === 'unknown' ? 'capability_unknown' : 'available';

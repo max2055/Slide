@@ -71,6 +71,25 @@ describe('MAX-75 deterministic consumer contract', () => {
     await expect(service.discover(actor, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
     expect(reads).toBe(0);
   });
+  it('keeps the formal API available when a host counter has no supported rate unit',async()=>{
+    const registry=createConfigurationRegistry();
+    const release=registry.list().find(r=>r.package.id==='linux-host'&&r.package.version==='1.1.0')!.package;
+    const host={type:'server' as const,id:3};
+    const hostPolicy=new PolicyService(new MemoryPolicyStore(),registry,{exists:async()=>true,
+      inventory:async()=>({type:'server',id:'3',attributes:{'os.family':{value:'linux',source:'test',observed_at:now}}})},()=>now);
+    await hostPolicy.changeBinding(admin,host,{expected_revision:0,package:{id:release.id,version:release.version,digest:release.digest}},true);
+    const readMetrics:string[]=[];
+    const hostService=new MetricConsumerService(hostPolicy,registry,{queryWindow:async s=>{readMetrics.push(s.metric.id);return[];},
+      dimensions:async()=>[{device:'nvme0n1'}],inventory:async()=>null,attempts:async()=>[]},()=>now);
+    const app=Fastify();await registerMetricConsumerRoutes(app,async r=>{(r as any).user=admin;},hostService);
+    try{
+      const response=await app.inject({method:'POST',url:'/api/metrics/query',payload:{resource:host,...fixture.window,
+        metric_ids:['linux.block.io_time_ms_total','linux.uptime.seconds']}});
+      expect(response.statusCode).toBe(200);
+      expect(response.json().metrics[0]).toMatchObject({state:'query_operation_unavailable',series:[]});
+      expect(readMetrics).toEqual(['linux.uptime.seconds']);
+    }finally{await app.close();}
+  });
   it('keeps product profile fixed across template changes and filters extension discovery', async () => {
     const before = await service.discover(admin, fixture.resource);
     expect(CoreProfileSchema.parse(before.profile)).toEqual(before.profile);

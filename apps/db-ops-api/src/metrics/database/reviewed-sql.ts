@@ -22,6 +22,7 @@ const Pin = z.strictObject({ id: z.string().min(1), version: VersionSchema, dige
 const Manifest = z.strictObject({
   id: z.string().regex(/^(mysql|postgresql|oracle|dameng)-custom-[a-z0-9-]{1,100}$/),
   version: VersionSchema,
+  bundle: z.strictObject({id:z.string().regex(/^(mysql|postgresql|oracle|dameng)-custom-[a-z0-9-]{1,100}$/),version:VersionSchema}).optional(),
   base: Pin,
   engine: z.enum(["mysql", "postgresql", "oracle", "dameng"]),
   source_id: z.string().min(1).max(128),
@@ -154,6 +155,28 @@ export function compileReviewedSql(input: unknown[] = reviewedSqlCatalog) {
       }),
     );
   }
+  // A resource has one package binding. Explicitly reviewed bundles preserve multiple
+  // legacy scalar queries in that same runner, instead of replacing one with another.
+  const bundles = new Map<string, typeof manifests>();
+  for(const m of manifests)if(m.bundle){
+    const key=`${m.bundle.id}@${m.bundle.version}`;
+    const members=bundles.get(key)??[];members.push(m);bundles.set(key,members);
+  }
+  for(const [key,unsorted] of bundles){
+    if(seen.has(key))throw new Error('IMMUTABLE_PACKAGE');seen.add(key);
+    const members=[...unsorted].sort((a,b)=>a.source_id.localeCompare(b.source_id));
+    const first=members[0],bundle=first.bundle!;
+    if(!bundle.id.startsWith(`${first.engine}-custom-`)||members.some(m=>m.engine!==first.engine||stable(m.base)!==stable(first.base))
+      ||new Set(members.map(m=>m.source_id)).size!==members.length||new Set(members.map(m=>m.definition.id)).size!==members.length)throw new Error('CUSTOM_BUNDLE_CONFLICT');
+    const base=diagnosticReleases().find(r=>r.package.id===first.base.id&&r.package.version===first.base.version&&r.package.digest===first.base.digest)!;
+    const additions=members.map(m=>{
+      const release=releases.find(r=>r.package.id===m.id&&r.package.version===m.version)!;
+      const id=`reviewed_sql_${createHash('sha256').update(m.source_id).digest('hex').slice(0,12)}`;
+      return {collector:{...release.package.collectors.at(-1)!,id},documentation:{...release.documentation.at(-1)!,collector_id:id}};
+    });
+    releases.push(sealRelease({...base,package:{...base.package,id:bundle.id,version:bundle.version,collectors:[...base.package.collectors,...additions.map(a=>a.collector)]},
+      extensions:[...base.extensions,...members.map(m=>m.definition)],documentation:[...base.documentation,...additions.map(a=>a.documentation)]}));
+  }
   return { specs, releases, entries, manifests };
 }
 /** Single scalar inside the existing authorized bounded transport, never a scheduler or writer. */
@@ -233,7 +256,7 @@ export function migrationItems(
       const release =
         approved &&
         compiled.releases.find(
-          (r) => r.package.id === approved.id && r.package.version === approved.version,
+          (r) => r.package.id === (approved.bundle?.id??approved.id) && r.package.version === (approved.bundle?.version??approved.version),
         );
       const pin = release
         ? {

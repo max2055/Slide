@@ -40,6 +40,38 @@ const manifest = () => ({
   review: { reference: "review/test-fixture", reviewed_by: "fixture reviewer" },
 });
 describe("reviewed custom SQL uses the unique package runner", () => {
+  it('matches the existing processlist source exactly and requires review again after configuration edits', () => {
+    const existing = {id:'connections',target_type:'instance',unit:'count',value_type:'gauge',default_interval:300,
+      collection_sqls:{mysql:'SELECT COUNT(*) as count FROM information_schema.PROCESSLIST'},compute_expr:null};
+    const item = migrationItems([existing], 'mysql')[0];
+    expect(item).toMatchObject({state:'reviewed',code:'CUSTOM_SQL_ACTIVATION_REQUIRED',package:{id:'mysql-custom-existing-scalars'}});
+    for (const patch of [{unit:'%'},{default_interval:60},{value_type:'counter'},
+      {collection_sqls:{mysql:"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep'"}}]) {
+      expect(migrationItems([{...existing,...patch}], 'mysql')[0].state).toBe('blocked');
+    }
+    const release = createConfigurationRegistry().get(item.package!);
+    expect(release.extensions.find(d=>d.id==='custom.mysql.processlist_connections')).toMatchObject({
+      kind:'gauge',unit:'count',temporality:'instant',value_type:'uint64',dimensions:{keys:[]},
+    });
+  });
+  it('keeps both existing scalar queries in one binding without creating a second collection path', async () => {
+    const sources = [
+      {id:'connections',target_type:'instance',unit:'count',value_type:'gauge',default_interval:300,
+        collection_sqls:{mysql:'SELECT COUNT(*) as count FROM information_schema.PROCESSLIST'},compute_expr:null},
+      {id:'slow_queries',target_type:'instance',unit:'count',value_type:'gauge',default_interval:60,
+        collection_sqls:{mysql:"SELECT VARIABLE_VALUE AS Value FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Slow_queries'"},compute_expr:null},
+    ];
+    const items = migrationItems(sources,'mysql');
+    expect(items.every(m=>m.state==='reviewed')).toBe(true);
+    expect(items[0].package).toEqual(items[1].package);
+    const release = createConfigurationRegistry().get(items[0].package!);
+    expect(release.extensions.map(d=>d.id)).toEqual(expect.arrayContaining(['custom.mysql.processlist_connections','custom.mysql.slow_queries_snapshot']));
+    const compiled=compileReviewedSql();
+    const collect = async (sql:string) => collectReviewedSql(compiled.entries.find(e=>e.sql===sql)!.id,
+      {method:'sql',pool:{query:async()=>[[{val:'9007199254740993'}],[]]}},1000);
+    expect(await collect(sources[1].collection_sqls.mysql)).toMatchObject([{fields:{val:{encoding:'uint64',value:'9007199254740993'}}}]);
+    expect(migrationItems([{...sources[1],default_interval:30}],'mysql')[0].state).toBe('blocked');
+  });
   it("blocks pending, stale or unsafe definitions with an actionable migration and never executes them", () => {
     const entry = manifest();
     expect(migrationItems([source], "mysql", [])[0]).toMatchObject({

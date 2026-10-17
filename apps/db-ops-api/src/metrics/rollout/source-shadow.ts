@@ -24,6 +24,7 @@ export class SourceSnapshotCapture {
     return transport;
   }
   compare(ref:Ref,engine:string,samples:NormalizedObservation[],catalog:MetricDefinition[], collectors: Array<{id:string;implementation_ref:string}> = []){
+    const differences=new Map<string,string>();
     const checks:Array<{metric_id:string;sample_id:string;legacy_reference:string;legacy_value:number|null;value:number|null;dimensions:Record<string,string>;state:'passed'|'failed';unit:string}> = [];
     const add=(o:NormalizedObservation,oldId:string,legacy:number|null,dimensions:Record<string,string>,unit:string)=>{
       const definition=catalog.find(d=>d.id===o.metric.id&&d.semantic_version===o.metric.semantic_version)!;
@@ -49,9 +50,22 @@ export class SourceSnapshotCapture {
         ['filesystem_available_bytes','linux.filesystem.available_bytes','availableBytes','By'],['filesystem_inode_usage','linux.filesystem.inode_used_percent','inodeUsagePercent','%'],
       ] as const) for(const o of samples.filter(o=>o.metric.id===key)){
         const bytes=response(o,FILESYSTEM_BYTES_COMMAND);if(bytes===undefined)continue;
-        const filesystems=parseFilesystemEvidence(bytes,response(o,FILESYSTEM_INODES_COMMAND)??'',response(o,FILESYSTEM_MOUNTS_COMMAND)??'');
+        const inodes=response(o,FILESYSTEM_INODES_COMMAND);
+        const filesystems=parseFilesystemEvidence(bytes,inodes??'',response(o,FILESYSTEM_MOUNTS_COMMAND)??'');
         const fs=filesystems.find(fs=>stable({mount:fs.mount,device:fs.device,fs_type:fs.fsType??'unknown'})===stable(o.dimensions));
-        if(fs)add(o,oldId,fs[field]===null?null:Number(fs[field]),o.dimensions,unit);
+        if(fs){
+          // A successful df snapshot can explicitly lack inode accounting (e.g. vfat,
+          // efivarfs). Both parsers preserve null; this is not a numeric observation
+          // or a passed gauge comparison. Missing capture and non-null disagreement
+          // still fail the source gate.
+          const explicitlyUnavailable=inodes?.split(/\r?\n/).some(line=>{
+            const mount=/^.*?\s+(?:-|\d+)\s+(?:-|\d+)\s+(?:-|\d+)\s+-\s+(.+)$/.exec(line.trim())?.[1];
+            return mount?.replace(/\\([0-7]{3})/g,(_match,octal:string)=>String.fromCharCode(parseInt(octal,8)))===fs.mount;
+          });
+          if(field==='inodeUsagePercent'&&explicitlyUnavailable&&fs[field]===null&&o.value===null&&o.quality.status==='unknown'){
+            differences.set(o.id,'The same successful df snapshot has no inode usage statistic for this filesystem. Preserve null/unknown; no numeric equivalence or inode capacity is claimed.');
+          }else add(o,oldId,fs[field]===null?null:Number(fs[field]),o.dimensions,unit);
+        }
       }
     }
     if(ref.type==='instance'){
@@ -69,8 +83,8 @@ export class SourceSnapshotCapture {
     return {mode:'same_actual_source_snapshot',resource:ref,revision:samples[0]?.versions.config_revision??0,remote_requests_added:0,checks,
       sample_ids:samples.map(o=>o.id),measured_at:new Date().toISOString(),
       semantic_differences:samples.filter(o=>!checks.some(c=>c.sample_id===o.id)).map(o=>({metric_id:o.metric.id,sample_id:o.id,
-        reason:catalog.find(d=>d.id===o.metric.id)?.kind==='counter'?'Exact cumulative counter and authoritative epoch replace lossy unversioned totals/rates; old epochs cannot be imported.':
+        reason:differences.get(o.id)??(catalog.find(d=>d.id===o.metric.id)?.kind==='counter'?'Exact cumulative counter and authoritative epoch replace lossy unversioned totals/rates; old epochs cannot be imported.':
           o.metric.id==='db.uptime_seconds'?'No historical database uptime source; initialize from actual server status.':
-          `Definition ${o.metric.id}@${o.metric.semantic_version}: ${catalog.find(d=>d.id===o.metric.id)?.meaning??'unregistered'}. No equivalent historical scalar identity is asserted; preserve native unit, scope, dimensions and quality.`}))};
+          `Definition ${o.metric.id}@${o.metric.semantic_version}: ${catalog.find(d=>d.id===o.metric.id)?.meaning??'unregistered'}. No equivalent historical scalar identity is asserted; preserve native unit, scope, dimensions and quality.`)}))};
   }
 }
