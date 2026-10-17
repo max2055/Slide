@@ -10,8 +10,11 @@ export function configurationReader(pool: () => Pool): ConfigurationReader {
   return { migration: ref => legacyConfigurationMigration(pool(),ref), inventory: configurationInventory, async evidence(ref, revision) {
     const connection = pool();
     const asset_enabled = await assetCollectionEnabled(connection, ref);
+    // Job IDs are opaque, exact identifiers. Existing tables can have different
+    // collations; binary comparison avoids both SQL 1267 and case/padding aliases.
     const [jobs] = await connection.execute<RowDataPacket[]>(`SELECT j.state FROM metric_schedule s
-      JOIN workflow_jobs j ON j.id = s.job_id WHERE s.resource_key = ? AND s.revision = ?`, [refKey(ref), revision]);
+      JOIN workflow_jobs j ON CAST(j.id AS BINARY) = CAST(s.job_id AS BINARY)
+      WHERE s.resource_key = ? AND s.revision = ?`, [refKey(ref), revision]);
     const [rows] = await connection.execute<RowDataPacket[]>(`SELECT COUNT(DISTINCT r.series_hash) AS total,
       COUNT(DISTINCT CASE WHEN r.read_mode = 'semantic' AND r.source = 'semantic' AND r.published_revision = ? AND r.applied_revision = ?
         AND p.generation = r.generation AND JSON_EXTRACT(o.payload, '$.versions.config_revision') = r.published_revision THEN r.series_hash END) AS applied,
