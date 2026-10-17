@@ -4,6 +4,7 @@ import type { Pool } from 'mysql2/promise';
 import { ActorContextService } from '../auth/actor-context.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { InvestigationAuthorization } from '../investigations/authorization.js';
+import { InvestigationStoreError } from '../investigations/store.js';
 import { OperationsAuthorization } from './authorization.js';
 import { OperationsError } from './contracts.js';
 import { operationsFlags } from './feature-flags.js';
@@ -30,12 +31,19 @@ export function investigationRelationEvidence(investigations: InvestigationAutho
   return { async check(session, actor, relation, now) {
     if (!relation.evidence.length) return 'unavailable';
     for (const ref of relation.evidence) {
-      const proof = await resolver.lock(session.connection as never, actor, ref);
+      const proof = await resolver.lock(session.connection as never, actor, ref).catch(error => {
+        // An inaccessible source contributes no fact, including when only an
+        // investigation resource outside the relation endpoints was revoked.
+        if (error instanceof InvestigationStoreError && error.statusCode === 404) return null;
+        throw error;
+      });
       if (!proof) return 'unavailable';
-      if (!proof.active || proof.version !== ref.version || proof.hash !== ref.hash
+      if (!proof.active || proof.id !== ref.id || proof.version !== ref.version || proof.hash !== ref.hash
         || !Number.isFinite(Date.parse(proof.validUntil)) || Date.parse(proof.validUntil) <= +now
         || Date.parse(ref.validUntil) <= +now || Date.parse(ref.validUntil) > Date.parse(proof.validUntil)
-        || ![relation.source, relation.target].every(endpoint => proof.resources.some(r => r.type === endpoint.type && r.id === endpoint.id))) return 'withdrawn';
+        // Each cited proof must cover both endpoints itself. Do not pool
+        // incomplete proofs or use the investigation's additional ACL scope.
+        || ![relation.source, relation.target].every(endpoint => proof.evidenceResources.some(r => r.type === endpoint.type && r.id === endpoint.id))) return 'withdrawn';
     }
     return 'valid';
   } };
