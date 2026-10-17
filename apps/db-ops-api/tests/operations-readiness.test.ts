@@ -76,6 +76,69 @@ test('versions and near duplicate investigations/incidents cannot pad the thirty
     assert.equal(inspect(d).B04.status, 'blocked');
   }
 });
+test('more than thirty independent cases retain fixed-five precision and full-set recall for both searches', () => {
+  const d = dataset();
+  for (let i = 30; i < 35; i++) d.cases.push({ ...structuredClone(d.cases[0]), id: `case-${i}`,
+    investigationId: `investigation-${i}`, incidentGroup: `incident-${i}` });
+  const q = d.queries[0]; q.visibleCaseIds = d.cases.map(c => c.id);
+  q.rankedCaseIds.pop(); q.humanCaseIds.pop();
+  const r = inspect(d);
+  assert.equal(r.B04.trustedRealInvestigations, 35); assert.equal(r.B04.distinctRealIncidents, 35);
+  assert.equal(r.B04.status, 'ready_for_independent_review');
+  assert.equal(r.B04.precisionAt5, .8); assert.equal(r.B04.recallAt5, .8);
+  assert.equal(r.B04.humanPrecisionAt5, .8); assert.equal(r.B04.humanRecallAt5, .8);
+  q.relevantCaseIds.push('case-30', 'case-31');
+  const extended = inspect(d);
+  assert.equal(extended.B04.recallAt5, 4 / 7); assert.equal(extended.B04.humanRecallAt5, 4 / 7);
+  assert.equal(extended.B04.status, 'blocked');
+});
+test.each(['investigationId', 'incidentGroup'] as const)('P12-R1: duplicate %s cannot multiply top-five hits above thirty cases', field => {
+  const d = dataset(), anchor = d.cases[0];
+  const duplicates = Array.from({ length: 4 }, (_, i) => ({ ...structuredClone(anchor), id: `duplicate-${i}`,
+    investigationId: field === 'investigationId' ? anchor.investigationId : `extra-investigation-${i}`,
+    version: i + 2, contentHash: String(i + 1).repeat(64),
+    review: { ...anchor.review, version: i + 2, contentHash: String(i + 1).repeat(64) } }));
+  d.cases.push(...duplicates);
+  const ids = [anchor.id, ...duplicates.map(c => c.id)];
+  Object.assign(d.queries[0], { visibleCaseIds: ids, relevantCaseIds: ids, rankedCaseIds: ids, humanCaseIds: ids });
+  const r = inspect(d);
+  assert(r.B04.trustedRealInvestigations! >= 30); assert.equal(r.B04.distinctRealIncidents, 30);
+  assert.equal(r.B04.status, 'blocked'); assert.equal(r.dataEvidenceStatus, 'blocked');
+  assert(r.B04.gaps.includes('duplicate_investigation_or_incident_in_cohort'));
+  assert.equal(r.B04.precisionAt5, null); assert.equal(r.B04.recallAt5, null);
+  assert.equal(r.B04.humanPrecisionAt5, null); assert.equal(r.B04.humanRecallAt5, null);
+});
+test.each(['investigationId', 'incidentGroup'] as const)('P12-R1: conflicting %s mappings reject the whole freeze, including unreferenced duplicates', field => {
+  for (const reverse of [false, true]) {
+    const d = dataset();
+    const duplicate = { ...structuredClone(d.cases[0]), id: 'conflicting-case',
+      investigationId: 'extra-investigation', incidentGroup: 'extra-incident' };
+    duplicate[field] = d.cases[0][field]; d.cases.push(duplicate);
+    if (reverse) d.cases.reverse();
+    // The duplicate is absent from every query list: cohort integrity is global.
+    const r = inspect(d);
+    assert.equal(r.B04.status, 'blocked'); assert.equal(r.B04.precisionAt5, null);
+    assert.equal(r.B04.humanPrecisionAt5, null);
+  }
+});
+test.each(['visibleCaseIds', 'relevantCaseIds', 'rankedCaseIds', 'humanCaseIds'] as const)(
+  'P12-R1: duplicates referenced only in %s cannot bypass the shared cohort boundary', field => {
+    const d = dataset(), duplicate = { ...structuredClone(d.cases[0]), id: 'duplicate-only-one-list' };
+    d.cases.push(duplicate);
+    if (field === 'visibleCaseIds') d.queries[0][field].push(duplicate.id);
+    else d.queries[0][field][0] = duplicate.id;
+    const r = inspect(d);
+    assert.equal(r.B04.status, 'blocked'); assert.equal(r.dataEvidenceStatus, 'blocked');
+    assert.equal(r.B04.precisionAt5, null); assert.equal(r.B04.humanPrecisionAt5, null);
+  });
+test('P12-R1: a transitive investigation/incident conflict is rejected across all queries', () => {
+  const d = dataset();
+  d.cases.push({ ...structuredClone(d.cases[0]), id: 'bridge', incidentGroup: d.cases[1].incidentGroup });
+  d.queries.push({ ...structuredClone(d.queries[0]), id: 'query-2', incidentGroup: 'held-out-2' });
+  const r = inspect(d);
+  assert.equal(r.B04.status, 'blocked'); assert.equal(r.B04.precisionAt5, null);
+  assert.equal(r.B04.recallAt5, null); assert.equal(r.B04.humanRecallAt5, null);
+});
 test('self review, stale review version/hash, withdrawal and expiry exclude the case', () => {
   for (const mutate of [(d: ReadinessDataset) => d.cases[0].review.reviewer = d.cases[0].author,
     (d: ReadinessDataset) => d.cases[0].version++, (d: ReadinessDataset) => d.cases[0].contentHash = 'b'.repeat(64),
