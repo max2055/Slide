@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
   MetricBulkResult,
@@ -33,6 +33,17 @@ const stateLabel: Record<string, string> = {
 const fieldLabel = (key: string) =>
   ({ package: "采集模板", enabled: "策略开关", metrics: "单项指标覆盖", ...numericFields })[key] ??
   key;
+const overrideValue = (key: string, value: unknown): string => {
+  if (value === undefined || value === "inherit") return "继承";
+  if (value === "enable") return "启用";
+  if (value === "disable") return "停用";
+  if (value && typeof value === "object" && "mode" in value) {
+    if (value.mode === "inherit") return "继承";
+    if ("value" in value && typeof value.value === "number")
+      return String(value.value / (key.endsWith("_ms") ? 1000 : 1));
+  }
+  return "待确认";
+};
 const codes: Record<string, string> = {
   BULK_NO_COMPATIBLE_PACKAGE: "没有兼容模板，保留当前设置",
   BULK_CAPABILITY_UNKNOWN: "引擎、版本或能力未知，保留当前设置",
@@ -107,6 +118,12 @@ export class MetricBulkDialog extends LitElement {
     window.removeEventListener("slide-permissions-loaded", this.accessChanged);
     window.removeEventListener("slide-session-expired", this.accessChanged);
     super.disconnectedCallback();
+  }
+  override updated(changed: PropertyValues) {
+    if (changed.has("step")) {
+      const body = this.renderRoot.querySelector("app-dialog")?.shadowRoot?.querySelector(".dialog-body");
+      if (body) body.scrollTop = 0;
+    }
   }
   show(resources: BulkResource[]) {
     this.generation++;
@@ -388,14 +405,17 @@ export class MetricBulkDialog extends LitElement {
       <section class="stack">
         ${[...groups].map(([group, members]) => {
           const first = members[0];
+          if (!members.some((i) => i.choices.some((c) => c.compatibility === "compatible")))
+            return html`<div class="notice">
+              <strong>${members.length} 个对象将跳过</strong>
+              <p>${members.map((i) => `${this.label(i)}：${reason(i)}`).join("；")}</p>
+            </div>`;
           return html`<app-card
             ><div class="section-title">
               <div>
                 <h2>
-                  ${group
-                    .replace(/instance/g, "数据库")
-                    .replace(/server/g, "服务器")
-                    .replace(/network_device/g, "网络设备")}
+                  ${{ instance: "数据库", server: "服务器", network_device: "网络设备" }[first.resource.type]}
+                  ${first.checks.map((check) => String(check.value ?? "能力未知")).join(" · ")}
                 </h2>
                 <p class="muted">
                   ${members.map((i) => this.label(i)).join("、")} · ${members.length} 个对象
@@ -408,7 +428,7 @@ export class MetricBulkDialog extends LitElement {
             <label class="field-label"
               >为此组选择模板<select
                 aria-label=${`${group} 模板`}
-                .disabled=${this.busy}
+                .disabled=${this.busy || !first.choices.some((c) => c.compatibility === "compatible")}
                 .value=${this.selections.get(resourceKey(first.resource))?.digest ?? first.change?.package?.digest ?? ""}
                 @change=${(e: Event) => {
                   const choice = first.choices.find(
@@ -507,10 +527,34 @@ export class MetricBulkDialog extends LitElement {
                   >保留：资产开关 /
                   策略组${i.retained.length ? " / " + i.retained.map(fieldLabel).join("、") : ""}</small
                 >${
-                  Object.keys(this.overrides).length
+                  i.change && Object.keys(i.change.overrides ?? {}).length
                     ? html`<details>
                         <summary>覆盖字段详情</summary>
-                        <pre>${JSON.stringify(i.change?.overrides, null, 2)}</pre>
+                        <dl class="override-diff">
+                          ${Object.entries(i.change.overrides ?? {}).flatMap(([key, value]) => {
+                            const before = i.before?.overrides;
+                            if (key === "metrics")
+                              return Object.entries(value as Record<string, unknown>).map(
+                                ([metric, next]) =>
+                                  html`<div>
+                                    <dt>${metricName(metric.split("@")[0])}</dt>
+                                    <dd>
+                                      ${overrideValue(metric, before?.metrics?.[metric])} →
+                                      ${overrideValue(metric, next)}${i.retained.includes(`metrics.${metric}`) || i.retained.includes("metrics") ? "（保留）" : ""}
+                                    </dd>
+                                  </div>`,
+                              );
+                            return [
+                              html`<div>
+                                <dt>${fieldLabel(key)}</dt>
+                                <dd>
+                                  ${overrideValue(key, before?.[key as keyof Overrides])} →
+                                  ${overrideValue(key, value)}${i.retained.includes(key) ? "（保留）" : ""}
+                                </dd>
+                              </div>`,
+                            ];
+                          })}
+                        </dl>
                       </details>`
                     : nothing
                 }`,
@@ -518,7 +562,7 @@ export class MetricBulkDialog extends LitElement {
                 ? `${i.cost.before} → ${i.cost.after} 次逻辑读取/小时（估算）`
                 : "不执行采集",
               result:
-                i.state === "eligible" ? "检查、试采、CAS 发布" : reason(i) || stateLabel[i.state],
+                i.state === "eligible" ? "检查、试采、发布配置" : reason(i) || stateLabel[i.state],
             }))}
           ></app-data-table></div
       ></app-card>
@@ -682,8 +726,16 @@ export class MetricBulkDialog extends LitElement {
           display: block;
           min-width: 680px;
         }
-        pre {
-          max-width: 22rem;
+        .override-diff {
+          min-width: 12rem;
+          font-size: 12px;
+        }
+        .override-diff div {
+          margin-block: var(--space-sm);
+        }
+        .override-diff dd {
+          margin: 0;
+          color: var(--muted);
         }
         .history {
           margin-top: var(--space-xl);
@@ -697,7 +749,7 @@ export class MetricBulkDialog extends LitElement {
       ><app-dialog
         .open=${this.open}
         title="批量绑定采集模板"
-        size="xl"
+        size="wide"
         @app-dialog-close=${this.close}
       >
         <p class="section-description">先按兼容范围分组，再确认差异；每个对象独立返回结果。</p>

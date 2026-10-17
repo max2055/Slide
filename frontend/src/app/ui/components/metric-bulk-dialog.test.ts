@@ -113,3 +113,24 @@ it("selection spans resource types and is cleared on account/permission changes"
   window.dispatchEvent(new Event("slide-session-expired"));
   expect(bulkSelection.values()).toHaveLength(0);
 });
+it("shows readable persisted field differences after reopening a preview without local form state", async () => {
+  const saved: any = job();
+  saved.items[0].before = {
+    overrides: { interval_ms: { mode: "set", value: 60000 }, max_rows: { mode: "set", value: 7 } },
+  };
+  saved.items[0].before.package = saved.items[0].change.package;
+  saved.items[0].change.overrides = {
+    interval_ms: { mode: "set", value: 5000 },
+    max_rows: { mode: "set", value: 7 },
+  };
+  saved.items[0].changed = ["interval_ms"];
+  const el = await mount();
+  el.job = saved;
+  el.step = 1;
+  await el.updateComplete;
+  const text = el.shadowRoot.textContent;
+  expect(text).toContain("覆盖字段详情");
+  expect(text).toMatch(/60\s*→\s*5/);
+  expect(text).toMatch(/7\s*→\s*7\s*（保留）/);
+  expect(text).not.toContain('"mode"');
+});
