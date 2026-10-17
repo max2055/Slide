@@ -1,5 +1,7 @@
 # MAX-189 后端候选与验收检查点
 
+> 集成状态入口：`docs/slide/development/MAX-192/final-qualification-2026-10-17.md`。下文保留原交付时点的版本、失败与门禁，不据历史待办推断当前状态。
+
 记录日期：2026-10-17（Asia/Shanghai）。这是候选实现的验证记录，不代表已合并、已部署或完成整体验收。
 
 当前有效的本轮源码、真实MySQL/VM和已有SQL迁移验收见 `unified-metrics-existing-sources-2026-10-17.md`。下文为各历史head的检查点；其中VM认证失败、catalog为空等结论不覆盖后续变化，不把历史结果当作最新集成候选的gate。

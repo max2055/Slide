@@ -1,5 +1,7 @@
 # MAX-190 R1 实服务对照与三类对象推广
 
+> 集成状态入口：`docs/slide/development/MAX-192/final-qualification-2026-10-17.md`。下文保留原交付时点的版本、失败与门禁，不据历史待办推断当前状态。
+
 本记录补齐原 PR200 的前端验收，不代表 A/B 已获独立审查或已经合并。冻结依据仍为 R1 ZIP（SHA256 ab49721cb37448222295b526cd6c1744b94e2b5b546596c5f2f0ad4416ae6074）及 APPROVAL.md。
 
 ## 实现
