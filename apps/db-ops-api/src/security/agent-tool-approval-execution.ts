@@ -55,9 +55,14 @@ export class AgentToolApprovalExecution {
     const executionId = randomUUID();
     const outcome = await this.transaction(async (connection) => {
       // Serialize against revocation and concurrent consumers before reading scope.
-      await connection.execute('SELECT id FROM agent_tool_approvals WHERE id = ? FOR UPDATE', [id]);
+      const [locked] = await connection.execute('SELECT id, tool_name FROM agent_tool_approvals WHERE id = ? FOR UPDATE', [id]);
+      // Operations actions use their dedicated transaction/intent/fence path.
+      // Generic approval tokens and refund callbacks never authorize them.
+      const isAction = Array.isArray(locked) && locked[0]?.tool_name === 'operations_action_plan';
       const service = new AgentToolApprovalService(() => connection, 'transaction-only-unused-key');
-      const result = await service.consumeApprovedDetailed(id, bindingHash, requesterId, options);
+      const result: ApprovalConsumeResult = isAction
+        ? { approved: false, failure: 'INVALID_APPROVAL' }
+        : await service.consumeApprovedDetailed(id, bindingHash, requesterId, options);
       if (result.approved) {
         await connection.execute(
           "INSERT INTO agent_tool_execution_intents (id, approval_id, request_id, state) VALUES (?, ?, ?, 'dispatching')",
