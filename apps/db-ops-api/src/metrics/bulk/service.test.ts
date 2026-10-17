@@ -36,11 +36,11 @@ describe('bulk collection configuration', () => {
     policy = new PolicyService(policies, registry, testResources);
     const config = new MetricConfigurationService(policy, registry, {
       reserve: async () => ({connection:{ping:async()=>{}},release:async()=>{}}), attempts:async()=>[],
-    }, {resolve:async ref => ({resource:resource(ref.id),credential_ref:'credential:fixture',evidence:{},
+    }, {resolve:async ref => ({resource:resource(ref.id),credential_ref:'credential:fixture',evidence:{counter:{bits:'64',start_at:'2026-09-01T00:00:00.000Z'}},
       resolve:async()=>({method:'sql',pool:{query:async()=> {
         calls++; if (hold) await hold();
         if (fail.includes(ref.id)) throw new Error('secret must never appear');
-        return [[{Variable_name:'Uptime',Value:'100'}],[]];
+        return [[{Variable_name:'Uptime',Value:'100'},{Variable_name:'Queries',Value:'10000'}],[]];
       }}}),
     })}, {inventory:testResources.inventory,evidence:async()=>({asset_enabled:true,global_enabled:true,in_flight:false,
       formal:{state:'pending',last_observed_at:null,generation:null}})});
@@ -60,7 +60,7 @@ describe('bulk collection configuration', () => {
     expect(preview.items[0].before?.overrides.max_rows).toEqual({mode:'set',value:7});
     expect(preview.items[0].change?.overrides).toMatchObject({max_rows:{mode:'set',value:7}});
     await bulk.run(); const result=await bulk.get(admin,preview.id);
-    expect(result.state).toBe('completed'); expect(result.items.map(i=>i.state)).toEqual(['pending_takeover','pending_takeover']);
+    expect(result.state).toBe('completed'); expect(result.items.map(i=>i.state),JSON.stringify(result.items.map(i=>({code:i.code,change:i.change})))).toEqual(['pending_takeover','pending_takeover']);
     expect(policies.bindings.get('instance:1')?.binding.overrides.max_rows).toEqual({mode:'set',value:7});
     expect(policies.logs.filter(l=>l.action==='binding.publish')).toHaveLength(3);
     expect(calls).toBe(2);
