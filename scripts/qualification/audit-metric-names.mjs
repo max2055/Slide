@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Check current code/configuration. Historical SQL, tests and evidence are immutable.
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-const generation = /metrics?-v[12]|metrics?_v[12]|MetricsV[12]|METRICS_V[12]/g;
+const generation = /metrics?[-_]?v[12]/gi;
 const exceptions = new Map([
   ['apps/db-ops-api/src/metrics/legacy-routes.ts', 'Same handler/auth alias; Sunset 2026-11-15; remove after external callers migrate.'],
   ['apps/db-ops-api/src/metrics/rollout/alert-publication-fence.ts', 'Recognize historical notification source to retain publication fencing; remove after old notifications drain.'],
@@ -25,7 +25,7 @@ for (const file of files) {
     const matches = [...line.matchAll(generation)].map(match => match[0]);
     if (matches.length) {
       const item = { file, line: index + 1, matches };
-      if (exceptions.has(file)) permitted.push({ ...item, reason: exceptions.get(file) });
+      if (exceptions.has(file) && matches.every(match => match === 'metrics-v2')) permitted.push({ ...item, reason: exceptions.get(file) });
       else residuals.push(item);
     }
     if (/\b(?:import|export)\b.*(?:from\s*|import\s*\().*['"][^'"]*migrations\/metric-history\//.test(line)) {
