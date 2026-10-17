@@ -58,8 +58,8 @@ pnpm --filter slide-api exec vitest run tests/operations-readiness.test.ts
 必须由有权限操作者提供以下内容；不得复制秘密或无权限案例全文：
 
 1. `schemaVersion=1`、`frozenAt`、`permission.{role,revision,evidenceRef}`。audit locator 必须能让独立审查者在受保护系统回读原记录；本工具不联网解析 locator。
-2. `cases`：准确案例 id/version/contentHash、来源 investigationId、真人归并 incidentGroup、`provenance`、生命周期、有效期、author、来源证据 locator；独立人审包含 kind/reviewer/时间/locator/绑定 version/contentHash。同调查多版本和同事故近重复分别去重，至少 30 个不同真实调查且 30 个不同事故组；自审、过期、撤回、旧 hash 审核不计入。
-3. `queries`：不同事故的真实冻结查询、适用产品/资源版本、角色与权限 revision、visibleCaseIds、**全部** relevantCaseIds、最多 5 个 rankedCaseIds 和人工 humanCaseIds、人工检索/标签 audit locator。所有标签及结果必须在可见 cohort 中；查询事故不得与参考事故重叠，重复事故查询拒绝。P@5 固定分母 5（空位算未命中），R@5 分母是全部相关案例；每查询计算后 macro average，两值均 ≥0.80。人工对照单独输出，不把其结果复制成模型/算法结果。
+2. `cases`：准确案例 id/version/contentHash、来源 investigationId、真人归并 incidentGroup、`provenance`、生命周期、有效期、author、来源证据 locator；独立人审包含 kind/reviewer/时间/locator/绑定 version/contentHash。冻结前由操作者与真人审查者选定每调查、每事故的唯一代表，至少 30 个不同真实调查且 30 个不同事故组。工具保守拒绝整个 cohort 中任何重复 investigationId 或 incidentGroup，包括同调查多版本、同事故跨调查近重复、冲突或传递映射、未出现在查询中的副本；不隐式选版本。不合格、自审、过期、撤回、旧 hash 审核不计入可信数量。
+3. `queries`：不同事故的真实冻结查询、适用产品/资源版本、角色与权限 revision、visibleCaseIds、**全部** relevantCaseIds、最多 5 个 rankedCaseIds 和人工 humanCaseIds、人工检索/标签 audit locator。四类集合必须引用上述同一独立 cohort；发现重复 cohort 时 B04 返回 `duplicate_investigation_or_incident_in_cohort` / blocked，全部算法与人工质量指标为 null，不按副本计算或在评分后补位。调查/事故 distinct 数仅为诊断，不能覆盖重复门禁。所有标签及结果必须在可见 cohort 中；查询事故不得与参考事故重叠，重复事故查询拒绝。有效独立 cohort 的 P@5 固定分母 5（空位算未命中），R@5 分母是全部相关独立案例；每查询计算后 macro average，两值均 ≥0.80。人工对照使用同一评分边界单独输出，不把其结果复制成模型/算法结果。去重/改代表须重新冻结全部集合并对准确 bytes 重新人审。
 4. `baselines`：每个申请系列的 provenance、正式来源 locator、静态规则版本 `staticRuleVersion`、原静态阈值、P04 `BaselineInput` 和完整 `BaselineSourceWindow`。冻结内容包含资源/metric/单位/dimensions/source/binding/configuration/transform/counter epoch、方法和窗口。工具要求日内和周模式均有材料，复算 P04 的 14/28 有效日、90%覆盖、训练槽重复次数、6 小时长缺口、漂移、当前新鲜度和最后 7 天 holdout；无插值。混合桶单位/指标/dimensions、目标不符或过期快照拒绝。结果仅适用于逐系列，不由一个指标外推全部资源支持。
 5. `labels` 逐小时绑定同一时间外窗口与真实 audit locator：normal/anomaly/important；与所有可比较 holdout 桶精确对齐，不允许重复、训练期或部分挑样。两算法在同一标签上复算；误报分母为 normal，基线误报率不得高于静态，静态命中而基线漏掉的 important 必须为 0。缺正常/异常标签或静态规则不作改善结论。
 6. 数据冻结后，操作者提交独立 `FreezeReview`：schemaVersion、精确文件 bytes 的 datasetSha256、`kind=human`、reviewer、reviewedAt、evidenceRef；审核时间必须介于冻结与当前时间。查询/标签/ACL/阈值/窗口任意 bytes 改动使审核失配。不是让代理把自己的校验报告填成真人审核。
@@ -98,10 +98,22 @@ P11 完整交付后再汇总全批工程/行动/设计/数据/独立审查、准
 
 本阶段产品模型请求 0，不创建或重置 AI-Operations-V23 canonical 账本；编码 token/费用实测不可用。无子代理。
 
-## 7. 本阶段验证
+## 7. 初始候选验证（P12-R1 修复前的历史证据）
 
 Node24.18.0 / pnpm11.19.0。专属工具类型检查（扩展现有 API tsconfig、将 rootDir 设为仓库根并包含工具/专属测试）通过；API/前端 typecheck、前端 build/CSP、contracts:check、qualification:matrix 37/37、安全扫描、14 项 CI 选择器测试、两文件 lint 和 diff 检查通过。保留既有前端体积/动态导入提示。
 
 自建回环隔离容器 `slide-max205-readiness`，MySQL9.6.0，ID `955d692275c0a24e3a232a02d7c405d6299e8cedc93bfde94d0f15e0e54334fa`，label `slide.task=MAX-205`，端口58971。执行 `OPERATIONS_TEST_MYSQL_PORT=58971 P04_REAL_REPORT=<专属输出> pnpm --filter slide-api exec vitest run tests/operations-readiness.test.ts src/operations --maxWorkers=1`，25文件/317项通过，无跳过；包含18项专属资格协议测试及实际SQL/JWT/HTTP/撤权/过期/unknown/保留回退测试。初次未配SQL端口时的60项跳过已由本次实际通过取代。调查、长窗口和人审身份均为 synthetic 测试输入，不能计入 B04/B06/B07 的真实数据。只停止本任务已核label/ID的容器，测试随机库自动清理；未触及共享产品服务或VM。
 
 真实业务盘点无新数据输入：命令无input时实跑退出2，输出案例数和检索质量null、各数据门禁blocked、productQualificationChanged=false。准确head完整CI和父独立审查/merge由任务交付记录接续，不以本地检查代替。
+
+## 8. P12-R1 修复与当前验证
+
+父独立审查针对初始 head `571fa7ad2fee866f7800ae42bd46d3bec55a990b` 提出 P12-R1：调查/事故仅在30例阈值去重，quality 按 case id 计分；30个独立调查/事故外增加4份副本，仍能让5份同源结果得到 P/R@5=1。原18项测试和 CI39011201311 的14绿未覆盖此反例；初始候选不构成独立审查通过。
+
+当前选择保守拒绝重复的整个冻结 cohort，在评分入口同时约束 visible/relevant/ranked/human；拒绝时不产生算法或人工数值质量声明。未改 P03/P04、产品路径、权限、指标、迁移或CI。原字节审核绑定、实时权限外部门禁、事故隔离、固定分母5、完整相关集 recall、macro average 与0.80均保留。
+
+真实执行 `inspectEvidence` 的红绿回归：修改实现前19通过/9失败/0跳过，实现修复后28通过/0失败/0跳过。新增10项覆盖两个父原反例、超过30例独立cohort的有效0.80及完整相关集、同调查不同事故冲突、同事故不同调查冲突、无查询引用的副本、四类查询集合以及跨查询传递冲突。所有 real/human 字段均为 synthetic 协议值，不是真人或真实长期数据；报告的 null 表示因重复而未计算，不是0分。
+
+原父附件的18项加两个原始反例未改断言重放20/20通过；这是owner重放，不能代替父独立复审。当前受影响Operations检查157通过/170条件跳过，未配置实库门禁；不将跳过计作通过，未变SQL/HTTP证据沿§7复用。工具与专属测试的TypeScript检查、两文件lint、diff检查通过；仓库未配置该工具行覆盖率，本轮未额外安装覆盖率依赖，未声称覆盖率百分比。
+
+受影响检查与新准确 head 的完整CI结果见本次任务交付附件和PR；父非实现上下文独立复审继续保留。无新增SQL/HTTP产品路径，§7及前置包未变的真实SQL/HTTP证据按原范围复用，不声称本次重新实测VM或长期观测。B04/B06/B07真实数据资格仍blocked，可信案例/有效时长/质量unknown；最终汇总仍等P11。部分PR合入不得自动关闭P12：当前平台PR关联仍有auto_complete等待配置，未经受支持方式保证不会误关整包前保留PR，不移除真实关联。
