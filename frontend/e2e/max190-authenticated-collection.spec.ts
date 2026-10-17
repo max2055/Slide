@@ -179,6 +179,7 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   }
   report.checks.threeFormalCycles = true; report.checks.existingSqlFormalValues = true; await save();
   await page.keyboard.press('Escape');
+  await editor.getByText('最近正式采集尝试与技术证据', { exact: true }).click();
   await editor.getByRole('button', { name: '重新加载', exact: true }).click();
   await expect(editor.locator('.state-card')).toContainText('正式可用');
   await page.getByRole('button', { name: '返回资源列表', exact: true }).click();
