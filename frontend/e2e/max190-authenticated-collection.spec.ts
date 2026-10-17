@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomBytes, createHash } from 'node:crypto';
@@ -18,13 +18,32 @@ const children: ChildProcess[] = [];
 let source: any, pool: any, started = false, token = '', sourceDigest = '';
 const report: any = { source: 'Real mysql3306, complete Fastify/JWT login/navigation and production scheduler', requests: [], processes: [], checks: {}, product_llm_calls: 0 };
 const save = () => writeFile(`${output}/result.json`, JSON.stringify(report, null, 2));
+const matrix = process.env.MAX190_VISUAL_MATRIX === '1';
+async function captureMatrix(page: Page, name: string) {
+  for (const width of [1440, 390]) for (const mode of ['light', 'dark']) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: document overflow`).toBe(true);
+    await page.evaluate(() => { for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; });
+    await page.screenshot({ path: `${output}/${name}-${width}-${mode}.png` });
+    const editor = page.locator('metric-configuration');
+    if (await editor.isVisible()) {
+      const overflows = await editor.evaluate((el: any) => [...el.shadowRoot.querySelectorAll('.edit-grid,.template-preview,.fields,.coverage-line')].filter((node: any) => node.scrollWidth > node.clientWidth + 1).map((node: any) => node.className));
+      expect(overflows, `${name}: inner overflow`).toEqual([]);
+      await editor.getByRole('button', {name:'检查并启用',exact:true}).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${output}/${name}-actions-${width}-${mode}.png` });
+    }
+  }
+}
 const snapshot = async () => {
   const [d] = await source.query('SELECT id,target_type,unit,value_type,default_interval,collection_sqls,compute_expr FROM metric_definitions WHERE is_builtin=0 ORDER BY id');
   const [b] = await source.query('SELECT * FROM instance_templates WHERE instance_id=1 ORDER BY template_id');
   const [r] = await source.query('SELECT * FROM database_instances WHERE id=1');
   const [providers] = await source.query('SELECT * FROM llm_providers ORDER BY id');
   const [routes] = await source.query('SELECT * FROM llm_scene_bindings ORDER BY scene');
-  return createHash('sha256').update(JSON.stringify([d,b,r,providers,routes])).digest('hex');
+  const [servers] = await source.query('SELECT * FROM servers ORDER BY id');
+  const [devices] = await source.query('SELECT * FROM network_devices ORDER BY id');
+  return createHash('sha256').update(JSON.stringify([d,b,r,providers,routes,servers,devices])).digest('hex');
 };
 async function request(path: string, body?: unknown, method?: string) {
   const response = await fetch(api + path, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -81,6 +100,21 @@ test.beforeAll(async () => {
   }
   const [[instance]] = await source.query('SELECT id,name,host,port,username,password_encrypted,db_type,db_version,database_name,environment,status FROM database_instances WHERE id=1');
   await pool.query('INSERT INTO database_instances SET ?', [instance]);
+  if (matrix) {
+    report.fixtureResources = {};
+    for (const table of ['servers', 'network_devices']) {
+      const [rows] = await source.query('SELECT * FROM ?? ORDER BY id LIMIT 1', [table]);
+      const [columns] = await pool.query('SHOW COLUMNS FROM ??', [table]);
+      const names = new Set(columns.map((c: any) => c.Field));
+      for (const row of rows) {
+        const copy = Object.fromEntries(Object.entries(row).filter(([key]) => names.has(key)));
+        // Read-only UI verification: never probe or schedule these copied targets.
+        copy.collection_enabled = 0;
+        await pool.query('INSERT INTO ?? SET ?', [table, copy]);
+      }
+      report.fixtureResources[table] = rows.map((r: any) => r.id);
+    }
+  }
   const [definitions] = await source.query('SELECT id,target_type,name,unit,value_type,db_types,aggregation,default_interval,is_collected,is_builtin,collection_sqls,compute_expr FROM metric_definitions WHERE is_builtin=0');
   for (const row of definitions) {
     for (const key of ['collection_sqls','db_types']) if (row[key] && typeof row[key] !== 'string') row[key] = JSON.stringify(row[key]);
@@ -127,7 +161,7 @@ test.afterAll(async () => {
   report.cleanup = { containerRemoved: started, processes: children.map(c => ({ pid: c.pid, exitCode: c.exitCode, signal: c.signalCode })) }; await save();
 });
 
-test('login → existing mysql3306 editor → mixed trial → publish → three formal cycles → list/detail/settings', async ({ page }) => {
+test(matrix ? 'authenticated R1 page matrix, formal field consistency and resource editor navigation' : 'login → existing mysql3306 editor → mixed trial → publish → three formal cycles → list/detail/settings', async ({ page }) => {
   test.setTimeout(240000); page.setDefaultTimeout(15000);
   const stage = async (name: string) => { report.stage = name; await save(); };
   await page.addInitScript(() => localStorage.setItem('slide.i18n.locale', 'zh-CN'));
@@ -152,6 +186,7 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   await editor.getByLabel('采集间隔（秒）覆盖方式', { exact: true }).selectOption('set');
   await editor.getByLabel('采集间隔（秒）', { exact: true }).fill('5');
   await page.screenshot({ path: `${output}/editor-desktop-light.png`, fullPage: true });
+  if (matrix) await captureMatrix(page, 'editor-normal');
   await editor.getByRole('button', { name: '检查并启用', exact: true }).click();
   await editor.getByRole('button', { name: '预检与影响预览' }).click(); await expect(editor).toContainText('影响 1 个资源');
   const trialResponse = page.waitForResponse(r => r.url().endsWith('/trial') && r.request().method() === 'POST');
@@ -169,7 +204,7 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   const published = await activation; expect(published.status()).toBe(200); report.activation = await published.json(); await save();
   const root = '/api/metrics/config/resources/instance/1';
   await expect.poll(async () => { report.status = await request(root + '/status'); await save(); return report.status.formal_visibility.state; }, { timeout: 120000, intervals: [1000,2000,3000] }).toBe('available');
-  await expect.poll(async () => {
+  if (!matrix) await expect.poll(async () => {
     const [[row]] = await pool.query("SELECT COUNT(DISTINCT p.observed_at) n FROM metric_publications p JOIN metric_rollout r ON r.series_hash=p.series_hash WHERE r.resource_type='instance' AND r.resource_id='1'");
     report.formalCycles = Number(row.n); return report.formalCycles;
   }, { timeout: 90000, intervals: [1000,2000,3000] }).toBeGreaterThanOrEqual(3);
@@ -177,7 +212,7 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   for (const id of ['custom.mysql.processlist_connections','custom.mysql.slow_queries_snapshot']) {
     expect(report.formalQuery.metrics.find((m: any) => m.definition.id === id)?.series.some((s: any) => s.buckets.some((b: any) => b.value !== null && b.quality.status === 'good'))).toBe(true);
   }
-  report.checks.threeFormalCycles = true; report.checks.existingSqlFormalValues = true; await save();
+  report.checks.threeFormalCycles = matrix ? 'reused e556eba1 evidence; not repeated' : true; report.checks.existingSqlFormalValues = true; await save();
   await page.keyboard.press('Escape');
   await editor.getByText('最近正式采集尝试与技术证据', { exact: true }).click();
   await editor.getByRole('button', { name: '重新加载', exact: true }).click();
@@ -185,19 +220,142 @@ test('login → existing mysql3306 editor → mixed trial → publish → three 
   await page.getByRole('button', { name: '返回资源列表', exact: true }).click();
   await expect(page.locator('resource-metrics-table')).toContainText('已绑定');
   await page.screenshot({ path: `${output}/list-formal.png`, fullPage: true });
+  if (matrix) {
+    // Compare the exact response consumed by the table, including capability changes
+    // introduced by imported custom packages; do not hard-code MySQL 9.6 unsupported.
+    const tableResult = await page.locator('resource-metrics-table').evaluate((el: any) => el.rows.get(1));
+    report.listEvidence = tableResult;
+    const capacity = tableResult.result.metrics.find((m: any) => m.definition.id === 'mysql.tables.estimated_allocated_bytes');
+    const capacityBucket = capacity.series[0]?.buckets.at(-1);
+    if (capacityBucket?.value) {
+      const bytes = Number(capacityBucket.value.value);
+      const units = ['B', 'KiB', 'MiB', 'GiB'];
+      const index = Math.min(3, Math.floor(Math.log2(Math.max(1, bytes)) / 10));
+      const formatted = index ? (bytes / 1024 ** index).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : bytes.toLocaleString('zh-CN');
+      await expect(page.locator('resource-metrics-table').getByRole('cell').filter({hasText: `${formatted} ${units[index]}`})).toBeVisible();
+    } else await expect(page.locator('resource-metrics-table')).toContainText(capacity.state === 'unsupported' ? '该版本不支持' : '待样本');
+    const uptime = tableResult.result.metrics.find((m: any) => m.definition.id === 'db.uptime_seconds').series[0]?.buckets.at(-1)?.value?.value;
+    if (uptime != null) await expect(page.locator('resource-metrics-table')).toContainText(`${Math.floor(Number(uptime)/86400)} 天 ${Math.floor(Number(uptime)%86400/3600)} 小时`);
+    report.listStatus = await request(root + '/status');
+    expect(pin).toMatchObject(report.listStatus.binding.package);
+    expect(report.listStatus.binding.published_revision).toBe(report.activation.resources[0].binding.revision);
+    report.checks.listValuesAndBindingMatchApi = true;
+    await captureMatrix(page, 'list-normal');
+  }
   await page.goto(site + '/instance-detail?id=1');
   await page.getByRole('tab', { name: '采集配置', exact: true }).click();
   await expect(page.locator('resource-collection-section')).toContainText('正式可用');
+  if (matrix) {
+    const section = page.locator('resource-collection-section');
+    await section.getByText('技术证据与配置版本', { exact: true }).click();
+    report.detailStatus = await request(root + '/status');
+    const status = await section.evaluate((el: any) => el.status);
+    report.detailRenderedStatus = status;
+    await expect(section.locator('.fact-strip')).toContainText(pin.version);
+    await expect(section.locator('.collection-facts')).toContainText(`发布 ${status.binding.published_revision} · 应用 ${status.binding.applied_revision}`);
+    const visibleTimes = await section.locator('.collection-facts time').evaluateAll(times => times.map(t => t.getAttribute('datetime')));
+    expect(visibleTimes).toEqual([status.collection.last_attempt_at, status.collection.last_success_at, status.formal_visibility.last_observed_at].filter(Boolean));
+    expect(status.binding).toEqual(report.detailStatus.binding);
+    expect(pin).toMatchObject(status.binding.package);
+    expect(status.binding.published_revision).toBe(report.activation.resources[0].binding.revision);
+    report.checks.detailPackageAndRevisions = true;
+    await section.getByText('技术证据与配置版本', { exact: true }).click();
+  }
   for (const width of [1440,390]) for (const mode of ['light','dark']) {
     await page.setViewportSize({ width, height: 1000 });
     await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `${output}/detail-${width}-${mode}.png`, fullPage: true });
   }
+  if (matrix) {
+    await page.getByRole('tab', { name: '指标与趋势', exact: true }).click();
+    const metrics = page.locator('semantic-metrics');
+    await expect(metrics.locator('.summary-grid')).toBeVisible();
+    const rendered = await metrics.evaluate((el: any) => el.result);
+    report.detailMetrics = rendered;
+    expect(rendered.configuration_revision).toBe(report.activation.resources[0].binding.revision);
+    for (const id of ['custom.mysql.processlist_connections', 'custom.mysql.slow_queries_snapshot']) {
+      const metric = rendered.metrics.find((m: any) => m.definition.id === id);
+      const card = metrics.locator('.current').filter({has: page.getByRole('heading', {name:id, exact:true})});
+      for (const series of metric.series) {
+        const bucket = series.buckets.at(-1);
+        await expect(card).toContainText(String(bucket?.value?.value ?? '未知'));
+        await expect(card).toContainText(bucket.unit);
+      }
+    }
+    report.checks.detailFormalValuesAndRevision = true;
+    await captureMatrix(page, 'metrics-normal');
+  }
   await page.goto(site + '/settings/monitoring/metrics?view=packages');
   await page.getByRole('tab', { name: '采集包', exact: true }).click();
-  await expect(page.locator('metric-settings')).toContainText('mysql-custom-existing-scalars');
+  await expect(page.locator('metric-settings')).toContainText('MySQL 现有自定义指标');
   await page.screenshot({ path: `${output}/templates-formal.png`, fullPage: true });
+  if (matrix) {
+    const settings = page.locator('metric-settings');
+    await settings.getByLabel('搜索采集包', { exact: true }).fill(pin.id);
+    const row = settings.getByRole('row').filter({ hasText: 'MySQL 现有自定义指标' });
+    await expect(row).toContainText(pin.version);
+    await captureMatrix(page, 'templates-normal');
+    await row.getByRole('button', { name: '查看模板', exact: true }).click();
+    const detail = settings.locator('app-dialog');
+    await detail.getByText('高级详情：原始 JSON', { exact: true }).click();
+    const displayed = JSON.parse(await detail.locator('pre').innerText());
+    expect(displayed.package).toEqual(pin);
+    report.checks.settingsDigestVersionCoverage = true;
+    await captureMatrix(page, 'template-detail');
+    await page.keyboard.press('Escape');
+    await expect(row.getByRole('button', { name: '查看模板', exact: true })).toBeFocused();
+    report.checks.templateDialogFocusRestored = true;
+  }
+  if (matrix && process.env.MAX190_RESOURCE_MATRIX === '1') {
+    for (const [type, route, tag, table, detailRoute] of [
+      ['server', 'servers', 'servers-page', 'servers', 'server-detail'],
+      ['network_device', 'network-devices', 'network-devices-page', 'network_devices', 'network-device-detail'],
+    ]) {
+      const id = report.fixtureResources[table][0];
+      expect(id, `${type}: copied source resource`).toBeTruthy();
+      await page.goto(`${site}/${route}`);
+      const view = page.locator(tag);
+      await expect(view.getByRole('button', {name:'编辑',exact:true})).toBeVisible();
+      await captureMatrix(page, `${type}-list`);
+      await view.getByRole('button', {name:'编辑',exact:true}).click();
+      const shell = view.locator('resource-editor-shell');
+      await expect(shell).toBeVisible();
+      await expect(view.locator('app-dialog[title="编辑采集配置"]')).toHaveCount(0);
+      await captureMatrix(page, `${type}-basic`);
+      await shell.getByRole('tab', {name:'基本信息',exact:true}).focus();
+      await page.keyboard.press('ArrowRight');
+      await expect(shell.getByRole('tab', {name:'监控与采集',exact:true})).toBeFocused();
+      const configuration = view.locator('metric-configuration');
+      await expect(configuration.getByLabel('采集包 / 模板版本', {exact:true})).toBeVisible();
+      await captureMatrix(page, `${type}-editor`);
+      await configuration.getByLabel('采集间隔（秒）覆盖方式', {exact:true}).selectOption('set');
+      await configuration.getByLabel('采集间隔（秒）', {exact:true}).fill('11');
+      await shell.getByRole('tab', {name:'基本信息',exact:true}).click();
+      const field = type === 'server' ? view.locator('app-form-field[label="标签 (可选)"] input') : view.locator('app-form-field[label="名称"] input');
+      await field.fill('MAX-190 disposable connection edit');
+      await view.getByRole('button', {name:'保存连接并配置采集',exact:true}).click();
+      await expect(shell.getByRole('tab', {name:'监控与采集',exact:true})).toHaveAttribute('aria-selected','true');
+      await expect(configuration.getByLabel('采集间隔（秒）', {exact:true})).toHaveValue('11');
+      await shell.getByRole('button', {name:'返回资源列表',exact:true}).click();
+      await expect(configuration.getByText('放弃未发布的修改？', {exact:true})).toBeVisible();
+      await configuration.getByRole('button', {name:'继续编辑',exact:true}).click();
+      await expect(configuration.getByLabel('采集间隔（秒）', {exact:true})).toHaveValue('11');
+      await shell.getByRole('button', {name:'返回资源列表',exact:true}).click();
+      await configuration.getByRole('button', {name:'放弃修改并继续',exact:true}).click();
+      await expect(view.getByRole('button', {name:'编辑',exact:true})).toBeFocused();
+      await view.getByRole('button', {name:'详情',exact:true}).click();
+      await page.getByRole('tab', {name:'采集配置',exact:true}).click();
+      const section = page.locator('resource-collection-section');
+      await expect(section.locator('.fact-strip')).toBeVisible();
+      await captureMatrix(page, `${type}-detail`);
+      await section.getByRole('button', {name:'修改监控与采集 →',exact:true}).click();
+      await expect(page.locator('resource-editor-shell').getByRole('tab', {name:'监控与采集',exact:true})).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('metric-configuration').getByLabel('采集包 / 模板版本', {exact:true})).toBeVisible();
+      report.checks[`${type}InlineEditorNavigationFocusAndDiscard`] = true;
+      await save();
+    }
+  }
   report.checks.listDetailSettings = true;
   expect(await snapshot()).toBe(sourceDigest); report.checks.originalConfigurationUnchanged = true; await save();
 });

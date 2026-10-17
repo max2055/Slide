@@ -6,6 +6,7 @@ export const collectionLabels: Record<string, string> = {
   stale: '已过期', partial: '部分缺失', query_failed: '指标加载失败', forbidden: '无查看权限', unavailable: '资源不可用', unknown: '采集状态未知', bound: '已绑定', unbound: '未绑定', waiting_sample: '待样本', global_disabled: '全局采集已关闭',
 };
 export const metricNames: Record<string, string> = {
+  'mysql.processlist.count': '当前会话数', 'mysql.connections.limit': '最大连接数', 'mysql.transaction_commands.commit_total': '提交命令累计数',
   'mysql.tables.estimated_allocated_bytes': 'MySQL 非系统库表与索引估算分配空间',
   'postgresql.database.disk_bytes': 'PostgreSQL 当前数据库物理文件大小',
   'oracle.datafiles.allocated_bytes': 'Oracle 永久数据文件已分配空间',
@@ -21,7 +22,7 @@ export const metricNames: Record<string, string> = {
 };
 export const resourceLabels: Record<string, string> = { instance: '数据库实例', server: '服务器', network_device: '网络设备' };
 export const packageName = (id: string) => ({ 'mysql-basic': 'MySQL 基础采集', 'linux-basic': 'Linux 基础采集', 'linux-host': 'Linux 主机采集', 'if-mib-basic': '标准接口采集', 'snmp-standard': 'SNMP 标准采集',
-  'mysql-representative': 'MySQL 数据库采集', 'postgresql-representative': 'PostgreSQL 数据库采集', 'oracle-representative': 'Oracle 数据库采集', 'dameng-representative': '达梦数据库采集',
+  'mysql-custom-existing-scalars': 'MySQL 现有自定义指标', 'mysql-representative': 'MySQL 数据库采集', 'postgresql-representative': 'PostgreSQL 数据库采集', 'oracle-representative': 'Oracle 数据库采集', 'dameng-representative': '达梦数据库采集',
 }[id] ?? id);
 export const metricName = (id: string) => metricNames[id] ?? id;
 export type MetricRow = { result?: SemanticResult; state: string; collection?: CollectionStatus; bindingError?: string; lastSuccess?: string; timeUnavailable?: boolean };

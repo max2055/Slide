@@ -20,12 +20,11 @@ export class ResourceCollectionSection extends LitElement {
   @state() private status: CollectionStatus | null = null;
   @state() private error = '';
   @state() private loading = false;
-  @state() private editing = false;
   @state() private events: Array<{ action: string; revision: number; at: string }> = [];
   @state() private eventError = '';
   private generation = 0;
   private readonly accessChanged = () => {
-    this.generation++; this.status = null; this.loading = false; this.editing = false; this.events = []; this.eventError = '';
+    this.generation++; this.status = null; this.loading = false; this.events = []; this.eventError = '';
     this.error = '权限或登录状态已变更，请重新打开资源后读取采集状态';
   };
   override connectedCallback() {
@@ -35,13 +34,11 @@ export class ResourceCollectionSection extends LitElement {
   }
   openEditor() {
     if (!this.resourceId || this.connectionPending || this.mode === 'edit') return;
-    if (this.resourceType === 'instance') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'instances-db'); url.searchParams.set('edit', String(this.resourceId)); url.searchParams.delete('id');
-      window.history.pushState({}, '', url);
-      window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'instances-db' } }));
-    } else this.editing = true;
+    const tab = { instance: 'instances-db', server: 'servers', network_device: 'network-devices' }[this.resourceType];
+    if (!tab) return;
+    window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab, editResourceId: this.resourceId } }));
   }
+
   confirmDiscard(action: () => void) {
     const editor = this.renderRoot.querySelector<MetricConfiguration>('metric-configuration');
     if (editor) editor.confirmDiscard(action); else action();
@@ -77,11 +74,6 @@ export class ResourceCollectionSection extends LitElement {
       if (generation === this.generation) this.events = events.slice(0, 5);
     } catch (e) { if (generation === this.generation) this.eventError = metricError(e); }
   }
-  private close() {
-    const editor = this.renderRoot.querySelector<MetricConfiguration>('metric-configuration');
-    const action = () => { this.editing = false; void this.load(); };
-    if (editor) editor.confirmDiscard(action); else action();
-  }
   render() {
     if (this.mode === 'edit') return html`<style>${sharedBtnStyles}</style>${!this.resourceId || this.connectionPending
       ? html`<p role="status">先保存连接信息，再配置采集。连接保存与采集发布分别确认。</p>` : nothing}
@@ -106,9 +98,6 @@ export class ResourceCollectionSection extends LitElement {
     ${status && !this.loading && !this.error ? html`<div class="detail-grid"><app-card><h2>指标与数据质量</h2><div class="coverage-table">${status.coverage.map(c => html`<div><strong>${metricName(c.metric.id)}</strong><app-badge variant=${c.state === 'covered' ? 'ok' : 'muted'}>${statusLabel(c.state)}</app-badge><span>${c.state === 'covered' ? '模板覆盖不等于正式样本就绪' : c.reason ? statusLabel(c.reason) : '依当前资源能力与模板判定'}</span></div>`)}</div>${!status.coverage.length ? html`<p class="muted">尚无可核实的单项覆盖证据</p>` : nothing}</app-card>
       <app-card><h2>最近配置事件</h2>${this.eventError ? html`<p role="alert">${this.eventError}</p>` : this.events.length ? html`<ol class="key-values">${this.events.map(e => html`<li><time>${new Date(e.at).toLocaleString('zh-CN')}</time><p>${e.action === 'binding.publish' ? '发布资源配置' : e.action === 'group.publish' ? '发布策略组' : '配置变更'} · 版本 ${e.revision}</p></li>`)}</ol>` : html`<p class="muted">暂无可读取的配置事件</p>`}</app-card></div>
       <details class="technical"><summary>技术证据与配置版本</summary>${renderCollectionStatus(status)}</details>` : nothing}
-    <app-dialog .open=${this.editing} size="xl" title="编辑采集配置" @app-dialog-close=${(e: Event) => { e.stopPropagation(); e.preventDefault(); this.close(); }}>
-      ${this.editing ? html`<metric-configuration .resourceType=${this.resourceType} .resourceId=${this.resourceId}></metric-configuration>` : nothing}
-      <div slot="footer"><button class="btn" @click=${this.close}>关闭</button></div>
-    </app-dialog>`;
+    `;
   }
 }

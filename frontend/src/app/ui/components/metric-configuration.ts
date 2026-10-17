@@ -299,7 +299,7 @@ export class MetricConfiguration extends LitElement {
           ${packages.map(p => { const r = this.recommendations.find(r => r.package.digest === p.package.digest); return html`<option value=${p.package.digest} ?disabled=${r?.status !== 'supported'} .selected=${p.package.digest === this.selected}>${packageName(p.package.id)} · ${p.package.version}${r?.recommended ? '（推荐）' : ''}${r?.status !== 'supported' ? ` · ${label(r?.status)}` : ''}</option>`; })}
         </select></app-form-field>
         ${recommendation ? html`<div class="template-preview"><div class="template-heading"><div class="template-icon">${icons[this.resourceType === 'server' ? 'server' : 'database']}</div><div><h3>${packageName(recommendation.package.id)}</h3><p class="muted">${recommendation.applicability.map(c => `${c.value ?? '未知'} · ${label(c.status)}`).join(' / ') || '按服务端兼容性证据匹配'}</p></div><app-badge variant=${recommendation.status === 'supported' ? 'ok' : 'warn'}>${recommendation.status === 'supported' ? '兼容' : label(recommendation.status)}</app-badge></div>
-          <div class="coverage-line"><span>本模板覆盖</span><strong>${recommendation.metrics.map(metricName).join('、') || '未提供指标覆盖'}</strong></div>
+          <div class="coverage-line"><span>本模板覆盖</span><strong>${recommendation.metrics.slice(0, 3).map(metricName).join('、') || '未提供指标覆盖'}${recommendation.metrics.length > 3 ? html`<span class="muted"> 等 ${recommendation.metrics.length} 项，完整列表见下方指标覆盖</span>` : nothing}</strong></div>
           <div class="coverage-line"><span>仍有缺口</span><span>${recommendation.missing_core_metrics?.length ? recommendation.missing_core_metrics.map(metricName).join('、') : '未报告核心指标缺口；实际覆盖与样本质量单独确认'}</span></div>
         </div>` : nothing}
         <div class="section-divider"></div>

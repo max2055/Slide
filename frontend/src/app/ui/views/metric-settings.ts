@@ -189,11 +189,14 @@ export class MetricSettings extends LitElement {
         <app-form-field label="资源类型"><select aria-label="采集包资源类型" .value=${this.packageType} @change=${(e: Event) => { this.packageType = (e.target as HTMLSelectElement).value; }}><option value="">全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
         <button class="btn" .disabled=${!this.packageSearch && !this.packageType} @click=${() => { this.packageSearch = ''; this.packageType = ''; }}>清空筛选</button>
       </div>${this.renderCatalogError()}
-      ${this.catalogError ? nothing : html`<div class="scroll"><app-data-table .loading=${!c} .columns=${[{ key: 'name', label: '模板' }, { key: 'version', label: '当前版本' }, { key: 'scope', label: '适用范围' }, { key: 'coverage', label: '指标覆盖' }, { key: 'actions', label: '操作' }]}
+      ${this.catalogError ? nothing : html`<div class="scroll"><app-data-table .loading=${!c} .columns=${[{ key: 'name', label: '模板', width: '12rem' }, { key: 'version', label: '当前版本', width: '6rem' }, { key: 'scope', label: '适用范围', width: '10rem' }, { key: 'coverage', label: '指标覆盖' }, { key: 'actions', label: '操作', width: '6rem' }]}
         .rows=${packages.map(p => ({
           name: html`<strong>${packageName(p.package.id)}</strong>`, version: p.package.version,
           scope: p.package.applicability?.map(a => a.values.join(' / ')).join(' · ') || resourceLabels[p.package.resource_type] || p.package.resource_type,
-          coverage: [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])].map(metricName).join('、') || '未提供指标映射',
+          coverage: (() => {
+            const ids = [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])];
+            return html`${ids.slice(0, 3).map(metricName).join('、') || '未提供指标映射'}${ids.length > 3 ? html`<small>共 ${ids.length} 项，查看模板了解完整覆盖</small>` : nothing}`;
+          })(),
           actions: html`<button class="btn btn-sm btn-ghost" @click=${() => { this.packageDetail = p.package.digest; }}>查看模板</button>`,
         }))} emptyMessage=${c?.packages.length ? '没有符合条件的采集包' : '暂无采集包'}></app-data-table></div>`}
       ${this.catalogError ? nothing : html`<p class="table-foot" role="status" aria-label=${!c ? '正在读取采集包' : nothing}>${c ? `显示 ${packages.length} / ${c.packages.length} 个采集包版本` : '正在读取采集包'}</p>`}
