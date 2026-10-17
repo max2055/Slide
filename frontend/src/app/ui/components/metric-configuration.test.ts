@@ -232,8 +232,9 @@ it('publishes effective mixed trial results while retaining partial and unknown 
   expect(text).toContain('counter_epoch_unknown');
   const publish = [...el.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent === '发布') as HTMLButtonElement;
   expect(publish.disabled).toBe(false);
-  await el.execute('publish');
+  await el.execute('publish'); await el.updateComplete;
   expect(authFetch.mock.calls.some((c: any[]) => c[0].endsWith('/activate'))).toBe(true);
+  expect(el.shadowRoot.textContent).not.toContain('本次试采验证通过');
 });
 it.each([
   ['all failed', [{ status: 'failed', error: 'connection_error' }], [goodSample]],
@@ -282,4 +283,12 @@ it.each(['candidate', 'permission', 'connection'])('invalidates mixed proof afte
   await el.updateComplete;
   const before = authFetch.mock.calls.length; await el.execute('publish');
   expect(authFetch.mock.calls.length).toBe(before); expect(el.trial).toBeNull();
+});
+
+it('a failed repeat trial returns the activation flow to trial instead of keeping a completed step', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  authFetch.mockResolvedValueOnce({ ok: true, json: async () => mixedTrial() });
+  await el.execute('trial'); expect(el.activationStep).toBe(2);
+  authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'failed' }], samples: [] }) });
+  await el.execute('trial'); expect(el.activationStep).toBe(1); expect(el.publishReady()).toBe(false);
 });
