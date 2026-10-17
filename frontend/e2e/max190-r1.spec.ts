@@ -30,7 +30,7 @@ async function setup(page: Page, theme: string, tag = '<instances-page></instanc
     if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
     if (path.endsWith('/effective')) return route.fulfill({ json: { resolved } });
     if (path.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, requests_per_hour_before: 60, requests_per_hour_after: 60, resources: [{ resolved }] } });
-    if (path.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 600 }] } });
+    if (path.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 600, quality: { status: 'good' } }] } });
     if (path.endsWith('/activate')) { writes.push(route.request().postDataJSON()); return route.fulfill({ json: {} }); }
     if (/\/policy\/resources\/instance\/1$/.test(path)) return route.fulfill({ json: { binding: { package: pack.package, revision: 1, group_id: 'production', overrides: {} }, resolved, application: { status: 'applied', applied_revision: 1 } } });
     return route.fulfill({ json: [] });

@@ -22,8 +22,17 @@ import { type Toggle, type Overrides } from './metric-policy-fields.js';
 import './metric-policy-fields.js';
 export type { Overrides } from './metric-policy-fields.js';
 interface Preview { resources: Published[]; affected_resources: number; requests_per_hour_before: number; requests_per_hour_after: number }
-interface Trial { applicability?: Applicability[]; lifecycle_evidence?: string; decision: string; error?: string; capabilities: unknown[]; attempts: Array<{ status: string; error?: string }>; samples: unknown[] }
-export function trialPassed(trial: Trial | null): boolean { return !!trial && trial.decision === 'attempted' && !trial.error && trial.samples.length > 0 && trial.attempts.length > 0 && trial.attempts.every(a => a.status === 'succeeded'); }
+interface TrialSample { metric?: { id: string }; value?: unknown; quality?: { status: string; reason?: string } }
+interface Trial { applicability?: Applicability[]; lifecycle_evidence?: string; decision: string; error?: string; capabilities: unknown[]; attempts: Array<{ collector_id?: string; status: string; error?: string }>; samples: TrialSample[] }
+const goodSample = (sample: TrialSample) => sample.value != null && sample.quality?.status === 'good';
+// Match the server's activation evidence gate; activation rechecks live permission and CAS.
+export function trialPassed(trial: Trial | null): boolean {
+  return !!trial && trial.decision === 'attempted' && !trial.error
+    && trial.samples.some(goodSample) && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status));
+}
+function trialComplete(trial: Trial): boolean {
+  return trialPassed(trial) && trial.attempts.every(a => a.status === 'succeeded' && !a.error) && trial.samples.every(goodSample);
+}
 const labels: Record<string,string> = { pending: '等待应用', applied: '已应用', failed: '应用失败', succeeded: '成功', partial: '部分成功', running: '执行中', cancelled: '已取消', supported: '支持', unsupported: '不支持', unknown: '待验证', enabled: '启用', disabled: '停用', package: '采集包', platform: '平台默认', group: '策略组', resource: '本资源覆盖', attempted: '已试采' };
 const label = (value: string | undefined) => value ? labels[value] ?? '待确认' : '未知';
 @customElement('metric-configuration')
@@ -216,10 +225,11 @@ export class MetricConfiguration extends LitElement {
       timeout: '试采超时，请检查目标负载、连接和超时配置后重试；不代表永久不支持。',
       parse_error: '数据格式或字段不符合采集包要求，请核对目标版本和采集包后重试。',
     };
-    if (errors.length) return errors.map(error => messages[error!] ?? '实际采集失败，请检查诊断后重试。').join(' ');
-    if (trialPassed(trial)) return '试采成功，可以发布';
+    const diagnostics = errors.map(error => messages[error!] ?? '实际采集失败，请检查诊断后重试。').join(' ');
+    if (trialPassed(trial)) return trialComplete(trial) ? '试采成功，可以发布' : '可发布有效指标，部分指标仍失败/待验证。请逐项核对下方采集结果；发布不代表全部指标可用。';
+    if (errors.length) return diagnostics;
     if (!trial.samples.length) return '试采未返回样本，不能发布。请检查指标是否启用并重新试采。';
-    return '试采未完全成功，请检查原因并重新试采';
+    return '试采缺少有效样本或成功采集尝试，不能发布。请检查原因并重新试采';
   }
   private applicabilityMessage(checks: Applicability[] | undefined) {
     return checks?.filter(c => c.status !== 'supported').map(c => html`<p role="status">
@@ -246,11 +256,14 @@ export class MetricConfiguration extends LitElement {
     const steps = ['检查兼容性与权限', '执行试采', '发布并应用配置', '等待正式采集'];
     return html`<app-dialog .open=${this.flowOpen} title="检查并启用采集" size="xl" @app-dialog-close=${(e: Event) => { e.stopPropagation(); this.flowOpen = false; }}>
       <p class="muted">${packageName(this.catalog?.packages.find(p => p.package.digest === this.selected)?.package.id ?? '')} · 配置与正式采集分别确认</p>
-      <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', '本次试采验证通过', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
+      <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', this.trial && !trialComplete(this.trial) ? '有效指标可发布，部分指标仍失败/待验证' : '本次试采验证通过', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
       ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
       ${this.globalBlocksCandidate() ? html`<p class="notice" role="status">全局采集已关闭，不能继续启用；请联系平台运维。</p>` : nothing}
       ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before ?? '未知'} → ${this.preview.requests_per_hour_after ?? '未知'}</p>${this.applicabilityMessage(this.preview.resources[0]?.resolved.applicability)}` : nothing}
-      ${this.trial ? html`<h3>本次试采（不写正式观测）</h3><p>${this.trialMessage()}</p>${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
+      ${this.trial ? html`<h3>本次试采（不写正式观测）</h3><p role="status">${this.trialMessage()}</p>
+        <ul aria-label="逐项采集结果">${this.trial.attempts.map((attempt, i) => html`<li>${attempt.collector_id ?? `采集项 ${i + 1}`}：${label(attempt.status)}${attempt.error ? html` · ${attempt.error}` : nothing}</li>`) }
+        ${this.trial.samples.filter(sample => !goodSample(sample)).map(sample => html`<li>${metricName(sample.metric?.id ?? '未知指标')}：待验证${sample.quality?.reason ? html` · ${sample.quality.reason}` : nothing}</li>`)}</ul>
+        ${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
       ${this.activationStep === 3 && this.collection ? renderCollectionStatus(this.collection) : nothing}
       <div slot="footer" class="actions"><button class="btn" @click=${() => { this.flowOpen = false; }}>关闭</button>
         ${this.canManage ? html`<button class="btn" .disabled=${this.busy || this.connectionPending || !this.selected} @click=${() => this.execute('preview')}>预检与影响预览</button>

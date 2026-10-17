@@ -36,7 +36,7 @@ async function setup(page: Page, scenario: Scenario, theme: string) {
     if (path.endsWith('/access')) return route.fulfill({ json: { can_manage: true } });
     if (path.endsWith('/attempts') || path.endsWith('/audit')) return route.fulfill({ json: [] });
     if (path.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, requests_per_hour_before: 0, requests_per_hour_after: 60, resources: [{ resolved }] } });
-    if (path.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', samples: [{ value: 1000 }], attempts: [{ status: 'succeeded' }] } });
+    if (path.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', samples: [{ value: 1000, quality: { status: 'good' } }], attempts: [{ status: 'succeeded' }] } });
     if (path.endsWith('/activate')) return route.fulfill({ json: { published: true, status } });
     if (path.endsWith('/effective')) return route.fulfill({ json: { resolved } });
     return scenario === 'unbound' ? route.fulfill({ status: 404, json: { error: 'POLICY_NOT_FOUND' } })
