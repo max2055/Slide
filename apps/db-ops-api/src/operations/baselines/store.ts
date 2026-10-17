@@ -13,7 +13,7 @@ import { BASELINE_METHOD, calculateBaseline, invalidateBaseline, type BaselineCa
 export interface StoredBaseline {
   schemaVersion: 1; id: string; version: number; contentHash: string; result: BaselineCalculation;
 }
-type Snapshot = { fence: string; targetVersion: string; targetSince: string | null; collectionEnabled: boolean };
+type Snapshot = { fence: string; targetVersion: string; targetSince: string | null; resourceVersion: number; collectionEnabled: boolean };
 const decode = (v: unknown): any => typeof v === 'string' ? JSON.parse(v) : v;
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 const sqlDate = (value: string) => new Date(value);
@@ -60,10 +60,14 @@ export class BaselineStore {
     const { status, collection_enabled, ...identity } = target[0];
     const targetVersion = operationsContentHash(plain(identity));
     const [history] = await c.execute<RowDataPacket[]>(`SELECT reference_bands FROM behavior_baseline_versions
-      WHERE resource_type=? AND resource_id=? ORDER BY created_at DESC,version DESC,id LIMIT 1 FOR SHARE`, [input.resource.type, input.resource.id]);
+      WHERE resource_type=? AND resource_id=?
+      ORDER BY CAST(reference_bands->>'$.resourceVersion' AS UNSIGNED) DESC,created_at DESC,version DESC,id LIMIT 1 FOR SHARE`, [input.resource.type, input.resource.id]);
     const previous = history[0] ? decode(history[0].reference_bands) : null;
     const targetSince = previous && previous.targetVersion !== targetVersion ? this.clock().toISOString() : previous?.targetSince ?? null;
-    return { targetVersion, targetSince,
+    // Per-id versions and millisecond timestamps cannot order different metric
+    // series. The shared control lock serializes this persisted resource order;
+    // legacy envelopes without it precede all newly appended versions.
+    return { targetVersion, targetSince, resourceVersion: Number(previous?.resourceVersion ?? 0),
       collectionEnabled: input.resource.type === 'instance' ? status === 'active' : Boolean(collection_enabled),
       fence: operationsContentHash(plain({ target, binding, groups, rollout })) };
   }
@@ -81,13 +85,21 @@ export class BaselineStore {
     return this.transaction(async c => {
       const final = await this.snapshot(c, actor, input);
       assertOperationsEnabled(this.flags(), 'baselines');
+      // There may be no historical row at all on the first computation. Carry
+      // the observed identity transition into the durable envelope regardless.
+      if (before.targetVersion !== final.targetVersion) final.targetSince = new Date(Math.max(
+        +this.clock(), Date.parse(before.targetSince ?? '') || 0, Date.parse(final.targetSince ?? '') || 0)).toISOString();
+      // Other computations can commit a boundary during source IO, including
+      // A -> B -> A where the final target/fence equals the original again.
+      if (final.targetSince && Date.parse(source.from) < Date.parse(final.targetSince)) result = invalidateBaseline(result, 'resource_changed_reaccumulating');
       if (before.fence !== final.fence) result = invalidateBaseline(result, 'source_configuration_changed');
       if (!final.collectionEnabled) result = invalidateBaseline(result, 'resource_collection_disabled');
       if ((result.status === 'known' || result.staticComparison.status === 'known') && Date.parse(result.validUntil) <= +this.clock()) result = invalidateBaseline(result, 'expired');
       const id = operationsContentHash(input);
       const [versions] = await c.execute<RowDataPacket[]>('SELECT version FROM behavior_baseline_versions WHERE id=? ORDER BY version DESC LIMIT 1 FOR UPDATE', [id]);
       const version = Number(versions[0]?.version ?? 0) + 1;
-      if (!Number.isSafeInteger(version)) throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
+      const resourceVersion = final.resourceVersion + 1;
+      if (!Number.isSafeInteger(version) || !Number.isSafeInteger(resourceVersion)) throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
       const contentHash = operationsContentHash({ input, result, version });
       const stored: StoredBaseline = { schemaVersion: 1, id, version, contentHash, result };
       await c.execute(`INSERT INTO behavior_baseline_versions(id,version,resource_type,resource_id,series_hash,series_identity,
@@ -96,7 +108,7 @@ export class BaselineStore {
         result.seriesHash ?? operationsContentHash([input.resource, input.metric, input.dimensions]), JSON.stringify(result.series),
         result.methodVersion, contentHash, result.state, result.reason, sqlDate(result.training.from), sqlDate(result.training.until),
         sqlDate(result.validation.from), sqlDate(result.validation.until), JSON.stringify(result.quality),
-        JSON.stringify({ input, stored, targetVersion: final.targetVersion, targetSince: final.targetSince })]);
+        JSON.stringify({ input, stored, targetVersion: final.targetVersion, targetSince: final.targetSince, resourceVersion })]);
       await new OutboxService({ getConnection: async () => c as never }).append(c as never, {
         eventType: 'operations.baseline.versioned', schemaVersion: 1, aggregateType: 'behavior_baseline', aggregateId: id,
         aggregateVersion: version, idempotencyKey: `baseline:${id}:${version}`,
@@ -124,6 +136,7 @@ export class BaselineStore {
       const reason = !final.collectionEnabled ? 'resource_collection_disabled'
         : stored.result.methodVersion !== BASELINE_METHOD ? 'method_changed'
         : stored.result.sourceFence !== final.fence ? 'source_configuration_changed'
+        : final.targetSince && Date.parse(stored.result.training.from) < Date.parse(final.targetSince) ? 'resource_changed_reaccumulating'
         : !this.flags().baselines ? 'feature_disabled'
         : Date.parse(stored.result.validUntil) <= +this.clock() ? 'expired' : null;
       const value = reason ? { ...stored, result: invalidateBaseline(stored.result, reason) } : stored;
