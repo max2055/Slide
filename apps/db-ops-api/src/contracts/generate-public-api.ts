@@ -1,3 +1,4 @@
+import { operationsJsonSchemas, operationsPublicPaths } from '../operations/public-api.js';
 import { InvestigationFeedbackSchemas } from '../investigations/feedback-contracts.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -45,6 +46,7 @@ export function buildOpenApiDocument() {
     info: { title: 'Slide Public API', version: '0.10' },
     paths: {
       ...metricPublicPaths,
+      ...operationsPublicPaths,
       '/api/alerts/{id}/investigation': { post: {
         operationId: 'openAlertInvestigation', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
         description: 'Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.',
@@ -443,7 +445,7 @@ export function buildOpenApiDocument() {
     },
     components: {
       securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
-      schemas: { ...PublicApiSchemas, ...metricJsonSchemas },
+      schemas: { ...PublicApiSchemas, ...metricJsonSchemas, ...operationsJsonSchemas },
     },
   });
 }
@@ -558,6 +560,7 @@ function schemaType(schema: TSchema): string {
     return `{ ${Object.entries(schema.properties ?? {}).map(([key, value]) =>
       `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema)};`).join(' ')} }`;
   }
+  if (Object.keys(schema).length === 0) return 'unknown';
   throw new Error('Unsupported investigation client schema');
 }
 function buildInvestigationClientTypes(): string {
@@ -567,7 +570,7 @@ function buildInvestigationClientTypes(): string {
 }
 
 export function buildClientTypes(): string {
-  return Object.entries(metricJsonSchemas).map(([name, schema]) => `export type ${name} = ${schemaType(schema as unknown as TSchema)};\n`).join('')
+  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema as unknown as TSchema)};\n`).join('')
     + buildInvestigationClientTypes() + buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
   jobType: string; queued: number; retry: number; scheduled: number; ready: number;

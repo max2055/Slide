@@ -1,3 +1,4 @@
+import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
@@ -416,6 +417,7 @@ async function start() {
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
   await registerFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationRoutes(fastify, verifyToken);
+  await createOperationsComposition(() => dbConnection.getPool(), { jwtSecret: JWT_SECRET }).register(fastify);
   await registerInvestigationFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);

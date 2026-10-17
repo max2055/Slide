@@ -177,6 +177,7 @@ export interface RelationEvidenceResolver {
     hash: string;
     active: boolean;
     validUntil: string;
+    /** Complete authorization scope, not the resources supported by the proof. */
     resources: readonly ResourceRef[];
   } | null>;
 }
@@ -204,6 +205,9 @@ export class InvestigationRelationEvidence implements RelationEvidenceResolver {
       active: !row.expired_at && investigation.lifecycle !== 'archived',
       validUntil: new Date(row.expires_at).toISOString(),
       resources: [...investigation.resources, ...parsed.data].map(({ type, id }) => ({ type, id })),
+      // Keep PlanSources' full ACL contract above. Only the evidence metadata
+      // can establish endpoint support; investigation membership adds no facts.
+      evidenceResources: parsed.data.map(({ type, id }) => ({ type, id })),
     };
   }
 }

@@ -95,11 +95,14 @@ function sourceVisibility(caller: ActorContext, current: ActorContext): { sql: s
         AND NOT EXISTS(SELECT 1 FROM investigation_resources sr WHERE sr.investigation_id=i.id
           AND sr.resource_type=cr.resource_type AND sr.resource_id=cr.resource_id))
       AND JSON_LENGTH(v.source_snapshot,'$.evidence')>0
+      -- JSON_TABLE strings inherit the session collation. Production pools
+      -- may use general_ci while immutable source rows use unicode_ci. Compare
+      -- evidence identities/hashes as bytes, never case-fold or fail on collation.
       AND NOT EXISTS(SELECT 1 FROM JSON_TABLE(v.source_snapshot,'$.evidence[*]' COLUMNS(
         evidence_id CHAR(36) PATH '$.id', evidence_hash CHAR(64) PATH '$.hash')) e
-        LEFT JOIN investigation_evidence ie ON ie.id=e.evidence_id AND ie.investigation_id=i.id
+        LEFT JOIN investigation_evidence ie ON BINARY ie.id=BINARY e.evidence_id AND ie.investigation_id=i.id
           AND ie.request_id=ir.request_id AND ie.run_id=ir.run_id
-        WHERE ie.id IS NULL OR ie.content_hash<>e.evidence_hash OR ie.expired_at IS NOT NULL OR ie.expires_at<=UTC_TIMESTAMP(3)))`,
+        WHERE ie.id IS NULL OR BINARY ie.content_hash<>BINARY e.evidence_hash OR ie.expired_at IS NOT NULL OR ie.expires_at<=UTC_TIMESTAMP(3)))`,
     values: [caller.principalKind ?? 'user', caller.userId, caller.principalKind === 'service' ? 0 : caller.userId] };
 }
 

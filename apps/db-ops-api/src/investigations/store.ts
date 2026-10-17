@@ -89,10 +89,16 @@ export type InvestigationOperation = 'create' | 'read' | 'patch' | 'admit' | 'ca
  * Invisible objects throw NOT_FOUND; visible non-operators throw FORBIDDEN.
  * Resources and Profile/scope versions are immutable in this store. No callback
  * may append messages or execute a model. Use this connection for authority
- * reads/locks; do not substitute cached authorization. The service actor ID must
- * be the real numeric disabled-login user, validated by T03 before this call. */
-export type AdmissionAuthorizer = (connection: TransactionConnection, actor: Readonly<InvestigationActor>,
-  investigation: Readonly<AdmissionInvestigation>, operation: InvestigationOperation) => Promise<void>;
+ * reads/locks; do not substitute a previous request's authorization. The service
+ * actor ID must be the real numeric disabled-login user, validated by T03 before
+ * this call. prepareReadList may lock the same predicates once for a list. */
+export interface AdmissionAuthorizer {
+  (connection: TransactionConnection, actor: Readonly<InvestigationActor>,
+    investigation: Readonly<AdmissionInvestigation>, operation: InvestigationOperation): Promise<void>;
+  prepareReadList?(connection: TransactionConnection, actor: Readonly<InvestigationActor>,
+    investigations: readonly Readonly<AdmissionInvestigation>[]): Promise<void>;
+  clearReadList?(connection: TransactionConnection): void;
+}
 
 /** Only trusted server composition supplies this hook. Session/Investigation/
  * Request/Job are locked and live cancel authority is checked before invocation.
@@ -155,10 +161,7 @@ export class MysqlInvestigationStore {
     }
   }
 
-  private async map(connection: TransactionConnection, row: RowDataPacket): Promise<InvestigationRecord> {
-    const resources = await select(connection, `SELECT resource_type, resource_id, role FROM investigation_resources
-      WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [row.id]);
-    const [creation] = await select(connection, 'SELECT command_snapshot FROM investigation_create_keys WHERE investigation_id = ?', [row.id]);
+  private toRecord(row: RowDataPacket, resources: readonly RowDataPacket[], creation?: RowDataPacket): InvestigationRecord {
     const context = creation?.command_snapshot?.context;
     return { ...(context ? { context } : {}), id: row.id, sessionId: row.session_id, title: row.title, goal: row.goal,
       profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version,
@@ -167,6 +170,28 @@ export class MysqlInvestigationStore {
       resources: Object.freeze(resources.map(resource => Object.freeze({ type: resource.resource_type,
         id: Number(resource.resource_id), role: resource.role }))),
       activeRequestId: row.active_request_id, createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  private async map(connection: TransactionConnection, row: RowDataPacket): Promise<InvestigationRecord> {
+    const resources = await select(connection, `SELECT resource_type, resource_id, role FROM investigation_resources
+      WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [row.id]);
+    const [creation] = await select(connection, 'SELECT command_snapshot FROM investigation_create_keys WHERE investigation_id = ?', [row.id]);
+    return this.toRecord(row, resources, creation);
+  }
+
+  private async attachContexts(connection: TransactionConnection, items: InvestigationRecord[]): Promise<InvestigationRecord[]> {
+    if (!items.length) return items;
+    const snapshots = await select(connection, `SELECT investigation_id, command_snapshot FROM investigation_create_keys
+      WHERE investigation_id IN (${items.map(() => '?').join(',')})`, items.map(item => item.id));
+    const contexts = new Map<string, InvestigationRecord['context']>();
+    for (const snapshot of snapshots) {
+      if (contexts.has(snapshot.investigation_id) || !snapshot.command_snapshot?.context) continue;
+      contexts.set(snapshot.investigation_id, snapshot.command_snapshot.context);
+    }
+    return items.map(item => {
+      const context = contexts.get(item.id);
+      return context ? { ...item, context } : item;
+    });
   }
 
   private async load(connection: TransactionConnection, id: string, lock: 'UPDATE' | 'SHARE'): Promise<InvestigationRecord> {
@@ -276,25 +301,67 @@ export class MysqlInvestigationStore {
       || profileId !== undefined && !['ops', 'system'].includes(profileId) || query !== undefined && !validText(query, 200)
       || resource !== undefined && (!['instance', 'server', 'network_device'].includes(resource.type) || !Number.isSafeInteger(resource.id) || resource.id <= 0)) throw invalid();
     actor = Object.freeze({ ...actor });
-    return this.transaction(async connection => {
-      // Deliberately no SQL LIMIT/COUNT before trusted per-object authority.
-      // A later SQL authority optimization must preserve this same contract.
-      const rows = await select(connection, `SELECT * FROM investigations ${lifecycle ? 'WHERE lifecycle = ?' : ''}
-        ORDER BY updated_at DESC, id DESC FOR SHARE`, lifecycle ? [lifecycle] : []);
+    const filters = { limit, offset, lifecycle, profileId, query, resource };
+    // Test-only switch so a same-process V1 sample can time the per-row path.
+    // Production and ordinary tests keep the aggregated locking reads.
+    const legacy = process.env.NODE_ENV === 'test' && process.env.INVESTIGATION_LIST_AGGREGATION === '0';
+    return this.transaction(connection => legacy ? this.listPerRow(connection, actor, filters) : this.listAggregated(connection, actor, filters));
+  }
+
+  private async listPerRow(connection: TransactionConnection, actor: Readonly<InvestigationActor>,
+    options: Required<Pick<InvestigationList, 'limit' | 'offset'>> & Omit<InvestigationList, 'limit' | 'offset'>): Promise<{ items: InvestigationRecord[]; total: number }> {
+    const { limit, offset, lifecycle, profileId, query, resource } = options;
+    const rows = await select(connection, `SELECT * FROM investigations ${lifecycle ? 'WHERE lifecycle = ?' : ''}
+      ORDER BY updated_at DESC, id DESC FOR SHARE`, lifecycle ? [lifecycle] : []);
+    const visible: InvestigationRecord[] = [];
+    for (const row of rows) {
+      const record = await this.map(connection, row);
+      if (!await this.keepReadable(connection, actor, record, profileId, query, resource)) continue;
+      visible.push(record);
+    }
+    return { total: visible.length, items: visible.slice(offset, offset + limit) };
+  }
+
+  private async listAggregated(connection: TransactionConnection, actor: Readonly<InvestigationActor>,
+    options: Required<Pick<InvestigationList, 'limit' | 'offset'>> & Omit<InvestigationList, 'limit' | 'offset'>): Promise<{ items: InvestigationRecord[]; total: number }> {
+    const { limit, offset, lifecycle, profileId, query, resource } = options;
+    // No SQL LIMIT or COUNT before every row has passed the authorizer.
+    // One locking read per predicate must not admit a row the per-object port rejects.
+    const rows = await select(connection, `SELECT * FROM investigations ${lifecycle ? 'WHERE lifecycle = ?' : ''}
+      ORDER BY updated_at DESC, id DESC FOR SHARE`, lifecycle ? [lifecycle] : []);
+    const resourceRows = await select(connection, `SELECT r.investigation_id, r.resource_type, r.resource_id, r.role
+      FROM investigations i STRAIGHT_JOIN investigation_resources r ON r.investigation_id = i.id
+      ${lifecycle ? 'WHERE i.lifecycle = ?' : ''}
+      ORDER BY r.investigation_id, r.resource_type, r.resource_id FOR SHARE`, lifecycle ? [lifecycle] : []);
+    const grouped = new Map<string, RowDataPacket[]>();
+    for (const resourceRow of resourceRows) {
+      const bucket = grouped.get(resourceRow.investigation_id) ?? [];
+      bucket.push(resourceRow);
+      grouped.set(resourceRow.investigation_id, bucket);
+    }
+    const records = rows.map(row => this.toRecord(row, grouped.get(row.id) ?? []));
+    try {
+      if (this.authorize.prepareReadList) await this.authorize.prepareReadList(connection, actor, records);
       const visible: InvestigationRecord[] = [];
-      for (const row of rows) {
-        const record = await this.map(connection, row);
-        try { await this.authorize(connection, actor, Object.freeze(record), 'read'); }
-        catch (error) {
-          if (error instanceof InvestigationStoreError && error.code === 'INVESTIGATION_NOT_FOUND') continue;
-          throw error;
-        }
-        if (profileId && record.profileId !== profileId || resource && !record.resources.some(ref => ref.type === resource.type && ref.id === resource.id)
-          || query && !`${record.title} ${record.goal}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) continue;
+      for (const record of records) {
+        if (!await this.keepReadable(connection, actor, record, profileId, query, resource)) continue;
         visible.push(record);
       }
-      return { total: visible.length, items: visible.slice(offset, offset + limit) };
-    });
+      return { total: visible.length, items: await this.attachContexts(connection, visible.slice(offset, offset + limit)) };
+    } finally {
+      this.authorize.clearReadList?.(connection);
+    }
+  }
+
+  private async keepReadable(connection: TransactionConnection, actor: Readonly<InvestigationActor>, record: InvestigationRecord,
+    profileId: InvestigationList['profileId'], query: string | undefined, resource: InvestigationList['resource']): Promise<boolean> {
+    try { await this.authorize(connection, actor, Object.freeze(record), 'read'); }
+    catch (error) {
+      if (error instanceof InvestigationStoreError && error.code === 'INVESTIGATION_NOT_FOUND') return false;
+      throw error;
+    }
+    return !(profileId && record.profileId !== profileId || resource && !record.resources.some(ref => ref.type === resource.type && ref.id === resource.id)
+      || query && !`${record.title} ${record.goal}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   }
 
   async patch(actor: InvestigationActor, id: string, patch: InvestigationPatch): Promise<InvestigationRecord> {
