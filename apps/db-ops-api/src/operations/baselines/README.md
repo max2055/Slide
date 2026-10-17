@@ -16,6 +16,8 @@ P10 用平台 pool 装配 `BaselineStore`、`registerBaselineRoutes(app, verifyT
 
 系列隔离包括资源、metric/semantic 版本、单位、dimensions、collector/binding、package/contract/transform/config 版本和 counter epoch。counter 复用 `metrics/query.aggregate` / `processCounter` 的精确累计计算，未知 epoch/回绕/质量/重置不推测 rate。目标地址/端口/已知身份变更后保存重新累计起点，不能重复重算就把旧观测恢复为 qualified。当前正式 generation/revision、asset 开关、策略/能力及最新正式值也纳入发送和缓存校验；这些状态变化后旧缓存只读 unknown。
 
+首次计算在来源 IO 前后观察到目标身份变化时，即使没有历史版本，也在最终事务中保存 `targetSince`。该边界按资源跨 metric/dimensions/mode 继承，计算最终快照和缓存读取均检查训练起点；完整新目标窗口之前保持 unknown。JSON envelope 的内部 `resourceVersion` 在既有共享控制锁下递增，建立跨系列持久顺序，避免各系列独立版本号及 `created_at` 毫秒并列导致边界回退。旧 envelope 缺省为 0，首次追加后沿新顺序读取；不改写旧版本或 outbox，不需要新增迁移。
+
 数据只来自集成 `MysqlFormalMetricStore.queryWindow`，不读 legacy、shadow 或旧 history。按天读取，超 1000 样本的区间递归拆分，最多 5000 查询/100000 个候选样本；超限为依赖不可用，绝不截断后宣称 qualified。此有界实现适用于常规分钟级采样；秒级长期序列可能触发上限，需由指标域提供有血缘的可流式历史聚合后再扩展，不增加第二采集或存储路径。
 
 时间外报告包含两种规则各自 flags；真实标签缺失时固定 `labelledSamples=0`、误报率/重要漏报=null、`improvement=not_established`。本包合成窗口测试不计真实天数，短时真实 SQL 不计 14/28 天准入。P12 仍需真实长期观测和相同标注集完成 B07。
