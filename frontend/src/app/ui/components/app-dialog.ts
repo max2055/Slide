@@ -99,10 +99,10 @@ export class AppDialog extends LitElement {
   }
 
   private _close(): void {
-    this.open = false;
-    this.dispatchEvent(
-      new CustomEvent("app-dialog-close", { bubbles: true, composed: true }),
-    );
+    // Owners may keep the dialog open while confirming unsaved changes.
+    if (this.dispatchEvent(new CustomEvent("app-dialog-close", { bubbles: true, composed: true, cancelable: true }))) {
+      this.open = false;
+    }
   }
 
   render() {

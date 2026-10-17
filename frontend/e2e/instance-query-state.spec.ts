@@ -41,7 +41,7 @@ test.beforeAll(async () => {
   });
   app.get('/api/ai/analysis/history', { preHandler: verify }, async () => ({ records: [] }));
   app.get('/api/resources/instance/:id/investigations', { preHandler: verify }, async () => ({ items: [] }));
-  app.post('/api/metrics-v2/query', async (_request, reply) => reply.code(503).send({ error: 'UNRELATED_METRICS_NOT_IN_FIXTURE' }));
+  app.post('/api/metrics/query', async (_request, reply) => reply.code(503).send({ error: 'UNRELATED_METRICS_NOT_IN_FIXTURE' }));
   app.setNotFoundHandler(async (_request, reply) => reply.send({ items: [], records: [] }));
   const apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   connections.set(991, { id: 991, connected: true, db_type: 'mysql', pool });
