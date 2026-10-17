@@ -55,6 +55,8 @@ pnpm --filter slide-api exec vitest run tests/operations-readiness.test.ts
 
 输入/审核格式以导出类型 `ReadinessDataset` / `FreezeReview` 为准，全部时间为毫秒精度 UTC ISO。单输入上限 25 MB。集合上限和完整性检查失败返回退出码 1，只输出固定错误码，不回显输入/文件路径；缺数据或门禁失败为 2。全部机械门禁满足仅返回 `ready_for_independent_review` / 0，**不等于正式资格接受**。
 
+上述退出码指工具进程本身；pnpm11 的 `--filter ... exec` 可能将子进程退出2包装为1。需按退出码区分缺口和格式错误时，从 `apps/db-ops-api` 直接执行 `node --import tsx ../../tests/qualification/operations-readiness.ts`（其余参数相同），或读取报告的门禁状态；不要把pnpm包装码当作工具输入错误。
+
 必须由有权限操作者提供以下内容；不得复制秘密或无权限案例全文：
 
 1. `schemaVersion=1`、`frozenAt`、`permission.{role,revision,evidenceRef}`。audit locator 必须能让独立审查者在受保护系统回读原记录；本工具不联网解析 locator。
