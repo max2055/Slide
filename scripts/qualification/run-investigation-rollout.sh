@@ -9,7 +9,7 @@ cleanup() { docker stop --time 10 "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --performance-schema=OFF --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null
+docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
 for _ in $(seq 1 60); do
