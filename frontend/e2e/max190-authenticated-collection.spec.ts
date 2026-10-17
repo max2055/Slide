@@ -22,7 +22,9 @@ const snapshot = async () => {
   const [d] = await source.query('SELECT id,target_type,unit,value_type,default_interval,collection_sqls,compute_expr FROM metric_definitions WHERE is_builtin=0 ORDER BY id');
   const [b] = await source.query('SELECT * FROM instance_templates WHERE instance_id=1 ORDER BY template_id');
   const [r] = await source.query('SELECT * FROM database_instances WHERE id=1');
-  return createHash('sha256').update(JSON.stringify([d,b,r])).digest('hex');
+  const [providers] = await source.query('SELECT * FROM llm_providers ORDER BY id');
+  const [routes] = await source.query('SELECT * FROM llm_scene_bindings ORDER BY scene');
+  return createHash('sha256').update(JSON.stringify([d,b,r,providers,routes])).digest('hex');
 };
 async function request(path: string, body?: unknown, method?: string) {
   const response = await fetch(api + path, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -63,6 +65,20 @@ test.beforeAll(async () => {
   pool = mysql.createPool({ host: env.DB_HOST, port: 23390, user: 'root', password: rootPassword, database: schema, timezone: 'Z' });
   await pool.query("UPDATE users SET password_hash=?,status='active' WHERE username='admin'", [await bcrypt.hash(password, 10)]);
   await pool.query("INSERT IGNORE INTO user_roles(user_id,role_id) SELECT u.id,r.id FROM users u JOIN roles r ON r.name='admin' WHERE u.username='admin'");
+  // Preserve configured providers/routes verbatim in the disposable platform for engine startup.
+  // Secrets stay in memory/encrypted SQL fields; no provider tests or inference are requested.
+  await pool.query('DELETE FROM llm_scene_bindings');
+  await pool.query('DELETE FROM llm_providers');
+  for (const table of ['llm_providers','llm_scene_bindings']) {
+    const [rows] = await source.query('SELECT * FROM ??', [table]);
+    const [columns] = await pool.query('SHOW COLUMNS FROM ??', [table]);
+    const names = new Set(columns.map((c: any) => c.Field));
+    for (const row of rows) {
+      const copy = Object.fromEntries(Object.entries(row).filter(([key]) => names.has(key)).map(([key,value]) =>
+        [key, value && typeof value === 'object' && !(value instanceof Date) ? JSON.stringify(value) : value]));
+      await pool.query('INSERT INTO ?? SET ?', [table,copy]);
+    }
+  }
   const [[instance]] = await source.query('SELECT id,name,host,port,username,password_encrypted,db_type,db_version,database_name,environment,status FROM database_instances WHERE id=1');
   await pool.query('INSERT INTO database_instances SET ?', [instance]);
   const [definitions] = await source.query('SELECT id,target_type,name,unit,value_type,db_types,aggregation,default_interval,is_collected,is_builtin,collection_sqls,compute_expr FROM metric_definitions WHERE is_builtin=0');
