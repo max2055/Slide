@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import mysql, { type Pool } from 'mysql2/promise';
 import { chromium, expect as browserExpect, type Browser } from '@playwright/test';
@@ -137,7 +137,15 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       await browserExpect(flow.getByRole('dialog')).toBeVisible();
       await flow.getByRole('button', { name: '预检与影响预览' }).click();
       await browserExpect(flow.getByText('每小时逻辑读取估算', { exact: false })).toBeVisible();
+      const trialResponse = page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/trial') && r.request().method() === 'POST');
       await flow.getByRole('button', { name: '试采', exact: true }).click();
+      const response = await trialResponse;
+      expect(response.status()).toBe(200);
+      const trial = await response.json() as Awaited<ReturnType<MetricConfigurationService['trial']>>;
+      expect(trial).toMatchObject({ trial: true, persisted: false, decision: 'attempted' });
+      expect(trial.samples.some(s => s.value !== null && s.quality.status === 'good')).toBe(true);
+      expect(trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status))).toBe(true);
+      await writeFile(`${artifacts}/trial-${width}.json`, JSON.stringify(trial, null, 2));
       await browserExpect(flow.getByRole('heading', { name: '本次试采（不写正式观测）' })).toBeVisible();
       await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toBeVisible();
       const activation = page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/activate') && r.request().method() === 'POST');
