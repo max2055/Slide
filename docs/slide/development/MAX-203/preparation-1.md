@@ -26,7 +26,7 @@
 HTTP 每次通过现有 JWT／实时主体服务，领域服务保留原 delegation ceiling 和完整 source scope。响应禁止缓存。
 开关在使用点读取；preparation 无条件覆盖 dispatch=false，即使配置写 true 也不会注册执行器。
 当前开关是进程内环境配置，不是跨进程控制面；外部变更须协调重启专属候选，不能把一个进程的 env 当成分布式停发保障。
-公开请求 schemas／路径加入既有生成器；无 execute API。旧公开契约语义保持，最终执行／验证响应与客户端装配随 P07/P08/P09 后补。
+公开请求 schemas／路径加入既有生成器；无 execute API。正式连接的 general_ci 与证据表 unicode_ci 混合时，JSON_TABLE 关联的证据 ID／hash 使用逐字节比较；实际 server 授权／撤权回归覆盖此差异。旧公开契约语义保持，最终执行／验证响应与客户端装配随 P07/P08/P09 后补。
 未改旧 Operation、旧审批、Chat、SQL 路由或它们的所有者；完整 API gate 检查兼容行为。
 
 ## 本轮验证与边界
@@ -34,7 +34,7 @@ HTTP 每次通过现有 JWT／实时主体服务，领域服务保留原 delegat
 测试只建立本机专属 MySQL9.6 容器和 UUID schema，使用真实 MigrationRunner、JWT、监听 HTTP、实际 server 子进程。
 server 子进程由测试预持有本 schema 的 `slide-singleton-workers` 租约，验证 API-only standby，禁止模型和目标 worker。
 同一 JWT 授权前拒绝、显式授予后允许、撤权后拒绝；来源过期消除关系事实并追加失效版本；案例自审拒绝、不同合成测试主体审核、完整资源撤权后计数为0；停用保留历史；基线 unknown。
-迁移演练先执行到127，写入旧 Operation outcome_unknown／Chat记录，再执行128/129及重入；回到旧迁移目录仍保留所有新表和旧记录。
+迁移演练先执行到127，写入旧 Operation outcome_unknown／Chat记录，再执行128/129及重入；回到旧迁移目录仍保留所有新表和旧记录。专属容器另用真实 mysqldump 导出到内存、恢复到全新 UUID schema，再核迁移 ledger／checksum、旧未知结果与 Chat记录一致；原 schema 不反向DDL、不删除历史。CI通过 OPERATIONS_TEST_MYSQL_CONTAINER 启用该恢复分支。
 
 所有调查、证据、测试主体、审核和观测均为 synthetic。它们不计真实案例、不代表真人审核、不建立长期资格，也不是产品执行的双人批准。
 真实目标操作、模型、视觉验收、1万调查／10万事件性能与最终整包gate不在本轮准备验收结论内；原 P07/P08 和最终 P09 前置保留。

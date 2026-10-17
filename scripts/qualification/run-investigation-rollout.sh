@@ -31,6 +31,7 @@ export AUTH_TEST_MYSQL_PORT="$port" AUTH_TEST_MYSQL_PASSWORD=''
 export BUDGET_TEST_MYSQL_PORT="$port" BUDGET_TEST_MYSQL_PASSWORD=''
 export TRIGGER_TEST_MYSQL_PORT="$port" TRIGGER_TEST_MYSQL_PASSWORD=''
 export T08_TEST_MYSQL_PORT="$port" T08_TEST_MYSQL_PASSWORD=''
+export OPERATIONS_TEST_MYSQL_CONTAINER="$container"
 export T11_TEST_MYSQL_PORT="$port" T11_TEST_MYSQL_PASSWORD=''
 if [[ "$mode" == --full || "$mode" == --api ]]; then
   # The full API candidate enables all existing MySQL gates on this exclusive

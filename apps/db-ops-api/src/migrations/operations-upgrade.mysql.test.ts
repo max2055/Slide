@@ -1,4 +1,5 @@
 /** Real incremental upgrade from 127; synthetic retained V1/Chat/SQL records. */
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,8 @@ describe.skipIf(!port)('P10 additive upgrade and retained rollback', () => {
     const database = `p10_upgrade_${randomUUID().replaceAll('-', '')}`;
     const config = { host: '127.0.0.1', port, user: 'root', password: process.env.OPERATIONS_TEST_MYSQL_PASSWORD ?? process.env.AGENT_RUN_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
     const admin = mysql.createPool(config), directory = await mkdtemp(join(tmpdir(), 'slide-p10-migrations-'));
-    let pool: mysql.Pool | undefined;
+    let pool: mysql.Pool | undefined, restored: mysql.Pool | undefined;
+    const restoreDatabase = `${database}_restore`; let restoreCreated = false;
     try {
       await admin.query(`CREATE DATABASE ${database}`);
       pool = mysql.createPool({ ...config, database });
@@ -33,6 +35,24 @@ describe.skipIf(!port)('P10 additive upgrade and retained rollback', () => {
       await new MigrationRunner(pool, directory).run();
       const [tables] = await pool.query<any[]>("SHOW TABLES LIKE 'action_executions'"); expect(tables).toHaveLength(1);
       const [unknown] = await pool.query<any[]>("SELECT state FROM operations WHERE id='p10-old'"); expect(unknown[0].state).toBe('outcome_unknown');
-    } finally { await pool?.end(); await admin.query(`DROP DATABASE ${database}`); await admin.end(); await rm(directory, { recursive: true, force: true }); }
+      const container = process.env.OPERATIONS_TEST_MYSQL_CONTAINER;
+      if (container) {
+        if (!/^slide-(t12-|max203-)[a-zA-Z0-9-]+$/.test(container)) throw new Error('UNSAFE_TEST_CONTAINER');
+        // Restore the real logical backup into a NEW dedicated schema; never
+        // reverse-migrate or drop evidence to simulate recovery.
+        const dump = execFileSync('docker', ['exec', container, 'mysqldump', '-uroot', '--no-tablespaces', '--single-transaction', '--set-gtid-purged=OFF', database], { maxBuffer: 32 * 1024 * 1024 });
+        await admin.query(`CREATE DATABASE ${restoreDatabase}`); restoreCreated = true;
+        execFileSync('docker', ['exec', '-i', container, 'mysql', '-uroot', restoreDatabase], { input: dump, maxBuffer: 1024 * 1024 });
+        restored = mysql.createPool({ ...config, database: restoreDatabase });
+        await new MigrationRunner(restored).run();
+        const [recovered] = await restored.query<any[]>("SELECT state,attempt FROM operations WHERE id='p10-old'");
+        expect(recovered).toEqual(operations);
+        const [recoveredChat] = await restored.query<any[]>("SELECT title FROM chat_sessions WHERE session_id='p10-retained'");
+        expect(recoveredChat[0].title).toBe('synthetic retained chat');
+        const [ledger] = await restored.query<any[]>("SELECT migration_id,status,checksum FROM app_schema_migrations ORDER BY migration_id");
+        expect(ledger).toEqual((await pool.query<any[]>('SELECT migration_id,status,checksum FROM app_schema_migrations ORDER BY migration_id'))[0]);
+      }
+
+    } finally { await restored?.end(); if (restoreCreated) await admin.query(`DROP DATABASE ${restoreDatabase}`); await pool?.end(); await admin.query(`DROP DATABASE ${database}`); await admin.end(); await rm(directory, { recursive: true, force: true }); }
   }, 90_000);
 });
