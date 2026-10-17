@@ -1,4 +1,4 @@
-import { evaluateOperationalRule } from './metrics-v2/consumers/operational.js';
+import { evaluateOperationalRule } from './metrics/consumers/operational.js';
 /**
  * 告警规则评估器
  * 支持静态阈值、动态基线阈值、参数化宏变量（${var}），真实持续时间检查，动态实例发现。
@@ -153,53 +153,9 @@ export async function checkDuration(
   rule: AlertRule,
   seconds: number = 60
 ): Promise<boolean> {
-  const semantic = await evaluateOperationalRule({ type: 'instance', id: instanceId }, rule, seconds);
-  if (semantic.handled) return semantic.level !== null;
-  // 无持续时间要求时直接返回 true，无需查询 metrics_history
-  if (seconds <= 0) return true;
-
-  const endTime = new Date();
-  const startTime = new Date(endTime.getTime() - seconds * 1000);
-
-  try {
-    const history = await metricsDatabaseService.getHistoricalMetrics(instanceId, startTime, endTime);
-
-    if (history.length === 0) {
-      // 无历史数据，退化为检查当前值
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-      if (!metrics) return false;
-      const current = getMetricValue(rule.metric_name, metrics);
-      if (current === null) return false;
-      return evaluateRule(rule, current);
-    }
-
-    // 所有历史数据点都满足阈值条件才返回 true
-    let anyValid = false;
-    for (const record of history) {
-      const value = getMetricValue(rule.metric_name, record);
-      if (value === null) continue; // 缺失数据点跳过
-      anyValid = true;
-      if (!evaluateRule(rule, value)) {
-        return false;
-      }
-    }
-    if (!anyValid) {
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-      if (!metrics) return false;
-      const current = getMetricValue(rule.metric_name, metrics);
-      return current !== null && evaluateRule(rule, current);
-    }
-    return true;
-  } catch (error) {
-    console.error(`检查持续时间失败 [实例 ${instanceId}]:`, error);
-    // 降级：检查当前值
-    const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-    if (!metrics) return false;
-    const current = getMetricValue(rule.metric_name, metrics);
-    if (current === null) return false;
-    return evaluateRule(rule, current);
+    const result=await evaluateOperationalRule({type:'instance',id:instanceId},rule,seconds);
+    return result.state === 'firing' && result.level != null;
   }
-}
 
 /**
  * 检查恢复持续时间 — 查询 metrics_history 最近 N 秒数据，验证所有数据点都处于健康范围
@@ -211,65 +167,9 @@ export async function checkRecoveryDuration(
   seconds: number = 60,
   macros?: Record<string, number>
 ): Promise<boolean> {
-  const semantic = await evaluateOperationalRule({ type: 'instance', id: instanceId }, rule, seconds, macros);
-  if (semantic.handled) return semantic.recovery;
-  // health_score 是状态型指标（存 database_instances 表），恢复检查直接读当前值
-  if (rule.metric_name === 'health_score') {
-    try {
-      const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      if (!instance || instance.health_score == null) return false;
-      return isValueHealthy(instance.health_score, rule, macros);
-    } catch (error) {
-      console.error(`检查 health_score 恢复失败 [实例 ${instanceId}]:`, error);
-      return false;
-    }
+    const result=await evaluateOperationalRule({type:'instance',id:instanceId},rule,seconds,macros);
+    return result.recovery === true;
   }
-
-  const endTime = new Date();
-  const startTime = new Date(endTime.getTime() - seconds * 1000);
-
-  try {
-    const history = await metricsDatabaseService.getHistoricalMetrics(instanceId, startTime, endTime);
-
-    if (history.length === 0) {
-      // 无历史数据，退化为检查当前值
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-      if (!metrics) return false;
-      const current = getMetricValue(rule.metric_name, metrics);
-      if (current === null) return false;
-      return isValueHealthy(current, rule, macros);
-    }
-
-    // 所有历史数据点都健康才返回 true
-    // anyValid 防止所有数据点为 null 时误返回 true（全部 continue 跳过）
-    let anyValid = false;
-    for (const record of history) {
-      const value = getMetricValue(rule.metric_name, record);
-      if (value === null) continue;
-      anyValid = true;
-      if (!isValueHealthy(value, rule, macros)) {
-        return false;
-      }
-    }
-    // 无有效数据点则回退到当前值检查
-    if (!anyValid) {
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-      if (!metrics) return false;
-      const current = getMetricValue(rule.metric_name, metrics);
-      if (current === null) return false;
-      return isValueHealthy(current, rule, macros);
-    }
-    return true;
-  } catch (error) {
-    console.error(`检查恢复持续时间失败 [实例 ${instanceId}]:`, error);
-    // 降级：检查当前值
-    const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-    if (!metrics) return false;
-    const current = getMetricValue(rule.metric_name, metrics);
-    if (current === null) return false;
-    return isValueHealthy(current, rule, macros);
-  }
-}
 
 /**
  * 获取动态阈值（如果规则为 dynamic 类型）
@@ -366,7 +266,6 @@ export async function evaluateAllRules(): Promise<
     }
 
     for (const instance of instances) {
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instance.id);
 
       for (const rule of rules) {
         // Pre-filter: skip disabled rules
@@ -387,48 +286,8 @@ export async function evaluateAllRules(): Promise<
 
         const semantic = await evaluateOperationalRule({ type: 'instance', id: instance.id }, rule, rule.duration_seconds,
           await resolveMacrosForRule(rule));
-        if (semantic.handled) {
-          if (semantic.level && semantic.value !== null) triggeredAlerts.push({ rule, instanceId: instance.id,
-            instanceName: instance.name, currentValue: semantic.value, thresholdUsed: rule.threshold, triggeredLevel: semantic.level, semanticMigration: semantic.migration });
-          continue;
-        }
-
-        // health_score 存在 database_instances 表而非 metrics_history 表，需特判
-        const currentValue = rule.metric_name === 'health_score'
-          ? (instance.health_score ?? null)
-          : getMetricValue(rule.metric_name, metrics);
-        if (currentValue === null) continue; // 指标未采集，跳过此规则
-
-        // 解析阈值（静态或动态）
-        let effectiveRule = rule;
-        let thresholdUsed = rule.threshold;
-        const dynamicResult = await resolveDynamicThreshold(instance.id, rule);
-        if (dynamicResult) {
-          effectiveRule = dynamicResult.effectiveRule;
-          thresholdUsed = dynamicResult.threshold;
-        }
-
-        // 解析 macros: 从指标定义的 threshold_template 取默认值（可被模板/实例覆盖）
-        // 示例: metric_definition.threshold_template = {warning: 500, error: 2000, critical: 5000}
-        //       → macros = { warning: 500, error: 2000, critical: 5000 }
-        //       规则 threshold_template = {warning: "${warning}", error: "${error}", critical: 10000}
-        //       → 解析后 {warning: 500, error: 2000, critical: 10000}
-        const macroCtx = await resolveMacrosForRule(rule);
-
-        const triggeredLevel = evaluateRuleWithLevels(effectiveRule, currentValue, macroCtx);
-        if (triggeredLevel) {
-          const durationMet = await checkDuration(instance.id, rule, rule.duration_seconds);
-          if (durationMet) {
-            triggeredAlerts.push({
-              rule: effectiveRule,
-              instanceId: instance.id,
-              instanceName: instance.name,
-              currentValue,
-              thresholdUsed,
-              triggeredLevel,
-            });
-          }
-        }
+        if (semantic.level && semantic.value !== null) triggeredAlerts.push({ rule, instanceId:instance.id,
+          instanceName:instance.name,currentValue:semantic.value,thresholdUsed:rule.threshold,triggeredLevel:semantic.level,semanticMigration:semantic.migration });
       }
     }
   } catch (error) {

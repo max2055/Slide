@@ -8,7 +8,7 @@ import { metricsDatabaseService } from './metrics-database-service';
 import { databaseService } from './database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import type { ActorContext } from './auth/actor-context.js';
-import { metricConsumerService, operationalSource } from './metrics-v2/consumers/runtime.js';
+import { metricConsumerService, operationalSource } from './metrics/consumers/runtime.js';
 import ejs from 'ejs';
 import path from 'path';
 import fs from 'fs';
@@ -98,7 +98,7 @@ function generateSemanticMetricHTML(
   <h1>${ejs.escapeXML(title)}</h1>
   <p><strong>实例:</strong> ${ejs.escapeXML(instanceName)}</p>
   <p><strong>生成时间:</strong> ${ejs.escapeXML(generatedAt)}</p>
-  <p><strong>来源契约:</strong> Metrics V2 ${ejs.escapeXML(semantic.contract_version)}</p>
+  <p><strong>来源契约:</strong> Metrics ${ejs.escapeXML(semantic.contract_version)}</p>
   <table>
     <thead><tr><th>指标</th><th>单位</th><th>维度</th><th>值</th><th>质量</th><th>原因</th><th>新鲜度</th><th>覆盖率</th><th>来源</th></tr></thead>
     <tbody>${rows.join('')}</tbody>
@@ -333,78 +333,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
-    await instanceAccessLifecycle.assertAvailable(instanceId);
-    const format = options.format || 'html';
-    let report: Report | null = null;
-
-    try {
-      // 创建报表记录（状态：pending）
-      assertWorkflowActive();
-      const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      const instanceName = instance?.name || `Instance-${instanceId}`;
-      const reportName = `${instanceName} - 健康检查报告`;
-
-      assertWorkflowActive();
-      report = await reportDatabaseService.createReport({
-        name: reportName,
-        type: 'health',
-        format,
-        instance_id: instanceId,
-        status: 'pending',
-      });
-
-      // 收集健康指标
-      assertWorkflowActive();
-      const metrics = await this.collectHealthMetrics(instanceId);
-
-      // 生成 HTML 内容
-      const generatedAt = new Date().toISOString();
-      assertWorkflowActive();
-      const htmlContent = await this.renderTemplate('health', {
-        title: '健康检查报告',
-        instanceName,
-        generatedAt,
-        accentColor: '#4CAF50',
-        icon: '\u{1F3E5}',
-        metrics,
-      });
-
-      // 准备结构化数据
-      const reportData = {
-        instance_id: instanceId,
-        instance_name: instanceName,
-        generated_at: new Date().toISOString(),
-        metrics,
-        summary: this.generateHealthSummary(metrics),
-      };
-
-      // 更新报表状态为 completed
-      assertWorkflowActive();
-      await reportDatabaseService.updateReportStatus(
-        report.id,
-        'completed',
-        htmlContent,
-        reportData
-      );
-
-      // 返回最新报表
-      assertWorkflowActive();
-      return (await reportDatabaseService.getReportById(report.id))!;
-    } catch (error: any) {
-      assertWorkflowActive();
-      console.error('生成健康检查报告失败:', error);
-      // 如果报表已创建，更新状态为 failed
-      try {
-        if (report) {
-          assertWorkflowActive();
-          await reportDatabaseService.updateReportStatus(report.id, 'failed');
-        }
-      } catch (innerError: any) {
-        assertWorkflowActive();
-        console.error('更新报表失败状态时出错:', innerError.message);
-      }
-      throw error;
-    }
+    return this.generateSemanticMetricReport('health',instanceId,options);
   }
 
   /**
@@ -414,75 +343,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
-    await instanceAccessLifecycle.assertAvailable(instanceId);
-    const format = options.format || 'html';
-    const topN = options.topN || 20;
-    let report: Report | null = null;
-
-    try {
-      assertWorkflowActive();
-      const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      const instanceName = instance?.name || `Instance-${instanceId}`;
-      const reportName = `${instanceName} - 性能分析报告`;
-
-      assertWorkflowActive();
-      report = await reportDatabaseService.createReport({
-        name: reportName,
-        type: 'performance',
-        format,
-        instance_id: instanceId,
-        status: 'pending',
-      });
-
-      // 收集性能指标
-      assertWorkflowActive();
-      const metrics = await this.collectPerformanceMetrics(instanceId, topN);
-
-      // 生成 HTML 内容
-      const generatedAt = new Date().toISOString();
-      assertWorkflowActive();
-      const htmlContent = await this.renderTemplate('performance', {
-        title: '性能分析报告',
-        instanceName,
-        generatedAt,
-        accentColor: '#2196F3',
-        icon: '⚡',
-        metrics,
-      });
-
-      // 准备结构化数据
-      const reportData = {
-        instance_id: instanceId,
-        instance_name: instanceName,
-        generated_at: new Date().toISOString(),
-        metrics,
-        analysis: this.generatePerformanceAnalysis(metrics),
-      };
-
-      assertWorkflowActive();
-      await reportDatabaseService.updateReportStatus(
-        report.id,
-        'completed',
-        htmlContent,
-        reportData
-      );
-
-      assertWorkflowActive();
-      return (await reportDatabaseService.getReportById(report.id))!;
-    } catch (error: any) {
-      assertWorkflowActive();
-      console.error('生成性能分析报告失败:', error);
-      try {
-        if (report) {
-          assertWorkflowActive();
-          await reportDatabaseService.updateReportStatus(report.id, 'failed');
-        }
-      } catch (innerError: any) {
-        assertWorkflowActive();
-        console.error('更新报表失败状态时出错:', innerError.message);
-      }
-      throw error;
-    }
+    return this.generateSemanticMetricReport('performance',instanceId,options);
   }
 
   /**
@@ -571,74 +432,7 @@ class ReportService {
     instanceId: number,
     options: ReportOptions = {}
   ): Promise<Report> {
-    await instanceAccessLifecycle.assertAvailable(instanceId);
-    const format = options.format || 'html';
-    let report: Report | null = null;
-
-    try {
-      assertWorkflowActive();
-      const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      const instanceName = instance?.name || `Instance-${instanceId}`;
-      const reportName = `${instanceName} - 容量规划报告`;
-
-      assertWorkflowActive();
-      report = await reportDatabaseService.createReport({
-        name: reportName,
-        type: 'capacity',
-        format,
-        instance_id: instanceId,
-        status: 'pending',
-      });
-
-      // 收集容量数据
-      assertWorkflowActive();
-      const capacityData = await this.collectCapacityData(instanceId);
-
-      // 生成 HTML 内容
-      const generatedAt = new Date().toISOString();
-      assertWorkflowActive();
-      const htmlContent = await this.renderTemplate('capacity', {
-        title: '容量规划报告',
-        instanceName,
-        generatedAt,
-        accentColor: '#9C27B0',
-        icon: '\u{1F4C8}',
-        capacityData,
-      });
-
-      // 准备结构化数据
-      const reportData = {
-        instance_id: instanceId,
-        instance_name: instanceName,
-        generated_at: new Date().toISOString(),
-        capacity: capacityData,
-        forecast: this.generateCapacityForecast(capacityData),
-      };
-
-      assertWorkflowActive();
-      await reportDatabaseService.updateReportStatus(
-        report.id,
-        'completed',
-        htmlContent,
-        reportData
-      );
-
-      assertWorkflowActive();
-      return (await reportDatabaseService.getReportById(report.id))!;
-    } catch (error: any) {
-      assertWorkflowActive();
-      console.error('生成容量规划报告失败:', error);
-      try {
-        if (report) {
-          assertWorkflowActive();
-          await reportDatabaseService.updateReportStatus(report.id, 'failed');
-        }
-      } catch (innerError: any) {
-        assertWorkflowActive();
-        console.error('更新报表失败状态时出错:', innerError.message);
-      }
-      throw error;
-    }
+    return this.generateSemanticMetricReport('capacity',instanceId,options);
   }
 
   /**
@@ -653,7 +447,7 @@ class ReportService {
     if (type === 'health' || type === 'performance' || type === 'capacity') {
       const source = await operationalSource({ type: 'instance', id: instanceId });
       if (source === 'pending') throw new Error('METRIC_SOURCE_PENDING');
-      if (source === 'v2') return this.generateSemanticMetricReport(type, instanceId, options);
+      if (source === 'semantic') return this.generateSemanticMetricReport(type, instanceId, options);
     }
 
     switch (type) {
@@ -702,7 +496,7 @@ class ReportService {
         instance_id: instanceId,
         instance_name: instanceName,
         generated_at: generatedAt,
-        source_contract: 'metrics-v2',
+        source_contract: 'metrics',
         semantic_metrics: semantic,
       };
 
@@ -721,116 +515,6 @@ class ReportService {
         }
       }
       throw error;
-    }
-  }
-
-  /**
-   * 收集健康指标
-   */
-  private async collectHealthMetrics(instanceId: number): Promise<HealthMetrics> {
-    const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-
-    // 确保数值类型正确（数据库可能返回字符串）
-    const toNumber = (val: any): number => {
-      if (typeof val === 'number') return val;
-      if (typeof val === 'string') return parseFloat(val) || 0;
-      return 0;
-    };
-
-    const health = await databaseService.checkHealth(instanceId);
-    return {
-      cpu_usage: toNumber(metrics?.cpu_usage) || 0,
-      memory_usage: toNumber(metrics?.memory_usage) || 0,
-      disk_usage: toNumber(metrics?.disk_usage) || 0,
-      connections: toNumber(metrics?.connections) || 0,
-      qps: toNumber(metrics?.qps) || 0,
-      tps: toNumber(metrics?.tps) || 0,
-      health_score: health?.health_score ?? 0,
-      health_status: health?.status ?? 'unknown'
-    };
-  }
-
-  /**
-   * 收集性能指标
-   */
-  private async collectPerformanceMetrics(
-    instanceId: number,
-    limit: number = 20
-  ): Promise<any> {
-    const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-    const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, limit);
-
-    const toNumber = (val: any): number => {
-      if (typeof val === 'number') return val;
-      if (typeof val === 'string') return parseFloat(val) || 0;
-      return 0;
-    };
-
-    return {
-      current: metrics ? {
-        cpu_usage: toNumber(metrics.cpu_usage),
-        memory_usage: toNumber(metrics.memory_usage),
-        disk_usage: toNumber(metrics.disk_usage),
-        connections: toNumber(metrics.connections),
-        qps: toNumber((metrics as any).qps),
-        tps: toNumber((metrics as any).tps),
-        health_score: toNumber((metrics as any).health_score),
-      } : null,
-      slow_queries: slowQueries,
-      top_slow_queries: slowQueries.slice(0, 5),
-    };
-  }
-
-  /**
-   * 收集容量数据
-   *
-   * 使用 database-service.ts 的 getCapacityInfo() 方法获取实例的真实容量数据，
-   * 结合 metrics-database-service.ts 的历史趋势和健康指标完成报表所需的字段。
-   */
-  private async collectCapacityData(instanceId: number): Promise<any> {
-    try {
-      // 1. 获取实例信息（用于确认实例存在）
-      const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      if (!instance) {
-        return { disk_usage: 0, table_sizes: [], growth_trend: 'unknown' };
-      }
-
-      // 2. 获取实时健康指标中的磁盘使用率
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
-      const diskUsage = metrics?.disk_usage
-        ? (typeof metrics.disk_usage === 'number'
-            ? metrics.disk_usage
-            : parseFloat(String(metrics.disk_usage)) || 0)
-        : 0;
-
-      // 3. 获取真实的容量数据（底层按 db_type 分派到 getMySQLCapacity / getPostgresCapacity / getOracleCapacity / getDamengCapacity）
-      const capacityInfo = await databaseService.getCapacityInfo(instanceId);
-
-      // 4. 获取容量历史用于计算增长趋势
-      const history = await metricsDatabaseService.getCapacityHistory(instanceId, 720);
-
-      let growthTrend = 'stable';
-      if (history.length >= 3) {
-        const firstSize = history[0].total_size_gb;
-        const lastSize = history[history.length - 1].total_size_gb;
-        if (firstSize > 0) {
-          const ratio = lastSize / firstSize;
-          if (ratio > 1.1) {
-            growthTrend = 'growing';
-          } else if (ratio < 0.9) {
-            growthTrend = 'shrinking';
-          }
-        }
-      }
-
-      return {
-        disk_usage: diskUsage,
-        table_sizes: capacityInfo?.top_tables || [],
-        growth_trend: growthTrend,
-      };
-    } catch (error) {
-      console.error(`收集容量数据失败 (instanceId=${instanceId}):`, error);
-      return { disk_usage: 0, table_sizes: [], growth_trend: 'unknown' };
     }
   }
 

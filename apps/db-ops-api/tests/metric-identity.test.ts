@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MetricRegistry } from '../src/metric-registry.js';
-import { normalizeMetricIdentity } from '../src/resources/observation-service.js';
+import { normalizeMetricIdentity } from '../src/migrations/metric-history/observation-service.js';
 
 describe('canonical metric identity', () => {
   it('uses resource type rather than a server prefix to disambiguate cpu and disk metrics', () => {

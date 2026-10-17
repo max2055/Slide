@@ -6,6 +6,7 @@ import { databaseStorageDiscoveryService } from './database-storage-discovery-se
 import { dbConnection } from './db-connection.js';
 import { linuxHostEvidenceService } from './linux-host-evidence-service.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
+import { metricConsumerService } from './metrics/consumers/runtime.js';
 import { redactSensitiveText } from './security/log-redaction.js';
 import { instanceHostService, type InstanceHostDetail } from './resources/instance-host-service.js';
 import { serverDiagnosticService } from './server-diagnostic-service.js';
@@ -553,17 +554,17 @@ export const safeInstanceMetadataProvider = new SafeInstanceMetadataProvider();
 const instanceServerDiagnostic = async (serverId: number): Promise<Record<string, unknown>> => (
   await serverDiagnosticService.getDiagnostics(serverId) as unknown as Record<string, unknown>
 );
+const metricEvidenceActor = (id: number): ActorContext => ({userId:0,username:'instance-evidence',roles:[],permissions:['instance:view'],
+  instanceScopes:{[id]:'read-only'},sessionVersion:0,requestId:`instance-evidence:${id}`});
 
 export const instanceDiagnosticContextService = new InstanceDiagnosticContextService({
   getInstance: (instanceId) => safeInstanceMetadataProvider.getInstance(instanceId),
   getRealtimeMetrics: async (instanceId) => (
-    await metricsDatabaseService.getRealtimeMetrics(instanceId, { strict: true }) as unknown as Record<string, unknown> | null
+    await metricConsumerService.query(metricEvidenceActor(instanceId), {resource:{type:'instance',id:instanceId},view:'all'}) as unknown as Record<string, unknown>
   ),
   getMetricHistory: async (instanceId, start, end, limit) => {
-    const records = await metricsDatabaseService.getHistoricalMetrics(
-      instanceId, start, end, undefined, limit, { strict: true },
-    );
-    return records as unknown as Array<Record<string, unknown>>;
+    return [await metricConsumerService.query(metricEvidenceActor(instanceId), {resource:{type:'instance',id:instanceId},view:'all',
+      from:start.toISOString(),to:end.toISOString(),bucket_ms:Math.max(1000,Math.ceil((end.getTime()-start.getTime())/Math.max(1,limit)))}) as unknown as Record<string,unknown>];
   },
   getAlerts: (instanceId, limit) => alertDatabaseService.getAlerts({
     instance_id: instanceId, limit, offset: 0, strict: true,

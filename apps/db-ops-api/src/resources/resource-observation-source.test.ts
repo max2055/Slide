@@ -9,20 +9,20 @@ const observation = {
   value: 12,
   observedAt: new Date('2026-09-24T00:00:00.000Z'),
   validUntil: new Date('2026-09-24T00:05:00.000Z'),
-  source: 'metrics_history',
+  source: 'metrics',
   quality: 'good' as const,
 };
 
 describe('resource observation formal-source boundary', () => {
-  it('reads legacy observations only while the whole resource remains legacy', async () => {
+  it('reads accepted observations only after source acceptance', async () => {
     const legacy = vi.fn(async () => [observation]);
-    const read = sourceControlledObservations(async () => 'legacy', legacy);
+    const read = sourceControlledObservations(async () => 'semantic', legacy);
 
     await expect(read(ref, actor, { limit: 10 })).resolves.toEqual([observation]);
     expect(legacy).toHaveBeenCalledOnce();
   });
 
-  it.each(['pending', 'v2'] as const)('does not expose legacy observations when formal source is %s', async (state) => {
+  it.each(['pending', 'legacy'] as const)('does not expose legacy observations when formal source is %s', async (state) => {
     const legacy = vi.fn(async () => [observation]);
     const read = sourceControlledObservations(async () => state, legacy);
 

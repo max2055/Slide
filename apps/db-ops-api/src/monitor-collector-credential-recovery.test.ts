@@ -33,11 +33,11 @@ vi.mock('./collection-capabilities', () => ({
     clearInstance: mocks.clearInstance,
   },
 }));
-vi.mock('./collector', () => ({ unifiedCollector: { collectInstance: mocks.collectInstance } }));
-vi.mock('./server-collector', () => ({ default: { start: vi.fn(), stop: vi.fn() } }));
+vi.mock('./migrations/metric-history/collector', () => ({ unifiedCollector: { collectInstance: mocks.collectInstance } }));
+vi.mock('./migrations/metric-history/server-collector', () => ({ default: { start: vi.fn(), stop: vi.fn() } }));
 vi.mock('./db-connection', () => ({ dbConnection: { getPool: vi.fn() } }));
 
-import { monitorCollector } from './monitor-collector';
+import { monitorCollector } from './migrations/metric-history/monitor-collector';
 
 type TestableMonitorCollector = {
   collectInstanceMetrics(instance: Record<string, unknown>, dueMetricIds: readonly string[]): Promise<Record<string, boolean>>;

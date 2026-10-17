@@ -45,7 +45,7 @@ test.beforeAll(async()=>{
   targetPool=mysql.createPool({host:targetHost,port:33176,user:'root',password:targetRoot});
   const env={...process.env,DB_HOST:targetHost,DB_PORT:'33176',DB_USER:'root',DB_PASSWORD:targetRoot,DB_NAME:schema,
     JWT_SECRET_KEY:randomBytes(32).toString('hex'),ENCRYPTION_KEY:encryption,PORT:'3175',AGENT_WS_PORT:'29775',
-    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_V2_COLLECTION_ENABLED:'true'};
+    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_COLLECTION_ENABLED:'true'};
   pool=mysql.createPool({host:targetHost,port:33176,user:'root',password:targetRoot,database:schema,timezone:'Z'});
   const migration=await launch(['--import','tsx','init-db.ts'],resolve('../apps/db-ops-api'),env,'migration');
   await new Promise<void>((ok,fail)=>{migration.once('exit',code=>code===0?ok():fail(Error('Formal migration failed')));migration.once('error',fail);});
@@ -106,9 +106,9 @@ test.afterAll(async()=>{
   const created=await request('/api/database/instances',{name:'MAX-175 R11 readonly MySQL',environment:'testing',db_type:'mysql',host:targetHost,port:33176,username:reader,password:readerPassword,database_name:dataSchema});
   expect(created.status).toBe(200);instanceId=created.value.id;report.resource={type:'instance',id:instanceId,dataSchema,readonlyUser:reader};
   const connected=await request(`/api/database/instances/${instanceId}/reload`,{});report.connection=connected;expect(connected.status).toBe(200);expect(connected.value.success).toBe(true);
-  const catalog=(await request('/api/metrics-v2/config/catalog')).value;
+  const catalog=(await request('/api/metrics/config/catalog')).value;
   const pkg=catalog.packages.find((r:any)=>r.package.id==='mysql-basic'&&r.package.version==='2.0.0').package;const pin={id:pkg.id,version:pkg.version,digest:pkg.digest};
-  const policy=`/api/metrics-v2/policy/resources/instance/${instanceId}`;
+  const policy=`/api/metrics/policy/resources/instance/${instanceId}`;
   const overrides={enabled:'enable',interval_ms:{mode:'set',value:5000},timeout_ms:{mode:'set',value:5000}};
   report.invalidBinding=await request(policy+'/publish',{expected_revision:0,package:pin,overrides:{interval_ms:{mode:'set',value:0}}});expect(report.invalidBinding.status).toBe(400);
   report.publish=await request(policy+'/publish',{expected_revision:0,package:pin,overrides});expect(report.publish.status).toBe(200);
@@ -116,10 +116,10 @@ test.afterAll(async()=>{
   const jobs=async()=> (await pool.query("SELECT id,state,payload,attempts,last_error,created_at,completed_at FROM workflow_jobs WHERE job_type='metrics.collect' ORDER BY created_at"))[0];
   try {await expect.poll(async()=>{const rows=await jobs();report.jobs=rows;await save();if(rows.some((j:any)=>j.state==='dead_letter'))throw Error('METRIC_JOB_DEAD_LETTER');return rows.filter((j:any)=>j.state==='completed').length;},{timeout:45000}).toBeGreaterThanOrEqual(2);report.checks.twoCycles=true;}
   catch {report.checks.twoCycles=false;}
-  report.observations=(await pool.query("SELECT id,stage,payload,stored_at FROM metric_v2_observations ORDER BY stored_at LIMIT 60"))[0];
+  report.observations=(await pool.query("SELECT id,stage,payload,stored_at FROM metric_observations ORDER BY stored_at LIMIT 60"))[0];
   report.checks.normalizedObservations=report.observations.some((r:any)=>r.stage==='normalized');
-  report.collectionAttempts=(await pool.query('SELECT id,payload,stored_at FROM metric_v2_attempts'))[0];
-  report.schedule=(await pool.query('SELECT * FROM metric_v2_schedule'))[0];report.events=(await pool.query('SELECT * FROM metric_v2_schedule_events'))[0];
+  report.collectionAttempts=(await pool.query('SELECT id,payload,stored_at FROM metric_attempts'))[0];
+  report.schedule=(await pool.query('SELECT * FROM metric_schedule'))[0];report.events=(await pool.query('SELECT * FROM metric_schedule_events'))[0];
   report.effective=(await request(policy+'/effective')).value;await save();
   if(!schedulerOnly){
   await page.addInitScript(({token,permissions})=>{localStorage.setItem('token',token);localStorage.setItem('slide.control.session_token.v1',token);localStorage.setItem('permissions',JSON.stringify(permissions));localStorage.setItem('slide.i18n.locale','zh-CN');},{token,permissions});
@@ -154,7 +154,7 @@ test.afterAll(async()=>{
   }
   report.disable=await request(policy+'/publish',{expected_revision:1,overrides:{...overrides,enabled:'disable'}});expect(report.disable.status).toBe(200);
   await expect.poll(async()=>((await request(policy)).value.application.applied_revision),{timeout:15000}).toBe(2);
-  const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_v2_attempts'))[0][0].n);
+  const count=async()=>Number((await pool.query('SELECT COUNT(*) n FROM metric_attempts'))[0][0].n);
   const before=await count(),jobsBefore=await jobs(),stoppedAt=new Date().toISOString();await new Promise(ok=>setTimeout(ok,11000));report.stop={stoppedAt,before,after:await count(),jobsBefore,jobs:await jobs()};
   report.checks.stopNoCollection=report.stop.after===before;report.checks.stopNoNewTasks=report.stop.jobs.length===jobsBefore.length;await save();
   // A fresh production process must honor persisted disabled application state.

@@ -8,7 +8,7 @@ vi.mock('./metrics-database-service.js', () => ({ metricsDatabaseService: { reco
 vi.mock('./metric-registry.js', () => ({ metricRegistry: { getByDbType: () => state.definitions } }));
 vi.mock('./collection-capabilities.js', () => ({ collectionCapabilityTracker: { recordMetricAttempt: vi.fn() } }));
 
-import { unifiedCollector } from './collector.js';
+import { unifiedCollector } from './migrations/metric-history/collector.js';
 import { collectorRegistry } from './collectors/registry.js';
 import { SystemFailurePublisher, installSystemFailurePublisher } from './platform/system-failure-publisher.js';
 

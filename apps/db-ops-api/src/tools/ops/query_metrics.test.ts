@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createQueryMetricsTool } from './query_metrics.js';
-import { admin } from '../../metrics-v2/policy/test-support.js';
-import { PolicyError } from '../../metrics-v2/policy/model.js';
+import { admin } from '../../metrics/policy/test-support.js';
+import { PolicyError } from '../../metrics/policy/model.js';
 const service = () => ({ query: vi.fn(), discover: vi.fn(), inventory: vi.fn() });
 describe('query_metrics authenticated semantic boundary', () => {
   it('requires an authenticated actor before any read', async () => {

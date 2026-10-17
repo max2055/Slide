@@ -36,11 +36,11 @@ describe('MonitorCollector', () => {
     monitorCollector.stop();
   });
 
-  it('start() 启动采集并设置 running 状态', async () => {
+  it('start() 兼容入口不启动第二套周期采集', async () => {
     monitorCollector.start();
     const status = monitorCollector.getStatus();
 
-    expect(status.running).toBe(true);
+    expect(status.running).toBe(false);
     expect(status.heartbeatMs).toBeGreaterThan(0);
     expect(Array.isArray(status.schedule)).toBe(true);
   });
@@ -71,7 +71,7 @@ describe('MonitorCollector', () => {
     monitorCollector.start();
     const status2 = monitorCollector.getStatus();
 
-    expect(status2.running).toBe(true);
+    expect(status2.running).toBe(false);
     expect(status2.heartbeatMs).toBe(status1.heartbeatMs);
   });
 });

@@ -3,7 +3,7 @@ import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData } from '../db-connection.js';
 import type { NotificationChannel } from '../notification-database-service.js';
 import type { ClaimedJob, JobExecutionContext } from './worker-runtime.js';
-import type { RolloutAlertFence } from '../metrics-v2/rollout/alert-publication-fence.js';
+import type { RolloutAlertFence } from '../metrics/rollout/alert-publication-fence.js';
 
 export interface DeliveryRequest { channel: NotificationChannel; message: unknown; rolloutFence?: RolloutAlertFence }
 export interface DeliveryClaim { key: string; attemptId: string; request: DeliveryRequest; retryDeadline?: number }

@@ -9,8 +9,9 @@ describe('MetricsDatabaseService.recordMetrics', () => {
 
   it('persists omitted independently scheduled metrics as null without losing real zeroes', async () => {
     const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
-      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
-      if (sql.includes('FROM metric_v2_rollout')) return [[], []];
+      if (sql.includes('FROM metric_policy_bindings')) return [[], []];
+    if (sql.includes('metric_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_rollout')) return [[], []];
       return [{ affectedRows: 1 }, []];
     });
     const connection = { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
@@ -29,9 +30,10 @@ describe('MetricsDatabaseService.recordMetrics', () => {
 
   it('treats a pending or v2 resource as an intentional legacy skip', async () => {
     const execute = vi.fn(async (sql: string, _values?: unknown[]) => {
-      if (sql.includes('metric_v2_policy_lock')) return [[{ id: 1 }], []];
-      if (sql.includes('FROM metric_v2_rollout')) return [[{
-        source: 'v2', read_mode: 'v2', published_revision: 2, applied_revision: null,
+      if (sql.includes('FROM metric_policy_bindings')) return [[], []];
+    if (sql.includes('metric_policy_lock')) return [[{ id: 1 }], []];
+      if (sql.includes('FROM metric_rollout')) return [[{
+        source: 'semantic', read_mode: 'semantic', published_revision: 2, applied_revision: null,
       }], []];
       throw new Error('legacy insert must be fenced');
     });

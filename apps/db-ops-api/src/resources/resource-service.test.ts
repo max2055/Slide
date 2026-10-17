@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestObservation, ObservationService } from './observation-service.js';
+import { latestObservation, ObservationService } from '../migrations/metric-history/observation-service.js';
 import { MysqlResourceRelationStore, ResourceService, canManageResource, canReadResource } from './resource-service.js';
 import { CapabilityService } from './capability-service.js';
 import type { ActorContext } from '../auth/actor-context.js';

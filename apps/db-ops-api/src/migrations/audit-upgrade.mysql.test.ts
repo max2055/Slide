@@ -81,7 +81,7 @@ describe.skipIf(!container)('W14 audited baseline upgrade and snapshot rollback'
         expect.objectContaining({ state: 'completed', report_id: 42, workflow_job_id: null, staged_report_id: null }),
         expect.objectContaining({ state: 'running', report_id: null, workflow_job_id: null, staged_report_id: null }),
       ]);
-      expect((await rows("SELECT payload,tombstone FROM metric_v2_observations WHERE id='old-raw'"))[0]).toMatchObject({ payload: { value: 7 }, tombstone: null });
+      expect((await rows("SELECT payload,tombstone FROM metric_observations WHERE id='old-raw'"))[0]).toMatchObject({ payload: { value: 7 }, tombstone: null });
       expect((await rows('SELECT lifecycle_state FROM database_instances WHERE id=42'))[0].lifecycle_state).toBe('available');
       expect(await rows('SELECT * FROM analysis_dispatches')).toEqual([]);
       expect(await rows("SELECT * FROM workflow_jobs WHERE job_type IN ('analysis.dispatch','cron.execute','report.occurrence')")).toEqual([]);

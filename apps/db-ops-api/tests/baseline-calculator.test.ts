@@ -1,223 +1,53 @@
-/**
- * BaselineCalculator 测试
- */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), discover: vi.fn() }));
+vi.mock('../src/db-connection.js', () => ({ dbConnection: { getPool: () => ({ execute: mocks.execute }) } }));
+vi.mock('../src/metrics/consumers/runtime.js', () => ({ metricConsumerService: { discover: mocks.discover } }));
+import { SemanticBaselineService } from '../src/metrics/consumers/baseline.js';
 
-const sourceMocks = vi.hoisted(() => ({ state: vi.fn(async () => 'legacy' as const) }));
+const sample = (value: string, quality = 'good') => ({ payload: {value: {encoding:'uint64',value},quality:{status:quality},accuracy:'exact'} });
+const context = () => ({ definitions: [{id:'mysql.threads.running',semantic_version:'1.0.0',unit:'count',kind:'gauge',dimensions:{keys:[]}}],
+  effective:{published_revision:3,resolved:{plan:{binding:{package:{id:'mysql-diagnostics'}}},settings:{enabled:true},metric_templates:[{metric:{id:'mysql.threads.running'},enabled:true}]}} });
 
-vi.mock('../src/metrics-v2/consumers/runtime', () => ({
-  operationalSource: sourceMocks.state,
-}));
-
-// Mock dependencies before importing the module
-vi.mock('../src/db-connection', () => ({
-  dbConnection: {
-    getPool: () => mockPool,
-    isConnected: () => true,
-  },
-}));
-
-vi.mock('../src/metrics-database-service', () => ({
-  metricsDatabaseService: {
-    getHistoricalMetrics: vi.fn(() => []),
-  },
-}));
-
-vi.mock('../src/instance-database-service', () => ({
-  instanceDatabaseService: {
-    getAllInstances: vi.fn(() => []),
-  },
-}));
-
-vi.mock('../src/metric-registry', () => {
-  const mockRegistry = {
-    getMetricIds: () => ['cpu_usage', 'memory_usage', 'disk_usage'],
-    isValidMetric: (id: string) => ['cpu_usage', 'memory_usage', 'disk_usage'].includes(id),
-  };
-  return {
-    metricRegistry: mockRegistry,
-    MetricRegistry: class {},
-  };
-});
-
-let mockPool: any = null;
-
-describe('BaselineCalculator', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    sourceMocks.state.mockResolvedValue('legacy');
+describe('baselines from accepted metric evidence', () => {
+  const service = new SemanticBaselineService();
+  beforeEach(() => { vi.resetAllMocks(); mocks.discover.mockResolvedValue(context()); });
+  it('computes a population deviation from exact good samples, recording revision, definition and unit', async () => {
+    mocks.execute.mockResolvedValueOnce([[...Array.from({length:10},(_,i)=>sample(String(i+1))),sample('999','partial'),sample('9007199254740993')]])
+      .mockResolvedValueOnce([{}]);
+    const result = await service.compute(7,'threads_running');
+    expect(result).toMatchObject({success:true,result:{mean:5.5,sampleCount:10}});
+    expect(result.result!.stddev).toBeCloseTo(Math.sqrt(8.25));
+    const [sql, params] = mocks.execute.mock.calls[0];
+    expect(sql).toContain('metric_publications');
+    expect(sql).toContain('p.generation = r.generation');
+    expect(params.slice(0,5)).toEqual(['instance','7',3,'mysql.threads.running','1.0.0']);
+    const payload=JSON.parse(mocks.execute.mock.calls[1][1][3]);
+    expect(payload).toMatchObject({unit:'count',metric:{id:'mysql.threads.running',semantic_version:'1.0.0'}});
   });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it('rejects insufficient samples and never falls back to historical metrics or caches', async () => {
+    mocks.execute.mockResolvedValueOnce([[sample('7'),sample('8')]]);
+    expect(await service.compute(7,'threads_running')).toEqual({success:false,error:'METRIC_BASELINE_INSUFFICIENT_SAMPLES'});
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
-
-  describe('computeBaselineForMetric', () => {
-    it('应返回失败结果当数据库未连接时', async () => {
-      mockPool = null;
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const result = await baselineCalculator.computeBaselineForMetric(1, 'cpu_usage');
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
-    });
-
-    it('应返回失败结果当样本量不足时', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const result = await baselineCalculator.computeBaselineForMetric(1, 'cpu_usage');
-      expect(result.success).toBe(false);
-    });
-
-    it('应使用 SQL STDDEV_POP 计算基线', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[
-          {
-            instance_id: 1,
-            mean_val: 45.5,
-            stddev_val: 10.2,
-            sample_count: 15,
-          },
-        ]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const result = await baselineCalculator.computeBaselineForMetric(1, 'cpu_usage');
-      expect(result.success).toBe(true);
-      expect(result.result).toBeDefined();
-      expect(result.result!.mean).toBe(45.5);
-      expect(result.result!.stddev).toBe(10.2);
-      expect(result.result!.sampleCount).toBe(15);
-
-      // 验证 SQL 包含 STDDEV_POP
-      const sqlCall = mockPool.execute.mock.calls[0][0];
-      expect(sqlCall).toContain('STDDEV_POP');
-    });
-
-    it('lower_bound 不应为负数（对正指标使用 Math.max(0, lowerBound)）', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[
-          {
-            instance_id: 1,
-            mean_val: 5,
-            stddev_val: 10,
-            sample_count: 20,
-          },
-        ]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const result = await baselineCalculator.computeBaselineForMetric(1, 'cpu_usage');
-      expect(result.success).toBe(true);
-      expect(result.result!.lowerBound).toBeGreaterThanOrEqual(0);
-    });
-
-    it('应使用参数化查询防止 SQL 注入', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[
-          {
-            instance_id: 1,
-            mean_val: 50,
-            stddev_val: 5,
-            sample_count: 30,
-          },
-        ]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      await baselineCalculator.computeBaselineForMetric(1, 'cpu_usage');
-
-      const params = mockPool.execute.mock.calls[0][1];
-      expect(params).toContain(1); // instance_id
-    });
-
-    it.each(['v2', 'pending'] as const)('does not compute a legacy baseline for %s formal source', async state => {
-      sourceMocks.state.mockResolvedValue(state);
-      mockPool = { execute: vi.fn() };
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      await expect(baselineCalculator.computeBaselineForMetric(1, 'cpu_usage'))
-        .resolves.toEqual({ success: false, error: state === 'v2' ? 'METRIC_V2_BASELINE_UNAVAILABLE' : 'METRIC_SOURCE_PENDING' });
-      expect(mockPool.execute).not.toHaveBeenCalled();
-    });
+  it.each(['counter','dimensioned','disabled','unmapped'])('keeps %s references unavailable instead of silently changing their meaning', async state => {
+    const ctx=context();
+    if(state==='counter')ctx.definitions[0].kind='counter';
+    if(state==='dimensioned')(ctx.definitions[0].dimensions.keys as unknown[])=[{name:'mount',required:true}];
+    if(state==='disabled')ctx.effective.resolved.settings.enabled=false;
+    mocks.discover.mockResolvedValue(ctx);
+    expect((await service.compute(7,state==='unmapped'?'cpu_usage':'threads_running')).success).toBe(false);
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
-
-  describe('getCachedBaseline', () => {
-    it('应返回缓存的基线数据', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[
-          {
-            mean_val: 45.5,
-            stddev_val: 10.2,
-            lower_bound: 25.1,
-            upper_bound: 65.9,
-          },
-        ]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const baseline = await baselineCalculator.getCachedBaseline(1, 'cpu_usage');
-      expect(baseline).not.toBeNull();
-      expect(baseline!.mean).toBe(45.5);
-      expect(baseline!.stddev).toBe(10.2);
-      expect(baseline!.lowerBound).toBe(25.1);
-      expect(baseline!.upperBound).toBe(65.9);
-    });
-
-    it('无缓存数据时应返回 null', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([[]]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const baseline = await baselineCalculator.getCachedBaseline(1, 'nonexistent');
-      expect(baseline).toBeNull();
-    });
-
-    it('does not expose a cached legacy baseline after V2 becomes formal', async () => {
-      sourceMocks.state.mockResolvedValue('v2');
-      mockPool = { execute: vi.fn() };
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      await expect(baselineCalculator.getCachedBaseline(1, 'cpu_usage')).resolves.toBeNull();
-      expect(mockPool.execute).not.toHaveBeenCalled();
-    });
+  it('does not reuse cached values of another revision, unit or metric version', async () => {
+    const payload={metric:{id:'mysql.threads.running',semantic_version:'1.0.0'},unit:'%',result:{mean:99,stddev:1,lowerBound:97,upperBound:101}};
+    mocks.execute.mockResolvedValue([[{payload}]]);
+    expect(await service.cached(7,'threads_running')).toBeNull();
+    expect(mocks.execute.mock.calls[0][1]).toEqual(['instance:7','threads_running',3]);
+    payload.unit='count';
+    expect(await service.cached(7,'threads_running')).toEqual(payload.result);
   });
-
-  describe('computeAllBaselines', () => {
-    it('应遍历所有实例和指标并返回统计', async () => {
-      mockPool = {
-        execute: vi.fn()
-          .mockResolvedValueOnce([[{ instance_id: 1, mean_val: 50, stddev_val: 5, sample_count: 15 }]])
-          .mockResolvedValue([[{ instance_id: 1, mean_val: 50, stddev_val: 5, sample_count: 15 }]]),
-      };
-
-      const { instanceDatabaseService } = await import('../src/instance-database-service');
-      (instanceDatabaseService.getAllInstances as any).mockReturnValue([
-        { id: 1, name: 'test-instance' },
-      ]);
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      const result = await baselineCalculator.computeAllBaselines();
-      expect(result.success).toBeGreaterThanOrEqual(0);
-      expect(result.results).toBeDefined();
-    });
-  });
-
-  describe('cleanupOldBaselines', () => {
-    it('应调用 SQL 删除过期基线', async () => {
-      mockPool = {
-        execute: vi.fn().mockResolvedValue([{}]),
-      };
-
-      const { baselineCalculator } = await import('../src/baseline-calculator');
-      await baselineCalculator.cleanupOldBaselines(30);
-
-      expect(mockPool.execute).toHaveBeenCalled();
-      const sqlCall = mockPool.execute.mock.calls[0][0];
-      expect(sqlCall).toMatch(/DELETE.*metric_baselines/i);
-    });
+  it('validates inputs before any query', async () => {
+    expect(await service.compute(7,'threads_running',NaN)).toMatchObject({success:false,error:'METRIC_BASELINE_INPUT'});
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
 });

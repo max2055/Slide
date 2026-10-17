@@ -9,9 +9,9 @@ docker run --detach --rm --name "$container" --env MYSQL_ALLOW_EMPTY_PASSWORD=ye
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 stable=0
 for _ in $(seq 1 60); do
-  if METRICS_V2_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec node -e '
+  if METRICS_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec node -e '
     import("mysql2/promise").then(async ({default:mysql}) => {
-      const c = await mysql.createConnection({host:"127.0.0.1",port:Number(process.env.METRICS_V2_TEST_MYSQL_PORT),user:"root",password:""});
+      const c = await mysql.createConnection({host:"127.0.0.1",port:Number(process.env.METRICS_TEST_MYSQL_PORT),user:"root",password:""});
       await c.query("SELECT 1"); await c.end();
     }).catch(() => process.exit(1));' >/dev/null 2>&1; then
     stable=$((stable + 1))
@@ -20,5 +20,5 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then echo 'isolated metric retention MySQL unavailable' >&2; exit 1; fi
-METRICS_V2_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run \
-  src/workflows/metric-retention-handler.test.ts src/metrics-v2/storage.mysql.test.ts src/metrics-v2/rollout/control.mysql.test.ts
+METRICS_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run \
+  src/workflows/metric-retention-handler.test.ts src/metrics/storage.mysql.test.ts src/metrics/rollout/control.mysql.test.ts

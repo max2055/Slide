@@ -6,7 +6,7 @@ import { instanceDatabaseService } from '../instance-database-service.js';
 import { databaseService } from '../database-service.js';
 import { metricsDatabaseService } from '../metrics-database-service.js';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {vi.restoreAllMocks();vi.unstubAllEnvs();});
 it('returns actual cleanup outcome and does not swallow storage failure as success', async () => {
   const execute = vi.fn(async () => [{ affectedRows: 3 }]);
   vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
@@ -15,6 +15,8 @@ it('returns actual cleanup outcome and does not swallow storage failure as succe
   expect(await baselineCalculator.cleanupOldBaselines()).toEqual({ success: false, error: 'SQL_ERROR' });
 });
 it('counts unavailable capacity and failed persistence along with actual successes', async () => {
+  vi.stubEnv('METRICS_COLLECTION_ENABLED','true');
+  vi.spyOn(dbConnection,'getPool').mockReturnValue({execute:vi.fn(async(sql:string)=>[sql.includes('AS enabled')?[{enabled:1}]:[]])} as any);
   vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([1, 2, 3, 4].map(id => ({ id, status: 'active', name: String(id) })) as any);
   vi.spyOn(databaseService, 'getCapacityInfo').mockImplementation(async id => {
     if (id === 4) throw new Error('TARGET_UNAVAILABLE');
@@ -22,4 +24,13 @@ it('counts unavailable capacity and failed persistence along with actual success
   });
   vi.spyOn(metricsDatabaseService, 'recordCapacity').mockImplementation(async data => ({ success: data.instance_id !== 3 }));
   expect(await monitorCollector.collectCapacityNow()).toEqual({ succeeded: 1, failed: 3 });
+});
+
+it('does not issue capacity or event queries while asset collection is paused',async()=>{
+  vi.stubEnv('METRICS_COLLECTION_ENABLED','true');
+  vi.spyOn(dbConnection,'getPool').mockReturnValue({execute:vi.fn(async()=>[[{enabled:0}]])} as any);
+  vi.spyOn(instanceDatabaseService,'getAllInstances').mockResolvedValue([{id:1,status:'active'}] as any);
+  const capacity=vi.spyOn(databaseService,'getCapacityInfo'),slow=vi.spyOn(databaseService,'getSlowQueries');
+  expect(await monitorCollector.collectCapacityNow()).toEqual({succeeded:0,failed:0});await monitorCollector.collectSlowQueriesNow();
+  expect(capacity).not.toHaveBeenCalled();expect(slow).not.toHaveBeenCalled();
 });

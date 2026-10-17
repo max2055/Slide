@@ -12312,6 +12312,2032 @@
         ],
         "type": "object"
       },
+      "MetricBindingChange": {
+        "$id": "MetricBindingChange",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 9007199254740990,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "overrides": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "enum": [
+                  "inherit",
+                  "enable",
+                  "disable"
+                ],
+                "type": "string"
+              },
+              "interval_ms": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 86400000,
+                        "minimum": 1000,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "max_concurrency": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 16,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "max_counter_gap_ms": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 86400000,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "max_rows": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "max_series_per_resource": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 10000,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "metrics": {
+                "additionalProperties": {
+                  "enum": [
+                    "inherit",
+                    "enable",
+                    "disable"
+                  ],
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_.]*@[0-9]+\\.[0-9]+\\.[0-9]+$",
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "stale_after_ms": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 86400000,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "timeout_ms": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "inherit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "set",
+                        "type": "string"
+                      },
+                      "value": {
+                        "maximum": 30000,
+                        "minimum": 250,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "package": {
+            "additionalProperties": false,
+            "properties": {
+              "digest": {
+                "pattern": "^sha256:[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "version": {
+                "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "digest"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "MetricConfigurationMigration": {
+        "$id": "MetricConfigurationMigration",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "custom_sql",
+                    "deprecated_template"
+                  ],
+                  "type": "string"
+                },
+                "package": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "digest": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "digest"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "blocked",
+                    "reviewed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "source_id",
+                "source_digest",
+                "state",
+                "code",
+                "package",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "resource",
+          "items"
+        ],
+        "type": "object"
+      },
+      "MetricConfigurationStatus": {
+        "$id": "MetricConfigurationStatus",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "additionalProperties": false,
+            "properties": {
+              "application": {
+                "enum": [
+                  "unbound",
+                  "pending",
+                  "applied",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "applied_revision": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "package": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "digest": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "digest"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "published_revision": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "enum": [
+                  "bound",
+                  "unbound"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "package",
+              "published_revision",
+              "applied_revision",
+              "application"
+            ],
+            "type": "object"
+          },
+          "blockers": {
+            "items": {
+              "enum": [
+                "UNBOUND",
+                "GLOBAL_COLLECTION_DISABLED",
+                "ASSET_COLLECTION_DISABLED",
+                "POLICY_COLLECTION_DISABLED",
+                "APPLICATION_PENDING",
+                "APPLICATION_FAILED",
+                "PACKAGE_INCOMPATIBLE",
+                "CAPABILITY_UNKNOWN",
+                "COLLECTION_FAILED",
+                "SOURCE_VALIDATION_PENDING",
+                "SOURCE_VALIDATION_FAILED",
+                "AWAITING_SAMPLE",
+                "STALE_SAMPLE",
+                "LEGACY_CONFIGURATION_REVIEW_REQUIRED"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "can_manage": {
+            "type": "boolean"
+          },
+          "collection": {
+            "additionalProperties": false,
+            "properties": {
+              "in_flight": {
+                "type": "boolean"
+              },
+              "last_attempt_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_success_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "enum": [
+                  "disabled",
+                  "pending",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "last_attempt_at",
+              "last_success_at",
+              "in_flight"
+            ],
+            "type": "object"
+          },
+          "contract_version": {
+            "const": "1.0.0",
+            "type": "string"
+          },
+          "coverage": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "metric": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "semantic_version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "semantic_version"
+                  ],
+                  "type": "object"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "covered",
+                    "not_covered",
+                    "unsupported",
+                    "unknown",
+                    "disabled"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "metric",
+                "state",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "effective_enabled": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_enabled": {
+                "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "global_enabled": {
+                "type": "boolean"
+              },
+              "policy_enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "global",
+                  "asset",
+                  "package",
+                  "platform",
+                  "group",
+                  "resource",
+                  "unbound"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "global_enabled",
+              "asset_enabled",
+              "policy_enabled",
+              "source"
+            ],
+            "type": "object"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+            "type": "string"
+          },
+          "formal_visibility": {
+            "additionalProperties": false,
+            "properties": {
+              "freshness": {
+                "enum": [
+                  "fresh",
+                  "stale",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "generation": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_observed_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "enum": [
+                  "none",
+                  "semantic"
+                ],
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "unbound",
+                  "pending",
+                  "validating",
+                  "available",
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "source",
+              "last_observed_at",
+              "generation",
+              "freshness"
+            ],
+            "type": "object"
+          },
+          "legacy_configuration": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "actions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "custom_sql",
+                    "deprecated_template"
+                  ],
+                  "type": "string"
+                },
+                "package": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "digest": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "digest"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "blocked",
+                    "reviewed"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "source_id",
+                "source_digest",
+                "state",
+                "code",
+                "package",
+                "actions"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "contract_version",
+          "resource",
+          "evaluated_at",
+          "can_manage",
+          "binding",
+          "effective_enabled",
+          "collection",
+          "formal_visibility",
+          "coverage",
+          "blockers"
+        ],
+        "type": "object"
+      },
+      "MetricPolicyGroups": {
+        "$id": "MetricPolicyGroups",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "can_manage": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "overrides": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "enum": [
+                        "inherit",
+                        "enable",
+                        "disable"
+                      ],
+                      "type": "string"
+                    },
+                    "interval_ms": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 86400000,
+                              "minimum": 1000,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "max_concurrency": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 16,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "max_counter_gap_ms": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 86400000,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "max_rows": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 100,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "max_series_per_resource": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 10000,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "metrics": {
+                      "additionalProperties": {
+                        "enum": [
+                          "inherit",
+                          "enable",
+                          "disable"
+                        ],
+                        "type": "string"
+                      },
+                      "propertyNames": {
+                        "pattern": "^[a-z][a-z0-9_.]*@[0-9]+\\.[0-9]+\\.[0-9]+$",
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "stale_after_ms": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 86400000,
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "timeout_ms": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "inherit",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "mode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mode": {
+                              "const": "set",
+                              "type": "string"
+                            },
+                            "value": {
+                              "maximum": 30000,
+                              "minimum": 250,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "policy_revision": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "revision": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "revision",
+                "overrides",
+                "can_manage"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "type": "object"
+      },
+      "MetricRecommendations": {
+        "$id": "MetricRecommendations",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "evaluated_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "checks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "attribute": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "enum": [
+                          "supported",
+                          "unsupported",
+                          "unknown"
+                        ],
+                        "type": "string"
+                      },
+                      "supported_values": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "attribute",
+                      "value",
+                      "supported_values",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "compatibility": {
+                  "enum": [
+                    "compatible",
+                    "incompatible",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                "coverage": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "semantic_version": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "semantic_version"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "missing_core_metrics": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "recommended": {
+                  "type": "boolean"
+                },
+                "release": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "derived": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accuracy_propagation": {
+                            "const": "least_certain_input",
+                            "type": "string"
+                          },
+                          "factor": {
+                            "type": "number"
+                          },
+                          "id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "inputs": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                                  "type": "string"
+                                },
+                                "semantic_version": {
+                                  "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "semantic_version"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "join": {
+                            "const": "same_resource_and_dimensions",
+                            "type": "string"
+                          },
+                          "max_skew_ms": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "on_missing": {
+                            "const": "null",
+                            "type": "string"
+                          },
+                          "on_zero_denominator": {
+                            "const": "null",
+                            "type": "string"
+                          },
+                          "operation": {
+                            "enum": [
+                              "difference",
+                              "rate",
+                              "ratio",
+                              "sum",
+                              "scale"
+                            ],
+                            "type": "string"
+                          },
+                          "output": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                                "type": "string"
+                              },
+                              "semantic_version": {
+                                "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "semantic_version"
+                            ],
+                            "type": "object"
+                          },
+                          "quality_propagation": {
+                            "const": "worst_input",
+                            "type": "string"
+                          },
+                          "transform_version": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "output",
+                          "transform_version",
+                          "inputs",
+                          "operation",
+                          "join",
+                          "max_skew_ms",
+                          "on_missing",
+                          "on_zero_denominator",
+                          "quality_propagation",
+                          "accuracy_propagation"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "documentation": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "collector_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "discovery": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "permissions": {
+                            "items": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "collector_id",
+                          "permissions",
+                          "discovery"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "extensions": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "aggregation": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "min_coverage": {
+                                "maximum": 1,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "missing": {
+                                "const": "preserve_null",
+                                "type": "string"
+                              },
+                              "quantiles": {
+                                "enum": [
+                                  "not_applicable",
+                                  "from_merged_histogram",
+                                  "non_mergeable"
+                                ],
+                                "type": "string"
+                              },
+                              "space": {
+                                "items": {
+                                  "enum": [
+                                    "none",
+                                    "sum",
+                                    "min",
+                                    "max",
+                                    "weighted_mean",
+                                    "merge"
+                                  ],
+                                  "type": "string"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "time": {
+                                "items": {
+                                  "enum": [
+                                    "last",
+                                    "min",
+                                    "max",
+                                    "mean",
+                                    "sum",
+                                    "rate",
+                                    "merge",
+                                    "quantile"
+                                  ],
+                                  "type": "string"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "time",
+                              "space",
+                              "missing",
+                              "min_coverage",
+                              "quantiles"
+                            ],
+                            "type": "object"
+                          },
+                          "category": {
+                            "const": "extension",
+                            "type": "string"
+                          },
+                          "dimensions": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "keys": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "allowed_values": {
+                                      "items": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    },
+                                    "meaning": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "pattern": "^[a-z][a-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "meaning",
+                                    "required"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "max_series_per_resource": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              "max_value_length": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 1024,
+                                "type": "integer"
+                              },
+                              "overflow": {
+                                "const": "reject",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "keys",
+                              "max_series_per_resource",
+                              "max_value_length",
+                              "overflow"
+                            ],
+                            "type": "object"
+                          },
+                          "id": {
+                            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "gauge",
+                              "counter",
+                              "histogram",
+                              "summary"
+                            ],
+                            "type": "string"
+                          },
+                          "lifecycle": {
+                            "enum": [
+                              "active",
+                              "deprecated"
+                            ],
+                            "type": "string"
+                          },
+                          "meaning": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "monotonic": {
+                            "type": "boolean"
+                          },
+                          "namespace": {
+                            "pattern": "^[a-z][a-z0-9_]*$",
+                            "type": "string"
+                          },
+                          "replacement_id": {
+                            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                            "type": "string"
+                          },
+                          "resource_type": {
+                            "enum": [
+                              "instance",
+                              "server",
+                              "network_device"
+                            ],
+                            "type": "string"
+                          },
+                          "roles": {
+                            "items": {
+                              "enum": [
+                                "core",
+                                "diagnostic",
+                                "capacity",
+                                "slo"
+                              ],
+                              "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "scope": {
+                            "enum": [
+                              "resource",
+                              "database",
+                              "filesystem",
+                              "interface"
+                            ],
+                            "type": "string"
+                          },
+                          "semantic_version": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          },
+                          "temporality": {
+                            "enum": [
+                              "instant",
+                              "cumulative",
+                              "delta"
+                            ],
+                            "type": "string"
+                          },
+                          "unit": {
+                            "enum": [
+                              "1",
+                              "By",
+                              "s",
+                              "ms",
+                              "%",
+                              "bit/s",
+                              "By/s",
+                              "count",
+                              "count/s"
+                            ],
+                            "type": "string"
+                          },
+                          "value_type": {
+                            "enum": [
+                              "float64",
+                              "int64",
+                              "uint64",
+                              "histogram",
+                              "summary"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "semantic_version",
+                          "meaning",
+                          "unit",
+                          "resource_type",
+                          "scope",
+                          "kind",
+                          "roles",
+                          "temporality",
+                          "monotonic",
+                          "value_type",
+                          "dimensions",
+                          "aggregation",
+                          "lifecycle",
+                          "category",
+                          "namespace"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "package": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "applicability": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "attribute": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "values": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "attribute",
+                              "values"
+                            ],
+                            "type": "object"
+                          },
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "collectors": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "estimated_cost": {
+                                "enum": [
+                                  "low",
+                                  "medium",
+                                  "high"
+                                ],
+                                "type": "string"
+                              },
+                              "id": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "implementation_ref": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "mappings": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "input_unit": {
+                                      "enum": [
+                                        "1",
+                                        "By",
+                                        "s",
+                                        "ms",
+                                        "%",
+                                        "bit/s",
+                                        "By/s",
+                                        "count",
+                                        "count/s"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "metric": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                                          "type": "string"
+                                        },
+                                        "semantic_version": {
+                                          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "semantic_version"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "output_unit": {
+                                      "enum": [
+                                        "1",
+                                        "By",
+                                        "s",
+                                        "ms",
+                                        "%",
+                                        "bit/s",
+                                        "By/s",
+                                        "count",
+                                        "count/s"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "raw_field": {
+                                      "maxLength": 256,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "steps": {
+                                      "items": {
+                                        "enum": [
+                                          "decode",
+                                          "unit_convert",
+                                          "counter_delta",
+                                          "rate",
+                                          "derive",
+                                          "normalize"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "minItems": 2,
+                                      "type": "array"
+                                    },
+                                    "transform_version": {
+                                      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "metric",
+                                    "raw_field",
+                                    "input_unit",
+                                    "output_unit",
+                                    "transform_version",
+                                    "steps"
+                                  ],
+                                  "type": "object"
+                                },
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "method": {
+                                "enum": [
+                                  "sql",
+                                  "ssh",
+                                  "snmp"
+                                ],
+                                "type": "string"
+                              },
+                              "timeout_ms": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "method",
+                              "implementation_ref",
+                              "timeout_ms",
+                              "estimated_cost",
+                              "mappings"
+                            ],
+                            "type": "object"
+                          },
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "contract_version": {
+                          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                          "type": "string"
+                        },
+                        "digest": {
+                          "pattern": "^sha256:[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "resource_type": {
+                          "enum": [
+                            "instance",
+                            "server",
+                            "network_device"
+                          ],
+                          "type": "string"
+                        },
+                        "version": {
+                          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "contract_version",
+                        "digest",
+                        "resource_type",
+                        "applicability",
+                        "collectors"
+                      ],
+                      "type": "object"
+                    },
+                    "recommendations": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "interval_ms": {
+                          "maximum": 86400000,
+                          "minimum": 1000,
+                          "type": "integer"
+                        },
+                        "max_counter_gap_ms": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "max_rows": {
+                          "maximum": 100,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        "stale_after_ms": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "timeout_ms": {
+                          "maximum": 30000,
+                          "minimum": 250,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "interval_ms",
+                        "timeout_ms",
+                        "stale_after_ms",
+                        "max_counter_gap_ms",
+                        "max_rows",
+                        "enabled"
+                      ],
+                      "type": "object"
+                    },
+                    "transforms": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "enum": [
+                              "normalize",
+                              "derive"
+                            ],
+                            "type": "string"
+                          },
+                          "version": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "type": "object"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "package",
+                    "extensions",
+                    "derived",
+                    "transforms",
+                    "recommendations",
+                    "documentation"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "release",
+                "compatibility",
+                "recommended",
+                "checks",
+                "coverage",
+                "missing_core_metrics"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "resource",
+          "evaluated_at",
+          "packages"
+        ],
+        "type": "object"
+      },
       "NetworkDevice": {
         "$id": "NetworkDevice",
         "additionalProperties": false,
@@ -20048,6 +22074,330 @@
           },
           "503": {
             "description": "Configuration unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/activate": {
+      "post": {
+        "description": "Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly.",
+        "operationId": "activateMetricConfiguration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricBindingChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "published": {
+                      "const": true
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/MetricConfigurationStatus"
+                    }
+                  },
+                  "required": [
+                    "published",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Published policy preview and independently evaluated status"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "409": {
+            "description": "Revision conflict or trial busy; no implicit retry"
+          },
+          "422": {
+            "description": "Incompatible package or trial failed; not published"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/migration": {
+      "get": {
+        "description": "Requires live resource management permission. Returns pending custom-SQL/retained-template migration codes and actionable steps, without SQL or secrets. Reviewed means awaiting activation, not formal visibility.",
+        "operationId": "getMetricConfigurationMigration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricConfigurationMigration"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/recommendations": {
+      "get": {
+        "description": "Same resource type only; actual engine/version/protocol applicability. Unknown is never a compatible recommendation.",
+        "operationId": "getMetricRecommendations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricRecommendations"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/status": {
+      "get": {
+        "description": "Binding, effective switch, execution, formal visibility and per-metric coverage are independent. Read failures never become unbound.",
+        "operationId": "getMetricConfigurationStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricConfigurationStatus"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/policy/groups": {
+      "get": {
+        "description": "At most 100 visible groups; every member must be readable. Empty groups require admin. Management permission is evaluated separately.",
+        "operationId": "listMetricPolicyGroups",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricPolicyGroups"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
           }
         },
         "security": [

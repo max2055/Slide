@@ -1,3 +1,4 @@
+import { resourceMetricRead } from './metrics/consumers/resource-api.js';
 /** Fixed-profile, read-only server diagnostics. */
 
 import type { Client } from 'ssh2';
@@ -446,29 +447,21 @@ class ServerDiagnosticService {
   } = {}): Promise<{ latest: ServerMetricPoint[]; history: ServerMetricPoint[]; freshness: string | null; gaps: string[] }> {
     if (!Number.isSafeInteger(serverId) || serverId <= 0) throw new Error('SERVER_ID_INVALID');
     if (!['1h', '6h', '24h', '7d', '30d', undefined].includes(options.range)) throw new Error('TIME_RANGE_INVALID');
-    if (options.metricName !== undefined && !/^[a-z][a-z0-9_]{1,80}$/.test(options.metricName)) throw new Error('METRIC_NAME_INVALID');
+    if (options.metricName !== undefined && !/^[a-z][a-z0-9_.]{0,127}$/.test(options.metricName)) throw new Error('METRIC_NAME_INVALID');
     const limit = Math.min(Math.max(Number.isSafeInteger(options.maxRows) ? options.maxRows! : 100, 1), 100);
     const server = await this.dependencies.serverDatabaseService.getServerById(serverId);
     if (!server) throw new Error('SERVER_NOT_FOUND');
-    const pool = dbConnection.getPool();
-    if (!pool) return { latest: [], history: [], freshness: null, gaps: ['METRICS_UNAVAILABLE'] };
+    const ref={type:'server' as const,id:serverId},actor={userId:0,username:'server-diagnostic',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-metrics:${serverId}`};
     const hours = options.range ? ({ '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as Record<string, number>)[options.range] : null;
-    const params: unknown[] = [serverId];
-    let where = 'WHERE server_id = ?';
-    if (options.metricName) { where += ' AND metric_name = ?'; params.push(options.metricName); }
-    if (hours) { where += ` AND recorded_at >= DATE_SUB(NOW(), INTERVAL ${hours} HOUR)`; }
-    const [rows] = await (pool as any).execute(
-      `SELECT metric_name, metric_value, dimensions, recorded_at FROM server_metrics ${where} ORDER BY recorded_at DESC, id DESC LIMIT ${limit}`,
-      params,
-    ) as any;
-    const history = (rows ?? []).map((row: any) => ({
-      metric_name: String(row.metric_name),
-      metric_value: Number(row.metric_value),
-      dimensions: typeof row.dimensions === 'string' ? (() => { try { return JSON.parse(row.dimensions); } catch { return null; } })() : row.dimensions ?? null,
-      recorded_at: new Date(row.recorded_at).toISOString(),
-    })) as ServerMetricPoint[];
+    const to=new Date().toISOString(),from=hours?new Date(Date.parse(to)-hours*3600000).toISOString():undefined;
+    const result=await resourceMetricRead(actor,ref,{...(from?{from,to,bucket_ms:Math.max(60000,Math.ceil(hours!*3600000/1000))}:{}),...(options.metricName?{metric_ids:[options.metricName]}:{})});
+    const history=result.metrics.filter(row=>row.quality.status==='good'&&row.freshness==='fresh'&&row.value&&'value'in row.value).flatMap(row=>{
+      const value=row.value! as {encoding:string;value:string|number},n=Number(value.value);
+      return Number.isFinite(n)&&(value.encoding==='float64'||Number.isSafeInteger(n))?[{metric_name:row.metric_id,metric_value:n,dimensions:row.dimensions,
+        recorded_at:row.recorded_at!,unit:row.unit,quality:row.quality}]:[];
+    }).sort((a,b)=>b.recorded_at.localeCompare(a.recorded_at)).slice(0,limit);
     const latestMap = new Map<string, ServerMetricPoint>();
-    for (const row of history) if (!latestMap.has(row.metric_name)) latestMap.set(row.metric_name, row);
+    for (const row of history) { const key=JSON.stringify([row.metric_name,row.dimensions]); if (!latestMap.has(key)) latestMap.set(key, row); }
     const latest = [...latestMap.values()];
     const freshness = latest.length ? latest.reduce((max, row) => row.recorded_at > max ? row.recorded_at : max, latest[0].recorded_at) : null;
     return { latest, history, freshness, gaps: latest.length ? [] : ['METRICS_UNAVAILABLE'] };

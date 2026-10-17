@@ -1,17 +1,15 @@
+import { semanticBaselineService } from './metrics/consumers/baseline.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 基线计算服务 - 使用历史指标数据计算统计基线
  *
  * 基于 mean +/- 2sigma 原则计算指标基线，
- * 支持 SQL 计算和 in-memory fallback（simple-statistics）。
+ * 仅使用当前配置版本已接受的正式观测，不继承历史缓存。
  */
 import mysql from 'mysql2/promise';
-import * as ss from 'simple-statistics';
 import { dbConnection } from './db-connection';
-import { metricsDatabaseService } from './metrics-database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import { metricRegistry } from './metric-registry';
-import { operationalSource } from './metrics-v2/consumers/runtime.js';
 
 /**
  * 基线计算结果
@@ -30,24 +28,14 @@ export interface BaselineResult {
 /**
  * 基线计算器类
  *
- * 使用 SQL STDDEV_POP 进行高效计算，
- * 当 stddev 为 NULL 时使用 simple-statistics 作为 in-memory fallback。
+ * 使用正式样本计算总体标准差，保留指标版本和单位。
  */
 class BaselineCalculator {
-  private readonly MIN_SAMPLE_SIZE = 10;
-
   /**
    * 获取数据库连接池
    */
   private getPool(): mysql.Pool | null {
     return dbConnection.getPool();
-  }
-
-  /**
-   * 检查数据库是否已连接
-   */
-  private isConnected(): boolean {
-    return dbConnection.isConnected();
   }
 
   /**
@@ -65,90 +53,7 @@ class BaselineCalculator {
     sigma: number = 2,
     lookbackDays: number = 7
   ): Promise<{ success: boolean; result?: BaselineResult; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) {
-      return { success: false, error: '数据库未连接' };
-    }
-
-    // Whitelist validation to prevent SQL injection via metricName
-    const validMetricIds = metricRegistry.getMetricIds();
-    if (!validMetricIds.includes(metricName)) {
-      return { success: false, error: `Invalid metric name: ${metricName}` };
-    }
-
-    try {
-      const source = await operationalSource({ type: 'instance', id: instanceId });
-      if (source !== 'legacy') {
-        return {
-          success: false,
-          error: source === 'v2' ? 'METRIC_V2_BASELINE_UNAVAILABLE' : 'METRIC_SOURCE_PENDING',
-        };
-      }
-
-      // 使用 SQL STDDEV_POP 计算均值和标准差
-      const [rows] = await pool.execute(
-        `SELECT
-          instance_id,
-          AVG(\`${metricName}\`) AS mean_val,
-          STDDEV_POP(\`${metricName}\`) AS stddev_val,
-          COUNT(*) AS sample_count
-         FROM metrics_history
-         WHERE instance_id = ?
-           AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY instance_id
-         HAVING COUNT(*) >= ?`,
-        [instanceId, lookbackDays, this.MIN_SAMPLE_SIZE]
-      ) as any;
-
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return {
-          success: false,
-          error: `样本量不足（< ${this.MIN_SAMPLE_SIZE}）或无历史数据`,
-        };
-      }
-
-      const row = rows[0];
-      let meanVal = Number(row.mean_val);
-      let stddevVal = row.stddev_val !== null && row.stddev_val !== undefined ? Number(row.stddev_val) : null;
-
-      // 如果 stddev 为 NULL（单一样本），使用 in-memory fallback
-      if (stddevVal === null || isNaN(stddevVal)) {
-        const fallbackResult = await this._computeInMemory(instanceId, metricName, lookbackDays);
-        if (!fallbackResult.success) {
-          return fallbackResult;
-        }
-        meanVal = fallbackResult.result!.mean;
-        stddevVal = fallbackResult.result!.stddev;
-      }
-
-      // 计算上下界
-      let lowerBound = meanVal - sigma * stddevVal;
-      const upperBound = meanVal + sigma * stddevVal;
-
-      // 对永远为正的指标（CPU、内存等），lowerBound 不小于 0
-      if (metricName === 'cpu_usage' || metricName === 'memory_usage' || metricName === 'disk_usage') {
-        lowerBound = Math.max(0, lowerBound);
-      }
-
-      const result: BaselineResult = {
-        instanceId,
-        metricName,
-        mean: Number(meanVal.toFixed(4)),
-        stddev: Number(stddevVal.toFixed(4)),
-        lowerBound: Number(lowerBound.toFixed(4)),
-        upperBound: Number(upperBound.toFixed(4)),
-        sampleCount: Number(row.sample_count),
-        computedAt: new Date(),
-      };
-
-      // UPSERT 到 metric_baselines 表
-      await this._saveBaseline(result, sigma, lookbackDays);
-
-      return { success: true, result };
-    } catch (error: any) {
-      console.error(`计算基线失败 [${metricName} 实例 ${instanceId}]:`, error);
-      return { success: false, error: error.message };
-    }
+    return semanticBaselineService.compute(instanceId,metricName,sigma,lookbackDays);
   }
 
   /**
@@ -191,7 +96,7 @@ class BaselineCalculator {
   }
 
   /**
-   * 从 metric_baselines 表获取缓存的基线
+   * 获取当前配置版本的正式指标基线缓存
    *
    * @param instanceId 实例 ID
    * @param metricName 指标名称
@@ -201,40 +106,7 @@ class BaselineCalculator {
     instanceId: number,
     metricName: string
   ): Promise<{ mean: number; stddev: number; lowerBound: number; upperBound: number } | null> {
-    const pool = this.getPool();
-    if (!pool) {
-      return null;
-    }
-
-    try {
-      if (await operationalSource({ type: 'instance', id: instanceId }) !== 'legacy') {
-        return null;
-      }
-
-      const [rows] = await pool.execute(
-        `SELECT mean_val, stddev_val, lower_bound, upper_bound
-         FROM metric_baselines
-         WHERE instance_id = ? AND metric_name = ?
-         ORDER BY computed_at DESC
-         LIMIT 1`,
-        [instanceId, metricName]
-      ) as any;
-
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return null;
-      }
-
-      const row = rows[0];
-      return {
-        mean: Number(row.mean_val),
-        stddev: Number(row.stddev_val),
-        lowerBound: Number(row.lower_bound),
-        upperBound: Number(row.upper_bound),
-      };
-    } catch (error) {
-      console.error(`获取缓存基线失败 [${metricName} 实例 ${instanceId}]:`, error);
-      return null;
-    }
+    return semanticBaselineService.cached(instanceId,metricName);
   }
 
   /**
@@ -251,7 +123,7 @@ class BaselineCalculator {
     try {
       assertWorkflowActive();
       const [result] = await pool.execute(
-        `DELETE FROM metric_baselines WHERE computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+        `DELETE FROM metric_semantic_baselines WHERE computed_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
         [retentionDays]
       );
       return { success: true, deleted: Number((result as { affectedRows: number }).affectedRows) };
@@ -260,103 +132,6 @@ class BaselineCalculator {
       console.error('清理过期基线失败:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-  }
-
-  /**
-   * 从内存中计算基线（in-memory fallback）
-   *
-   * 当 SQL STDDEV_POP 返回 NULL 时使用 simple-statistics 计算。
-   */
-  private async _computeInMemory(
-    instanceId: number,
-    metricName: string,
-    lookbackDays: number
-  ): Promise<{ success: boolean; result?: BaselineResult; error?: string }> {
-    const endTime = new Date();
-    const startTime = new Date(endTime.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
-
-    const historicalData = await metricsDatabaseService.getHistoricalMetrics(
-      instanceId,
-      startTime,
-      endTime
-    );
-
-    if (historicalData.length < this.MIN_SAMPLE_SIZE) {
-      return {
-        success: false,
-        error: `样本量不足（< ${this.MIN_SAMPLE_SIZE}）`,
-      };
-    }
-
-    // 提取指标值
-    const values = historicalData
-      .map((r: any) => Number((r as any)[metricName]))
-      .filter((v: number) => !isNaN(v));
-
-    if (values.length < this.MIN_SAMPLE_SIZE) {
-      return {
-        success: false,
-        error: `有效样本量不足（< ${this.MIN_SAMPLE_SIZE}）`,
-      };
-    }
-
-    const mean = ss.mean(values);
-    const stddev = ss.standardDeviation(values);
-
-    return {
-      success: true,
-      result: {
-        instanceId,
-        metricName,
-        mean,
-        stddev,
-        lowerBound: mean - 2 * stddev,
-        upperBound: mean + 2 * stddev,
-        sampleCount: values.length,
-        computedAt: new Date(),
-      },
-    };
-  }
-
-  /**
-   * 将基线结果 UPSERT 到 metric_baselines 表
-   */
-  private async _saveBaseline(
-    result: BaselineResult,
-    sigma: number,
-    lookbackDays: number
-  ): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) {
-      return;
-    }
-
-    await pool.execute(
-      `INSERT INTO metric_baselines
-       (instance_id, metric_name, mean_val, stddev_val, lower_bound, upper_bound, sigma, lookback_days, sample_count, computed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         mean_val = VALUES(mean_val),
-         stddev_val = VALUES(stddev_val),
-         lower_bound = VALUES(lower_bound),
-         upper_bound = VALUES(upper_bound),
-         sigma = VALUES(sigma),
-         lookback_days = VALUES(lookback_days),
-         sample_count = VALUES(sample_count),
-         computed_at = VALUES(computed_at)`,
-      [
-        result.instanceId,
-        result.metricName,
-        result.mean,
-        result.stddev,
-        result.lowerBound,
-        result.upperBound,
-        sigma,
-        lookbackDays,
-        result.sampleCount,
-        result.computedAt,
-      ]
-    );
   }
 }
 

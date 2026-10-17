@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// These cases exercise legacy threshold/history behavior; formal source selection has its own integration coverage.
-vi.mock('../src/metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: async () => ({ handled: false }) }));
+const formal = vi.hoisted(() => vi.fn());
+vi.mock('../src/metrics/consumers/operational.js', () => ({ evaluateOperationalRule: formal }));
 
 vi.mock('../src/db-connection', () => ({
   dbConnection: { getPool: () => null, isConnected: () => false },
@@ -30,7 +30,7 @@ vi.mock('../src/alert-database-service', () => ({
 }));
 
 describe('alert-evaluator.ts', () => {
-  beforeEach(() => { vi.resetModules(); });
+  beforeEach(() => { vi.resetModules(); formal.mockResolvedValue({ handled: true, state: 'unknown', level: null, value: null, recovery: false }); });
 
   it('evaluateRule: > operator works with numeric comparison', async () => {
     const { evaluateRule } = await import('../src/alert-evaluator');
@@ -72,7 +72,7 @@ describe('alert-evaluator.ts', () => {
 
   it('checkDuration: returns true when no history but current value triggered', async () => {
     const { metricsDatabaseService } = await import('../src/metrics-database-service');
-    vi.mocked(metricsDatabaseService.getRealtimeMetrics).mockResolvedValue({ cpu_usage: 90 } as any);
+    formal.mockResolvedValue({handled: true, state: 'firing', level: 'warning', value: 90});
     const { checkDuration } = await import('../src/alert-evaluator');
     const result = await checkDuration(1, { metric_name: 'cpu_usage', operator: '>', threshold: 80 } as any, 60);
     expect(result).toBe(true);
@@ -94,6 +94,7 @@ describe('alert-evaluator.ts', () => {
     vi.mocked(metricsDatabaseService.getRealtimeMetrics)
       .mockResolvedValue({ cpu_usage: 95 } as any);
 
+    formal.mockResolvedValue({handled: true, state: 'firing', level: 'warning', value: 95});
     const result = await evaluateAllRules();
     expect(result.length).toBeGreaterThan(0);
     expect(result[0].instanceId).toBe(10);

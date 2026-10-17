@@ -5,11 +5,11 @@ import type { DeliveryGate } from './delivery-store.js';
 import {
   parseRolloutAlertFence,
   type RolloutAlertPublicationGate,
-} from '../metrics-v2/rollout/alert-publication-fence.js';
+} from '../metrics/rollout/alert-publication-fence.js';
 
 const fence = {
   series_hash: 'a'.repeat(64),
-  source: 'v2',
+  source: 'semantic',
   generation: 4,
   revision: 12,
 };
@@ -17,7 +17,7 @@ const fence = {
 const alert = {
   id: 7,
   instance_id: 3,
-  source: 'metrics-v2-rollout',
+  source: 'metrics-rollout',
   status: 'unread',
   level: 'warning',
   title: 'CPU high',
@@ -73,7 +73,7 @@ async function execute(publicationGate: RolloutAlertPublicationGate) {
   return { sent, finished };
 }
 
-describe('Metrics V2 alert notification publication fence', () => {
+describe('Metrics alert notification publication fence', () => {
   it('skips a queued alert after its source generation becomes stale', async () => {
     const run = vi.fn(async (_alertId: number, actual: typeof fence, _publish: () => Promise<void>) => {
       expect(actual).toEqual(fence);
@@ -117,8 +117,8 @@ describe('Metrics V2 alert notification publication fence', () => {
     expect(finished).toEqual([{ state: 'retryable', error: 'ROLLOUT_ALERT_FENCE_UNAVAILABLE' }]);
   });
 
-  it('rejects a Metrics V2 alert without a complete immutable fence', () => {
-    expect(() => parseRolloutAlertFence({ source: 'metrics-v2-rollout', tags: { rollout_fence: { ...fence, revision: 0 } } }))
+  it('rejects a Metrics alert without a complete immutable fence', () => {
+    expect(() => parseRolloutAlertFence({ source: 'metrics-rollout', tags: { rollout_fence: { ...fence, revision: 0 } } }))
       .toThrow('ROLLOUT_ALERT_FENCE_INVALID');
   });
 

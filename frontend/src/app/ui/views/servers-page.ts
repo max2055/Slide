@@ -1,3 +1,5 @@
+import "../components/resource-collection-section.js";
+import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
@@ -229,6 +231,8 @@ export class ServersPage extends LitElement {
   @state() private _environmentFilter = "all";
   @state() private _relationFilter = "all";
 
+  @state() private editorTab = "basic";
+  @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -250,6 +254,12 @@ export class ServersPage extends LitElement {
       }
       if (!serversRes.ok) throw new Error("加载服务器列表失败");
       this._servers = await serversRes.json();
+      const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
+      const edit = this._servers.find(server => server.id === editId);
+      if (edit && !this._showDialog) {
+        await this._openEditDialog(edit); this.editorTab = 'collection';
+        url.searchParams.delete('edit'); history.replaceState({}, '', url);
+      }
       this.metricRefreshVersion++;
     } catch (err: any) {
       showToast(err.message || "网络错误", "error");
@@ -259,6 +269,8 @@ export class ServersPage extends LitElement {
   }
 
   private _openAddDialog() {
+    this.editorTab = "basic";
+    this.connectionPending = true;
     this._editingId = null;
     this._form = {
       host: "",
@@ -276,6 +288,8 @@ export class ServersPage extends LitElement {
   }
 
   private async _openEditDialog(server: ServerRow) {
+    this.editorTab = "basic";
+    this.connectionPending = false;
     this._editingId = server.id;
     // Fetch detail to get credential_username (stripped from list response)
     let credentialUsername = "";
@@ -303,17 +317,32 @@ export class ServersPage extends LitElement {
   }
 
   private _closeDialog() {
+    if (this._isSubmitting) return;
+    this._confirmEditorLeave(() => this._finishCloseDialog());
+  }
+  private _confirmEditorLeave(action: () => void) {
+    const section = this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section');
+    if (section) { this.editorTab = 'collection'; section.confirmDiscard(action); } else action();
+  }
+  private async _finishCloseDialog() {
+    const id = this._editingId;
     this._showDialog = false;
     this._editingId = null;
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
+    await this.updateComplete;
+    const table = this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table');
+    await table?.updateComplete;
+    await (table?.renderRoot.querySelector('app-data-table') as LitElement | null)?.updateComplete;
+    (id ? table?.renderRoot.querySelector<HTMLElement>(`[data-resource-edit-id="${id}"]`) : this.renderRoot.querySelector<HTMLElement>('.resource-action--add'))?.focus();
   }
 
   private _updateForm<K extends keyof ServerFormData>(field: K, value: ServerFormData[K]) {
+    this.connectionPending = true;
     this._form = { ...this._form, [field]: value };
   }
 
-  private async _handleSubmit() {
+  private async _handleSubmit(configureCollection = false) {
     if (this._isSubmitting) return;
 
     if (!this._form.host || !this._form.credential_username) {
@@ -346,9 +375,14 @@ export class ServersPage extends LitElement {
         throw new Error(err.error || "保存失败");
       }
 
-      this._closeDialog();
+      const savedId = isEdit ? this._editingId : Number((await res.json()).id);
+      if (configureCollection) {
+        this._editingId = savedId;
+        this.connectionPending = false;
+        this.editorTab = 'collection';
+      } else await this._finishCloseDialog();
       await this._loadServers();
-      showToast(isEdit ? "服务器已更新" : "服务器已添加", "success");
+      showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
     } catch (err: any) {
       showToast(`保存失败: ${err.message}`, "error");
     } finally {
@@ -521,7 +555,7 @@ export class ServersPage extends LitElement {
         actions: html`
           <div class="actions">
             <button class="btn-sm" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
-            <button class="btn-sm" @click=${() => this._openEditDialog(srv)}>编辑</button>
+            <button class="btn-sm" data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
             <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${this._testingServerId === srv.id}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
             <button class="btn-sm danger" @click=${() => this._confirmDelete(srv)}>删除</button>
           </div>`,
@@ -544,6 +578,7 @@ export class ServersPage extends LitElement {
   }
 
   override render() {
+    if (this._showDialog) return this._renderFormDialog();
     if (this._loading && this._servers.length === 0) {
       return html`<div class="page"><div class="loading">加载中...</div></div>`;
     }
@@ -652,8 +687,10 @@ export class ServersPage extends LitElement {
     const title = this._editingId ? "编辑服务器" : "添加服务器";
 
     return html`
-      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title=${title} @app-dialog-close=${this._closeDialog}>
-        <div class="form-grid">
+      <resource-editor-shell .heading=${title} .caption=${`${this._form.label || this._form.host || '新资源'} · ${this._form.os_type} · ${this._form.host}:${this._form.port}`} .activeTab=${this.editorTab} .busy=${this._isSubmitting}
+        @editor-close=${this._closeDialog} @editor-tab-change=${(event: CustomEvent<string>) => { this.editorTab = event.detail; }}>
+        ${this._editingId ? html`<button slot="actions" class="btn btn-ghost" @click=${() => this._confirmEditorLeave(() => this._navigateToDetail(this._editingId!))}>查看资源详情 ↗</button>` : nothing}
+        <app-card slot="basic"><h2 slot="header">连接与识别</h2><div class="form-grid">
           <div class="form-row">
             <app-form-field label="IP/主机名" required .inline=${true}>
               <input class="form-input" type="text" .value=${this._form.host}
@@ -728,12 +765,16 @@ export class ServersPage extends LitElement {
               ${this._testingConnection ? "测试中..." : "测试连接"}
             </button>
             <button class="btn" @click=${this._closeDialog}>取消</button>
-            <button class="btn-primary" @click=${this._handleSubmit} .disabled=${this._isSubmitting}>
+            <button class="btn" @click=${() => this._handleSubmit(true)} .disabled=${this._isSubmitting}>保存连接并配置采集</button>
+            <button class="btn-primary" @click=${() => this._confirmEditorLeave(() => void this._handleSubmit())} .disabled=${this._isSubmitting}>
               ${this._isSubmitting ? "保存中..." : "保存"}
             </button>
           </div>
         </div>
-      </app-dialog>
+        </app-card>
+        <div slot="collection"><resource-collection-section mode="edit" resourceType="server" .resourceId=${this._editingId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
+          ${this.connectionPending ? html`<button class="btn-primary" .disabled=${this._isSubmitting} @click=${() => this._handleSubmit(true)}>保存连接并配置采集</button>` : nothing}</div>
+      </resource-editor-shell>
     `;
   }
 
