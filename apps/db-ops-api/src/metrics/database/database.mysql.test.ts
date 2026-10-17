@@ -79,7 +79,11 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
     const expected = Number(BigInt(b.value) - BigInt(a.value)) / 60;
     expect(expected).toBeGreaterThan(0);
     const rate = data.find(o => o.metric.id === 'mysql.transaction_commands.commit_rate' && o.observed_at === commits[1].observed_at)!;
-    expect(rate.value).toEqual({ encoding: 'float64', value: expected });
+    expect(rate.value?.encoding).toBe('float64');
+    if(rate.value?.encoding!=='float64')throw new Error('RATE_ENCODING');
+    // The independent Number division and exact-rational transform can round one
+    // ULP apart. Counter input/delta identity remains exact above; rates are float64.
+    expect(rate.value.value).toBeCloseTo(expected,14);
     expect(rate.lineage.length).toBeGreaterThanOrEqual(2);
     const storage = new MysqlMetricStorage(pool), query = new SemanticQueryService(storage, async () => true);
     const definition = packages.catalog(pin).find(d => d.id === rate.metric.id)!;
