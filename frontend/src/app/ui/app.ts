@@ -470,7 +470,7 @@ export class SlideApp extends LitElement {
 
     // Listen for navigation events
     window.addEventListener("slide-navigate", (e: any) => {
-      const { tab, id, session, serverId, networkDeviceId, investigationId } = e.detail;
+      const { tab, id, session, serverId, networkDeviceId, investigationId, editResourceId } = e.detail;
       const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
       const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
       if (tab) {
@@ -509,6 +509,7 @@ export class SlideApp extends LitElement {
           serverId: effectiveServerId,
           networkDeviceId: effectiveNetworkDeviceId,
           investigationId,
+          editResourceId,
         });
         window.history.pushState({}, "", url);
       }

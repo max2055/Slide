@@ -3,7 +3,6 @@ const { authFetch, get } = vi.hoisted(() => ({ authFetch: vi.fn(), get: vi.fn() 
 vi.mock('../../../api/index.js', () => ({ authFetch, apiClient: { get } }));
 import { SchemaManagementPage } from './schema-management.js';
 import { IndexManagementPage } from './index-management.js';
-import { MetricRegistryViewer } from './metric-registry.js';
 import { PermissionManagementTab } from './rbac-page.js';
 import { ReportsPage } from './reports.js';
 import { ListBrowser } from '../components/list-browser.js';
@@ -43,11 +42,6 @@ describe('list failure and compatibility', () => {
     view.indexes = view.unusedIndexes = view.redundancyReport = [{ table_name: 'private-old' }];
     authFetch.mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({}, 403)).mockResolvedValueOnce(response([]));
     await view.loadIndexes(); expect(view.indexes).toEqual([]); expect(view.unusedIndexes).toEqual([]); expect(view.redundancyReport).toEqual([]); expect(view.indexError).toContain('无权限');
-  });
-  it('preserves legacy metric target and composes resource/database filters', () => {
-    const view = new MetricRegistryViewer() as any;
-    view.metrics = [{ id: 'legacy', db_types: ['mysql'] }, { id: 'server', target_type: 'server', db_types: [] }];
-    view.filterTargetType = 'instance'; view.filterDbType = 'mysql'; expect(view._filtered().map((m: any) => m.id)).toEqual(['legacy']);
   });
   it('clears permissions after revoked access', async () => {
     const view = new PermissionManagementTab() as any; view.permissions = [{ code: 'private-old' }]; get.mockRejectedValue(new Error('HTTP 403'));

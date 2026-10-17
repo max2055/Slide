@@ -1,3 +1,5 @@
+import "../components/resource-collection-section.js";
+import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
 import { LitElement, html, nothing } from "lit";
@@ -72,6 +74,8 @@ export class NetworkDevicesPage extends LitElement {
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
 
+  @state() private editorTab = "basic";
+  @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -91,6 +95,12 @@ export class NetworkDevicesPage extends LitElement {
       }
       const value = await response.json();
       this.devices = Array.isArray(value) ? value as NetworkDevice[] : [];
+      const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
+      const edit = this.devices.find(device => device.id === editId);
+      if (edit && !this.showDialog) {
+        await this.openEdit(edit); this.editorTab = 'collection';
+        url.searchParams.delete('edit'); history.replaceState({}, '', url);
+      }
       this.metricRefreshVersion++;
     } catch (error) {
       this.error = error instanceof Error ? error.message : "加载网络设备失败";
@@ -129,6 +139,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private openCreate() {
+    this.editorTab = "basic"; this.connectionPending = true;
     this.editingId = null;
     this.form = { ...EMPTY_FORM };
     this.formError = null;
@@ -136,6 +147,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private async openEdit(device: NetworkDevice) {
+    this.editorTab = "basic";
     this.editingId = device.id;
     this.form = {
       ...EMPTY_FORM,
@@ -152,14 +164,31 @@ export class NetworkDevicesPage extends LitElement {
       vendor: device.vendor === "cisco" ? "cisco" : "huawei",
     };
     this.formError = null;
+    this.connectionPending = false;
     this.showDialog = true;
   }
 
   private closeDialog() {
-    if (!this.saving && !this.testing && !this.testingSsh) this.showDialog = false;
+    if (this.saving || this.testing || this.testingSsh) return;
+    this.confirmEditorLeave(() => { void this.finishCloseDialog(); });
+  }
+
+  private confirmEditorLeave(action: () => void) {
+    const section = this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section');
+    if (section) { this.editorTab = 'collection'; section.confirmDiscard(action); } else action();
+  }
+  private async finishCloseDialog() {
+    const id = this.editingId;
+    this.showDialog = false;
+    await this.updateComplete;
+    const table = this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table');
+    await table?.updateComplete;
+    await (table?.renderRoot.querySelector('app-data-table') as LitElement | null)?.updateComplete;
+    (id ? table?.renderRoot.querySelector<HTMLElement>(`[data-resource-edit-id="${id}"]`) : this.renderRoot.querySelector<HTMLElement>('.resource-action--add'))?.focus();
   }
 
   private updateForm<K extends keyof DeviceForm>(key: K, value: DeviceForm[K]) {
+    this.connectionPending = true;
     this.form = { ...this.form, [key]: value };
   }
 
@@ -203,7 +232,7 @@ export class NetworkDevicesPage extends LitElement {
     };
   }
 
-  private async saveDevice() {
+  private async saveDevice(configureCollection = false) {
     if (this.saving) return;
     if (!this.form.name.trim() || !this.form.host.trim()) {
       this.formError = "名称和主机不能为空";
@@ -230,9 +259,14 @@ export class NetworkDevicesPage extends LitElement {
         const body = await responseBody(response);
         throw new Error(String(body.error || "保存网络设备失败"));
       }
-      this.showDialog = false;
+      const savedId = this.editingId ?? Number((await response.json()).id);
+      if (configureCollection) {
+        this.editingId = savedId;
+        this.connectionPending = false;
+        this.editorTab = 'collection';
+      } else await this.finishCloseDialog();
       await this.loadDevices();
-      showToast(this.editingId ? "网络设备已更新" : "网络设备已添加", "success");
+      showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
     } catch (error) {
       this.formError = error instanceof Error ? error.message : "保存网络设备失败";
     } finally {
@@ -358,7 +392,7 @@ export class NetworkDevicesPage extends LitElement {
       lastCheck: device.last_check_at ? new Date(device.last_check_at).toLocaleString("zh-CN") : "--",
       actions: html`<div class="actions">
         <button class="btn-sm" type="button" @click=${() => this.navigate(device.id)}>详情</button>
-        <button class="btn-sm" type="button" @click=${() => this.openEdit(device)}>编辑</button>
+        <button class="btn-sm" type="button" data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
         <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId === device.id}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
         <button class="btn-sm danger" type="button" @click=${() => this.confirmDelete(device)}>删除</button>
       </div>`,
@@ -367,8 +401,10 @@ export class NetworkDevicesPage extends LitElement {
 
   private renderDialog() {
     if (!this.showDialog) return nothing;
-    return html`<app-dialog .open=${true} size="xl" title=${this.editingId ? "编辑网络设备" : "添加网络设备"} .closeOnOverlay=${false} @app-dialog-close=${this.closeDialog}>
-      <div class="device-form">
+    return html`<resource-editor-shell .heading=${this.editingId ? "编辑网络设备" : "添加网络设备"} .caption=${`${this.form.label || this.form.name || '新资源'} · ${this.form.vendor} · ${this.form.host}`} .activeTab=${this.editorTab} .busy=${this.saving}
+      @editor-close=${this.closeDialog} @editor-tab-change=${(event: CustomEvent<string>) => { this.editorTab = event.detail; }}>
+      ${this.editingId ? html`<button slot="actions" class="btn btn-ghost" @click=${() => this.confirmEditorLeave(() => this.navigate(this.editingId!))}>查看资源详情 ↗</button>` : nothing}
+      <app-card slot="basic"><h2 slot="header">连接与识别</h2><div class="device-form">
         <section class="device-form-section">
           <div class="section-heading">
             <h3>基本信息</h3>
@@ -405,8 +441,10 @@ export class NetworkDevicesPage extends LitElement {
         </section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>
-      <div slot="footer" class="dialog-actions"><div class="dialog-test-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing || this.testingSsh}>${this.testing ? "探测中…" : `测试 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"}`}</button><button class="btn" type="button" @click=${this.testSshConnection} .disabled=${this.testing || this.testingSsh}>${this.testingSsh ? "测试中…" : "测试 SSH"}</button></div><span class="dialog-spacer" aria-hidden="true"></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn-primary" type="button" @click=${this.saveDevice} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
-    </app-dialog>`;
+      <div slot="footer" class="dialog-actions"><div class="dialog-test-actions"><button class="btn" type="button" @click=${this.testConnection} .disabled=${this.testing || this.testingSsh}>${this.testing ? "探测中…" : `测试 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"}`}</button><button class="btn" type="button" @click=${this.testSshConnection} .disabled=${this.testing || this.testingSsh}>${this.testingSsh ? "测试中…" : "测试 SSH"}</button></div><span class="dialog-spacer" aria-hidden="true"></span><button class="btn" type="button" @click=${this.closeDialog}>取消</button><button class="btn" type="button" @click=${() => this.saveDevice(true)} .disabled=${this.saving}>保存连接并配置采集</button><button class="btn-primary" type="button" @click=${() => this.confirmEditorLeave(() => void this.saveDevice())} .disabled=${this.saving}>${this.saving ? "保存中…" : "保存"}</button></div>
+      </app-card><div slot="collection"><resource-collection-section mode="edit" resourceType="network_device" .resourceId=${this.editingId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
+        ${this.connectionPending ? html`<button class="btn-primary" .disabled=${this.saving} @click=${() => this.saveDevice(true)}>保存连接并配置采集</button>` : nothing}</div>
+    </resource-editor-shell>`;
   }
 
   private renderDeleteDialog() {
@@ -463,7 +501,7 @@ export class NetworkDevicesPage extends LitElement {
         .dialog-test-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; }
         .dialog-actions > .dialog-spacer { display:none; }
       }
-    </style>
+    </style>${this.showDialog ? this.renderDialog() : html`
     ${this.loading && this.devices.length === 0 ? html`<div class="loading" role="status">正在加载网络设备…</div>` : this.error ? html`<app-card><div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadDevices}>重试</button></div></app-card>` : html`
       <app-card .compact=${true}>
         <div class="resource-toolbar">
@@ -486,7 +524,6 @@ export class NetworkDevicesPage extends LitElement {
         </div>
         ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
-    ${this.renderDialog()}
-    ${this.renderDeleteDialog()}`;
+      ${this.renderDeleteDialog()}`}`;
   }
 }

@@ -93,7 +93,7 @@ test.beforeAll(async () => {
   await mkdir(output, { recursive: true });
   const env = { ...process.env, DB_HOST:'127.0.0.1', DB_PORT:'33186', DB_USER:'root', DB_PASSWORD:'', DB_NAME:taskSchema,
     JWT_SECRET_KEY:randomBytes(32).toString('hex'), ENCRYPTION_KEY:randomBytes(32).toString('hex'),
-    PORT:String(apiPort), AGENT_WS_PORT:'29886', SLIDE_MEMORY_PIPELINE_ENABLED:'false', METRICS_V2_COLLECTION_ENABLED:'false' };
+    PORT:String(apiPort), AGENT_WS_PORT:'29886', SLIDE_MEMORY_PIPELINE_ENABLED:'false', METRICS_COLLECTION_ENABLED:'false' };
   const migration = execFileSync(process.execPath, ['--import','tsx','init-db.ts'], { cwd:resolve('../apps/db-ops-api'), env, encoding:'utf8', timeout:90_000 });
   await writeFile(`${output}/migration.log`, migration);
   pool = mysql.createPool({ host:env.DB_HOST, port:Number(env.DB_PORT), user:env.DB_USER, password:env.DB_PASSWORD, database:env.DB_NAME, timezone:'Z' });
@@ -320,12 +320,12 @@ test('resource feedback: unified stored refresh, compact columns, neutral names,
       const reads: string[] = [], writes: string[] = [];
       const listener = (request: import('@playwright/test').Request) => {
         const url=new URL(request.url());if(!url.pathname.startsWith('/api/'))return;
-        if(request.method()==='GET' || url.pathname==='/api/metrics-v2/query') reads.push(url.pathname); else writes.push(url.pathname);
+        if(request.method()==='GET' || url.pathname==='/api/metrics/query') reads.push(url.pathname); else writes.push(url.pathname);
       };
       page.on('request',listener);
       await refresh.focus(); await page.keyboard.press('Enter'); await expect(refresh).toBeEnabled();
       await expect.poll(()=>reads.filter(p=>p===endpoint).length).toBe(1);
-      await expect.poll(()=>reads.filter(p=>p==='/api/metrics-v2/query').length).toBe(path === 'servers' ? 2 : 1);
+      await expect.poll(()=>reads.filter(p=>p==='/api/metrics/query').length).toBe(path === 'servers' ? 2 : 1);
       await expect(refresh).toBeEnabled(); page.off('request', listener);
       expect(writes).toEqual([]);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

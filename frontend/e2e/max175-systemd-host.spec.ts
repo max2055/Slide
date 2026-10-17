@@ -8,12 +8,12 @@ import { mkdir, open, writeFile } from 'node:fs/promises';
 import { encryptData } from '../../apps/db-ops-api/src/db-connection.js';
 import { ActorContextService } from '../../apps/db-ops-api/src/auth/actor-context.js';
 import sshSessionPool from '../../apps/db-ops-api/src/ssh-session-pool.js';
-import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics-v2/config/registry.js';
-import { runPackage, type PackageResult } from '../../apps/db-ops-api/src/metrics-v2/packages/runner.js';
-import { MysqlMetricStorage } from '../../apps/db-ops-api/src/metrics-v2/storage.js';
-import { MysqlPolicyStore } from '../../apps/db-ops-api/src/metrics-v2/policy/store.js';
-import { PolicyService } from '../../apps/db-ops-api/src/metrics-v2/policy/service.js';
-import { RolloutControl } from '../../apps/db-ops-api/src/metrics-v2/rollout/control.js';
+import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics/config/registry.js';
+import { runPackage, type PackageResult } from '../../apps/db-ops-api/src/metrics/packages/runner.js';
+import { MysqlMetricStorage } from '../../apps/db-ops-api/src/metrics/storage.js';
+import { MysqlPolicyStore } from '../../apps/db-ops-api/src/metrics/policy/store.js';
+import { PolicyService } from '../../apps/db-ops-api/src/metrics/policy/service.js';
+import { RolloutControl } from '../../apps/db-ops-api/src/metrics/rollout/control.js';
 
 // Explicit opt-in for a member-authorized test host. No credential literals.
 // All HTTP, target authorization, host-key verification and SSH use production code.
@@ -53,7 +53,7 @@ test.beforeAll(async () => {
   await expect.poll(async () => { try { const c = await mysql.createConnection({host:'127.0.0.1',port:33175,user:'root',connectTimeout:2_000}); await c.end(); return true; } catch { return false; } }, {timeout:60_000}).toBe(true);
   const env = {...process.env, DB_HOST:'127.0.0.1',DB_PORT:'33175',DB_USER:'root',DB_PASSWORD:'',DB_NAME:schema,
     JWT_SECRET_KEY:secret,ENCRYPTION_KEY:encryption,PORT:'3175',AGENT_WS_PORT:'29775',
-    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_V2_COLLECTION_ENABLED:'false'};
+    SLIDE_MEMORY_PIPELINE_ENABLED:'false',METRICS_COLLECTION_ENABLED:'false'};
   // The API receives only its encrypted task inventory credential, not test variables.
   delete env.MAX175_TEST_PASSWORD;
   const apiCwd = resolve('../apps/db-ops-api');
@@ -96,8 +96,8 @@ test.beforeAll(async () => {
       expect(result.attempts.every(a=>a.status==='succeeded'),JSON.stringify(result.attempts)).toBe(true);
       expect(result.observations.length).toBeGreaterThan(0);
       for(const {observation} of result.observations) {
-        const key=JSON.stringify([observation.metric,observation.dimensions]), ticket={source:'v2',generation:1,revision:1};
-        if(!published.has(key)) {await control.initialize(observation,{source:'v2',read:'v2',package:pin,revision:1});await control.applied(observation,ticket);published.add(key);}
+        const key=JSON.stringify([observation.metric,observation.dimensions]), ticket={source:'semantic',generation:1,revision:1};
+        if(!published.has(key)) {await control.initialize(observation,{source:'semantic',read:'semantic',package:pin,revision:1});await control.applied(observation,ticket);published.add(key);}
         await control.publish(observation,registry.catalog(pin).find(d=>d.id===observation.metric.id)!,ticket);
       }
       await policyStore.reportCapabilities({type:'server',id:serverId},1,result.capabilities,null); previous=result;
@@ -135,7 +135,7 @@ test('authorized host metrics → production SSH, formal storage/query and six p
   test.setTimeout(120_000);const requests:string[]=[],errors:string[]=[],views:any[]=[];
   page.on('request',r=>{if(r.url().includes('diagnostics'))requests.push(`${r.method()} ${new URL(r.url()).pathname}`);});
   page.on('pageerror',e=>errors.push(e.message));
-  page.on('response',async r=>{if(r.url().endsWith('/api/metrics-v2/query'))queries.push({status:r.status(),body:await r.json()});});
+  page.on('response',async r=>{if(r.url().endsWith('/api/metrics/query'))queries.push({status:r.status(),body:await r.json()});});
   await page.goto(`http://127.0.0.1:5195/server-detail?id=${serverId}`);
   const view=page.locator('server-detail');
   for(const width of [1440,768,390])for(const theme of ['light','dark']) {
