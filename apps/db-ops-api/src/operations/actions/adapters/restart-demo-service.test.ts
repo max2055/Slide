@@ -10,6 +10,10 @@ import { consumeActionInvocation, checkedActionReceipt, actionConfigHash } from 
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const hostKey = Buffer.from('registered-host-key');
+const helperFixture = new URL(
+  '../../../../../../scripts/qualification/action-demo-helper-fixture.py',
+  import.meta.url,
+).pathname;
 const registration: DemoTargetRegistration = {
   protocol: 1,
   serverId: 7,
@@ -294,6 +298,44 @@ print('disk intent, duplicate, collision, lost reply, unknown blockade passed')
     const result = spawnSync('/usr/bin/python3', ['-I', '-c', harness], { encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('unknown blockade passed');
+  });
+
+  it.each(['after_intent', 'before_receipt'])(
+    'Q09/Q10 SIGKILL at %s preserves the durable unknown without replay',
+    (point) => {
+      const result = spawnSync('/usr/bin/python3', ['-I', helperFixture, 'scenario', point], {
+        encoding: 'utf8', timeout: 20_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        point, restartCount: point === 'after_intent' ? 0 : 1,
+        killed: true, markerBound: true, duplicateRestartDelta: 0,
+        newOperationBlocked: true, receipt: { outcome: 'outcome_unknown', after: null },
+      });
+    },
+  );
+  it.each(['after_intent', 'before_receipt'])(
+    'qualification %s timeout fails closed if the controller disappears',
+    (point) => {
+      const result = spawnSync('/usr/bin/python3', ['-I', helperFixture, 'timeout', point], {
+        encoding: 'utf8', timeout: 20_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        timeout: true, restartCount: point === 'after_intent' ? 0 : 1,
+        duplicateRestartDelta: 0, receipt: { outcome: 'outcome_unknown' },
+      });
+    }, 25_000,
+  );
+  it.each([
+    'malformed', 'operationId', 'planHash', 'configHash', 'helperHash', 'point',
+    'nonce', 'extra', 'permissions', 'symlink', 'hardlink', 'absent',
+  ])('qualification control %s preserves the fixed protocol boundary', (invalid) => {
+    const result = spawnSync('/usr/bin/python3', ['-I', helperFixture, 'invalid', invalid], {
+      encoding: 'utf8', timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ rejected: invalid !== 'absent' });
   });
 
   it('real loopback SSH handshake accepts only pinned key and fixed helper command', async () => {

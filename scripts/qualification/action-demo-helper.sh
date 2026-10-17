@@ -5,7 +5,7 @@
 # PTY, password login and user rc for this dedicated nonroot account.
 # Registration and state directories MUST be provisioned root-owned beforehand.
 exec /usr/bin/env -i PATH=/usr/bin:/bin SUDO_USER="${SUDO_USER-}" /usr/bin/python3 -I - "$@" <<'PY'
-import os, sys, json, hashlib, stat, re, subprocess, fcntl, uuid
+import os, sys, json, hashlib, stat, re, subprocess, fcntl, uuid, time
 HELPER = '/usr/local/libexec/slide-action-demo-helper'
 REGISTRATION = '/etc/slide-action-demo/registration.json'
 STATE = '/var/lib/slide-action-demo'
@@ -78,6 +78,37 @@ def read_receipt(path, op, plan, config, helper):
         raise ValueError('operation collision')
     return r
 
+def qualification_control(op, plan, config, helper):
+    # Absent by default. Only the environment administrator can arm this fixed
+    # root-only file; SSH arguments and sudo environment cannot enable faults.
+    path=STATE+'/.qualification-control'
+    if not os.path.lexists(path): return None
+    check_path(path)
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as f:
+        s=os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode) or s.st_uid!=0 or s.st_mode & 0o077 or s.st_nlink!=1 or s.st_size>4096:
+            raise ValueError('qualification ownership')
+        c=json.loads(f.read(4097))
+    keys={'protocol','point','operationId','planHash','configHash','helperHash','nonce'}
+    if not isinstance(c,dict) or set(c)!=keys or type(c['protocol']) is not int or c['protocol']!=1 or c['point'] not in ('after_intent','before_receipt') or not isinstance(c['nonce'],str) or not re.fullmatch('[a-f0-9]{32}',c['nonce']):
+        raise ValueError('qualification control')
+    if (c['operationId'],c['planHash'],c['configHash'],c['helperHash'])!=(op,plan,config,helper):
+        raise ValueError('qualification binding')
+    return c
+
+def qualification_barrier(control, point):
+    if control is None or control['point']!=point: return
+    # persist() fsyncs both the marker and directory. The marker identifies the
+    # exact child to stop; an administrator must still verify PID/start identity.
+    marker=dict(control,pid=os.getpid(),reachedAtNs=time.time_ns())
+    persist(STATE+'/.qualification-'+control['operationId']+'.reached',marker)
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline: time.sleep(0.05)
+    # No resume command, arbitrary delay or callback. A missed controller leaves
+    # the durable unknown intact, including at Q09 where restart never happened.
+    raise TimeoutError('qualification barrier expired')
+
 def main():
     args=sys.argv[1:]
     if args==['inspect']: mode='inspect'
@@ -107,13 +138,16 @@ def main():
                 check_path(STATE+'/'+name)
                 with open(STATE+'/'+name) as f: previous=json.load(f)
                 if previous.get('outcome')=='outcome_unknown': raise ValueError('unresolved operation')
+        control=qualification_control(op,plan,config,r['helperHash'])
         before=invocation()
         receipt={'protocol':1,'operationId':op,'planHash':plan,'unit':UNIT,'configHash':config,'helperHash':r['helperHash'],'outcome':'outcome_unknown','before':before,'after':None}
         persist(path,receipt)  # DURABLE SEND BOUNDARY; crash from here NEVER retries.
+        qualification_barrier(control,'after_intent')
         try:
             ctl('restart',UNIT)
             after=invocation()
             if after!=before and ctl('is-active',UNIT)=='active':
+                qualification_barrier(control,'before_receipt')
                 completed=dict(receipt,outcome='succeeded',after=after)
                 persist(path,completed)
                 receipt=completed

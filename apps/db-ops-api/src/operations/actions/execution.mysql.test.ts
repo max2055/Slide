@@ -1,6 +1,7 @@
 /** Production schema + actual MySQL transactions. No VM/model calls. */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
@@ -486,6 +487,35 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     expect((await worker.reconcile(reviewer, e.id)).state).toBe('succeeded');
     expect(sends).toBe(1);
   });
+  it.each(['after_intent', 'before_receipt'])(
+    'Q09/Q10 actual helper child crash at %s retains SQL approval and locks',
+    async (point) => {
+      const e = await queued();
+      send = async (invocation) => {
+        const result = spawnSync('/usr/bin/python3', [
+          '-I', new URL('../../../../../scripts/qualification/action-demo-helper-fixture.py', import.meta.url).pathname,
+          'scenario', point, invocation.operationId, invocation.planHash,
+          invocation.configHash, invocation.toolHash,
+        ], { encoding: 'utf8', timeout: 20_000 });
+        expect(result.status, result.stderr).toBe(0);
+        const actual = JSON.parse(result.stdout);
+        expect(actual.restartCount).toBe(point === 'after_intent' ? 0 : 1);
+        expect(actual.killed).toBe(true);
+        remoteReceipt = actual.receipt;
+        throw new Error('actual child terminated at durable barrier');
+      };
+      await worker.run(e.id, 'barrier-worker');
+      expect((await state(e)).state).toBe('outcome_unknown');
+      expect(sends).toBe(1);
+      await worker.run(e.id, 'fresh-worker');
+      expect(sends).toBe(1);
+      expect((await worker.reconcile(reviewer, e.id)).state).toBe('outcome_unknown');
+      expect(sends).toBe(1);
+      expect((await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?', [e.approvalId]))[0])
+        .toMatchObject({ status: 'consumed', used_count: 1 });
+      expect(await rows('SELECT * FROM action_dispatch_locks WHERE execution_id=?', [e.id])).toHaveLength(2);
+    },
+  );
   it('lost completion persistence stays unknown; fresh worker reads receipt without send', async () => {
     const e = await queued();
     const original = store.transition.bind(store);
