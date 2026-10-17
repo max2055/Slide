@@ -126,7 +126,14 @@ function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, no
     && Date.parse(c.validUntil) > now);
   const investigationCount = new Set(validCases.map(c => c.investigationId)).size;
   const incidentCount = new Set(validCases.map(c => c.incidentGroup)).size;
+  // A freeze must choose one reviewed representative per investigation AND
+  // incident before labelling/searching. Reject duplicates globally rather than
+  // choosing a version implicitly or scoring different representatives in the
+  // visible, relevant, algorithm and human sets. Conflicting mappings also fail.
+  const independentCohort = unique(cases.map(c => c.investigationId))
+    && unique(cases.map(c => c.incidentGroup));
   const b04 = [...freezeGaps];
+  if (!independentCohort) b04.push('duplicate_investigation_or_incident_in_cohort');
   if (investigationCount < 30 || incidentCount < 30) b04.push('fewer_than_30_distinct_real_reviewed_investigations_and_incidents');
   if (validCases.length !== cases.length) b04.push('unqualified_case_in_cohort');
   if (!queries.length) b04.push('real_labelled_queries_and_human_search_missing');
@@ -139,8 +146,13 @@ function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, no
       || [...q.relevantCaseIds, ...q.rankedCaseIds, ...q.humanCaseIds].some(id => !q.visibleCaseIds.includes(id))) b04.push('query_permission_or_case_binding_invalid');
     if (groups.has(q.incidentGroup)) b04.push('query_incident_leaks_reference_cohort');
     if (!q.relevantCaseIds.length) b04.push('query_relevance_labels_empty');
-    scores.push(quality(q.rankedCaseIds, q.relevantCaseIds));
-    humanScores.push(quality(q.humanCaseIds, q.relevantCaseIds));
+    // No quality claim (including the human comparison) for a rejected cohort.
+    // Accepted cohorts have identical case/investigation/incident cardinality,
+    // so the fixed-five numerator and full relevant denominator are independent.
+    if (independentCohort) {
+      scores.push(quality(q.rankedCaseIds, q.relevantCaseIds));
+      humanScores.push(quality(q.humanCaseIds, q.relevantCaseIds));
+    }
   }
   if (!unique(queries.map(q => q.incidentGroup))) b04.push('duplicate_query_incident');
   const precision = mean(scores.map(s => s.precision)), recall = mean(scores.flatMap(s => s.recall === null ? [] : [s.recall]));
