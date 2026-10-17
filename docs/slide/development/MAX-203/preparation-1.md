@@ -31,7 +31,7 @@ HTTP 每次通过现有 JWT／实时主体服务，领域服务保留原 delegat
 
 ## 本轮验证与边界
 
-测试只建立本机专属 MySQL9.6 容器和 UUID schema，使用真实 MigrationRunner、JWT、监听 HTTP、实际 server 子进程。
+测试只建立本机专属 MySQL 容器和 UUID schema：完整API保留既有8.4验收，Operations另设9.6实例以验证已审正式来源；不把旧mysql-representative的8.4支持范围擅自扩大到9.6。两实例均保留performance_schema锁验收并限制缓存／内存。使用真实 MigrationRunner、JWT、监听 HTTP、实际 server 子进程。
 server 子进程由测试预持有本 schema 的 `slide-singleton-workers` 租约，验证 API-only standby，禁止模型和目标 worker。
 同一 JWT 授权前拒绝、显式授予后允许、撤权后拒绝；来源过期消除关系事实并追加失效版本；案例自审拒绝、不同合成测试主体审核、完整资源撤权后计数为0；停用保留历史；基线 unknown。
 迁移演练先执行到127，写入旧 Operation outcome_unknown／Chat记录，再执行128/129及重入；回到旧迁移目录仍保留所有新表和旧记录。专属容器另用真实 mysqldump 导出到内存、恢复到全新 UUID schema，再核迁移 ledger／checksum、旧未知结果与 Chat记录一致；原 schema 不反向DDL、不删除历史。CI通过 OPERATIONS_TEST_MYSQL_CONTAINER 启用该恢复分支。
