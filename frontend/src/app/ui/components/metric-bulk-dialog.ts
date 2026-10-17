@@ -319,6 +319,10 @@ export class MetricBulkDialog extends LitElement {
       `${{ instance: "数据库实例", server: "服务器", network_device: "网络设备" }[item.resource.type]} #${item.resource.id}`
     );
   }
+  private groupLabel(item: Item) {
+    const type = { instance: "数据库", server: "服务器", network_device: "网络设备" }[item.resource.type];
+    return `${type} ${item.checks.map(check => String(check.value ?? "能力未知")).join(" · ")}`;
+  }
   private fields() {
     return html`<details class="advanced">
       <summary>修改字段（可选） · 默认保留每个对象原值</summary>
@@ -420,7 +424,7 @@ export class MetricBulkDialog extends LitElement {
     }
     return html`<div class="edit-grid">
       <section class="stack">
-        ${[...groups].map(([group, members]) => {
+        ${[...groups.values()].map((members) => {
           const first = members[0];
           if (!members.some((i) => i.choices.some((c) => c.compatibility === "compatible")))
             return html`<div class="notice">
@@ -430,10 +434,7 @@ export class MetricBulkDialog extends LitElement {
           return html`<app-card
             ><div class="section-title">
               <div>
-                <h2>
-                  ${{ instance: "数据库", server: "服务器", network_device: "网络设备" }[first.resource.type]}
-                  ${first.checks.map((check) => String(check.value ?? "能力未知")).join(" · ")}
-                </h2>
+                <h2>${this.groupLabel(first)}</h2>
                 <p class="muted">
                   ${members.map((i) => this.label(i)).join("、")} · ${members.length} 个对象
                 </p>
@@ -444,7 +445,7 @@ export class MetricBulkDialog extends LitElement {
             </div>
             <label class="field-label"
               >为此组选择模板<select
-                aria-label=${`${group} 模板`}
+                aria-label=${`${this.groupLabel(first)} 模板`}
                 .disabled=${this.busy || !first.choices.some((c) => c.compatibility === "compatible")}
                 .value=${this.selections.get(resourceKey(first.resource))?.digest ?? first.change?.package?.digest ?? ""}
                 @change=${(e: Event) => {
