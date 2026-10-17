@@ -11,7 +11,7 @@
 领域同步服务当前无需新增后台 tick：关系事实、案例来源、基线资格、关联投影均在读取／写入时实时复核。
 准备阶段没有行动执行路由、执行工具或 action worker，不创建占位执行器，不消费 once，不启动新自动派发。
 
-- P02：关系写入、修订、独立确认和图读取；复用 P06 `InvestigationRelationEvidence` 在同一事务核 investigation membership、完整 scope、证据生命周期／hash／版本／有效期；两端都必须被证据 scope 覆盖。未知证据命名空间不可确认，不按字符串引用推定事实。
+- P02：关系写入、修订、独立确认和图读取；复用 P06 `InvestigationRelationEvidence` 在同一事务核 investigation membership、完整 scope、证据生命周期／hash／版本／有效期；两端都必须被每条权威证据自身的 `evidenceResources` 覆盖，不聚合不完整证据；`resources` 仍表示完整调查＋证据授权范围，不能用它补齐事实端点。未知证据命名空间不可确认，不按字符串引用推定事实。
 - P03：候选、修订、提交、准确版本／hash 的独立真人审核发布、撤回、详情与授权后搜索。直接使用既有 `KnowledgeStore.source`，要求关闭的准确调查结果和同一 request/run 证据血缘。不同服务进程用既有持久 JWT 密钥经域分离 HMAC 派生同一 AES 游标密钥；JWT 密钥轮换会使旧游标失效。
 - P04：基线只使用 `formalBaselineSource` 和正式 metrics consumer／store，不引入第二来源。无覆盖／缺历史时返回 unknown、null 数值、not_qualified；没有把合成窗口认作实际14/28天。
 - P05：共享 P02 权威证据 resolver，使用已合入的 P05 原事务投影、权限过滤、计数、排序与分页；部署端已知签名注册表为空，不从文本发明签名。
@@ -49,3 +49,11 @@ server 子进程由测试预持有本 schema 的 `slide-singleton-workers` 租�
 6. **计划依赖**：由 P07 原owner在已审定候选上下文提供真实环境验证器及 allowlist／主机指纹／工具与配置 hash／策略和前置条件，保持准确计划与来源不变。P07未齐不让本候选自称正式执行装配完成。具体 execute 仍需两个不同真实主体对准确不可变版本作 once批准，本候选不代签。
 7. **停发／回退**：先停止新派发；核 queued/prechecking/dispatching/outcome_unknown、批准消费、intent/outbox/lease/fence，未知不重放。撤新入口和 worker，优雅停止确属候选的PID，保留数据库、审计、所有版本和日志。启动旧API-only代码对保留数据库执行只读核验；恢复写入前再审 schema/operationId/目标回执。
 8. **责任边界**：父非实现上下文审查后按既有授权协调下一阶段；无需额外要求Max逐包接受。P07/P12等新来源才接续，不重复盘点／恢复。P10整包未齐不merge/done；不把本提案当作已经部署。
+
+## P10-R1 修复边界
+
+独立审查在 PR212 原 head `1e5d37d4` 复现了调查含101/102、证据仅支持101却确认101→102的反例。修复保留 `InvestigationRelationEvidence.resources` 的完整授权契约，新增 `evidenceResources` 作为证据实际支持集合。每条引用必须独立支持两个端点；关系确认、图谱及 Attention 共享该判断，不以调查额外资源或其他证据补齐。来源因实时调查／成员／资源ACL不可见时不参与事实，基础设施错误继续失败，不转为允许。
+
+同事务锁、准确ID/version/hash、有效期／生命周期和原领域最终出站复核保留。PlanSources继续消费原完整授权范围，不改变它的来源或行动授权语义。新增真实SQL/JWT/HTTP回归覆盖不完整证据、多证据策略、历史错误确认、完整证据正向、调查额外资源实时撤权、hash/version/缺失/到期/归档及派发关闭；全部合成数据仍不计真实资格。
+
+本修复没有新增迁移、公开API、环境写入或执行器。前述未执行运行提案仍须在修复后的准确head由父非实现上下文独立复审后才可安排；本记录不是该审定，也不代表P10整包完成。

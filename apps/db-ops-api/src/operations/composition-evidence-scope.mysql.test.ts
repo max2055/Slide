@@ -107,14 +107,30 @@ describe.skipIf(!port)('P10-R1 evidence support versus complete authorization sc
     }
     expect((await f.rows('SELECT state FROM resource_relation_revisions WHERE relation_id=? ORDER BY version DESC LIMIT 1', [value.id]))[0].state).toBe('withdrawn');
   });
-  it('keeps investigation-only resource ACL checks even when proof covers both relation endpoints', async () => {
+  it('rejects live revocation of an investigation-only resource even when proof covers both endpoints', async () => {
     const source = await proofFor(), value = await propose([source.evidence]);
     await f.rows("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(104,'extra','fixture.invalid',3306,'fixture','unused')");
     await f.rows("INSERT INTO investigation_resources(investigation_id,resource_type,resource_id,role) VALUES(?,'instance',104,'related')", [source.inv.id]);
+    await f.rows("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(101,104,'read-write')");
+    actor = await f.contexts.loadActiveActor(101);
+    await f.rows('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=104');
     const c = await f.pool.getConnection();
     try { await expect(new InvestigationRelationEvidence(f.authorization).lock(c as never, actor, source.evidence)).rejects.toMatchObject({ statusCode: 404 }); }
     finally { c.release(); }
     expect((await confirm(value.id)).status).toBe(503);
+    expect((await graph()).body.edges.map((e: any) => e.relationId)).not.toContain(value.id);
+  });
+  it.each(['expiry', 'invalidation', 'archive'])('rechecks %s before graph and Attention delivery', async kind => {
+    const source = await proofFor(), value = await propose([source.evidence]);
+    expect((await confirm(value.id)).status).toBe(200);
+    if (kind === 'expiry') await f.rows('UPDATE investigation_evidence SET expires_at=UTC_TIMESTAMP(3) WHERE id=?', [source.proof.id]);
+    if (kind === 'invalidation') await f.rows('UPDATE investigation_evidence SET expired_at=UTC_TIMESTAMP(3) WHERE id=?', [source.proof.id]);
+    if (kind === 'archive') await f.rows("UPDATE investigations SET lifecycle='archived' WHERE id=?", [source.inv.id]);
+    const response = await http('/api/operations/attention', { observedAt: new Date(Date.now()-1000).toISOString(), resources: [ref(101), ref(102)] });
+    expect(response.status).toBe(200);
+    const [row] = await f.rows('SELECT snapshot FROM attention_correlation_snapshots WHERE id=? AND version=?', [response.body.id, response.body.version]);
+    const snapshot = typeof row.snapshot === 'string' ? JSON.parse(row.snapshot) : row.snapshot;
+    expect(snapshot.edges.map((e: any) => e.id)).not.toContain(value.id);
     expect((await graph()).body.edges.map((e: any) => e.relationId)).not.toContain(value.id);
   });
   it.each(['hash', 'version', 'missing', 'expired', 'archived'])('rejects %s evidence without weakening scope checks', async kind => {
