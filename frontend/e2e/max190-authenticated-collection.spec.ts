@@ -18,14 +18,99 @@ const children: ChildProcess[] = [];
 let source: any, pool: any, started = false, token = '', sourceDigest = '';
 const report: any = { source: 'Real mysql3306, complete Fastify/JWT login/navigation and production scheduler', requests: [], processes: [], checks: {}, product_llm_calls: 0 };
 const save = () => writeFile(`${output}/result.json`, JSON.stringify(report, null, 2));
-const matrix = process.env.MAX190_VISUAL_MATRIX === '1';
+const visualReview = process.env.MAX190_VISUAL_REVIEW === '1';
+const matrix = visualReview || process.env.MAX190_VISUAL_MATRIX === '1';
+// Exercise the same settings path as the product; changing themeMode alone leaves
+// legacy data-theme selectors and native controls on the previous palette.
+async function settleCapture(page: Page, mode: string) {
+  await page.evaluate(async mode => {
+    const app = document.querySelector('slide-app') as any;
+    app.setThemeMode(mode);
+    await app.updateComplete;
+    const roots = [document as Document | ShadowRoot];
+    for (let i = 0; i < roots.length; i++) for (const node of roots[i].querySelectorAll('*')) {
+      if ((node as any).updateComplete) await (node as any).updateComplete;
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+  }, mode);
+  const toggle = page.locator('.topbar-nav-toggle');
+  if (await toggle.getAttribute('aria-expanded') === 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect.poll(() => page.evaluate(() => document.getAnimations().filter(a =>
+    a.playState === 'running' && a.effect?.getComputedTiming().iterations !== Infinity).length)).toBe(0);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  const theme = await page.evaluate(() => ({ theme: document.documentElement.dataset.theme,
+    mode: document.documentElement.dataset.themeMode, scheme: document.documentElement.style.colorScheme }));
+  expect(theme).toEqual({ theme: mode, mode, scheme: mode });
+}
 async function captureMatrix(page: Page, name: string) {
+  if (visualReview && ['editor-normal', 'server-basic'].includes(name)) {
+    // Reproduce the old capture path without changing production CSS. Record the
+    // mismatched palette and the navigation animation started by viewport resize.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await settleCapture(page, 'dark');
+    await page.setViewportSize({ width: 390, height: 1000 });
+    await page.evaluate(() => { document.documentElement.dataset.themeMode = 'light'; });
+    const legacy = await page.evaluate(() => {
+      const nav = document.querySelector('.shell-nav')!;
+      const style = getComputedStyle(nav);
+      const roots = [document as Document | ShadowRoot];
+      const inputs: string[] = [];
+      for (let i = 0; i < roots.length; i++) for (const el of roots[i].querySelectorAll('*')) {
+        if (el.shadowRoot) roots.push(el.shadowRoot);
+        if (el.matches('resource-editor-shell input,.form-input')) inputs.push(getComputedStyle(el).backgroundColor);
+      }
+      return { theme: document.documentElement.dataset.theme, mode: document.documentElement.dataset.themeMode,
+        colorScheme: document.documentElement.style.colorScheme, nav: { opacity: style.opacity, transform: style.transform,
+          right: nav.getBoundingClientRect().right }, animations: document.getAnimations().map(a => ({
+          state: a.playState, target: (a.effect as KeyframeEffect)?.target instanceof Element ? ((a.effect as KeyframeEffect).target as Element).className : '',
+        })), inputBackgrounds: inputs };
+    });
+    expect(legacy).toMatchObject({ theme: 'dark', mode: 'light', colorScheme: 'dark' });
+    report.legacyCaptureDiagnostics ??= [];
+    report.legacyCaptureDiagnostics.push({ name, ...legacy });
+    await page.screenshot({ path: `${output}/legacy-replay-${name}-390-light.png` });
+  }
   for (const width of [1440, 390]) for (const mode of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 1000 });
-    await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    await settleCapture(page, mode);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: document overflow`).toBe(true);
-    await page.evaluate(() => { for (const el of document.querySelectorAll('*')) if (el.scrollTop) el.scrollTop = 0; });
+    await page.evaluate(() => {
+      const roots = [document as Document | ShadowRoot];
+      for (let i = 0; i < roots.length; i++) for (const el of roots[i].querySelectorAll('*')) {
+        if (el.scrollTop) el.scrollTop = 0;
+        if (el.shadowRoot) roots.push(el.shadowRoot);
+      }
+    });
+    const geometry = await page.locator('resource-editor-shell').evaluateAll(shells => shells.flatMap(shell =>
+      [...shell.querySelectorAll('app-form-field')].flatMap(field => [...field.querySelectorAll('input,select,textarea')]
+        .filter(control => control.getBoundingClientRect().width > 0).map(control => {
+          const rect = control.getBoundingClientRect(), parent = control.parentElement!.getBoundingClientRect();
+          const style = getComputedStyle(control);
+          return { label: field.getAttribute('label'), x: rect.x, width: rect.width, right: rect.right,
+            parentRight: parent.right, background: style.backgroundColor, color: style.color,
+            overflow: rect.right > parent.right + 1 || rect.right > innerWidth + 1 || rect.left < -1 };
+        }))));
+    expect(geometry.filter(control => control.overflow), `${name}: basic controls fit their fields`).toEqual([]);
+    report.captures ??= [];
+    report.captures.push({ name, width, mode, geometry, theme: await page.evaluate(() => ({ ...document.documentElement.dataset,
+      colorScheme: document.documentElement.style.colorScheme, navDrawerOpen: document.querySelector('.topbar-nav-toggle')?.getAttribute('aria-expanded') })) });
     await page.screenshot({ path: `${output}/${name}-${width}-${mode}.png` });
+    if (name === 'template-advanced') {
+      await page.getByText('高级详情：原始 JSON', { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${output}/${name}-json-${width}-${mode}.png` });
+    }
+    if (name === 'template-default') {
+      const dialog = page.locator('metric-settings app-dialog');
+      await expect(dialog.locator('details').last()).not.toHaveAttribute('open');
+      for (const [section, heading] of [['scope', '适用范围'], ['permissions', '所需权限'], ['discovery', '发现方式'], ['schedule', '推荐周期与配置']]) {
+        await dialog.getByRole('heading', { name: heading, exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${output}/${name}-${section}-${width}-${mode}.png` });
+      }
+    }
     const editor = page.locator('metric-configuration');
     if (await editor.isVisible()) {
       const overflows = await editor.evaluate((el: any) => [...el.shadowRoot.querySelectorAll('.edit-grid,.template-preview,.fields,.coverage-line')].filter((node: any) => node.scrollWidth > node.clientWidth + 1).map((node: any) => node.className));
@@ -77,7 +162,7 @@ test.beforeAll(async () => {
   }, { timeout: 120000 }).toBe(true);
   const env = { ...process.env, DB_HOST: '127.0.0.1', DB_PORT: '23390', DB_USER: 'root', DB_PASSWORD: rootPassword, DB_NAME: schema,
     JWT_SECRET_KEY: randomBytes(32).toString('hex'), ENCRYPTION_KEY: cfg.ENCRYPTION_KEY,
-    PORT: '3190', HOST: '127.0.0.1', AGENT_WS_PORT: '29990', SLIDE_MEMORY_PIPELINE_ENABLED: 'false', METRICS_COLLECTION_ENABLED: 'true',
+    PORT: '3190', HOST: '127.0.0.1', AGENT_WS_PORT: '29990', SLIDE_MEMORY_PIPELINE_ENABLED: 'false', METRICS_COLLECTION_ENABLED: visualReview ? 'false' : 'true',
     INITIAL_ADMIN_USERNAME: 'admin', INITIAL_ADMIN_PASSWORD: password };
   const migration = await launch(['--import', 'tsx', 'init-db.ts'], apiDirectory, env, 'migration');
   await new Promise<void>((ok, fail) => { migration.once('exit', code => code === 0 ? ok() : fail(new Error('Disposable platform migration failed'))); migration.once('error', fail); });
@@ -161,7 +246,7 @@ test.afterAll(async () => {
   report.cleanup = { containerRemoved: started, processes: children.map(c => ({ pid: c.pid, exitCode: c.exitCode, signal: c.signalCode })) }; await save();
 });
 
-test(matrix ? 'authenticated R1 page matrix, formal field consistency and resource editor navigation' : 'login → existing mysql3306 editor → mixed trial → publish → three formal cycles → list/detail/settings', async ({ page }) => {
+test(visualReview ? 'R1 targeted visual review without collection or probes' : matrix ? 'authenticated R1 page matrix, formal field consistency and resource editor navigation' : 'login → existing mysql3306 editor → mixed trial → publish → three formal cycles → list/detail/settings', async ({ page }) => {
   test.setTimeout(240000); page.setDefaultTimeout(15000);
   const stage = async (name: string) => { report.stage = name; await save(); };
   await page.addInitScript(() => localStorage.setItem('slide.i18n.locale', 'zh-CN'));
@@ -187,6 +272,43 @@ test(matrix ? 'authenticated R1 page matrix, formal field consistency and resour
   await editor.getByLabel('采集间隔（秒）', { exact: true }).fill('5');
   await page.screenshot({ path: `${output}/editor-desktop-light.png`, fullPage: true });
   if (matrix) await captureMatrix(page, 'editor-normal');
+  if (visualReview) {
+    report.source = 'Targeted real product UI + disposable Fastify/MySQL platform, copied resource metadata; collection globally disabled; no trial/activation/VM probes';
+    for (const [name, route, tag] of [['server', 'servers', 'servers-page'], ['network_device', 'network-devices', 'network-devices-page']]) {
+      await page.goto(`${site}/${route}`);
+      const view = page.locator(tag);
+      await view.getByRole('button', { name: '编辑', exact: true }).click();
+      await expect(view.locator('resource-editor-shell')).toBeVisible();
+      await captureMatrix(page, `${name}-basic`);
+      await view.getByRole('tab', { name: '监控与采集', exact: true }).click();
+      await expect(view.locator('metric-configuration').getByLabel('采集包 / 模板版本', { exact: true })).toBeVisible();
+      await captureMatrix(page, `${name}-editor`);
+    }
+    await page.goto(site + '/settings/monitoring/metrics?view=packages');
+    const settings = page.locator('metric-settings');
+    await page.getByRole('tab', { name: '采集包', exact: true }).click();
+    await settings.getByLabel('搜索采集包', { exact: true }).fill(pin.id);
+    const open = settings.getByRole('row').filter({ hasText: 'MySQL 现有自定义指标' }).getByRole('button', { name: '查看模板', exact: true });
+    await open.click();
+    const dialog = settings.locator('app-dialog');
+    await expect(dialog.locator('details').last()).not.toHaveAttribute('open');
+    await captureMatrix(page, 'template-default');
+    await expect(dialog.locator('details').last()).not.toHaveAttribute('open');
+    await dialog.getByText('高级详情：原始 JSON', { exact: true }).click();
+    expect(JSON.parse(await dialog.locator('pre').innerText()).package).toEqual(pin);
+    await captureMatrix(page, 'template-advanced');
+    await page.keyboard.press('Escape');
+    await expect(open).toBeFocused();
+    report.checks.targetedVisualReview = true;
+    report.checks.templateDefaultCollapsedAndAdvancedPin = true;
+    expect(report.requests.filter((r: any) => /\/(trial|activate|test-connection)$/.test(r.path))).toEqual([]);
+    const [[publications]] = await pool.query('SELECT COUNT(*) n FROM metric_publications');
+    expect(Number(publications.n)).toBe(0);
+    report.checks.formalPublicationsCreated = Number(publications.n);
+    report.checks.trialActivationOrProbeRequested = false;
+    await save();
+    return;
+  }
   await editor.getByRole('button', { name: '检查并启用', exact: true }).click();
   await editor.getByRole('button', { name: '预检与影响预览' }).click(); await expect(editor).toContainText('影响 1 个资源');
   const trialResponse = page.waitForResponse(r => r.url().endsWith('/trial') && r.request().method() === 'POST');
@@ -196,7 +318,7 @@ test(matrix ? 'authenticated R1 page matrix, formal field consistency and resour
   await expect(editor).toContainText('可发布有效指标，部分指标仍失败/待验证');
   await expect(editor.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
   for (const width of [1440,390]) for (const mode of ['light','dark']) {
-    await page.setViewportSize({ width, height: 1000 }); await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    await page.setViewportSize({ width, height: 1000 }); await settleCapture(page, mode);
     await page.screenshot({ path: `${output}/mixed-trial-${width}-${mode}.png`, fullPage: true });
   }
   const activation = page.waitForResponse(r => r.url().endsWith('/activate') && r.request().method() === 'POST');
@@ -263,7 +385,7 @@ test(matrix ? 'authenticated R1 page matrix, formal field consistency and resour
   }
   for (const width of [1440,390]) for (const mode of ['light','dark']) {
     await page.setViewportSize({ width, height: 1000 });
-    await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    await settleCapture(page, mode);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `${output}/detail-${width}-${mode}.png`, fullPage: true });
   }
@@ -298,6 +420,7 @@ test(matrix ? 'authenticated R1 page matrix, formal field consistency and resour
     await captureMatrix(page, 'templates-normal');
     await row.getByRole('button', { name: '查看模板', exact: true }).click();
     const detail = settings.locator('app-dialog');
+    await captureMatrix(page, 'template-default');
     await detail.getByText('高级详情：原始 JSON', { exact: true }).click();
     const displayed = JSON.parse(await detail.locator('pre').innerText());
     expect(displayed.package).toEqual(pin);
