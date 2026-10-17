@@ -499,6 +499,23 @@ test("real bulk workflow, mixed outcomes, retry, cancellation, live grants and r
     .check();
   await page.getByRole("button", { name: "批量绑定采集模板", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "预览变更 →", exact: true })).toBeEnabled();
+  const vmChoice = await dialog.evaluate((el: any) =>
+    el.job.items
+      .find((i: any) => i.resource.type === "server")
+      .choices.find((c: any) => c.package.id === "linux-basic" && c.compatibility === "compatible"),
+  );
+  expect(vmChoice).toBeTruthy();
+  report.vm_explicit_template = vmChoice.package;
+  await dialog
+    .getByRole("combobox", { name: /^服务器.* 模板/ })
+    .selectOption(vmChoice.package.digest);
+  await dialog.getByText("修改字段（可选）", { exact: false }).click();
+  for (const label of ["采集间隔（秒）", "超时（秒）"]) {
+    await dialog.getByLabel(`批量${label}修改方式`, { exact: true }).selectOption("set");
+    await dialog.getByLabel(`批量${label}`, { exact: true }).fill("5");
+  }
+  await dialog.getByRole("button", { name: "重新匹配与预览 →", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "预览变更 →", exact: true })).toBeEnabled();
   const mixedPreview = await dialog.evaluate((el: any) => el.job);
   expect(mixedPreview.items.map((i: any) => i.resource.type).sort()).toEqual([
     "instance",
