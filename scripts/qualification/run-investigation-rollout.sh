@@ -9,7 +9,7 @@ cleanup() { docker stop --time 10 "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-docker run --detach --rm --name "$container" --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:8.4 >/dev/null
+docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --performance-schema=OFF --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
 for _ in $(seq 1 60); do
@@ -35,7 +35,7 @@ export T11_TEST_MYSQL_PORT="$port" T11_TEST_MYSQL_PASSWORD=''
 if [[ "$mode" == --full || "$mode" == --api ]]; then
   # The full API candidate enables all existing MySQL gates on this exclusive
   # server. Suites requiring other resources still need their own fixtures.
-  for prefix in REPORT CRON METRICS DELIVERY ALERT_EVENT APPROVAL SOURCE METRIC_QUALITY ANALYSIS INSTANCE_REMOVAL; do
+  for prefix in OPERATIONS REPORT CRON METRICS DELIVERY ALERT_EVENT APPROVAL SOURCE METRIC_QUALITY ANALYSIS INSTANCE_REMOVAL; do
     export "${prefix}_TEST_MYSQL_PORT=$port" "${prefix}_TEST_MYSQL_PASSWORD="
   done
 fi

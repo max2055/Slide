@@ -18813,6 +18813,1266 @@
         ],
         "type": "object"
       },
+      "OperationsAttentionInput": {
+        "additionalProperties": false,
+        "properties": {
+          "observedAt": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "resources": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "type": {
+                  "enum": [
+                    "instance",
+                    "server",
+                    "network_device"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "observedAt",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "OperationsAttentionOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "partitions": {
+            "items": {
+              "items": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "maxItems": 1000,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "partitions"
+        ],
+        "type": "object"
+      },
+      "OperationsBaselineInput": {
+        "additionalProperties": false,
+        "properties": {
+          "dimensions": {
+            "additionalProperties": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "propertyNames": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "metric": {
+            "pattern": "^[a-z][a-z0-9_.]{0,127}$",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "daily",
+              "weekly"
+            ],
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "staticThreshold": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "enum": [
+                  ">",
+                  "<"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "operator",
+              "value"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "resource",
+          "metric",
+          "dimensions",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "applicability": {
+            "additionalProperties": false,
+            "properties": {
+              "conditions": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "productVersion": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "resourceVersion": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "conditions",
+              "productVersion",
+              "resourceVersion"
+            ],
+            "type": "object"
+          },
+          "content": {
+            "additionalProperties": false,
+            "properties": {
+              "actions": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "actualEffect": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "confirmedCause": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "counterexamples": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "faultType": {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              "symptoms": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "symptoms",
+              "faultType",
+              "confirmedCause",
+              "actions",
+              "actualEffect",
+              "counterexamples"
+            ],
+            "type": "object"
+          },
+          "humanConfirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "investigationId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "resultVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "validUntil": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "investigationId",
+          "resultVersion",
+          "content",
+          "applicability",
+          "validUntil",
+          "humanConfirmed"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseReview": {
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "expectedRevision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "note": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "version",
+          "contentHash",
+          "decision",
+          "note"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "additionalProperties": false,
+            "properties": {
+              "applicability": {
+                "additionalProperties": false,
+                "properties": {
+                  "conditions": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "productVersion": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "resourceVersion": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "conditions",
+                  "productVersion",
+                  "resourceVersion"
+                ],
+                "type": "object"
+              },
+              "content": {
+                "additionalProperties": false,
+                "properties": {
+                  "actions": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "actualEffect": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "confirmedCause": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "counterexamples": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "faultType": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "symptoms": {
+                    "maxLength": 4000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "symptoms",
+                  "faultType",
+                  "confirmedCause",
+                  "actions",
+                  "actualEffect",
+                  "counterexamples"
+                ],
+                "type": "object"
+              },
+              "humanConfirmed": {
+                "const": true,
+                "type": "boolean"
+              },
+              "investigationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "resultVersion": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "validUntil": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "investigationId",
+              "resultVersion",
+              "content",
+              "applicability",
+              "validUntil",
+              "humanConfirmed"
+            ],
+            "type": "object"
+          },
+          "expectedRevision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "candidate"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseSearch": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "faultType": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "productVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "query": {
+            "default": "",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "resourceType": {
+            "enum": [
+              "instance",
+              "server",
+              "network_device"
+            ],
+            "type": "string"
+          },
+          "resourceVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "state": {
+            "default": "published",
+            "enum": [
+              "draft",
+              "pending_review",
+              "published",
+              "expired",
+              "withdrawn"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "query",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "OperationsCaseWithdrawal": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "OperationsPlanContent": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "user",
+                  "service"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "baselines": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validUntil": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "hash",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validUntil": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "hash",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "impact": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "investigationId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "unit": {
+                "const": "slide-action-demo.service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "unit"
+            ],
+            "type": "object"
+          },
+          "policyVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "preconditions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "expected": {
+                  "maxLength": 1000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "expected"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validUntil": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "hash",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "requester": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "user",
+                  "service"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "resultVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "risk": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "rollback": {
+            "additionalProperties": false,
+            "properties": {
+              "capability": {
+                "const": "none",
+                "type": "string"
+              },
+              "description": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "capability",
+              "description"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "target": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "const": "server",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "tool": {
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "name": {
+                "const": "restart_demo_service",
+                "type": "string"
+              },
+              "version": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "hash"
+            ],
+            "type": "object"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "validUntil": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "verifier": {
+            "additionalProperties": false,
+            "properties": {
+              "beforeSeconds": {
+                "const": 120,
+                "type": "number"
+              },
+              "definitionHash": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "intervalSeconds": {
+                "const": 10,
+                "type": "number"
+              },
+              "maxExtraRestarts": {
+                "const": 0,
+                "type": "number"
+              },
+              "observationSeconds": {
+                "const": 300,
+                "type": "number"
+              },
+              "readinessSeconds": {
+                "const": 60,
+                "type": "number"
+              },
+              "requireAllHealthy": {
+                "const": true,
+                "type": "boolean"
+              },
+              "version": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "definitionHash",
+              "beforeSeconds",
+              "readinessSeconds",
+              "observationSeconds",
+              "intervalSeconds",
+              "maxExtraRestarts",
+              "requireAllHealthy"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "investigationId",
+          "resultVersion",
+          "target",
+          "tool",
+          "parameters",
+          "evidence",
+          "relations",
+          "baselines",
+          "preconditions",
+          "risk",
+          "impact",
+          "policyVersion",
+          "validFrom",
+          "validUntil",
+          "verifier",
+          "rollback",
+          "author",
+          "requester"
+        ],
+        "type": "object"
+      },
+      "OperationsPlanProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "lifetimeMs": {
+            "exclusiveMinimum": 0,
+            "maximum": 1800000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
+      "OperationsPlanReview": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "type": "string"
+          },
+          "approvalId": {
+            "pattern": "^[1-9]\\d{0,19}$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "note": {
+            "maxLength": 1000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "approvalId",
+          "action"
+        ],
+        "type": "object"
+      },
+      "OperationsPlanRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "expectedVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "lifetimeMs": {
+            "exclusiveMinimum": 0,
+            "maximum": 1800000,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content",
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "OperationsPlanVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "OperationsRelationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validUntil": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "hash",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "manual",
+              "collector",
+              "model"
+            ],
+            "type": "string"
+          },
+          "relationType": {
+            "enum": [
+              "runs_on",
+              "replicates_to",
+              "depends_on",
+              "connected_to",
+              "serves"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "target": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "relationType",
+          "evidence",
+          "observedAt",
+          "validFrom",
+          "validUntil",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "OperationsRelationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "validUntil": {
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "hash",
+                "validUntil"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "manual",
+              "collector",
+              "model"
+            ],
+            "type": "string"
+          },
+          "validFrom": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+            "type": "string"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "evidence",
+          "observedAt",
+          "validFrom",
+          "validUntil",
+          "origin",
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "OperationsRelationTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "confirm",
+              "withdraw"
+            ],
+            "type": "string"
+          },
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "action"
+        ],
+        "type": "object"
+      },
+      "OperationsResourceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "instance",
+              "server",
+              "network_device"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
       "PhysicalFileEvidence": {
         "$id": "PhysicalFileEvidence",
         "additionalProperties": false,
@@ -25928,6 +27188,1138 @@
               }
             },
             "description": "Probe failed or target was denied"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/actions/plans": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "createOperationsPlan",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsPlanProposal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/actions/plans/{id}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/actions/plans/{id}/review": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviewOperationsPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsPlanReview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/actions/plans/{id}/submit": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "submitOperationsPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsPlanVersion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/actions/plans/{id}/versions": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviseOperationsPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsPlanRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/attention": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "computeOperationsAttention",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsAttentionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/attention/{id}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsAttention",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/attention/{id}/overrides": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "overrideOperationsAttention",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsAttentionOverride"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/baselines": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "computeOperationsBaseline",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsBaselineInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/baselines/{id}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsBaseline",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/knowledge": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "searchOperationsCases",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "createOperationsCase",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsCaseCandidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/knowledge/{id}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviseOperationsCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsCaseRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/knowledge/{id}/review": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviewOperationsCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsCaseReview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/knowledge/{id}/submit": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "submitOperationsCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsCaseTransition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/knowledge/{id}/withdraw": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "withdrawOperationsCase",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsCaseWithdrawal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/relations": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "suggestOperationsRelation",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsRelationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/relations/{id}/review": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviewOperationsRelation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsRelationTransition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/relations/{id}/revisions": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsRelationHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "reviseOperationsRelation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsRelationRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/resources/{type}/{id}/relations": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "operationId": "readOperationsGraph",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
           }
         },
         "security": [
