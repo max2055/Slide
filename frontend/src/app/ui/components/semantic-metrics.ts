@@ -16,7 +16,7 @@ export interface MetricResult {
     unit: string; coverage: number; quality: { status: string; reason: string }; freshness: string; observed_at?: string | null; accuracy: string; sources: unknown[]; window: { from: string; to: string } }> }>;
 }
 export interface SemanticResult { profile: { columns: Array<{ key: string; metric: { id: string }; label: string }> }; window: { from: string; to: string }; metrics: MetricResult[] }
-const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '未配置', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
+const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '当前模板未覆盖', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
 const qualityLabels: Record<string, string> = { good: '良好', partial: '部分', unknown: '未知', invalid: '无效', fresh: '新鲜', stale: '过期', exact: '精确', estimated: '估算' };
 export function renderMetricValue(m: MetricResult) {
   return html`<span>${states[m.state] ?? m.state}</span>${m.series.length ? m.series.map(s => html`<div>
@@ -83,7 +83,7 @@ export class SemanticMetrics extends LitElement {
     this.busy = true; this.error = '';
     try {
       const now = Date.now();
-      const response = await authFetch('/api/metrics-v2/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resource: { type: this.resourceType, id: this.resourceId }, view: 'all', ...(this.from && this.to ? { from: this.from, to: this.to } : { from: new Date(now - this.hours * 3600000).toISOString(), to: new Date(now).toISOString(), bucket_ms: Math.max(60000, this.hours * 60000) }) }) });
       if (!current()) return;
       if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
@@ -191,7 +191,7 @@ export class SemanticCoreList extends LitElement {
       if (generation !== this.generation) return;
       const row: Record<string, unknown> = { resource: resource.name || resource.label || resource.host || String(resource.id) };
       try {
-        const response = await authFetch('/api/metrics-v2/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resource: { type: this.resourceType, id: resource.id }, view: 'core', from: new Date(Date.parse(to) - 60000).toISOString(), to }) });
         if (!response.ok) throw new Error(errors(response.status));
         const data: SemanticResult = await response.json();
