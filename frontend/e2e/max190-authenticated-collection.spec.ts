@@ -118,23 +118,25 @@ test.afterAll(async () => {
 });
 
 test('login → existing mysql3306 editor → mixed trial → publish → three formal cycles → list/detail/settings', async ({ page }) => {
-  test.setTimeout(240000);
+  test.setTimeout(240000); page.setDefaultTimeout(15000);
+  const stage = async (name: string) => { report.stage = name; await save(); };
   await page.addInitScript(() => localStorage.setItem('slide.i18n.locale', 'zh-CN'));
   page.on('response', response => { const path = new URL(response.url()).pathname; if (path.startsWith('/api/metrics/')) report.requests.push({ path, status: response.status(), source: 'browser' }); });
-  await page.goto(site + '/instances-db');
-  await page.getByRole('textbox', { name: '用户名', exact: true }).fill('admin');
-  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.goto(site + '/instances-db'); await stage('login page');
+  await page.getByRole('textbox', { name: '用户名', exact: true }).fill('admin'); await stage('username filled');
+  await page.getByLabel('密码', { exact: true }).fill(password); await stage('password filled');
   const login = page.waitForResponse(r => r.url().endsWith('/api/auth/login') && r.request().method() === 'POST');
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  expect((await login).status()).toBe(200);
+  expect((await login).status()).toBe(200); await stage('REST login succeeded');
   token = await page.evaluate(() => localStorage.getItem('token') ?? ''); expect(token).not.toBe('');
-  await expect(page.locator('instances-page')).toBeVisible(); report.checks.authenticatedNavigation = true;
+  await expect(page.locator('instances-page')).toBeVisible(); report.checks.authenticatedNavigation = true; await stage('authenticated resource page');
+  await page.screenshot({ path: `${output}/authenticated-list.png`, fullPage: true });
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   await page.getByRole('tab', { name: '监控与采集', exact: true }).click();
-  const editor = page.locator('metric-configuration');
+  const editor = page.locator('metric-configuration'); await stage('resource editor');
   const catalog = await request('/api/metrics/config/catalog');
   const pin = catalog.packages.find((r: any) => r.package.id === 'mysql-custom-existing-scalars').package;
-  await editor.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(pin.digest);
+  await editor.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(pin.digest); await stage('custom SQL package selected');
   await editor.getByLabel('采集间隔（秒）覆盖方式', { exact: true }).selectOption('set');
   await editor.getByLabel('采集间隔（秒）', { exact: true }).fill('5');
   await page.screenshot({ path: `${output}/editor-desktop-light.png`, fullPage: true });
