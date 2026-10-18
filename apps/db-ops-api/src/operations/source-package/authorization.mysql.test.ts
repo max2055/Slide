@@ -104,6 +104,7 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
     } finally { await rows("UPDATE investigation_members SET role='viewer',expires_at=NULL WHERE investigation_id=? AND user_id=1", [config.investigationId]); }
   });
   it('narrows a broader frozen service grant to the source four-tool lane without changing the request', async () => {
+    const previousCeiling = process.env.INVESTIGATION_SOURCE_TOOL_CEILING;
     await rows("INSERT INTO role_permissions(role_id,permission_id) SELECT 121,id FROM permissions WHERE code IN ('metric:view','alert:view')");
     try {
       const service = { ...await contexts.loadInvestigationActorFrom(pool as never, 7, 'service', 1),
@@ -115,7 +116,19 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
       const [request] = await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [c.requestId]);
       const frozen = typeof request.request_snapshot === 'string' ? JSON.parse(request.request_snapshot) : request.request_snapshot;
       expect(frozen.authority.toolAllowlist).toEqual(expect.arrayContaining(['query_metrics', 'list_active_alerts', ...sourceReadTools]));
-      const before = await snapshot(), result = await authorize(c);
+      const before = await snapshot();
+      await expect(authorize(c)).rejects.toThrow('AUTHORIZATION_REJECTED');
+      process.env.INVESTIGATION_SOURCE_TOOL_CEILING = 'server-read-v1';
+      const capped = new InvestigationAuthorization(contexts);
+      const connection = await pool.getConnection();
+      try {
+        await connection.query('START TRANSACTION READ ONLY');
+        const investigation = await capped.load(connection as never, c.investigationId);
+        const live = await contexts.loadInvestigationActorFrom(connection as never, 7, 'service', 1);
+        const admitted = await capped.authorize(connection as never, { ...live, ...{ permissions: frozen.authority.permissions, instanceScopes: frozen.authority.instanceScopes, resourceBoundary: frozen.authority.resourceBoundary } }, investigation, 'continue', [], frozen.authority);
+        expect([...capped.freeze(admitted).toolAllowlist].sort()).toEqual([...sourceReadTools].sort());
+      } finally { await connection.rollback(); connection.release(); }
+      const result = await authorize(c);
       expect([...result.execution.toolAllowlist].sort()).toEqual([...sourceReadTools].sort());
       expect([...result.operatorTools].sort()).toEqual([...sourceReadTools].sort());
       expect(result.execution.resourceBoundary).toEqual({ instanceIds: [], serverIds: [3], networkDeviceIds: [] });
@@ -132,6 +145,8 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
       }
       reports.push({ case: 'broader-frozen-four-tool-intersection', ...result, tableCount: Object.keys(before).length, unchanged: true });
     } finally {
+      if (previousCeiling === undefined) delete process.env.INVESTIGATION_SOURCE_TOOL_CEILING;
+      else process.env.INVESTIGATION_SOURCE_TOOL_CEILING = previousCeiling;
       await rows("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=121 AND p.code IN ('metric:view','alert:view')");
     }
   });
