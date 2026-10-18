@@ -6,7 +6,10 @@ export async function waitForSourceApi(probe: {
   standby(): Promise<boolean>;
   health(): Promise<boolean>;
 }): Promise<boolean> {
-  const readyUntil = Date.now() + 30_000;
+  // Cold imports can exceed 30 seconds in the qualification workspace. Keep
+  // this startup bound aligned with the driver; assertActive still enforces
+  // the shorter operation deadline and the live external worker lease.
+  const readyUntil = Date.now() + 120_000;
   while (Date.now() < readyUntil && probe.childRunning()) {
     await probe.assertActive();
     const standby = await probe.standby();
