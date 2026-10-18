@@ -76,6 +76,49 @@ describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => 
     try { await expect(next.open()).rejects.toThrow('PRIOR_WORK_REQUIRES_AUDIT'); }
     finally { await next.close(); }
   });
+  it('commits derived content while its exact job and external lease remain live', async () => {
+    const c = control(), registry = new JobRegistry(), id = randomUUID();
+    registry.register('investigation.execute', async () => {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction(); await c.assertCommitFence(connection);
+        await connection.execute("UPDATE workflow_jobs SET payload=JSON_OBJECT('committed',true) WHERE id=?", [id]);
+        await c.assertCommitFence(connection); await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; }
+      finally { connection.release(); }
+    });
+    try {
+      await c.open();
+      await new MysqlWorkflowStore(() => pool as never).enqueue({ id, type: 'investigation.execute', schemaVersion: 1, payload: {}, idempotencyKey: id });
+      await c.execute(id, 'investigation.execute', registry, () => {});
+      expect((await rows('SELECT payload FROM workflow_jobs WHERE id=?', [id]))[0].payload).toEqual({ committed: true });
+      await c.close(true);
+    } finally { await c.close(); }
+  });
+  it.each(['worker', 'job'])('rolls back derived content when the %s commit fence expires', async kind => {
+    const c = control(), registry = new JobRegistry(), id = randomUUID(); let calls = 0;
+    registry.register('investigation.execute', async () => {
+      calls++;
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.execute("UPDATE workflow_jobs SET payload=JSON_OBJECT('uncommitted',true) WHERE id=?", [id]);
+        if (kind === 'worker') await connection.query("UPDATE worker_leases SET expires_at=DATE_SUB(NOW(),INTERVAL 1 MINUTE)");
+        else await connection.execute("UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 MINUTE) WHERE id=?", [id]);
+        await c.assertCommitFence(connection);
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; }
+      finally { connection.release(); }
+    });
+    try {
+      await c.open();
+      await new MysqlWorkflowStore(() => pool as never).enqueue({ id, type: 'investigation.execute', schemaVersion: 1, payload: {}, idempotencyKey: id });
+      await expect(c.execute(id, 'investigation.execute', registry, () => {})).rejects.toThrow('RESULT_UNCERTAIN');
+      await expect(c.execute(id, 'investigation.execute', registry, () => {})).rejects.toThrow('JOB_NOT_UNSENT');
+      expect(calls).toBe(1);
+      expect((await rows('SELECT payload FROM workflow_jobs WHERE id=?', [id]))[0].payload).toEqual({});
+    } finally { await c.close(); }
+  });
   it('uses exact claims to run production collection, raw lineage, formal acceptance and publication (actual local SQL)', async () => {
     const c = control(), packages = createConfigurationRegistry(), ref = { type: 'instance' as const, id: 101 };
     const inventory = () => ({ type: 'instance' as const, id: '101', attributes: {
