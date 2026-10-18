@@ -84,6 +84,13 @@ it('rejects protected facts above the hard input cap before summary dispatch', a
   expect(f.calls).toHaveLength(0);
   expect(f.manager.summary).toBeUndefined();
 });
+it('zero failure retries still permits budgeted lifecycle compaction without authorizing a retry', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.6 } });
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.calls).toHaveLength(1);
+  expect(result.runtimeState).toMatchObject({ total: 0, counts: { context: 0 }, providerAttempts: 2 });
+});
 it('persists a source-bound summary before projection, retains goal/authority/evidence/uncertainty and original history', async () => {
   const f = fixture(); const before = structuredClone(f.raw); let record: unknown;
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async value => {
