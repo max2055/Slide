@@ -3,7 +3,7 @@
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { MysqlWorkflowStore } from '../../workflows/worker-runtime.js';
 import { JobRegistry } from '../../workflows/job-registry.js';
@@ -193,6 +193,66 @@ describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => 
       expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [f.oldRow.id]))[0]).toEqual(f.oldRow);
     } finally { await a.close(); await b.close(); }
   });
+  it.each(['deadline', 'lease', 'signature', 'cancel', 'valid'])('rechecks %s after the final worker lease row-lock wait', async kind => {
+    const f = await failedAudit(), blocker = await pool.getConnection(), cancel = new AbortController();
+    const expiry = Date.now() + 2000;
+    if (kind === 'deadline') {
+      f.config.deadline = new Date(expiry).toISOString();
+      f.receipt.successor.deadline = f.config.deadline; f.receipt.expiresAt = f.config.deadline;
+    }
+    const auth = f.authorize(), next = new SourceControl(pool, f.config, cancel.signal, auth);
+    const before = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+    // Run the real enqueue unchanged, then take a second-connection row lock.
+    // This places contention after lease.acquire(), at recordIntent's final
+    // lease SELECT, without replacing a query, result, clock or production API.
+    const enqueue = MysqlWorkflowStore.prototype.enqueue;
+    const hook = vi.spyOn(MysqlWorkflowStore.prototype, 'enqueue').mockImplementation(async function(job) {
+      const result = await enqueue.call(this, job);
+      if (job.idempotencyKey === `v23-source:${f.config.operationId}`) {
+        await blocker.beginTransaction();
+        await blocker.query("SELECT lease_name FROM worker_leases WHERE lease_name='slide-singleton-workers' FOR UPDATE");
+        if (kind === 'lease') await blocker.execute('UPDATE worker_leases SET expires_at=?', [new Date(expiry)]);
+      }
+      return result;
+    });
+    const attempt = next.open().then(() => null, error => error);
+    try {
+      let waits: RowDataPacket[] = [];
+      const waitDeadline = Date.now() + 1500;
+      do {
+        waits = await rows(`SELECT w.REQUESTING_ENGINE_TRANSACTION_ID AS requester, w.BLOCKING_ENGINE_TRANSACTION_ID AS blocker,
+          l.OBJECT_NAME AS tableName, l.LOCK_TYPE AS lockType, l.LOCK_STATUS AS lockStatus
+          FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l
+          ON l.ENGINE=w.ENGINE AND l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID
+          WHERE l.OBJECT_SCHEMA=? AND l.OBJECT_NAME='worker_leases'`, [database]);
+        if (waits.length) break;
+        await delay(10);
+      } while (Date.now() < waitDeadline);
+      expect(waits).toHaveLength(1);
+      expect(waits[0]).toMatchObject({ tableName: 'worker_leases', lockType: 'RECORD', lockStatus: 'WAITING' });
+      if (kind === 'signature') auth.envelope[20] ^= 1;
+      if (kind === 'cancel') cancel.abort(new Error('test cancelled during final lease wait'));
+      if (kind === 'deadline' || kind === 'lease') await delay(Math.max(0, expiry - Date.now() + 100));
+      const releasedAt = new Date().toISOString();
+      await blocker.commit();
+      const error = await attempt;
+      if (kind === 'valid') {
+        expect(error).toBeNull(); await next.close(true);
+        expect(await rows("SELECT id FROM workflow_jobs WHERE job_type='qualification.source.audit'")).toHaveLength(1);
+        expect(await rows('SELECT id FROM workflow_jobs WHERE idempotency_key=?', [`v23-source:${f.config.operationId}`])).toHaveLength(1);
+      } else {
+        expect(error).toBeInstanceOf(Error);
+        // Includes the complete immutable predecessor and absence of both the
+        // receipt consumption and successor, even if open() later rejects.
+        expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(before);
+      }
+      expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [f.oldRow.id]))[0]).toEqual(f.oldRow);
+      console.info(JSON.stringify({ case: kind, waits, expiresAt: new Date(expiry).toISOString(), releasedAt,
+        result: error?.message ?? 'committed_once', rollbackVerified: kind !== 'valid' }));
+    } finally {
+      await blocker.rollback(); blocker.release(); hook.mockRestore(); await attempt; await next.close();
+    }
+  }, 10000);
   it('uses exact claims to run production collection, raw lineage, formal acceptance and publication (actual local SQL)', async () => {
     const c = control(), packages = createConfigurationRegistry(), ref = { type: 'instance' as const, id: 101 };
     const inventory = () => ({ type: 'instance' as const, id: '101', attributes: {
