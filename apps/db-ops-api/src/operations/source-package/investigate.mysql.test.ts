@@ -49,7 +49,7 @@ describe.skipIf(!input)('fresh standalone investigation with SQL policy and real
     await query("INSERT INTO llm_scene_bindings(scene,provider_id,model) VALUES('fault_diagnosis',?,'deepseek-flash') ON DUPLICATE KEY UPDATE provider_id=VALUES(provider_id),model=VALUES(model)", [provider.id]);
     const journal = new OperationsBudgetJournal(join(process.env.V23_SOURCE_CHILD_DIRECTORY!, 'synthetic-budget.jsonl')); journal.initialize();
     let sends = 0;
-    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const syntheticHttp = async (url: string, init: RequestInit) => {
       expect(String(url)).toBe('https://api.deepseek.com/v1/chat/completions');
       const body = JSON.parse(init.body as string);
       expect(body.stream).toBeFalsy(); expect(journal.read().pending).not.toBeNull();
@@ -60,6 +60,21 @@ describe.skipIf(!input)('fresh standalone investigation with SQL policy and real
         : { role: 'assistant', content: '已读取服务器指标；根因与恢复未验证。' };
       return Response.json({ id: `synthetic-${sends}`, model: 'deepseek-flash', choices: [{ index: 0,
         finish_reason: sends === 1 ? 'tool_calls' : 'stop', message }], usage: { prompt_tokens: 100, completion_tokens: 20 } });
+    };
+    const engine = await import('../../adapter/get-agent-engine.js');
+    const createProvider = engine.createLLMProvider;
+    vi.spyOn(engine, 'createLLMProvider').mockImplementation(async purpose => {
+      const provider = await createProvider(purpose);
+      // OpenAI's Node shim captures its fetch at import time. Substitute the
+      // actual SDK client HTTP transport, not only the global fetch symbol.
+      (provider as unknown as { client: { fetch: typeof fetch } }).client.fetch = syntheticHttp as typeof fetch;
+      return provider;
+    });
+    const { JobRegistry } = await import('../../workflows/job-registry.js');
+    const execute = JobRegistry.prototype.execute;
+    vi.spyOn(JobRegistry.prototype, 'execute').mockImplementation(async function(job, context) {
+      try { return await execute.call(this, job, context); }
+      catch (error) { console.error('synthetic source diagnostic', error, JSON.stringify(await query('SELECT state,error_json,result_json FROM agent_runs'))); throw error; }
     });
     let result;
     try {
@@ -68,12 +83,25 @@ describe.skipIf(!input)('fresh standalone investigation with SQL policy and real
       expect(sends).toBe(2);
       const [audit] = await query("SELECT allowed,policy_snapshot FROM agent_tool_audit WHERE tool_name='get_server_metrics' AND phase='result' ORDER BY id DESC LIMIT 1");
       expect(Number(audit.allowed)).toBe(1);
-      expect(typeof audit.policy_snapshot === 'string' ? JSON.parse(audit.policy_snapshot).version : audit.policy_snapshot.version).toBe(9);
+      expect(typeof audit.policy_snapshot === 'string' ? JSON.parse(audit.policy_snapshot).agentPolicy.version : audit.policy_snapshot.agentPolicy.version).toBe(9);
       expect(await query('SELECT id FROM action_executions')).toHaveLength(0);
       expect(await query('SELECT id FROM agent_tool_approvals')).toHaveLength(0);
       expect(await query("SELECT id FROM workflow_jobs WHERE job_type LIKE 'action.%'")).toHaveLength(0);
       await writeFile(join(process.env.V23_SOURCE_CHILD_DIRECTORY!, 'investigate-result.json'), JSON.stringify({ synthetic: true, sends, result, budget: journal.read() }, null, 2));
       await control.close(true);
     } finally { await control.close(); }
-  }, 60_000);
+    vi.unstubAllGlobals();
+    const { planFromStandalone } = await import('./plan-test-fixture.js');
+    const plan = await planFromStandalone(pool, config, process.env.V23_SOURCE_CHILD_DIRECTORY!);
+    expect(plan.apiLog).toContain('WORKER_LEASE_UNAVAILABLE: API-only standby');
+    const terminal = plan.entries.find(e => e.result)?.result;
+    expect(terminal.submitted.plan.state).toBe('pending_approval');
+    expect(terminal.plan.content.evidence).toEqual(result!.evidence);
+    expect(plan.commands).toContain('date -u +%s%3N');
+    expect(plan.commands).toContain('sudo -n -- /usr/local/libexec/slide-action-demo-helper inspect');
+    expect(await query('SELECT status,used_count FROM agent_tool_approvals')).toEqual([{ status: 'pending', used_count: 0 }]);
+    expect(await query('SELECT id FROM action_executions')).toHaveLength(0);
+    expect(await query("SELECT id FROM workflow_jobs WHERE job_type LIKE 'action.%'")).toHaveLength(0);
+    await expect(fetch(`http://127.0.0.1:${plan.apiPort}/api/health`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
+  }, 100_000);
 });
