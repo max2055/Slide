@@ -64,7 +64,9 @@ export async function autoCompact(
   if (!spec.checkpointCallback) throw new RuntimeError('SUMMARY_PERSISTENCE_REQUIRED', 'Compaction requires durable checkpoint persistence');
   const { end, pins, retained } = manager.split(raw);
   if (!end || (manager.summary && end <= manager.summary.sourceEnd)) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'No older atomic history can be summarized');
-  manager.assertFits([...pins, ...prepareMessages(spec, retained)], manager.inputBudget * manager.target);
+  // The target is a compaction goal, not a second input cap. Complete pins,
+  // references and recent batches may legitimately exceed that goal.
+  manager.assertFits([...pins, ...prepareMessages(spec, retained)]);
   const original = structuredClone(raw.slice(0, end));
   const hash = sourceHash(original);
   const maxTokens = Math.min(spec.contextPolicy?.summaryMaxTokens ?? 2048, spec.maxTokens ?? 4096);
@@ -117,7 +119,7 @@ export async function autoCompact(
     assertSource();
     // Validate candidate without changing the active projection.
     const candidate = new ContextManager(spec, provider); candidate.summary = record;
-    candidate.assertFits(candidate.project(raw), manager.inputBudget * manager.target);
+    candidate.assertFits(candidate.project(raw));
     const committedTracker = new RapidRefill(tracker.snapshot()); committedTracker.commit();
     await persist(record, committedTracker.snapshot());
     assertSource();
