@@ -199,6 +199,7 @@ export async function investigateSource(control: SourceControl) {
         tool.execute = async (args, context) => {
           await control.assertActive();
           await initializeSourceRuntime();
+          await control.assertActive();
           // The original tool wrapper checks the refreshed policy, including
           // effect/resource constraints, immediately before its handler.
           return execute(args, context);
@@ -254,9 +255,16 @@ async function referenceSourceObservations(control: SourceControl, runId: string
     proofs.push(proof);
   }
   await control.assertActive();
-  await store.put(actor, { investigationId: c.investigationId!, requestId: c.requestId!, runId },
-    `v23-source-observations:${runId}`, summary.version, { ...summary.result,
-      facts: proofs.map(proof => ({ statement: proof.summary, evidenceIds: [proof.id] })) });
+  const binding = { investigationId: c.investigationId!, requestId: c.requestId!, runId };
+  await store.transaction(actor, c.investigationId!, async (connection, investigation, current) => {
+    await control.assertCommitFence(connection);
+    const bound = await store.assertBinding(connection, current, investigation, binding);
+    if (bound.run.state !== 'completed') sourceFailure('INVESTIGATION_NOT_COMPLETED');
+    await store.putOnConnection(connection, current, investigation, binding,
+      `v23-source-observations:${runId}`, summary.version, { ...summary.result,
+        facts: proofs.map(proof => ({ statement: proof.summary, evidenceIds: [proof.id] })) });
+    await control.assertCommitFence(connection);
+  });
 }
 
 export async function exactSource(control: SourceControl) {

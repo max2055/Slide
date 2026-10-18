@@ -68,6 +68,25 @@ export class SourceControl {
     await sourceDatabaseGuard(this.pool, this.config);
     this.signal.throwIfAborted();
   }
+  /** Lock and recheck the exact source authority on the content transaction.
+   * Call again immediately before commit so time expiry rolls back its writes. */
+  async assertCommitFence(connection: PoolConnection) {
+    this.signal.throwIfAborted(); assertSourceDeadline(this.config);
+    if (!this.lock || !this.intent || !this.active) sourceFailure('COMMIT_FENCE_LOST');
+    const [held] = await connection.execute<RowDataPacket[]>('SELECT IS_USED_LOCK(?)=? AS held', [this.lockName, this.lock.threadId]);
+    const [lease] = await connection.execute<RowDataPacket[]>(`SELECT owner_id,expires_at>NOW(3) AS live FROM worker_leases
+      WHERE lease_name='slide-singleton-workers' FOR UPDATE`);
+    if (Number(held[0].held) !== 1 || lease[0]?.owner_id !== this.lease.ownerId || Number(lease[0]?.live) !== 1)
+      sourceFailure('COMMIT_FENCE_LOST');
+    for (const job of [this.intent, this.active]) {
+      const [rows] = await connection.execute<RowDataPacket[]>(`SELECT state,lease_owner,fencing_token,lease_expires_at>NOW(3) AS live
+        FROM workflow_jobs WHERE id=? FOR UPDATE`, [job.id]);
+      const row = rows[0];
+      if (row?.state !== 'running' || row.lease_owner !== this.workerId || Number(row.fencing_token) !== job.fencingToken
+        || Number(row.live) !== 1) sourceFailure('COMMIT_FENCE_LOST');
+    }
+    this.signal.throwIfAborted();
+  }
   async open() {
     await sourceDatabaseGuard(this.pool, this.config);
     this.lock = await this.pool.getConnection();
