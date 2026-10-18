@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# The actual operator CLI writes its durable audit to the project's fixed
+# artifact root. Provision that same root on disposable Linux GitHub runners;
+# macOS uses the existing authorized output directory without changing it.
+if [[ "${GITHUB_ACTIONS:-}" == "true" && "${RUNNER_OS:-}" == "Linux" ]]; then
+  sudo install -d -o "$(id -u)" -g "$(id -g)" /Users/max/Coding/40-Slide/outputs
+fi
 container="slide-v23-source-ci-${RANDOM}-${RANDOM}"
 cleanup() { docker stop "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
