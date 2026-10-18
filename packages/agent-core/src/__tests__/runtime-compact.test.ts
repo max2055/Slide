@@ -91,6 +91,25 @@ it('zero failure retries still permits budgeted lifecycle compaction without aut
   expect(f.calls).toHaveLength(1);
   expect(result.runtimeState).toMatchObject({ total: 0, counts: { context: 0 }, providerAttempts: 2 });
 });
+it('zero context retries rejects reactive provider overflow without a summary or model retry', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.99 } });
+  let ordinary = 0;
+  f.provider.chat = async () => { ordinary++; return { ...reply(''), finishReason: 'error', error: 'context window exceeded' }; };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.runtimeError?.code).toBe('RECOVERY_LIMIT');
+  expect(ordinary).toBe(1);
+  expect(f.calls).toHaveLength(0);
+});
+it('zero retries never replays a failed lifecycle summary and keeps unknown usage reserved', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.6 } });
+  let ordinary = 0;
+  f.provider.chat = async () => { ordinary++; return reply('must not dispatch'); };
+  f.provider.chatStream = async () => { f.calls.push({ messages: [], tools: [] }); return { ...reply('{}'), usage: {} }; };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.runtimeError?.code).toBe('SUMMARY_INVALID');
+  expect(ordinary).toBe(0); expect(f.calls).toHaveLength(1);
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 1, unknownRequests: 1, reservedTokens: 15000 });
+});
 it('persists a source-bound summary before projection, retains goal/authority/evidence/uncertainty and original history', async () => {
   const f = fixture(); const before = structuredClone(f.raw); let record: unknown;
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async value => {
