@@ -1,5 +1,6 @@
 import { assertKnownPartial } from '../../investigations/continuation.js';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { sourceIntentHash, verifySourceAudit, type SourceAuditInput } from './audit.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
@@ -137,7 +138,13 @@ export class SourceControl {
         if (data.receipt?.decision !== 'known_partial_explicit_continuation') continue;
         const previous = data.receipt.partial;
         if (this.config.investigationId !== previous.investigationId || !this.config.requestId) sourceFailure('CONTINUATION_BINDING');
-        const retained = await assertKnownPartial(connection as never, previous.investigationId, previous, this.config.requestId);
+        // A consumed technical audit does not prove HTTP admission happened.
+        // A fresh signed audit may recover its exact failed continue only while
+        // the same immutable partial still has no successor request. After
+        // admission, every later phase must retain the exact accepted successor.
+        const beforeAdmission = continuation && isDeepStrictEqual(previous, continuation.partial);
+        const retained = await assertKnownPartial(connection as never, previous.investigationId, previous,
+          beforeAdmission ? undefined : this.config.requestId);
         if (sourceIntentHash(retained) !== previous.recordsHash) sourceFailure('AUDIT_PARTIAL_BINDING');
       }
       if (this.config.phase === 'continue' && !continuation) sourceFailure('PARTIAL_AUDIT_REQUIRED');
@@ -165,7 +172,8 @@ export class SourceControl {
           && historicalExecutions.get(job.id) === sourceIntentHash(job)) continue;
         const terminal = job.job_type === 'qualification.source' && job.state === 'dead_letter' && job.attempts === 1
           && job.max_attempts === 1 && job.lease_owner === null && job.lease_expires_at === null
-          && job.last_error === 'V23_SOURCE_REQUIRES_AUDIT' && (payload.phase === 'collect' || (payload.phase === 'investigate' && (continuation || historical.has(job.id))));
+          && job.last_error === 'V23_SOURCE_REQUIRES_AUDIT' && (payload.phase === 'collect'
+            || (['investigate', 'continue'].includes(payload.phase) && (continuation || historical.has(job.id))));
         const digest = sourceIntentHash(job);
         if (terminal && historical.get(job.id) === digest) continue;
         if (!receipt || used || !terminal || receipt.predecessor.intentId !== job.id

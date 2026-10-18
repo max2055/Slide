@@ -365,6 +365,19 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         successor: { ...receipt.successor, operationId: config.operationId } };
       input = sourceFixture.authorize(receipt as never);
       const jobsBefore = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+      for (const change of [{ state: 'running' }, { attempts: 2 },
+        { lease_owner: 'still-owned' }, { last_error: 'UNKNOWN_OUTCOME' }]) {
+        const [column, value] = Object.entries(change)[0];
+        await pool.query(`UPDATE workflow_jobs SET ${column}=? WHERE id=?`, [value, failedContinuation.id]);
+        const [changed] = await rows('SELECT * FROM workflow_jobs WHERE id=?', [failedContinuation.id]);
+        const invalidAudit = sourceFixture.authorize({ ...receipt,
+          predecessor: { ...receipt.predecessor, jobHash: sourceIntentHash(changed) } } as never);
+        const rejected = new SourceControl(pool, config, undefined, invalidAudit);
+        try { await expect(rejected.open()).rejects.toThrow(); }
+        finally { await rejected.close(); }
+        await pool.query(`UPDATE workflow_jobs SET ${column}=? WHERE id=?`, [failedContinuation[column], failedContinuation.id]);
+        expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(jobsBefore);
+      }
       const originalRun = before.run[0].result_json;
       const unknown = typeof originalRun === 'string' ? JSON.parse(originalRun) : structuredClone(originalRun);
       unknown.investigationExecution.usageUnknown = true;
@@ -465,7 +478,19 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const fresh = new SourceControl(pool, nextConfig);
     try { await fresh.open(); await fresh.close(true); } finally { await fresh.close(); }
     expect(await snapshot()).toEqual(before);
-    if (failedContinuation) expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [failedContinuation.id]))[0]).toEqual(failedContinuation);
+    if (failedContinuation) {
+      expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [failedContinuation.id]))[0]).toEqual(failedContinuation);
+      // A lost admission ACK is not permission to create a second successor,
+      // even with a freshly signed envelope and another operation/review ID.
+      const retryConfig = { ...config, operationId: randomUUID() };
+      const retryAudit = sourceFixture.authorize({ ...receipt, reviewId: randomUUID(),
+        successor: { ...receipt.successor, operationId: retryConfig.operationId } } as never);
+      const afterAdmission = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+      const duplicate = new SourceControl(pool, retryConfig, undefined, retryAudit);
+      try { await expect(duplicate.open()).rejects.toThrow('VERSION_CONFLICT'); }
+      finally { await duplicate.close(); }
+      expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(afterAdmission);
+    }
 
   });
 
