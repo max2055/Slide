@@ -2,6 +2,9 @@ import { mkdtemp, writeFile, chmod, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:net';
+import { execFileSync } from 'node:child_process';
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 import type { Pool } from 'mysql2/promise';
 import { sourceTestConfig } from './config.fixture.js';
 import { bytesHash } from './config.js';
@@ -74,5 +77,95 @@ describe('owned standby session API admission before audit consumption', () => {
       'SESSION_API_REJECTED',
     );
     expect(f.query).not.toHaveBeenCalled();
+  });
+});
+
+/** Boundary regression: real private socket/files; SQL and ps are unit doubles.
+ * Actual production CLI/SQL/JWT/HTTP admission is verified by the isolated harness. */
+describe('bounded complete session descriptor', () => {
+  let socket: Server | undefined;
+  afterEach(async () => {
+    if (socket) await new Promise<void>((done) => socket!.close(() => done()));
+    socket = undefined;
+    vi.clearAllMocks();
+  });
+  async function fixture() {
+    vi.stubEnv('DB_PORT', '54321');
+    const directory = await mkdtemp(join(tmpdir(), 'v23-large-session-'));
+    paths.push(directory);
+    const head = 'a'.repeat(40), config = sourceTestConfig();
+    const descriptor = {
+      directory, head, schema: config.database, databasePort: 54321, apiPort: 19303,
+      startsAt: new Date(Date.now() - 1000).toISOString(),
+      sessionExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      socket: join(directory, 'control.sock'), sessionId: config.operationId, uuid: 'synthetic-uuid',
+      files: Object.fromEntries(Array.from({ length: 322 }, (_, i) =>
+        [`/synthetic/dependency-${i}/` + 'module/'.repeat(23) + 'source.ts', 'b'.repeat(64)])),
+    };
+    const current = { closed: false, held: false, phaseOperationId: config.operationId,
+      url: config.api, expiresAt: descriptor.sessionExpiresAt, apiPid: process.pid };
+    socket = createServer(c => c.once('data', () => c.end(JSON.stringify({ ok: true, result: current }))));
+    await new Promise<void>((done, reject) => { socket!.once('error', reject); socket!.listen(descriptor.socket, done); });
+    await chmod(descriptor.socket, 0o600);
+    const identity = { sourceToolCeiling: 'server-read-v1', pid: process.pid, head,
+      cwd: process.cwd(), port: descriptor.apiPort, sessionId: descriptor.sessionId,
+      log: directory + '/api.log', execPath: process.execPath,
+      argv: ['--import', '/synthetic/loader.mjs', 'server.ts'], loader: '/synthetic/loader.mjs' };
+    await writeFile(identity.log, 'WORKER_LEASE_UNAVAILABLE: API-only standby', { mode: 0o600 });
+    vi.mocked(execFileSync).mockReturnValue([identity.execPath, ...identity.argv].join(' '));
+    const saveIdentity = async (size?: number) => {
+      const bytes = Buffer.from(JSON.stringify(identity));
+      await writeFile(directory + '/api-identity.json', Buffer.concat([bytes, Buffer.alloc((size ?? bytes.length) - bytes.length, ' ')]), { mode: 0o600 });
+    };
+    await saveIdentity();
+    const query = vi.fn().mockResolvedValue([[{ db: descriptor.schema, uuid: descriptor.uuid }]]);
+    const verify = async (size?: number, hash?: string) => {
+      const compact = Buffer.from(JSON.stringify(descriptor));
+      const bytes = Buffer.concat([compact, Buffer.alloc((size ?? compact.length) - compact.length, ' ')]);
+      const file = directory + '/descriptor.json';
+      await writeFile(file, bytes, { mode: 0o600 });
+      return verifySessionApi({ query } as unknown as Pool, config, head, file, hash ?? bytesHash(bytes));
+    };
+    return { verify, saveIdentity, query, descriptor, identity, current };
+  }
+  it('accepts all 322 dependencies in a complete descriptor larger than 64 KiB', async () => {
+    const f = await fixture();
+    expect(Buffer.byteLength(JSON.stringify(f.descriptor))).toBeGreaterThan(65536);
+    expect(Object.keys(f.descriptor.files)).toHaveLength(322);
+    expect((await f.verify()).pid).toBe(process.pid);
+  });
+  it('accepts exactly 262144 bytes', async () => {
+    const f = await fixture();
+    expect((await f.verify(262144)).pid).toBe(process.pid);
+  });
+  it('rejects 262145 bytes before SQL', async () => {
+    const f = await fixture();
+    await expect(f.verify(262145)).rejects.toThrow('SESSION_API_REJECTED');
+    expect(f.query).not.toHaveBeenCalled();
+  });
+  it('retains the API identity boundary at 65536/65537 bytes', async () => {
+    const f = await fixture();
+    await f.saveIdentity(65536);
+    expect((await f.verify()).pid).toBe(process.pid);
+    await f.saveIdentity(65537);
+    await expect(f.verify()).rejects.toThrow('SESSION_API_REJECTED');
+  });
+  it('rejects complete descriptor hash and binding mismatches before SQL', async () => {
+    const f = await fixture();
+    await expect(f.verify(undefined, '0'.repeat(64))).rejects.toThrow('SESSION_API_REJECTED');
+    f.descriptor.head = 'b'.repeat(40);
+    await expect(f.verify()).rejects.toThrow('SESSION_API_REJECTED');
+    expect(f.query).not.toHaveBeenCalled();
+  });
+  it('still rejects held lease, changed API identity and oversized socket status', async () => {
+    const f = await fixture();
+    f.current.held = true;
+    await expect(f.verify()).rejects.toThrow('SESSION_API_REJECTED');
+    f.current.held = false;
+    f.identity.head = 'b'.repeat(40); await f.saveIdentity();
+    await expect(f.verify()).rejects.toThrow('SESSION_API_REJECTED');
+    f.identity.head = f.descriptor.head; await f.saveIdentity();
+    Object.assign(f.current, { padding: 'x'.repeat(65537) });
+    await expect(f.verify()).rejects.toThrow('SESSION_API_REJECTED');
   });
 });
