@@ -336,7 +336,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const [identity] = await rows('SELECT @@server_uuid AS uuid');
     let config = { ...sourceFixture.config, database, api, phase: 'continue' as const, investigationId: binding.investigationId, requestId: binding.requestId };
     let receipt = { ...sourceFixture.receipt, decision: 'known_partial_explicit_continuation',
-      predecessor: { ...sourceFixture.receipt.predecessor, intentId: sourceId, operationId, jobHash: sourceIntentHash(sourceRow) },
+      predecessor: { ...sourceFixture.receipt.predecessor, intentId: sourceId, operationId: operationId as string, jobHash: sourceIntentHash(sourceRow) },
       successor: { ...sourceFixture.receipt.successor, database, databaseServerUuid: identity.uuid, operationId: config.operationId },
       partial: { investigationId: binding.investigationId, ...previous, executionJobId: binding.jobId,
         executionJobHash: sourceIntentHash(records.job), recordsHash: sourceIntentHash(records) } };
