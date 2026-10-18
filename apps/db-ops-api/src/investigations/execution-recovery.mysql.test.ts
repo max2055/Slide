@@ -301,7 +301,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
 
-  it.each(['concurrent','source-http','service-http'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
+  it.each(['concurrent','source-http','service-http','failed-source-http'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
     if (mode === 'service-http') {
       await automatic();
       await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)", [binding.investigationId, owner.userId, serviceId]);
@@ -334,8 +334,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const [sourceRow] = await rows('SELECT * FROM workflow_jobs WHERE id=?', [sourceId]);
     const records = await bridge.storeFor(owner).transaction(c => assertKnownPartial(c, binding.investigationId, previous));
     const [identity] = await rows('SELECT @@server_uuid AS uuid');
-    const config = { ...sourceFixture.config, database, api, phase: 'continue' as const, investigationId: binding.investigationId, requestId: binding.requestId };
-    const receipt = { ...sourceFixture.receipt, decision: 'known_partial_explicit_continuation',
+    let config = { ...sourceFixture.config, database, api, phase: 'continue' as const, investigationId: binding.investigationId, requestId: binding.requestId };
+    let receipt = { ...sourceFixture.receipt, decision: 'known_partial_explicit_continuation',
       predecessor: { ...sourceFixture.receipt.predecessor, intentId: sourceId, operationId, jobHash: sourceIntentHash(sourceRow) },
       successor: { ...sourceFixture.receipt.successor, database, databaseServerUuid: identity.uuid, operationId: config.operationId },
       partial: { investigationId: binding.investigationId, ...previous, executionJobId: binding.jobId,
@@ -343,9 +343,42 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     delete (receipt as any).failureCode; delete (receipt as any).metricsJobs; delete (receipt as any).modelUsage;
     const withoutAudit = new SourceControl(pool, config);
     try { await expect(withoutAudit.open()).rejects.toThrow('PARTIAL_AUDIT_REQUIRED'); } finally { await withoutAudit.close(); }
-    const input = sourceFixture.authorize(receipt as never);
-    const controlled = new SourceControl(pool, config, undefined, input);
+    let input = sourceFixture.authorize(receipt as never);
+    let controlled = new SourceControl(pool, config, undefined, input);
     await controlled.open();
+    let failedContinuation: RowDataPacket | undefined;
+    if (mode === 'failed-source-http') {
+      // Real recordIntent consumption followed by API failure before admission.
+      // No SQL edits to the intent, old partial, receipt or failed source.
+      await controlled.close();
+      [failedContinuation] = await rows('SELECT * FROM workflow_jobs WHERE idempotency_key=?', [`v23-source:${config.operationId}`]);
+      expect(failedContinuation.state).toBe('dead_letter');
+      expect(await snapshot()).toEqual(before);
+      const replay = new SourceControl(pool, config, undefined, input);
+      try { await expect(replay.open()).rejects.toThrow('OPERATION_ALREADY_RECORDED'); }
+      finally { await replay.close(); }
+      const oldOperation = config.operationId;
+      config = { ...config, operationId: randomUUID() };
+      receipt = { ...receipt, reviewId: randomUUID(),
+        predecessor: { ...receipt.predecessor, intentId: failedContinuation.id,
+          operationId: oldOperation, jobHash: sourceIntentHash(failedContinuation) },
+        successor: { ...receipt.successor, operationId: config.operationId } };
+      input = sourceFixture.authorize(receipt as never);
+      const jobsBefore = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+      const originalRun = before.run[0].result_json;
+      const unknown = typeof originalRun === 'string' ? JSON.parse(originalRun) : structuredClone(originalRun);
+      unknown.investigationExecution.usageUnknown = true;
+      await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(unknown), binding.runId]);
+      const refused = new SourceControl(pool, config, undefined, input);
+      try { await expect(refused.open()).rejects.toThrow('VERSION_CONFLICT'); }
+      finally { await refused.close(); }
+      await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof originalRun === 'string' ? JSON.parse(originalRun) : originalRun), binding.runId]);
+      expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(jobsBefore);
+      controlled = new SourceControl(pool, config, undefined, input);
+      try { await controlled.open(); }
+      catch (error) { await controlled.close(); await app.close(); throw error; }
+      expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [failedContinuation.id]))[0]).toEqual(failedContinuation);
+    }
     const competing = new SourceControl(pool, config, undefined, input);
     try { await expect(competing.open()).rejects.toThrow('LOCK_BUSY'); } finally { await competing.close(); }
     let followup: any;
@@ -418,7 +451,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     } finally { await app.close(); await controlled.close(true); }
     const reused = new SourceControl(pool, config, undefined, input);
     try { await expect(reused.open()).rejects.toThrow('OPERATION_ALREADY_RECORDED'); } finally { await reused.close(); }
-    expect((await rows("SELECT id FROM workflow_jobs WHERE job_type='qualification.source.audit'"))).toHaveLength(1);
+    expect((await rows("SELECT id FROM workflow_jobs WHERE job_type='qualification.source.audit'"))).toHaveLength(mode === 'failed-source-http' ? 2 : 1);
     expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [sourceId]))[0]).toEqual(sourceRow);
     // Fresh collection may precede the new explicit Run, using that exact
     // successor. A historical signed audit cannot mask new contradictory state.
@@ -432,6 +465,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const fresh = new SourceControl(pool, nextConfig);
     try { await fresh.open(); await fresh.close(true); } finally { await fresh.close(); }
     expect(await snapshot()).toEqual(before);
+    if (failedContinuation) expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [failedContinuation.id]))[0]).toEqual(failedContinuation);
 
   });
 
