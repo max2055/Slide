@@ -163,12 +163,25 @@ export class SourceControl {
       await queue.enqueue({ id, type: 'qualification.source', schemaVersion: 1,
         payload: { operationId: this.config.operationId, phase: this.config.phase },
         idempotencyKey: `v23-source:${this.config.operationId}`, maxAttempts: 1 });
-      // Recheck expiry at commit, after all SQL/lock waits.
-      if (this.audit) verifySourceAudit(this.audit, this.config);
-      await sourceDatabaseGuard(connection as unknown as Pool, this.config);
-      const [lease] = await connection.execute<RowDataPacket[]>(`SELECT owner_id,expires_at>NOW(3) AS live FROM worker_leases
+      await connection.execute<RowDataPacket[]>(`SELECT lease_name FROM worker_leases
         WHERE lease_name='slide-singleton-workers' FOR UPDATE`);
-      if (lease[0]?.owner_id !== this.lease.ownerId || Number(lease[0]?.live) !== 1) sourceFailure('LEASE_LOST');
+      // NOW() on a locking SELECT is fixed before its row-lock wait. With the
+      // lease row now locked, use a current read (not the transaction's older
+      // repeatable-read snapshot) to sample UTC and authority afresh. Perform
+      // all time/signature/cancellation checks after the final SQL response.
+      const before = Date.now();
+      const [guard] = await connection.execute<RowDataPacket[]>(`SELECT DATABASE() AS db, UTC_TIMESTAMP(3) AS utc,
+        @@session.time_zone AS zone, IS_USED_LOCK(?)=? AS held, owner_id, expires_at FROM worker_leases
+        WHERE lease_name='slide-singleton-workers' FOR UPDATE`, [this.lockName, connection.threadId]);
+      const row = guard[0], now = Date.now(), dbNow = new Date(row?.utc).getTime();
+      assertSourceClock(before, now, dbNow);
+      if (row.db !== this.config.database || row.zone !== '+00:00') sourceFailure('DATABASE_IDENTITY');
+      if (Number(row.held) !== 1) sourceFailure('LOCK_LOST');
+      if (row.owner_id !== this.lease.ownerId || !(new Date(row.expires_at).getTime() > Math.max(now, dbNow))) sourceFailure('LEASE_LOST');
+      assertSourceDeadline(this.config, dbNow);
+      assertSourceDeadline(this.config);
+      if (this.audit) verifySourceAudit(this.audit, this.config);
+      this.signal.throwIfAborted(); this.cancel?.throwIfAborted();
       await connection.commit();
       return id;
     } catch (error) { await connection.rollback(); throw error; }
