@@ -94,4 +94,15 @@ describe('standalone investigation bootstrap precedes any claim or provider send
     await expect(investigateSource({} as SourceControl)).rejects.toThrow('AGENT_POLICY_STORE_UNAVAILABLE');
     expect(read).not.toHaveBeenCalled();
   });
+  it('rejects an absent policy instead of inheriting version zero', async () => {
+    const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
+    const engine = await import('../../adapter/get-agent-engine.js');
+    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    vi.spyOn(policy, 'initialize').mockResolvedValue();
+    vi.spyOn(engine, 'loadPlatformTools').mockResolvedValue({} as never);
+    vi.spyOn(policy, 'get').mockReturnValue({ version: 0 } as never);
+    vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { throw Error('budget reached'); });
+    await expect(investigateSource({} as SourceControl)).rejects.toThrow('AGENT_POLICY_REQUIRED');
+  });
+
 });
