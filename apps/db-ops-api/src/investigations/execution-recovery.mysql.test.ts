@@ -1,3 +1,8 @@
+import { continueSource } from '../operations/source-package/runtime.js';
+import { SourceControl, claimSourceJob } from '../operations/source-package/control.js';
+import { auditFixture } from '../operations/source-package/audit.fixture.js';
+import { sourceIntentHash } from '../operations/source-package/audit.js';
+import { assertKnownPartial } from './continuation.js';
 import { createRequire } from 'node:module';
 import Fastify from 'fastify';
 import { vi } from 'vitest';
@@ -119,6 +124,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     admin = mysql.createPool(config);
     await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ ...config, database, connectionLimit: 12 });
+    pool.on('connection', c => c.query("SET time_zone='+00:00'"));
     await new MigrationRunner(pool).run();
     await pool.query(
       "INSERT INTO users (id, username, password_hash) VALUES (101, 'inv-owner', 'no-login'), (102, 'inv-operator', 'no-login'), (104, 'inv-viewer', 'no-login')",
@@ -295,8 +301,11 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
 
-  it('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once', async () => {
-    await admit(owner);
+  it.each(['concurrent','source-http','service-http'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
+    if (mode === 'service-http') {
+      await automatic();
+      await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)", [binding.investigationId, owner.userId, serviceId]);
+    }
     const run = await execute(fixture({ toolError: true }));
     expect(run.state).toBe('partial');
     // The source orchestrator terminally records a handler's partial outcome.
@@ -315,12 +324,39 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const before = await snapshot();
     const app = Fastify(), secret = 'continuation-synthetic-jwt-secret';
     await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
+    const api = await app.listen({ host: '127.0.0.1', port: 0 });
+    const sourceFixture = auditFixture(), operationId = randomUUID(), sourceId = randomUUID();
+    const queue = new MysqlWorkflowStore(() => pool as never);
+    await queue.enqueue({ id: sourceId, type: 'qualification.source', schemaVersion: 1,
+      payload: { operationId, phase: 'investigate' }, idempotencyKey: `v23-source:${operationId}`, maxAttempts: 1 });
+    const originalSource = await claimSourceJob(pool, sourceId, 'qualification.source', 'synthetic-source');
+    await queue.fail(originalSource, 'synthetic-source', new Error('V23_SOURCE_REQUIRES_AUDIT'), null);
+    const [sourceRow] = await rows('SELECT * FROM workflow_jobs WHERE id=?', [sourceId]);
+    const records = await bridge.storeFor(owner).transaction(c => assertKnownPartial(c, binding.investigationId, previous));
+    const [identity] = await rows('SELECT @@server_uuid AS uuid');
+    const config = { ...sourceFixture.config, database, api, phase: 'continue' as const, investigationId: binding.investigationId, requestId: binding.requestId };
+    const receipt = { ...sourceFixture.receipt, decision: 'known_partial_explicit_continuation',
+      predecessor: { ...sourceFixture.receipt.predecessor, intentId: sourceId, operationId, jobHash: sourceIntentHash(sourceRow) },
+      successor: { ...sourceFixture.receipt.successor, database, databaseServerUuid: identity.uuid, operationId: config.operationId },
+      partial: { investigationId: binding.investigationId, ...previous, executionJobId: binding.jobId,
+        executionJobHash: sourceIntentHash(records.job), recordsHash: sourceIntentHash(records) } };
+    delete (receipt as any).failureCode; delete (receipt as any).metricsJobs; delete (receipt as any).modelUsage;
+    const withoutAudit = new SourceControl(pool, config);
+    try { await expect(withoutAudit.open()).rejects.toThrow('PARTIAL_AUDIT_REQUIRED'); } finally { await withoutAudit.close(); }
+    const input = sourceFixture.authorize(receipt as never);
+    const controlled = new SourceControl(pool, config, undefined, input);
+    await controlled.open();
+    const competing = new SourceControl(pool, config, undefined, input);
+    try { await expect(competing.open()).rejects.toThrow('LOCK_BUSY'); } finally { await competing.close(); }
+    let followup: any;
     const [inv] = await rows('SELECT version FROM investigations WHERE id=?', [binding.investigationId]);
     const send = (continuationOf = previous, expectedVersion = Number(inv.version), key = randomUUID()) => app.inject({ method: 'POST',
       url: `/api/investigations/${binding.investigationId}/runs`, headers: { authorization: `Bearer ${signAccessToken(owner, secret)}`, 'idempotency-key': key },
       payload: { message: 'Explicit follow-up; retain original partial', expectedVersion, continuationOf } });
     try {
       expect((await send({ ...previous, runId: randomUUID() })).statusCode).toBe(409);
+      expect((await send({ ...previous, notAfter: new Date(0).toISOString() } as any)).statusCode).toBe(409);
+      expect(await snapshot()).toEqual(before);
       // Contradictory durable states must win over an otherwise exact binding.
       for (const mutate of [
         (x: any) => { x.investigationExecution.usageUnknown = true; },
@@ -333,17 +369,46 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         expect((await send()).statusCode).toBe(409);
         await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof original === 'string' ? JSON.parse(original) : original), binding.runId]);
       }
-      const replies = await Promise.all([send(), send()]);
-      expect(replies.map(r => r.statusCode).sort()).toEqual([202,409]);
-      const next = replies.find(r => r.statusCode === 202)!.json();
+      let next: any;
+      if (mode !== 'concurrent') next = await continueSource(controlled, signAccessToken(owner, secret));
+      else {
+        const replies = await Promise.all([send(), send()]);
+        expect(replies.map(r => r.statusCode).sort()).toEqual([202,409]);
+        next = replies.find(r => r.statusCode === 202)!.json();
+      }
+      followup = next;
       expect(next.investigationId).toBe(binding.investigationId);
       const [stored] = await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [next.requestId]);
       const snap = typeof stored.request_snapshot === 'string' ? JSON.parse(stored.request_snapshot) : stored.request_snapshot;
-      expect(snap.continuationOf).toEqual(previous);
+      expect(snap.continuationOf).toMatchObject(previous);
+      if (mode !== 'concurrent') expect(snap.continuationOf.notAfter).toBe(config.deadline);
+      if (mode === 'service-http') {
+        expect(snap.actor).toEqual({ kind: 'service', id: serviceId });
+        expect(snap.authority.actor).toEqual({ kind: 'service', id: serviceId });
+        expect(snap.continuationOperator).toEqual({ kind: 'user', id: owner.userId });
+        expect(snap.budgetReceipt.mode).toBe('automatic');
+      }
       expect(await snapshot()).toEqual(before);
       expect((await send(previous, next.version)).statusCode).toBe(409);
       expect(providerCalls).toBe(1);
-    } finally { await app.close(); }
+    } finally { await app.close(); await controlled.close(true); }
+    const reused = new SourceControl(pool, config, undefined, input);
+    try { await expect(reused.open()).rejects.toThrow('OPERATION_ALREADY_RECORDED'); } finally { await reused.close(); }
+    expect((await rows("SELECT id FROM workflow_jobs WHERE job_type='qualification.source.audit'"))).toHaveLength(1);
+    expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [sourceId]))[0]).toEqual(sourceRow);
+    // Fresh collection may precede the new explicit Run, using that exact
+    // successor. A historical signed audit cannot mask new contradictory state.
+    const nextConfig = { ...config, operationId: randomUUID(), phase: 'collect' as const, requestId: followup.requestId };
+    const original = before.run[0].result_json, changed = typeof original === 'string' ? JSON.parse(original) : structuredClone(original);
+    changed.investigationExecution.usageUnknown = true;
+    await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(changed), binding.runId]);
+    const refused = new SourceControl(pool, nextConfig);
+    try { await expect(refused.open()).rejects.toThrow('VERSION_CONFLICT'); } finally { await refused.close(); }
+    await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof original === 'string' ? JSON.parse(original) : original), binding.runId]);
+    const fresh = new SourceControl(pool, nextConfig);
+    try { await fresh.open(); await fresh.close(true); } finally { await fresh.close(); }
+    expect(await snapshot()).toEqual(before);
+
   });
 
   async function automatic(reserveTokens = 32000, claim = true) {
