@@ -103,6 +103,38 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
       reports.push({ case: 'operator', ...result, tableCount: Object.keys(before).length, unchanged: true });
     } finally { await rows("UPDATE investigation_members SET role='viewer',expires_at=NULL WHERE investigation_id=? AND user_id=1", [config.investigationId]); }
   });
+  it('narrows a broader frozen service grant to the source four-tool lane without changing the request', async () => {
+    await rows("INSERT INTO role_permissions(role_id,permission_id) SELECT 121,id FROM permissions WHERE code IN ('metric:view','alert:view')");
+    try {
+      const service = { ...await contexts.loadInvestigationActorFrom(pool as never, 7, 'service', 1),
+        resourceBoundary: { instanceIds: [], serverIds: [3], networkDeviceIds: [] } };
+      const created = await bridge.create(service, { title: 'synthetic broader frozen grant', goal: 'read server3', profileId: 'ops', profileVersion: 1,
+        resources: [{ type: 'server', id: 3, role: 'primary' }], idempotencyKey: randomUUID() }, { message: 'read', idempotencyKey: randomUUID() });
+      const c = { ...config, investigationId: created.investigation.id, requestId: created.acceptance!.requestId };
+      await rows("INSERT INTO investigation_members(investigation_id,user_id,role,granted_by) VALUES(?,1,'operator',7)", [c.investigationId]);
+      const [request] = await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [c.requestId]);
+      const frozen = typeof request.request_snapshot === 'string' ? JSON.parse(request.request_snapshot) : request.request_snapshot;
+      expect(frozen.authority.toolAllowlist).toEqual(expect.arrayContaining(['query_metrics', 'list_active_alerts', ...sourceReadTools]));
+      const before = await snapshot(), result = await authorize(c);
+      expect([...result.execution.toolAllowlist].sort()).toEqual([...sourceReadTools].sort());
+      expect([...result.operatorTools].sort()).toEqual([...sourceReadTools].sort());
+      expect(result.execution.resourceBoundary).toEqual({ instanceIds: [], serverIds: [3], networkDeviceIds: [] });
+      expect(await snapshot()).toEqual(before);
+      // Extra grants cannot compensate for a revoked required source tool.
+      const [policy] = await rows('SELECT tool_allowlist FROM agent_security_policies WHERE agent_id=?', [DEFAULT_AGENT_ID]);
+      try {
+        await rows('UPDATE agent_security_policies SET tool_allowlist=? WHERE agent_id=?', [JSON.stringify(sourceReadTools.slice(1)), DEFAULT_AGENT_ID]);
+        const revoked = await snapshot();
+        await expect(authorize(c)).rejects.toThrow('AUTHORIZATION_REJECTED');
+        expect(await snapshot()).toEqual(revoked);
+      } finally {
+        await rows('UPDATE agent_security_policies SET tool_allowlist=? WHERE agent_id=?', [policy.tool_allowlist === null ? null : JSON.stringify(policy.tool_allowlist), DEFAULT_AGENT_ID]);
+      }
+      reports.push({ case: 'broader-frozen-four-tool-intersection', ...result, tableCount: Object.keys(before).length, unchanged: true });
+    } finally {
+      await rows("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=121 AND p.code IN ('metric:view','alert:view')");
+    }
+  });
   it.each(['missing','expired','revoked','wrong-user','wrong-session','expired-jwt','invalid-jwt','disabled-user','resource','service-session','policy-tool','policy-resource'])('rejects %s without any durable write', async kind => {
     const [member] = await rows('SELECT * FROM investigation_members WHERE investigation_id=? AND user_id=1', [config.investigationId]);
     const [policy] = await rows('SELECT * FROM agent_security_policies WHERE agent_id=?', [DEFAULT_AGENT_ID]);
