@@ -124,6 +124,8 @@ source 控制器新增 `continue` phase（不调用模型或工具）。由父�
 
 控制器在原 schema 锁及事务下重验实际 durable facts，将一次审计消费和新的 source intent 一起提交；原末端租约等待后验签、UTC/期限/取消复核保持。CLI 的 `continue` 通过原 API 子进程、用户 JWT 和 `/runs` 创建后续请求，返回准确新 request/job。HTTP 不确定时保留审计与 intent，交父核对，不自行重发。真实父签名及新互斥锁由父审本候选后提供；本轮不生成、安装或消费真实凭据。
 
+若 `continue` 已消费技术凭据、但自有 API 启动失败而未创建后继请求，旧凭据仍不能重用。父须先核无在途/unknown、原 partial 完整摘要及该次准确失败 intent，再以它为前驱签发新 operation/config/lock/head/DB 绑定。控制器只在原 partial 尚无任何后继请求、历史绑定完全相同且失败 intent 为无租约的单次 dead_letter 时接受新的审计；已有后继（包括 HTTP ACK 丢失）、unknown、在途或未审失败均拒绝，旧 intent/消费记录保持原样。自有 API 等待窗为最多 120 秒，期间仍逐轮检查操作期限和外部租约、准确子进程、standby 回执及 HTTP health；它不延长父签/锁期限或证据新鲜性。
+
 后续新鲜性路径：父核准新锁/新 head → `continue` 返回同一调查的新 request → 必要时以该准确 request 绑定新 `collect` operation，沿原 scheduler/正式 publication 刷新采样 → 新 `investigate` operation 仅执行该 queued/attempts0 请求 → 原证据/结果装配与 `plan`。每个 phase 使用新 config/lock/operation，collect receipt 用完即移除环境变量。历史 partial/死信按原摘要保留，后续每次 source open 还会重验旧完整记录和准确 successor；已审历史不豁免新出现的 unknown。新采集不创建替代调查或重置原事件链，工具读取新正式 publication，证据绑定本次 request/Run/hash；`exactSource` 的 120 秒新鲜性和生命周期门禁保持。旧 ready 仅证明旧窗口，不能用于今天的计划。P07 helper/行动环境资格及两真实分离主体 once 仍是后续边界。
 
 辅助执行改用 `scripts/qualification/v23-source-stage.ts` 的 `runBoundSourceStage`，整个获审阶段只调用一次。传入本轮准确 allocation 文件及原字节 hash、head、source 容器完整 ID/label；每个 phase 回调都用传入的动态端口创建本次 config/lock/环境，不能沿用旧 common/缓存端口。完整阶段的 phases 数组包含已授权的所有后续步骤；子 phase 不负责 stop。统一 finally 按顺序尝试恢复临时配置、关闭 API/连接/租约、停止准确自有 source，即使前一项清理失败也收集后续结果。该 helper 不 start/restart source，不包含目标3308的 stop，不签凭据、续锁或自动重试。尚未获准或缺资格的阶段应在首次发送前拒绝；不能在 collect 后结束辅助 runner 再另起一个脚本接未发送阶段。旧 `.qualification/source-runtime5` 脚本仅留作历史证据，不能重放。
