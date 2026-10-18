@@ -36,10 +36,38 @@ export async function assertKnownPartial(c: TransactionConnection, investigation
   if (!result || result.request_id !== previous.requestId || result.run_id !== previous.runId
     || Number(result.version) !== previous.resultVersion) conflict();
   const allocations = await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=? FOR UPDATE', [previous.requestId]);
-  if (allocations.length !== 1 || allocations[0].state !== 'settled' || !allocations[0].usage_snapshot
-    || !allocations[0].settlement_hash || !allocations[0].settled_at) conflict();
-  const usage = decode(allocations[0].usage_snapshot);
-  if (!isDeepStrictEqual(usage, execution.usage)) conflict();
+  if (allocations.length !== 1 || !allocations[0].settled_at) conflict();
+  const allocation = allocations[0];
+  if (allocation.state === 'settled') {
+    if (!allocation.usage_snapshot || !allocation.settlement_hash
+      || !isDeepStrictEqual(decode(allocation.usage_snapshot), execution.usage)) conflict();
+  } else {
+    // cancelUnsentInTransaction releases a reserved allocation without creating
+    // a usage settlement. Accept only that exact, durably known zero-send path;
+    // neither cancellation nor a missing usage snapshot alone proves it safe.
+    const receipt = snapshot?.budgetReceipt, reservation = decode(allocation.reservation_snapshot);
+    if (allocation.state !== 'cancelled' || allocation.sent_at !== null
+      || allocation.cost_status !== 'known' || Number(allocation.charged_tokens) !== 0
+      || Number(allocation.charged_cost_micros) !== 0 || allocation.charged_tokens == null || allocation.charged_cost_micros == null
+      || allocation.usage_snapshot !== null || allocation.settlement_hash !== null
+      || !isDeepStrictEqual(execution.usage, { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 })
+      || typeof execution.tools !== 'object' || Array.isArray(execution.tools)
+      || Object.keys(execution.tools).length !== 0 || execution.schemaVersion !== 1
+      || snapshot.id !== investigationId || snapshot.actor?.kind !== request.actor_kind
+      || snapshot.actor.id !== Number(request.actor_id) || snapshot.authority?.actor?.kind !== request.actor_kind
+      || snapshot.authority.actor.id !== Number(request.actor_id) || snapshot.authority.investigationId !== investigationId
+      || snapshot.authority.sessionId !== snapshot.sessionId
+      || !receipt || receipt.schemaVersion !== 1 || receipt.requestId !== previous.requestId
+      || allocation.request_id !== previous.requestId || allocation.id !== execution.reservationId
+      || receipt.reservationId !== allocation.id || receipt.operationId !== `request:${previous.requestId}`
+      || allocation.operation_id?.toString() !== receipt.operationId || allocation.domain_key?.toString() !== receipt.domain
+      || allocation.mode !== receipt.mode || allocation.command_hash !== receipt.commandHash
+      || !reservation || reservation.requestId !== previous.requestId || reservation.operationId !== receipt.operationId
+      || reservation.domain !== receipt.domain || reservation.mode !== receipt.mode
+      || Number(allocation.reserved_tokens) !== execution.reservedTokens
+      || reservation.reserveTokens !== execution.reservedTokens
+      || Number(allocation.reserved_cost_micros) !== reservation.reserveCostMicros) conflict();
+  }
   const used = await rows(`SELECT id FROM investigation_requests WHERE investigation_id=?
     AND JSON_UNQUOTE(JSON_EXTRACT(request_snapshot,'$.continuationOf.requestId'))=? LIMIT 2 FOR UPDATE`,
   [investigationId, previous.requestId]);

@@ -133,20 +133,7 @@ export class SourceControl {
       const historicalExecutions = new Map(jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')
         .flatMap(j => { const p = typeof j.payload === 'string' ? JSON.parse(j.payload) : j.payload;
           return p.receipt?.decision === 'known_partial_explicit_continuation' ? [[p.receipt.partial.executionJobId, p.receipt.partial.executionJobHash]] : []; }));
-      for (const auditJob of jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')) {
-        const data = typeof auditJob.payload === 'string' ? JSON.parse(auditJob.payload) : auditJob.payload;
-        if (data.receipt?.decision !== 'known_partial_explicit_continuation') continue;
-        const previous = data.receipt.partial;
-        if (this.config.investigationId !== previous.investigationId || !this.config.requestId) sourceFailure('CONTINUATION_BINDING');
-        // A consumed technical audit does not prove HTTP admission happened.
-        // A fresh signed audit may recover its exact failed continue only while
-        // the same immutable partial still has no successor request. After
-        // admission, every later phase must retain the exact accepted successor.
-        const beforeAdmission = continuation && isDeepStrictEqual(previous, continuation.partial);
-        const retained = await assertKnownPartial(connection as never, previous.investigationId, previous,
-          beforeAdmission ? undefined : this.config.requestId);
-        if (sourceIntentHash(retained) !== previous.recordsHash) sourceFailure('AUDIT_PARTIAL_BINDING');
-      }
+      await this.assertHistoricalContinuations(connection, jobs, continuation?.partial);
       if (this.config.phase === 'continue' && !continuation) sourceFailure('PARTIAL_AUDIT_REQUIRED');
       if (historicalExecutions.size && ['collect', 'investigate'].includes(this.config.phase)
         && (!this.config.investigationId || !this.config.requestId)) sourceFailure('CONTINUATION_BINDING');
@@ -229,6 +216,89 @@ export class SourceControl {
       await connection.commit();
       return id;
     } catch (error) { await connection.rollback(); throw error; }
+  }
+  /** Consumed audits authorize adjacent immutable edges, not a shortcut from
+   * every ancestor to today's request. Read the entire path under this same
+   * transaction, validate each node's own identity, and reject unrelated audits. */
+  private async assertHistoricalContinuations(connection: PoolConnection, jobs: RowDataPacket[],
+    admitting?: { investigationId: string; requestId: string; runId: string; resultVersion: number }) {
+    const decode = (v: any) => typeof v === 'string' ? JSON.parse(v) : v;
+    const text = (v: any) => v?.toString();
+    const binding = () => sourceFailure('CONTINUATION_BINDING');
+    const groups = new Map<string, any[]>(), byId = new Map(jobs.map(j => [j.id, j]));
+    for (const job of jobs) {
+      const data = decode(job.payload), receipt = data?.receipt;
+      if (job.job_type !== 'qualification.source.audit' || job.state !== 'completed'
+        || receipt?.decision !== 'known_partial_explicit_continuation') continue;
+      const previous = receipt.partial, predecessor = byId.get(data.predecessorId), intent = byId.get(data.successorIntentId);
+      const predecessorPayload = decode(predecessor?.payload), intentPayload = decode(intent?.payload);
+      if (!previous || previous.investigationId !== this.config.investigationId || !this.config.requestId
+        || job.id !== receipt.reviewId || text(job.idempotency_key) !== `v23-source-audit:${data.predecessorId}`
+        || job.lease_owner !== null || job.lease_expires_at !== null
+        || !predecessor || predecessor.job_type !== 'qualification.source' || predecessor.state !== 'dead_letter'
+        || predecessor.lease_owner !== null || predecessor.lease_expires_at !== null
+        || predecessor.last_error !== 'V23_SOURCE_REQUIRES_AUDIT'
+        || data.predecessorId !== receipt.predecessor?.intentId || data.predecessorHash !== receipt.predecessor.jobHash
+        || sourceIntentHash(predecessor) !== data.predecessorHash
+        || predecessorPayload?.operationId !== receipt.predecessor.operationId
+        || text(predecessor.idempotency_key) !== `v23-source:${receipt.predecessor.operationId}`
+        || !intent || intent.job_type !== 'qualification.source' || !['completed', 'dead_letter'].includes(intent.state)
+        || intent.lease_owner !== null || intent.lease_expires_at !== null
+        || intentPayload?.phase !== 'continue' || intentPayload.operationId !== receipt.successor?.operationId
+        || text(intent.idempotency_key) !== `v23-source:${receipt.successor.operationId}`
+        || receipt.successor.database !== this.config.database) binding();
+      const group = groups.get(previous.requestId) ?? [];
+      if (group.length && !isDeepStrictEqual(group[0].receipt.partial, previous)) binding();
+      group.push(data); groups.set(previous.requestId, group);
+    }
+    if (!groups.size) return;
+    const visited = new Set<string>();
+    let requestId = this.config.requestId!;
+    while (true) {
+      if (visited.has(requestId)) binding();
+      visited.add(requestId);
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        'SELECT * FROM investigation_requests WHERE id=? AND investigation_id=? FOR UPDATE',
+        [requestId, this.config.investigationId]);
+      const request = rows[0], snapshot = decode(request?.request_snapshot), authority = snapshot?.authority;
+      // Each node retains its own actor and Session; no equality requirement
+      // across generations. Live caller/service ACL remains on HTTP/CLI ingress.
+      if (rows.length !== 1 || request.cancel_requested_at || snapshot?.id !== this.config.investigationId
+        || !['user', 'service'].includes(request.actor_kind) || snapshot.actor?.kind !== request.actor_kind
+        || snapshot.actor.id !== Number(request.actor_id) || authority?.actor?.kind !== request.actor_kind
+        || authority.actor.id !== Number(request.actor_id) || authority.investigationId !== this.config.investigationId
+        || !snapshot.sessionId || authority.sessionId !== snapshot.sessionId) binding();
+      if (requestId === this.config.requestId && !admitting) {
+        const [successors] = await connection.execute<RowDataPacket[]>(`SELECT id FROM investigation_requests WHERE investigation_id=?
+          AND JSON_UNQUOTE(JSON_EXTRACT(request_snapshot,'$.continuationOf.requestId'))=? LIMIT 2 FOR UPDATE`,
+        [this.config.investigationId, requestId]);
+        if (successors.length) binding();
+      }
+      const edge = snapshot.continuationOf;
+      if (!edge) break;
+      const group = groups.get(edge.requestId), previous = group?.[0].receipt.partial;
+      if (!previous || edge.runId !== previous.runId || edge.resultVersion !== previous.resultVersion
+        || visited.has(edge.requestId)) binding();
+      // If the request came through this source CLI, its immutable HTTP key
+      // must name one of the exact consumed audits. Ordinary authorized HTTP
+      // admission retains its own key and the same continuationOf edge proof.
+      const key = text(request.idempotency_key);
+      if (key?.startsWith('v23-continuation:') && !group!.some(d => key === `v23-continuation:${d.receipt.reviewId}`)) binding();
+      const retained = await assertKnownPartial(connection as never, previous.investigationId, previous, requestId);
+      if (sourceIntentHash(retained) !== previous.recordsHash || retained.job.id !== previous.executionJobId
+        || sourceIntentHash(retained.job) !== previous.executionJobHash) sourceFailure('AUDIT_PARTIAL_BINDING');
+      requestId = edge.requestId;
+    }
+    for (const [id, group] of groups) {
+      const previous = group[0].receipt.partial;
+      if (id === this.config.requestId && admitting && isDeepStrictEqual(previous, admitting)) {
+        // A consumed technical audit may have failed before HTTP admission.
+        // Only a fresh exact review with no accepted successor may recover it.
+        const retained = await assertKnownPartial(connection as never, previous.investigationId, previous);
+        if (sourceIntentHash(retained) !== previous.recordsHash || retained.job.id !== previous.executionJobId
+          || sourceIntentHash(retained.job) !== previous.executionJobHash) sourceFailure('AUDIT_PARTIAL_BINDING');
+      } else if (!visited.has(id) || id === this.config.requestId) binding();
+    }
   }
   async execute(id: string, type: 'metrics.collect' | 'investigation.execute', registry: JobRegistry,
     validate: (job: ClaimedJob) => void) {

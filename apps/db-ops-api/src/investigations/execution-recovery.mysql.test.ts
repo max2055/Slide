@@ -217,6 +217,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       toolCalls?: boolean;
       missingUsage?: boolean;
       toolError?: boolean;
+      zeroSend?: boolean;
     } = {},
   ) {
     providerCalls = 0;
@@ -225,7 +226,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       getDefaultModel: () => 'readonly-fixture',
       getModelCapabilities: () => ({
         model: 'readonly-fixture',
-        contextWindowTokens: 32768,
+        contextWindowTokens: options.zeroSend ? 5121 : 32768,
         preferredOutputTokens: 4096,
         source: 'configuration',
         version: 'fixture/v1',
@@ -519,6 +520,56 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(afterAdmission);
     }
 
+  });
+
+  it('continues three exact cancelled zero-send partials through real JWT HTTP and complete source transactions', async () => {
+    const app = Fastify(), secret = 'synthetic-multilevel-continuation-secret';
+    await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
+    const api = await app.listen({ host: '127.0.0.1', port: 0 });
+    const queue = new MysqlWorkflowStore(() => pool as never), immutable: Array<{ previous: any; records: any; successor: string }> = [];
+    try {
+      for (let level = 0; level < 3; level++) {
+        const run = await execute(fixture({ zeroSend: true }));
+        expect(run.state).toBe('partial'); expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+        binding.runId = run.id;
+        await queue.fail({ id: binding.jobId, attempts: 1, maxAttempts: 1, fencingToken: binding.fencingToken } as never,
+          binding.workerId, new Error('V23_SOURCE_RESULT_UNCERTAIN'), null);
+        const [result] = await rows('SELECT * FROM investigation_results WHERE investigation_id=? ORDER BY version DESC LIMIT 1', [binding.investigationId]);
+        const previous = { requestId: binding.requestId, runId: run.id, resultVersion: Number(result.version) };
+        const records = await bridge.storeFor(owner).transaction(c => assertKnownPartial(c, binding.investigationId, previous));
+        expect(records.allocation).toMatchObject({ state: 'cancelled', sent_at: null, charged_tokens: 0, cost_status: 'known', usage_snapshot: null, settlement_hash: null });
+        const sourceId = randomUUID(), operationId = randomUUID();
+        await queue.enqueue({ id: sourceId, type: 'qualification.source', schemaVersion: 1,
+          payload: { operationId, phase: 'investigate' }, idempotencyKey: `v23-source:${operationId}`, maxAttempts: 1 });
+        const failed = await claimSourceJob(pool, sourceId, 'qualification.source', randomUUID());
+        const [claimed] = await rows('SELECT lease_owner FROM workflow_jobs WHERE id=?', [sourceId]);
+        await queue.fail(failed, claimed.lease_owner, new Error('V23_SOURCE_REQUIRES_AUDIT'), null);
+        const [sourceRow] = await rows('SELECT * FROM workflow_jobs WHERE id=?', [sourceId]);
+        const a = auditFixture(), [identity] = await rows('SELECT @@server_uuid AS uuid');
+        const config = { ...a.config, database, api, phase: 'continue' as const, investigationId: binding.investigationId, requestId: binding.requestId };
+        const receipt: any = { ...a.receipt, reviewId: randomUUID(), decision: 'known_partial_explicit_continuation',
+          predecessor: { ...a.receipt.predecessor, intentId: sourceId, operationId, jobHash: sourceIntentHash(sourceRow) },
+          successor: { ...a.receipt.successor, database, databaseServerUuid: identity.uuid, operationId: config.operationId },
+          partial: { investigationId: binding.investigationId, ...previous, executionJobId: binding.jobId,
+            executionJobHash: sourceIntentHash(records.job), recordsHash: sourceIntentHash(records) } };
+        delete receipt.failureCode; delete receipt.metricsJobs; delete receipt.modelUsage;
+        const control = new SourceControl(pool, config, undefined, a.authorize(receipt));
+        let next: any;
+        try { await control.open(); next = await continueSource(control, signAccessToken(owner, secret)); await control.close(true); }
+        finally { await control.close(); }
+        immutable.push({ previous, records, successor: next.requestId });
+        for (const phase of ['collect', 'investigate'] as const) {
+          const follow = new SourceControl(pool, { ...config, operationId: randomUUID(), phase, requestId: next.requestId });
+          try { await follow.open(); await follow.close(true); } finally { await follow.close(); }
+        }
+        for (const saved of immutable) {
+          expect(await bridge.storeFor(owner).transaction(c => assertKnownPartial(c, binding.investigationId, saved.previous, saved.successor))).toEqual(saved.records);
+        }
+        const workerId = randomUUID();
+        const claimedJob = await claimSourceJob(pool, next.jobId, 'investigation.execute', workerId);
+        binding = { investigationId: next.investigationId, requestId: next.requestId, jobId: next.jobId, runId: '', workerId, fencingToken: claimedJob.fencingToken };
+      }
+    } finally { await app.close(); }
   });
 
   async function automatic(reserveTokens = 32000, claim = true) {
