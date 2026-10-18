@@ -77,6 +77,11 @@ async function main() {
       await runtime.assertSourceInventory(pool, { config });
       await record({ code: 'V23_SOURCE_AUTHORIZATION_CHECKED', operationId: config.operationId });
     }
+    const sessionFile = process.env.V23_SOURCE_SESSION_DESCRIPTOR_FILE;
+    const sessionHash = process.env.V23_SOURCE_SESSION_DESCRIPTOR_SHA256;
+    if (!!sessionFile !== !!sessionHash) sourceFailure('SESSION_API_REJECTED');
+    const sessionApi = sessionFile ? await import('./session-api.js') : undefined;
+    if (sessionApi) await sessionApi.verifySessionApi(pool, config, head, sessionFile!, sessionHash!);
     const auditInput = process.env.V23_SOURCE_PARENT_AUDIT_FILE ? {
       envelope: await protectedBytes(process.env.V23_SOURCE_PARENT_AUDIT_FILE),
       publicKey: await protectedBytes(sourceAuditPublicKeyPath),
@@ -106,6 +111,14 @@ async function main() {
       // production HTTP middleware and environment validation remain installed.
       // A pre-existing listener must never be mistaken for this child. The
       // child's own durable standby log is also required before HTTP readiness.
+      if (sessionApi) {
+        await control.assertActive();
+        const receipt = await sessionApi.verifySessionApi(pool, config, head, sessionFile!, sessionHash!);
+        if (!(await fetch(config.api + '/api/health', { redirect: 'error',
+          signal: AbortSignal.any([control.signal, AbortSignal.timeout(1000)]),
+        })).ok) sourceFailure('API_NOT_READY');
+        await record({ reusedSessionApi: receipt });
+      } else {
       const portProbe = createServer();
       await new Promise<void>((done, reject) => {
         portProbe.once('error', reject);
@@ -128,6 +141,7 @@ async function main() {
       });
       await log.close(); apiLog = undefined;
       if (!ready) sourceFailure('API_NOT_READY');
+      }
       result = config.phase === 'continue' ? await runtime.continueSource(control, token) : await runtime.proposeSource(control, token, record);
     }
     await control.assertActive(); await record({ result, at: new Date().toISOString() });
