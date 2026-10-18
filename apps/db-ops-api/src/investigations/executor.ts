@@ -34,6 +34,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
+import { investigationToolContract } from './tool-contract.js';
 import { systemInvestigationHistory } from './system-tools.js';
 
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
@@ -621,8 +622,11 @@ export class InvestigationExecutor {
           security?.effect !== 'read'
         )
           continue;
+        const contract = profile.id === 'system' ? tool : investigationToolContract(tool, snapshot.resources, profile.budget);
+        if (!contract) continue;
         tools.register({
           ...tool,
+          ...contract,
           concurrencySafe: false,
           exclusive: true,
           timeoutMs: Math.min(tool.timeoutMs ?? 10_000, 10_000),
@@ -668,6 +672,11 @@ export class InvestigationExecutor {
             );
             toolContext?.signal?.throwIfAborted();
             control.signal.throwIfAborted();
+            await this.transaction(async c => {
+              await this.canonical.lockInvestigationExecution(c, actor, binding);
+              await this.authorization.authorizeTool(c, actor, await this.authorization.load(c, investigationId), frozen, name,
+                targets.length ? targets : security.resource === 'instance' ? snapshot.resources.filter((r: any) => r.type === 'instance') : []);
+            });
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });

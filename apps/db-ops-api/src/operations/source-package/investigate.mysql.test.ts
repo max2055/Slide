@@ -54,9 +54,13 @@ describe.skipIf(!input)('fresh standalone investigation with SQL policy and real
       const body = JSON.parse(init.body as string);
       expect(body.stream).toBeFalsy(); expect(journal.read().pending).not.toBeNull();
       expect(body.tools.some((t: any) => t.function.name === 'get_server_metrics')).toBe(true);
+      expect(body.tools.some((t: any) => t.function.name === 'list_active_alerts')).toBe(false);
+      const metricContract = body.tools.find((t: any) => t.function.name === 'get_server_metrics').function.parameters;
+      expect(metricContract.properties.serverId.enum).toEqual([3]);
+      expect(metricContract.properties.range.enum).toEqual(['1h']);
       sends++;
       const message = sends === 1 ? { role: 'assistant', content: null, tool_calls: [{ id: 'source-read-1', type: 'function',
-        function: { name: 'get_server_metrics', arguments: '{"serverId":3}' } }] }
+        function: { name: 'get_server_metrics', arguments: '{"serverId":3,"range":"1h"}' } }] }
         : { role: 'assistant', content: '已读取服务器指标；根因与恢复未验证。' };
       return Response.json({ id: `synthetic-${sends}`, model: 'deepseek-flash', choices: [{ index: 0,
         finish_reason: sends === 1 ? 'tool_calls' : 'stop', message }], usage: { prompt_tokens: 100, completion_tokens: 20 } });

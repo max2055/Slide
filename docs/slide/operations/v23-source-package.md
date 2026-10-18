@@ -114,3 +114,35 @@ CLI运行时要求 `METRICS_COLLECTION_ENABLED=false`、`INVESTIGATION_OPS_AUTO_
 6. 任何失租、hash/ACL/时钟异常、结果/usage未知即停止新阶段和注入。先核在途/未知与本任务jobs，保留不可变记录；没有明确结果不以新operationId重做该动作/调查。先恢复注入文件或有界session并核无剩余目标写，再停止准确API/连接；按18文件及新增差异逐项还原，只处理自己创建的unit/账户/端口/目录，最后核原账户拒绝、原unit not-found/inactive/MainPID0及18087无监听（若前态如此）。不得为了回退DROP平台证据表或重放动作。保留审计/数据库/备份供父查验，再由父释放写锁。
 
 该清单是未来恢复执行依据；本阶段没有声称18文件已重新恢复或现场时钟已修好。本包不执行目标部署、故障注入或行动。父审来源/准确plan后，才交两位真实分离主体对准确不可变版本once；P07原owner接续Q02～Q18。P08仍等P07审定合入，完整P10仍等P07/P08/P09，不merge/done。
+## 已执行 partial 的显式接续（investigation-continuation-1）
+
+这是本地候选协议，尚未获准在现场执行。旧 collect 审计只处理零执行连接失败；它不能授权已发送模型后的 partial。已有 source-runtime-5 的 Run、请求、结果版本、工具证据、两个死信及已结算计量全部保留，不修改状态、不重放。
+
+原生产 `POST /api/investigations/:id/runs` 现在接受可选的 `continuationOf: {requestId, runId, resultVersion}`。Session/调查原锁、JWT、实时权限和原 admission/session bridge 均复用。只有准确最新 partial、无在途执行、provider=null、usageUnknown=false、所有工具已返回且账本已 settled 才可新建一次后续请求；新请求快照持久保存该关联。并发仅一份新请求；原 idempotency key 仍提供原有幂等读取，新 key 不允许再次消费同一 predecessor。缺关联的 partial、未知计量/工具、撤权和版本失配均拒绝。
+
+source 控制器新增 `continue` phase（不调用模型或工具）。由父沿现有固定 Ed25519 信任锚签发独立的 `known_partial_explicit_continuation` receipt，公共字段沿原审计；去除 `failureCode/metricsJobs/modelUsage`，新增 `partial`：准确 `investigationId/requestId/runId/resultVersion/executionJobId/executionJobHash/recordsHash`。`recordsHash` 是 `sourceIntentHash(await assertKnownPartial(...))`，包含旧 request/job/run/result/allocation/evidence 的完整行；`executionJobHash` 是原 execute job 全字段摘要。其 predecessor 仍准确绑定旧 source intent/operation/config/head/hash；successor 绑定本次新 operation/config/head/lock、DB UUID/实际动态端口和期限。实现方没有签发命令或信任锚覆盖选项。
+
+控制器在原 schema 锁及事务下重验实际 durable facts，将一次审计消费和新的 source intent 一起提交；原末端租约等待后验签、UTC/期限/取消复核保持。CLI 的 `continue` 通过原 API 子进程、用户 JWT 和 `/runs` 创建后续请求，返回准确新 request/job。HTTP 不确定时保留审计与 intent，交父核对，不自行重发。真实父签名及新互斥锁由父审本候选后提供；本轮不生成、安装或消费真实凭据。
+
+后续新鲜性路径：父核准新锁/新 head → `continue` 返回同一调查的新 request → 必要时以该准确 request 绑定新 `collect` operation，沿原 scheduler/正式 publication 刷新采样 → 新 `investigate` operation 仅执行该 queued/attempts0 请求 → 原证据/结果装配与 `plan`。每个 phase 使用新 config/lock/operation，collect receipt 用完即移除环境变量。历史 partial/死信按原摘要保留，后续每次 source open 还会重验旧完整记录和准确 successor；已审历史不豁免新出现的 unknown。新采集不创建替代调查或重置原事件链，工具读取新正式 publication，证据绑定本次 request/Run/hash；`exactSource` 的 120 秒新鲜性和生命周期门禁保持。旧 ready 仅证明旧窗口，不能用于今天的计划。P07 helper/行动环境资格及两真实分离主体 once 仍是后续边界。
+
+辅助执行改用 `scripts/qualification/v23-source-stage.ts` 的 `runBoundSourceStage`，整个获审阶段只调用一次。传入本轮准确 allocation 文件及原字节 hash、head、source 容器完整 ID/label；每个 phase 回调都用传入的动态端口创建本次 config/lock/环境，不能沿用旧 common/缓存端口。完整阶段的 phases 数组包含已授权的所有后续步骤；子 phase 不负责 stop。统一 finally 按顺序尝试恢复临时配置、关闭 API/连接/租约、停止准确自有 source，即使前一项清理失败也收集后续结果。该 helper 不 start/restart source，不包含目标3308的 stop，不签凭据、续锁或自动重试。尚未获准或缺资格的阶段应在首次发送前拒绝；不能在 collect 后结束辅助 runner 再另起一个脚本接未发送阶段。旧 `.qualification/source-runtime5` 脚本仅留作历史证据，不能重放。
+
+
+接续身份与预算：真人 JWT 仅授权原 admission。若旧请求由 service 执行，新请求继续使用原 service/sessionVersion/冻结权限上限与实时 ACL；`continuationOperator` 单独记录操作人。身份、消息及原 ledger 的 automatic 预留在同一事务提交，撤权、额度不足或末端 deadline 过期整笔回滚。原调用人的 admission key 保留幂等语义，不重复消息或额度。用户调查仍沿原用户路径。
+
+### 后续完整路径预查与新增恢复
+
+下表是代码路径预查与下一轮运行材料要求，不代表现场通过；本轮仅有合成隔离 SQL/HTTP/SDK 传输测试。原 service7、role12、sessionVersion1 和四个 server3 只读许可保持；模型契约移除在该范围不能调用的数据库工具，不改执行权限。
+
+| 步骤 | 原路径与必备绑定 | 拒绝/交付条件 |
+| --- | --- | --- |
+| 显式后继 | `continueSource` → 原 API `/runs` → Session bridge；新独立 partial receipt、准确新 head/allocation/config/lock/DB UUID/port | 父提供技术签名，运行方不得自签；旧 partial 全行摘要保持，返回新 request/job，不发送模型 |
+| 新鲜来源 | 原 `collectSource` 的 scheduler → formalization/publication，绑定新 request 与原两资产 package revision | 新 operation/config/lock；无新 alert/evaluate 以替换原事件。按实际采集时间留出 <=120s 证据窗口；过期拒绝，不回填时间 |
+| 调查与证据 | `investigateSource` → 原 service Executor → 持久 Agent 策略/场景路由；原 automatic reservation + canonical 总预算 | 仅 queued/attempts0 的准确新请求；只读 <=1h/server3、实时撤权；未知用量不重发，partial 不晋为成功。成功工具回执仍保留原 unknown，结果引用同 request/Run 的证据 |
+| 计划创建与提交 | `exactSource` → `proposeSource` → 原 JWT create/submit；原 `ActionEnvironment` / `PlanSources` | 最新结果、准确 evidence id/version/hash/有效期及实际 server3 范围；受信 helper/unit/host/target hash，固定 policy/verifier 定义与有效 manifest；VM/DB/API 时钟可信。先持久记录 create 结果，再 submit，不重试失联 |
+| 保持待审 | `pending_approval`，保存完整不可变计划与 contentHash、policy/verifier hash | 批准均 pending/used_count0，无 action execution/action job；真实双主体 once、P07 Q02～Q18 由原 owner 后续处理 |
+
+下一轮只补新增差异：以 `post-runtime5.sql` 原基线为前态，保留旧全部恢复点；新增审计消费/新请求/automatic ledger/消息/采集 publication/新 Run/证据/结果/计划与 pending 批准进入新快照。停止新派发并核无在途/未知后，以原 single-transaction 快照脚本写新的 0600 文件，不覆盖旧文件；在全新专属 restore schema 核 migration ledger/checksum、沿原15配置表及71相关业务表逐表 count/全字段 hash，并补本轮新记录绑定/状态。新增目标变更只按准确前态恢复，规则/collection flags/临时配置还原；阶段 finally 关闭准确自有 API/连接/租约后停止自有 source。记录每个准确 PID/端口/容器及退出状态，3308保持原运行状态，父核查后释放新 allocation。发生 unknown 则保留原始记录并交缺口，不以恢复动作掩盖或重放。
+
+仍需父独立审查本候选与新 head 必要 CI，再提供准确锁/技术签名。新鲜正式来源、completed 调查、真实 pending plan 及其新增恢复尚未现场验证；不重复执行未变化的旧恢复、身份/revision1、B16 或旧全量。

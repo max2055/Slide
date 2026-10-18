@@ -15,7 +15,12 @@ export const sourceAuditSchema = z.strictObject({
   successor: z.strictObject({ operationId: z.uuid(), configHash: digest, head, lockHash: digest,
     database: z.string(), databaseServerUuid: z.uuid(), databasePort: z.number().int().min(1024).max(65535).refine(p => ![3306, 3307, 3308].includes(p)), deadline: z.iso.datetime({ precision: 3 }) }),
 });
-export type SourceAudit = z.infer<typeof sourceAuditSchema>;
+export const sourceContinuationAuditSchema = sourceAuditSchema.omit({ decision: true, failureCode: true, metricsJobs: true, modelUsage: true }).extend({
+  decision: z.literal('known_partial_explicit_continuation'),
+  partial: z.strictObject({ investigationId: z.uuid(), requestId: z.uuid(), runId: z.uuid(), resultVersion: z.number().int().positive(),
+    executionJobId: z.uuid(), executionJobHash: digest, recordsHash: digest }),
+});
+export type SourceAudit = z.infer<typeof sourceAuditSchema> | z.infer<typeof sourceContinuationAuditSchema>;
 export interface SourceAuditInput { envelope: Buffer; publicKey: Buffer; binding: { head: string; configHash: string; lockHash: string; databasePort: number }; }
 export const sourceIntentHash = (row: unknown) => bytesHash(JSON.stringify([row]));
 export function verifySourceAudit(input: SourceAuditInput, config: SourcePackage): SourceAudit {
@@ -25,12 +30,14 @@ export function verifySourceAudit(input: SourceAuditInput, config: SourcePackage
   const bytes = Buffer.from(envelope.payload, 'base64'), key = createPublicKey(input.publicKey);
   if (key.asymmetricKeyType !== 'ed25519' || !verify(null, bytes, key, Buffer.from(envelope.signature, 'base64')))
     sourceFailure('AUDIT_SIGNATURE');
-  const receipt = sourceAuditSchema.parse(JSON.parse(bytes.toString())), next = receipt.successor;
-  if (receipt.predecessor.operationId === config.operationId || config.phase !== 'collect'
+  const receipt = z.union([sourceAuditSchema, sourceContinuationAuditSchema]).parse(JSON.parse(bytes.toString())), next = receipt.successor;
+  if (receipt.predecessor.operationId === config.operationId || config.phase !== (receipt.decision === 'known_partial_explicit_continuation' ? 'continue' : 'collect')
     || next.operationId !== config.operationId || next.database !== config.database || next.deadline !== config.deadline
     || next.databasePort !== input.binding.databasePort
     || next.head !== input.binding.head || next.configHash !== input.binding.configHash || next.lockHash !== input.binding.lockHash)
     sourceFailure('AUDIT_BINDING');
+  if (receipt.decision === 'known_partial_explicit_continuation'
+    && (receipt.partial.investigationId !== config.investigationId || receipt.partial.requestId !== config.requestId)) sourceFailure('AUDIT_BINDING');
   const now = Date.now();
   if (Date.parse(receipt.reviewedAt) > now || Date.parse(receipt.expiresAt) <= now
     || Date.parse(receipt.reviewedAt) >= Date.parse(receipt.expiresAt) || Date.parse(receipt.expiresAt) < Date.parse(config.deadline))

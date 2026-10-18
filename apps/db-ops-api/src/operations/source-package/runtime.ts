@@ -224,6 +224,33 @@ export async function investigateSource(control: SourceControl) {
   return exactSource(control);
 }
 
+/** New request through the original authenticated admission lane. This phase
+ * sends no model/tool work; its separate parent receipt only acknowledges the
+ * exact settled partial. A following investigate needs its own config/lock. */
+export async function continueSource(control: SourceControl, token: string) {
+  const c = control.config;
+  if (c.phase !== 'continue' || !control.audit) sourceFailure('PARTIAL_AUDIT_REQUIRED');
+  const { verifySourceAudit } = await import('./audit.js');
+  const receipt = verifySourceAudit(control.audit, c);
+  if (receipt.decision !== 'known_partial_explicit_continuation') return sourceFailure('PARTIAL_AUDIT_REQUIRED');
+  const actor = await sourceActor(control);
+  const inv = await new InvestigationSessionBridge(() => control.pool).storeFor(actor)
+    .detail({ kind: 'user', id: actor.userId }, c.investigationId!);
+  await control.assertActive();
+  const response = await fetch(`${c.api}/api/investigations/${c.investigationId}/runs`, {
+    method: 'POST', redirect: 'error', signal: AbortSignal.any([control.signal, AbortSignal.timeout(25000)]),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': `v23-continuation:${receipt.reviewId}` },
+    body: JSON.stringify({ expectedVersion: inv.version,
+      message: '显式后续调查：保留原 partial、证据与计量；重新读取当前合法范围，不重放旧请求或假定已恢复。',
+      continuationOf: { requestId: receipt.partial.requestId, runId: receipt.partial.runId, resultVersion: receipt.partial.resultVersion, notAfter: c.deadline } }),
+  });
+  if (response.status !== 202) sourceFailure('CONTINUATION_HTTP_REJECTED');
+  const accepted = await response.json() as { investigationId: string; requestId: string; jobId: string; version: number };
+  if (accepted.investigationId !== c.investigationId || accepted.requestId === c.requestId) sourceFailure('CONTINUATION_BINDING');
+  await control.assertActive();
+  return accepted;
+}
+
 /** The generic runtime summary deliberately has no evidence references. Compose
  * a new version through the original trusted result port, citing only successful
  * canonical tool receipts of this completed request/Run. Never infer root cause,
@@ -262,7 +289,7 @@ async function referenceSourceObservations(control: SourceControl, runId: string
     if (bound.run.state !== 'completed') sourceFailure('INVESTIGATION_NOT_COMPLETED');
     await store.putOnConnection(connection, current, investigation, binding,
       `v23-source-observations:${runId}`, summary.version, { ...summary.result,
-        facts: proofs.map(proof => ({ statement: proof.summary, evidenceIds: [proof.id] })) });
+        facts: proofs.map(proof => ({ statement: `已读取工具回执：${proof.summary}；缺口与unknown保持原状，不证明健康、根因或恢复`, evidenceIds: [proof.id] })) });
     await control.assertCommitFence(connection);
   });
 }

@@ -1,3 +1,4 @@
+import { assertKnownPartial, type InvestigationContinuation } from './continuation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { INVESTIGATION_ERROR_STATUS, type InvestigationSubject } from './contracts.js';
@@ -13,6 +14,7 @@ export class InvestigationStoreError extends Error {
 }
 export type InvestigationActor = { kind: 'user' | 'service'; id: number };
 export interface InvestigationAdmission {
+  continuationOf?: InvestigationContinuation;
   investigationId: string;
   actor: InvestigationActor;
   idempotencyKey: string;
@@ -445,6 +447,7 @@ export class MysqlInvestigationStore {
     // not a newly resolved Profile version that could change on a retry.
     const requestHash = createHash('sha256').update(JSON.stringify([
       input.investigationId, input.message, input.expectedVersion,
+      ...(input.continuationOf ? [input.continuationOf.requestId, input.continuationOf.runId, input.continuationOf.resultVersion, input.continuationOf.notAfter ?? null] : []),
     ])).digest('hex');
     const key = Buffer.from(input.idempotencyKey, 'utf8');
     const keyValues = [input.actor.kind, input.actor.id, key];
@@ -472,6 +475,10 @@ export class MysqlInvestigationStore {
     if (row.active_request_id) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
     if (investigation.version !== input.expectedVersion) throw new InvestigationStoreError('VERSION_CONFLICT');
     if (['closed', 'archived'].includes(investigation.lifecycle)) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    const [latestRun] = await select(connection, `SELECT r.state FROM agent_runs r JOIN investigation_requests q
+      ON r.idempotency_key=CONCAT('investigation:',q.id) WHERE q.investigation_id=? ORDER BY q.accepted_version DESC LIMIT 1 FOR UPDATE`, [investigation.id]);
+    if (input.continuationOf) await assertKnownPartial(connection, investigation.id, input.continuationOf);
+    else if (latestRun?.state === 'partial') throw new InvestigationStoreError('VERSION_CONFLICT');
     const version = investigation.version + 1;
     if (!Number.isSafeInteger(version)) throw new InvestigationStoreError('VERSION_CONFLICT');
     const requestId = randomUUID();
@@ -479,7 +486,8 @@ export class MysqlInvestigationStore {
     const jobKey = `investigation.execute:${requestId}`;
     // Only IDs go in the Workflow queue; the immutable request owns the
     // execution snapshot. No Agent Run is fabricated at admission time.
-    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: input.message };
+    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: input.message,
+      ...(input.continuationOf ? { continuationOf: structuredClone(input.continuationOf) } : {}) };
     await connection.execute(`INSERT INTO investigation_requests
       (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

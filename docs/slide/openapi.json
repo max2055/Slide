@@ -8954,6 +8954,40 @@
         "$id": "InvestigationRequest",
         "additionalProperties": false,
         "properties": {
+          "continuationOf": {
+            "additionalProperties": false,
+            "properties": {
+              "notAfter": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "requestId": {
+                "maxLength": 36,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "runId": {
+                "maxLength": 36,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "required": [
+              "requestId",
+              "runId",
+              "resultVersion"
+            ],
+            "type": "object"
+          },
           "expectedVersion": {
             "maximum": 9007199254740991,
             "minimum": 1,

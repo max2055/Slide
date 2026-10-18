@@ -369,6 +369,20 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         expect((await send()).statusCode).toBe(409);
         await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof original === 'string' ? JSON.parse(original) : original), binding.runId]);
       }
+      if (mode === 'service-http') {
+        // Live service revocation cannot be bypassed by the human operator.
+        await pool.execute("UPDATE users SET session_version=session_version+1 WHERE id=?", [serviceId]);
+        expect((await send()).statusCode).not.toBe(202);
+        await pool.execute("UPDATE users SET session_version=session_version-1 WHERE id=?", [serviceId]);
+        expect(await snapshot()).toEqual(before);
+        const refusedBridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts),
+          { domain: 'test-continuation-refusal', policy: { ...policy, maxCostMicrosPerDay: 1 } });
+        await expect(refusedBridge.admit(owner, { investigationId: binding.investigationId, message: 'budget must refuse',
+          expectedVersion: Number(inv.version), idempotencyKey: randomUUID(), continuationOf: previous }))
+          .rejects.toThrow('INVESTIGATION_BUDGET_EXHAUSTED');
+        expect(await snapshot()).toEqual(before);
+        expect(await rows('SELECT id FROM investigation_requests WHERE investigation_id=?', [binding.investigationId])).toHaveLength(1);
+      }
       let next: any;
       if (mode !== 'concurrent') next = await continueSource(controlled, signAccessToken(owner, secret));
       else {
@@ -387,6 +401,16 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         expect(snap.authority.actor).toEqual({ kind: 'service', id: serviceId });
         expect(snap.continuationOperator).toEqual({ kind: 'user', id: owner.userId });
         expect(snap.budgetReceipt.mode).toBe('automatic');
+        const [reservation] = await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [next.requestId]);
+        expect(reservation.state).toBe('reserved');
+        // The original caller/key remains an idempotent read, with no second
+        // message or automatic budget allocation after execution identity changes.
+        const retry = await app.inject({ method: 'POST', url: `/api/investigations/${binding.investigationId}/runs`,
+          headers: { authorization: `Bearer ${signAccessToken(owner, secret)}`, 'idempotency-key': `v23-continuation:${receipt.reviewId}` },
+          payload: { continuationOf: snap.continuationOf, expectedVersion: Number(inv.version), message: snap.message } });
+        expect(retry.statusCode).toBe(202);
+        expect(retry.json()).toMatchObject(next);
+        expect(await rows('SELECT id FROM investigation_budget_ledger WHERE request_id=?', [next.requestId])).toHaveLength(1);
       }
       expect(await snapshot()).toEqual(before);
       expect((await send(previous, next.version)).statusCode).toBe(409);

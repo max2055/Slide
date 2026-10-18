@@ -8,7 +8,7 @@ export const sourcePackageSchema = z.strictObject({
   schemaVersion: z.literal(1), operationId: z.uuid(),
   database: z.string().regex(/^slide_v23_source_[a-f0-9]{8,32}$/),
   deadline: z.iso.datetime({ precision: 3 }),
-  phase: z.enum(['collect', 'evaluate', 'investigate', 'plan']),
+  phase: z.enum(['collect', 'evaluate', 'continue', 'investigate', 'plan']),
   serverId: z.literal(3), instanceId: id,
   instanceHost: z.enum(['127.0.0.1', '192.168.49.130']),
   maxMetricJobs: z.number().int().min(1).max(12),
@@ -25,7 +25,7 @@ export const sourcePackageSchema = z.strictObject({
 }).superRefine((v, c) => {
   if (v.target.serverId !== v.serverId) c.addIssue({ code: 'custom', message: 'SOURCE_TARGET_IDENTITY' });
   if (new Set(v.alertRules.map(r => r.id)).size !== v.alertRules.length) c.addIssue({ code: 'custom', message: 'SOURCE_RULE_DUPLICATE' });
-  if (['investigate', 'plan'].includes(v.phase) && (!v.investigationId || !v.requestId))
+  if (['continue', 'investigate', 'plan'].includes(v.phase) && (!v.investigationId || !v.requestId))
     c.addIssue({ code: 'custom', message: 'SOURCE_EXACT_REQUEST_REQUIRED' });
 });
 export type SourcePackage = z.infer<typeof sourcePackageSchema>;

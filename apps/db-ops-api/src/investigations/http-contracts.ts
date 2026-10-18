@@ -11,7 +11,8 @@ export const InvestigationCreateRequestSchema = Type.Object({ title: text(200), 
   resourceRefs: Type.Array(resource, { maxItems: 20 }), sessionId: Type.Optional(text(100)),
   from: Type.Optional(text(32)), to: Type.Optional(text(32)),
 }, { $id: 'InvestigationCreateRequest', ...strict });
-export const InvestigationRequestSchema = Type.Object({ message: text(2_000), expectedVersion: version },
+export const InvestigationRequestSchema = Type.Object({ message: text(2_000), expectedVersion: version,
+  continuationOf: Type.Optional(Type.Object({ requestId: text(36), runId: text(36), resultVersion: version, notAfter: Type.Optional(text(32)) }, strict)) },
   { $id: 'InvestigationRequest', ...strict });
 export const InvestigationPatchRequestSchema = Type.Object({ expectedVersion: version,
   title: Type.Optional(text(200)), goal: Type.Optional(text(2_000)), lifecycle: Type.Optional(InvestigationLifecycleSchema),

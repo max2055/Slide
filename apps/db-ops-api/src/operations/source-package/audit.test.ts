@@ -3,6 +3,19 @@ import { verifySourceAudit, sourceIntentHash } from './audit.js';
 import { auditFixture } from './audit.fixture.js';
 
 describe('parent source audit authorization', () => {
+  it('separates a known-partial continuation receipt from zero-send collection authorization', () => {
+    const f = auditFixture();
+    const config = { ...f.config, phase: 'continue' as const, investigationId: f.row.id, requestId: f.row.payload.operationId };
+    const { failureCode: _failure, metricsJobs: _jobs, modelUsage: _usage, ...common } = f.receipt;
+    const receipt = { ...common, decision: 'known_partial_explicit_continuation', partial: {
+      investigationId: config.investigationId, requestId: config.requestId, runId: f.row.id, resultVersion: 1,
+      executionJobId: f.row.id, executionJobHash: 'a'.repeat(64), recordsHash: 'b'.repeat(64),
+    } };
+    expect(verifySourceAudit(f.authorize(receipt as never), config)).toEqual(receipt);
+    expect(() => verifySourceAudit(f.authorize(), config)).toThrow();
+    expect(() => verifySourceAudit(f.authorize(receipt as never), f.config)).toThrow();
+    expect(() => verifySourceAudit(f.authorize(receipt as never), { ...config, requestId: f.row.id })).toThrow();
+  });
   it('accepts an exact independently signed successor and hashes the entire old row', () => {
     const f = auditFixture(); expect(verifySourceAudit(f.authorize(), f.config)).toEqual(f.receipt);
     expect(sourceIntentHash(f.row)).toBe(f.receipt.predecessor.jobHash);

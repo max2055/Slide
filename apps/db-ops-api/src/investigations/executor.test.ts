@@ -4,6 +4,10 @@ import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 const now = Date.parse('2026-10-12T12:00:00Z'),
   budget = { maxBytes: 128_000, maxRows: 200, maxWindowMs: 3_600_000 };
 describe('restricted investigation arguments', () => {
+  it('rejects the originally emitted 24h server call and keeps the legal 1h call', () => {
+    expect(() => boundedInvestigationArguments('get_server_metrics', { serverId: 3, range: '24h' }, budget, now)).toThrow('INVESTIGATION_TOOL_WINDOW_LIMIT');
+    expect(boundedInvestigationArguments('get_server_metrics', { serverId: 3, range: '1h' }, budget, now).targets).toEqual([{ type: 'server', id: 3 }]);
+  });
   it('resolves exact trusted resource IDs', () => {
     expect(boundedInvestigationArguments('get_instance_summary', { instance_id: 101 }, budget, now).targets).toEqual([
       { type: 'instance', id: 101 },

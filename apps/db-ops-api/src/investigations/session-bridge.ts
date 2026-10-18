@@ -1,9 +1,10 @@
+import { assertContinuationDeadline } from './continuation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
 import { resolveInvestigationProfile } from './profiles.js';
 import { randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
-import type { ActorContext } from '../auth/actor-context.js';
+import { ActorContextService, type ActorContext } from '../auth/actor-context.js';
 import { ChatDatabaseService, type ChatMessageRecord } from '../chat-database-service.js';
 import { recordMessageParts } from '../adapter/message-parts.js';
 import { InvestigationAuthorization, freezeInvestigationCaller, type InvestigationAuthoritySnapshot } from './authorization.js';
@@ -33,11 +34,13 @@ export class InvestigationSessionBridge {
   private readonly chat: ChatDatabaseService;
   private readonly ledger: MysqlInvestigationBudgetLedger;
   private readonly budgetDomain: string;
+  private readonly reserveCostMicros: number;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
-    cancellationBudget: { domain: string; policy: BudgetPolicy } = investigationBudgetConfiguration()) {
+    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number } = investigationBudgetConfiguration()) {
     this.chat = new ChatDatabaseService(poolProvider, authorization);
     this.budgetDomain = cancellationBudget.domain;
+    this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
     this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, cancellationBudget.policy);
   }
 
@@ -137,13 +140,43 @@ export class InvestigationSessionBridge {
       { ...command, actor: { kind: actor.principalKind ?? 'user', id: actor.userId } });
     if (!isNew) return acceptance;
     const investigation = await this.authorization.load(connection, acceptance.investigationId);
-    const authority = this.authorization.freeze(await this.authorization.authorize(connection, actor, investigation, 'continue'));
+    // HTTP caller authorizes admission, while an automatic predecessor keeps
+    // its original service ceiling. A human JWT never upgrades execution.
+    let executionActor = actor;
+    let frozen: InvestigationAuthoritySnapshot | undefined;
+    if (command.continuationOf) {
+      const [previous] = await connection.execute('SELECT actor_kind, actor_id, request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE',
+        [command.continuationOf.requestId]) as [RowDataPacket[], unknown];
+      if (previous[0]?.actor_kind === 'service') {
+        const prior = typeof previous[0].request_snapshot === 'string' ? JSON.parse(previous[0].request_snapshot) : previous[0].request_snapshot;
+        frozen = prior?.authority;
+        if (!frozen || frozen.actor.kind !== 'service' || frozen.actor.id !== Number(previous[0].actor_id))
+          throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+        const current = await new ActorContextService().loadInvestigationActorFrom(connection,
+          frozen.actor.id, 'service', frozen.sessionVersion);
+        executionActor = { ...current, permissions: frozen.permissions, instanceScopes: frozen.instanceScopes,
+          resourceBoundary: frozen.resourceBoundary };
+      }
+    }
+    const authorized = await this.authorization.authorize(connection, executionActor, investigation, 'continue', [], frozen);
+    if (frozen) executionActor = authorized.actor;
+    const authority = this.authorization.freeze(authorized);
+    const executionSubject = { kind: executionActor.principalKind ?? 'user', id: executionActor.userId };
     const [rows] = await connection.execute('SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [acceptance.requestId]) as [RowDataPacket[], unknown];
     const snapshot = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
-    await connection.execute('UPDATE investigation_requests SET request_snapshot = ? WHERE id = ?',
-      [JSON.stringify({ ...snapshot, authority }), acceptance.requestId]);
-    await this.chat.appendInvestigationMessage(actor, acceptance.investigationId, acceptance.version, acceptance.requestId,
+    await connection.execute('UPDATE investigation_requests SET actor_kind = ?, actor_id = ?, request_snapshot = ? WHERE id = ?',
+      [executionSubject.kind, executionSubject.id, JSON.stringify({ ...snapshot, actor: executionSubject, authority,
+        ...(frozen ? { continuationOperator: { kind: actor.principalKind ?? 'user', id: actor.userId } } : {}) }), acceptance.requestId]);
+    await this.chat.appendInvestigationMessage(executionActor, acceptance.investigationId, acceptance.version, acceptance.requestId,
       { messageId: randomUUID(), role: 'user', content: command.message }, connection);
+    if (frozen) {
+      const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
+      const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
+        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: profile.budget.maxTokens,
+        reserveCostMicros: this.reserveCostMicros });
+      if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');
+    }
+    await assertContinuationDeadline(connection, command.continuationOf?.notAfter);
     return acceptance;
   }
 

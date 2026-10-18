@@ -118,7 +118,7 @@ async function main() {
       await log.close();
       if (!ready) sourceFailure('API_NOT_READY');
       const token = (await protectedBytes(process.env.V23_SOURCE_JWT_FILE ?? '')).toString().trim();
-      result = await runtime.proposeSource(control, token, record);
+      result = config.phase === 'continue' ? await runtime.continueSource(control, token) : await runtime.proposeSource(control, token, record);
     }
     await control.assertActive(); await record({ result, at: new Date().toISOString() });
     success = true;

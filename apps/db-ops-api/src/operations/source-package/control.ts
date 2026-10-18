@@ -1,3 +1,4 @@
+import { assertKnownPartial } from '../../investigations/continuation.js';
 import { randomUUID } from 'node:crypto';
 import { sourceIntentHash, verifySourceAudit, type SourceAuditInput } from './audit.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -121,15 +122,50 @@ export class SourceControl {
       const historical = new Map(jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')
         .map(j => { const p = typeof j.payload === 'string' ? JSON.parse(j.payload) : j.payload;
           return [p.predecessorId, p.predecessorHash]; }));
+      const continuation = receipt?.decision === 'known_partial_explicit_continuation' ? receipt : undefined;
+      let partial: Awaited<ReturnType<typeof assertKnownPartial>> | undefined;
+      if (continuation) {
+        partial = await assertKnownPartial(connection as never, continuation.partial.investigationId, continuation.partial);
+        if (sourceIntentHash(partial) !== continuation.partial.recordsHash || partial.job.id !== continuation.partial.executionJobId
+          || sourceIntentHash(partial.job) !== continuation.partial.executionJobHash) sourceFailure('AUDIT_PARTIAL_BINDING');
+      }
+      const historicalExecutions = new Map(jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')
+        .flatMap(j => { const p = typeof j.payload === 'string' ? JSON.parse(j.payload) : j.payload;
+          return p.receipt?.decision === 'known_partial_explicit_continuation' ? [[p.receipt.partial.executionJobId, p.receipt.partial.executionJobHash]] : []; }));
+      for (const auditJob of jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')) {
+        const data = typeof auditJob.payload === 'string' ? JSON.parse(auditJob.payload) : auditJob.payload;
+        if (data.receipt?.decision !== 'known_partial_explicit_continuation') continue;
+        const previous = data.receipt.partial;
+        if (this.config.investigationId !== previous.investigationId || !this.config.requestId) sourceFailure('CONTINUATION_BINDING');
+        const retained = await assertKnownPartial(connection as never, previous.investigationId, previous, this.config.requestId);
+        if (sourceIntentHash(retained) !== previous.recordsHash) sourceFailure('AUDIT_PARTIAL_BINDING');
+      }
+      if (this.config.phase === 'continue' && !continuation) sourceFailure('PARTIAL_AUDIT_REQUIRED');
+      if (historicalExecutions.size && ['collect', 'investigate'].includes(this.config.phase)
+        && (!this.config.investigationId || !this.config.requestId)) sourceFailure('CONTINUATION_BINDING');
       let used = false;
       for (const job of jobs) {
         if (['completed', 'cancelled'].includes(job.state)) continue;
         const payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
-        if (this.config.phase === 'investigate' && job.job_type === 'investigation.execute' && job.state === 'queued'
-          && job.attempts === 0 && payload.investigationId === this.config.investigationId && payload.requestId === this.config.requestId) continue;
+        if (['collect', 'investigate'].includes(this.config.phase) && job.job_type === 'investigation.execute' && job.state === 'queued'
+          && job.attempts === 0 && payload.investigationId === this.config.investigationId && payload.requestId === this.config.requestId) {
+          if (historicalExecutions.size) {
+            const [requests] = await connection.execute<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=? FOR UPDATE', [this.config.requestId]);
+            const snapshot = typeof requests[0]?.request_snapshot === 'string' ? JSON.parse(requests[0].request_snapshot) : requests[0]?.request_snapshot;
+            const matches = jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')
+              .some(j => { const p = typeof j.payload === 'string' ? JSON.parse(j.payload) : j.payload, previous = p.receipt?.partial;
+                return previous?.investigationId === this.config.investigationId && snapshot?.continuationOf?.requestId === previous.requestId
+                  && snapshot.continuationOf.runId === previous.runId && snapshot.continuationOf.resultVersion === previous.resultVersion; });
+            if (!matches) sourceFailure('CONTINUATION_BINDING');
+          }
+          continue;
+        }
+        if (job.id === partial?.job.id) continue;
+        if (job.job_type === 'investigation.execute' && job.state === 'dead_letter'
+          && historicalExecutions.get(job.id) === sourceIntentHash(job)) continue;
         const terminal = job.job_type === 'qualification.source' && job.state === 'dead_letter' && job.attempts === 1
           && job.max_attempts === 1 && job.lease_owner === null && job.lease_expires_at === null
-          && job.last_error === 'V23_SOURCE_REQUIRES_AUDIT' && payload.phase === 'collect';
+          && job.last_error === 'V23_SOURCE_REQUIRES_AUDIT' && (payload.phase === 'collect' || (payload.phase === 'investigate' && (continuation || historical.has(job.id))));
         const digest = sourceIntentHash(job);
         if (terminal && historical.get(job.id) === digest) continue;
         if (!receipt || used || !terminal || receipt.predecessor.intentId !== job.id
@@ -143,8 +179,8 @@ export class SourceControl {
         if (!used || historical.has(receipt.predecessor.intentId)) sourceFailure('AUDIT_ALREADY_USED_OR_UNKNOWN');
         // This narrowly supported failure occurred before any collection or model
         // work. A signed assertion cannot override contradictory durable facts.
-        if (jobs.some(j => !['qualification.source', 'qualification.source.audit'].includes(j.job_type))) sourceFailure('AUDIT_EXECUTION_EXISTS');
-        for (const table of ['metric_observations', 'metric_publications', 'investigations']) {
+        if (!continuation && jobs.some(j => !['qualification.source', 'qualification.source.audit'].includes(j.job_type))) sourceFailure('AUDIT_EXECUTION_EXISTS');
+        for (const table of continuation ? [] : ['metric_observations', 'metric_publications', 'investigations']) {
           const [rows] = await connection.query<RowDataPacket[]>(`SELECT 1 FROM ${table} LIMIT 1`);
           if (rows.length) sourceFailure('AUDIT_EXECUTION_EXISTS');
         }
