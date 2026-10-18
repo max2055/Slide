@@ -19,10 +19,11 @@ import { InvestigationSessionBridge } from '../../investigations/session-bridge.
 import { operationsContentHash } from '../contracts.js';
 import { assertSourceClock, sourceDefinitions, sourceFailure } from './config.js';
 import { SourceControl } from './control.js';
+import { rejectSourceHttp } from './http-receipt.js';
 
 /** Guard before production services that enumerate the schema. A dedicated
  * configuration import must contain only these two assets and no unrelated jobs. */
-export async function assertSourceInventory(pool: Pool, control: SourceControl) {
+export async function assertSourceInventory(pool: Pool, control: Pick<SourceControl, 'config'>) {
   const c = control.config;
   const [servers] = await pool.query<RowDataPacket[]>('SELECT id,host,port,host_key_fingerprint FROM servers');
   const [instances] = await pool.query<RowDataPacket[]>('SELECT id,host,port,db_type FROM database_instances');
@@ -244,7 +245,7 @@ export async function continueSource(control: SourceControl, token: string) {
       message: '显式后续调查：保留原 partial、证据与计量；重新读取当前合法范围，不重放旧请求或假定已恢复。',
       continuationOf: { requestId: receipt.partial.requestId, runId: receipt.partial.runId, resultVersion: receipt.partial.resultVersion, notAfter: c.deadline } }),
   });
-  if (response.status !== 202) sourceFailure('CONTINUATION_HTTP_REJECTED');
+  if (response.status !== 202) await rejectSourceHttp(response, 'CONTINUATION_HTTP_REJECTED');
   const accepted = await response.json() as { investigationId: string; requestId: string; jobId: string; version: number };
   if (accepted.investigationId !== c.investigationId || accepted.requestId === c.requestId) sourceFailure('CONTINUATION_BINDING');
   await control.assertActive();
@@ -327,7 +328,7 @@ export async function proposeSource(control: SourceControl, token: string,
     const response = await fetch(c.api + path, { method: 'POST', redirect: 'error',
       signal: AbortSignal.any([control.signal, AbortSignal.timeout(25_000)]),
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!response.ok) sourceFailure('HTTP_REJECTED');
+    if (!response.ok) await rejectSourceHttp(response, 'HTTP_REJECTED');
     return response.json() as Promise<any>;
   };
   const { plan } = await post('/api/operations/actions/plans', { content: { schemaVersion: 1,

@@ -22,4 +22,4 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then exit 1; fi
-V23_SOURCE_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/operations/source-package/control.mysql.test.ts src/operations/source-package/runtime.mysql.test.ts
+V23_SOURCE_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/operations/source-package/control.mysql.test.ts src/operations/source-package/runtime.mysql.test.ts src/operations/source-package/authorization.mysql.test.ts

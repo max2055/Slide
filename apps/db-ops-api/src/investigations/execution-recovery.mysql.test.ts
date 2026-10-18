@@ -301,7 +301,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
 
-  it.each(['concurrent','source-http','service-http','failed-source-http'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
+  it.each(['concurrent','source-http','service-http','failed-source-http','transport-unknown'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
     if (mode === 'service-http') {
       await automatic();
       await pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,?,'operator',?)", [binding.investigationId, owner.userId, serviceId]);
@@ -324,6 +324,10 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const before = await snapshot();
     const app = Fastify(), secret = 'continuation-synthetic-jwt-secret';
     await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
+    let transportSends = 0;
+    if (mode === 'transport-unknown') app.addHook('onRequest', async (request, reply) => {
+      if (request.method === 'POST' && request.url.endsWith('/runs')) { transportSends++; reply.hijack(); request.raw.socket.destroy(); }
+    });
     const api = await app.listen({ host: '127.0.0.1', port: 0 });
     const sourceFixture = auditFixture(), operationId = randomUUID(), sourceId = randomUUID();
     const queue = new MysqlWorkflowStore(() => pool as never);
@@ -346,6 +350,19 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     let input = sourceFixture.authorize(receipt as never);
     let controlled = new SourceControl(pool, config, undefined, input);
     await controlled.open();
+    if (mode === 'transport-unknown') {
+      try {
+        await expect(continueSource(controlled, signAccessToken(owner, secret))).rejects.toThrow();
+        expect(transportSends).toBe(1);
+        expect(await snapshot()).toEqual(before);
+        expect(await rows('SELECT id FROM investigation_requests WHERE investigation_id=?', [binding.investigationId])).toHaveLength(1);
+      } finally { await app.close(); await controlled.close(); }
+      const [failed] = await rows('SELECT * FROM workflow_jobs WHERE idempotency_key=?', [`v23-source:${config.operationId}`]);
+      expect(failed.state).toBe('dead_letter');
+      const replay = new SourceControl(pool, config, undefined, input);
+      try { await expect(replay.open()).rejects.toThrow('OPERATION_ALREADY_RECORDED'); } finally { await replay.close(); }
+      expect(transportSends).toBe(1); return;
+    }
     let failedContinuation: RowDataPacket | undefined;
     if (mode === 'failed-source-http') {
       // Real recordIntent consumption followed by API failure before admission.
@@ -416,6 +433,16 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof original === 'string' ? JSON.parse(original) : original), binding.runId]);
       }
       if (mode === 'service-http') {
+        // A successful technical audit/open is never reusable operation authority.
+        await pool.execute("UPDATE investigation_members SET role='viewer' WHERE investigation_id=? AND user_id=?", [binding.investigationId, owner.userId]);
+        try {
+          await expect(continueSource(controlled, signAccessToken(owner, secret))).rejects.toMatchObject({
+            message: 'V23_SOURCE_CONTINUATION_HTTP_REJECTED', receipt: { status: 403, code: 'INVESTIGATION_OPERATION_FORBIDDEN' },
+          });
+          expect(await snapshot()).toEqual(before);
+        } finally {
+          await pool.execute("UPDATE investigation_members SET role='operator' WHERE investigation_id=? AND user_id=?", [binding.investigationId, owner.userId]);
+        }
         // Live service revocation cannot be bypassed by the human operator.
         await pool.execute("UPDATE users SET session_version=session_version+1 WHERE id=?", [serviceId]);
         expect((await send()).statusCode).not.toBe(202);

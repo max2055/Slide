@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { bytesHash, sourcePackageSchema, sourceDefinitions, sourceFailure } from './config.js';
 
+import { SourceHttpRejection } from './http-receipt.js';
 import { waitForSourceApi } from './api-readiness.js';
 
 const outputRoot = '/Users/max/Coding/40-Slide/outputs';
@@ -45,12 +46,7 @@ async function main() {
     sourceFailure('DISPATCH_MUST_BE_DISABLED');
   const { sourceAuditPublicKeyPath } = await import('./audit.js');
   // Fixed parent-provisioned trust anchor, no operator-supplied key override.
-  // Load before initializing DB so malformed authorization cannot leak a pool.
-  const auditInput = process.env.V23_SOURCE_PARENT_AUDIT_FILE ? {
-    envelope: await protectedBytes(process.env.V23_SOURCE_PARENT_AUDIT_FILE),
-    publicKey: await protectedBytes(sourceAuditPublicKeyPath),
-    binding: { head, configHash: bytesHash(configBytes), lockHash: bytesHash(lockBytes), databasePort: Number(process.env.DB_PORT) },
-  } : undefined;
+  // Credential parsing below runs inside the foreground cleanup boundary.
   const { dbConnection } = await import('../../db-connection.js');
   const { SourceControl } = await import('./control.js');
   const runtime = await import('./runtime.js');
@@ -59,8 +55,8 @@ async function main() {
   const controller = new AbortController();
   const cancel = () => controller.abort(new Error('V23_SOURCE_CANCELLED'));
   process.once('SIGTERM', cancel); process.once('SIGINT', cancel);
-  const control = new SourceControl(pool, config, controller.signal, auditInput);
-  let success = false, api: ChildProcess | undefined;
+  let control: InstanceType<typeof SourceControl> | undefined;
+  let success = false, api: ChildProcess | undefined, apiLog: FileHandle | undefined;
   const output = join(outputRoot, '2026-10-18-v23-source', config.operationId);
   let audit: FileHandle;
   try {
@@ -71,6 +67,22 @@ async function main() {
   }
   const record = async (value: unknown) => { await audit.write(JSON.stringify(value) + '\n'); await audit.sync(); };
   try {
+    // Authenticate the EXACT JWT before a receipt is read/consumed, any
+    // workflow/lease write, API startup or target connection.
+    const token = ['continue', 'plan'].includes(config.phase)
+      ? (await protectedBytes(process.env.V23_SOURCE_JWT_FILE ?? '')).toString().trim() : '';
+    if (config.phase === 'continue') {
+      const { authorizeSourceContinuation } = await import('./authorization.js');
+      await authorizeSourceContinuation(pool, config, token, process.env.JWT_SECRET_KEY ?? '');
+      await runtime.assertSourceInventory(pool, { config });
+      await record({ code: 'V23_SOURCE_AUTHORIZATION_CHECKED', operationId: config.operationId });
+    }
+    const auditInput = process.env.V23_SOURCE_PARENT_AUDIT_FILE ? {
+      envelope: await protectedBytes(process.env.V23_SOURCE_PARENT_AUDIT_FILE),
+      publicKey: await protectedBytes(sourceAuditPublicKeyPath),
+      binding: { head, configHash: bytesHash(configBytes), lockHash: bytesHash(lockBytes), databasePort: Number(process.env.DB_PORT) },
+    } : undefined;
+    control = new SourceControl(pool, config, controller.signal, auditInput);
     await control.open();
     await runtime.assertSourceInventory(pool, control);
     await record({ operationId: config.operationId, head, phase: config.phase, configHash: bytesHash(configBytes), at: new Date().toISOString() });
@@ -99,14 +111,14 @@ async function main() {
         portProbe.once('error', reject);
         portProbe.listen(Number(new URL(config.api).port), '127.0.0.1', () => portProbe.close(error => error ? reject(error) : done()));
       });
-      const log = await open(join(output, 'api.log'), 'wx', 0o600);
+      const log = apiLog = await open(join(output, 'api.log'), 'wx', 0o600);
       api = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: resolve('.'),
         env: { ...process.env, PORT: new URL(config.api).port }, stdio: ['ignore', log.fd, log.fd] });
       let childError = false;
       api.once('error', () => { childError = true; });
       await record({ api: { pid: api.pid, port: new URL(config.api).port, cwd: resolve('.'), command: 'node --import tsx server.ts', head, log: 'api.log' } });
       const ready = await waitForSourceApi({
-        assertActive: () => control.assertActive(),
+        assertActive: () => control!.assertActive(),
         childRunning: () => api.exitCode === null && !childError,
         standby: async () => (await readFile(join(output, 'api.log'), 'utf8'))
           .includes('WORKER_LEASE_UNAVAILABLE: API-only standby'),
@@ -114,16 +126,16 @@ async function main() {
           redirect: 'error', signal: AbortSignal.any([control.signal, AbortSignal.timeout(1000)]),
         })).ok,
       });
-      await log.close();
+      await log.close(); apiLog = undefined;
       if (!ready) sourceFailure('API_NOT_READY');
-      const token = (await protectedBytes(process.env.V23_SOURCE_JWT_FILE ?? '')).toString().trim();
       result = config.phase === 'continue' ? await runtime.continueSource(control, token) : await runtime.proposeSource(control, token, record);
     }
     await control.assertActive(); await record({ result, at: new Date().toISOString() });
     success = true;
   } catch (error) {
     await record({ status: 'requires_audit_no_replay', code: error instanceof Error && /^V23_SOURCE_[A-Z_]+$/.test(error.message)
-      ? error.message : 'V23_SOURCE_FAILED_CLOSED', at: new Date().toISOString() });
+      ? error.message : 'V23_SOURCE_FAILED_CLOSED',
+      ...(error instanceof SourceHttpRejection ? { http: error.receipt } : {}), at: new Date().toISOString() });
     throw error;
   } finally {
     if (api?.pid && api.exitCode === null && api.signalCode === null) {
@@ -131,12 +143,12 @@ async function main() {
       const timer = setTimeout(() => api?.kill('SIGKILL'), 10_000);
       await exit; clearTimeout(timer);
     }
-    try { await control.close(success); }
+    try { await control?.close(success); }
     finally {
       const { databaseService } = await import('../../database-service.js');
       const { default: ssh } = await import('../../ssh-session-pool.js');
       await databaseService.removeConnection(config.instanceId); ssh.closeAll();
-      await audit.close(); await dbConnection.close();
+      await apiLog?.close(); await audit.close(); await dbConnection.close();
       process.removeListener('SIGTERM', cancel); process.removeListener('SIGINT', cancel);
     }
   }
