@@ -175,9 +175,10 @@ export async function evaluateSource(control: SourceControl) {
 /** Standalone lane: load the same persisted policy and catalog as the API,
  * without starting an Agent, cron, worker or recovering global connections. */
 export async function initializeSourceRuntime() {
-  const { agentSecurityPolicyService } = await import('../../security/agent-security-policy-service.js');
+  const { agentSecurityPolicyService, DEFAULT_AGENT_ID } = await import('../../security/agent-security-policy-service.js');
   const { loadPlatformTools } = await import('../../adapter/get-agent-engine.js');
   await agentSecurityPolicyService.initialize(); // propagate failure; never use a stale/inherited cache on error
+  if (agentSecurityPolicyService.get(DEFAULT_AGENT_ID).version < 1) sourceFailure('AGENT_POLICY_REQUIRED');
   await loadPlatformTools();
 }
 
@@ -197,8 +198,7 @@ export async function investigateSource(control: SourceControl) {
         const execute = tool.execute.bind(tool);
         tool.execute = async (args, context) => {
           await control.assertActive();
-          const { agentSecurityPolicyService } = await import('../../security/agent-security-policy-service.js');
-          await agentSecurityPolicyService.initialize();
+          await initializeSourceRuntime();
           // The original tool wrapper checks the refreshed policy, including
           // effect/resource constraints, immediately before its handler.
           return execute(args, context);
@@ -214,10 +214,49 @@ export async function investigateSource(control: SourceControl) {
   const registry = new JobRegistry();
   registry.register('investigation.execute', async (payload, job, context) => {
     if (payload.investigationId !== c.investigationId || payload.requestId !== c.requestId) sourceFailure('JOB_IDENTITY');
-    return executor.execute({ investigationId: c.investigationId!, requestId: c.requestId!, job, context });
+    const run = await executor.execute({ investigationId: c.investigationId!, requestId: c.requestId!, job, context });
+    if (run.state !== 'completed') sourceFailure('INVESTIGATION_NOT_COMPLETED');
+    await referenceSourceObservations(control, run.id);
+    return run;
   });
   await control.execute(jobs[0].id, 'investigation.execute', registry, () => {});
   return exactSource(control);
+}
+
+/** The generic runtime summary deliberately has no evidence references. Compose
+ * a new version through the original trusted result port, citing only successful
+ * canonical tool receipts of this completed request/Run. Never infer root cause,
+ * import model claims, or manufacture evidence/observation values. */
+async function referenceSourceObservations(control: SourceControl, runId: string) {
+  await control.assertActive();
+  const c = control.config, pool = control.pool;
+  const [requests] = await pool.execute<RowDataPacket[]>(`SELECT actor_id,actor_kind,request_snapshot FROM investigation_requests
+    WHERE id=? AND investigation_id=?`, [c.requestId, c.investigationId]);
+  if (requests.length !== 1) sourceFailure('EXACT_REQUEST_REQUIRED');
+  const request = requests[0], snapshot = typeof request.request_snapshot === 'string'
+    ? JSON.parse(request.request_snapshot) : request.request_snapshot;
+  if (!snapshot?.authority || !['user', 'service'].includes(request.actor_kind)
+    || Number(request.actor_id) !== (request.actor_kind === 'service' ? c.serviceActorId : c.actorId)) sourceFailure('REQUEST_ACTOR_BINDING');
+  const live = await new ActorContextService().loadInvestigationActorFrom(pool as never, Number(request.actor_id),
+    request.actor_kind, snapshot.authority.sessionVersion);
+  const actor = { ...live, resourceBoundary: snapshot.authority.resourceBoundary };
+  const store = new InvestigationResultStore(() => pool);
+  const [summary] = (await store.list(actor, c.investigationId!, undefined, 1)).items;
+  if (!summary || summary.requestId !== c.requestId || summary.runId !== runId) sourceFailure('LATEST_RESULT_REQUIRED');
+  const [rows] = await pool.execute<RowDataPacket[]>(`SELECT id FROM investigation_evidence WHERE investigation_id=?
+    AND request_id=? AND run_id=? AND source_key LIKE 'canonical-tool:%' ORDER BY id LIMIT 101`, [c.investigationId, c.requestId, runId]);
+  if (!rows.length || rows.length > 100) sourceFailure('RESULT_EVIDENCE_REQUIRED');
+  const proofs = [];
+  for (const row of rows) {
+    const proof = await new InvestigationEvidenceStore(() => pool).get(actor, c.investigationId!, row.id, true);
+    if (proof.status !== 'available' || (proof.raw as { success?: boolean })?.success !== true)
+      sourceFailure('TOOL_OBSERVATION_UNAVAILABLE');
+    proofs.push(proof);
+  }
+  await control.assertActive();
+  await store.put(actor, { investigationId: c.investigationId!, requestId: c.requestId!, runId },
+    `v23-source-observations:${runId}`, summary.version, { ...summary.result,
+      facts: proofs.map(proof => ({ statement: proof.summary, evidenceIds: [proof.id] })) });
 }
 
 export async function exactSource(control: SourceControl) {

@@ -27,7 +27,7 @@ pnpm --filter slide-api exec tsx ../../scripts/qualification/v23-source-package.
 | --- | --- | --- |
 | collect | MetricScheduler.tick/register → MysqlScheduleStore(production) → JobRegistry.execute → 原适配器 → MetricFormalization | schema只能有两个受审资产/绑定。最多12个准确metric job；不改间隔、jitter、canonical状态。初次采集不是publication；后续真实采集才经原血缘接受/生产ticket发布。分别输出server/instance正式publication IDs/ready；ready=false不能进入对应后续步骤。不把mysql-basic就绪等同慢查询来源已验收。 |
 | evaluate | 原 ServerAlertEvaluator → evaluateOperationalRule → 唯一正式consumer；DatabaseAlertBridge 的原事件接入 | 最多两个固定server规则，无通知渠道。必须有新鲜正式publication，准确一条active告警。显式调用一次原auto事件lane（仅此对象注入enable，不启全局自动循环），原service身份/资源界限/预算/事件幂等保留；用户入口同样重核ACL。交准确alert/event/investigation/request IDs。 |
-| investigate | 原 InvestigationExecutor、createActorBoundToolRegistry、场景Provider路由 | 仅准确request对应的未发送job，原只读Profile/工具许可、事务和canonical运行归属不变。P01唯一batch预算适配器在**真实HTTP发送前**原子预留，收到usage后结算；丢响应/缺usage终止且不能重放。输出最新resultVersion、同request/run的准确证据引用。 |
+| investigate | 原 InvestigationExecutor、createActorBoundToolRegistry、场景Provider路由 | 仅准确request对应的未发送job；独立入口先从专属schema初始化持久Agent策略，再显式loadPlatformTools，不启动完整Agent/worker/cron。初始化失败即停止，工具执行前重载持久策略并重核原effect/resource限制，原只读Profile、动态ACL、事务和canonical运行归属不变。P01唯一batch预算适配器在**真实HTTP发送前**原子预留，收到usage后结算；丢响应/缺usage终止且不能重放。原通用完成摘要不引用证据；本装配仅在completed之后，经原InvestigationResultStore可信写入端追加一版结果，引用该准确request/run下成功canonical工具回执，保留未验证根因和未确认恢复，不把模型文本当事实、不SQL插入证据。输出最新resultVersion、同request/run的准确证据引用。 |
 | plan | 自启动真实API standby子进程、原JWT/live ACL、POST actions/plans及submit | 原ActionEnvironment、P06 PlanSources和事务内ACL/版本/证据到期校验保留。只create/submit；保存完整不可变计划、policy/verifier哈希和来源。确认执行表空、批准仍pending且used_count=0；没有review/execute入口调用。 |
 
 生产采集只使用唯一 metrics store/packages/scheduler/formalization；`trialCurrent`不在本包调用链，不使用旧 collector 写入。`assertSourceInventory`拒绝其他资产/全局规则/通知渠道。正式源读取还核原formal store的sourceState、generation、revision、normalized与120秒新鲜窗口；unknown不补0。调查结果必须是最新版本；计划证据必须在该结果实际引用、同request/run、未过期且确实支持server3。本包不INSERT观测、告警、结果或证据，不以调查的额外资源补证据支持范围。
@@ -79,12 +79,13 @@ init只创建新匹配schema，正式MigrationRunner连续运行两次并记录�
 | users/roles/user_roles/role_permissions/instance_permissions | 只原有授权人类actor和原有最小service身份/必要角色/准确两资源ACL与sessionVersion；保持真人/服务区别，不造人、不提权、不复制refresh tokens或活动会话。服务身份须满足原Investigation service许可白名单，admin会被原校验拒绝。 |
 | metrics配置 | 原不可变registry已有linux-host文件系统、mysql诊断慢查询所需准确package pin/digest；由原policy publish/activate服务在导入资产上发布，保存resourceKey→revision与审计。不能复制旧schedule、source acceptance、rollout canonical或观测来冒充新来源。 |
 | alert_rules | 先关闭MigrationRunner创建的默认规则；仅启用与alertRules精确匹配的最多两条server3文件系统字节规则。维度由受审配置绑定独立目录所在mount/device/fs_type，原单位/阈值/窗口明确、notification_channels=[]；不用全局规则或所有服务器通配。 |
+| agent_security_policies | 必须导入slide-db-ops实际持久策略，保留tool/skill allowlist、allowed_effects、version、原updated_by审计和资源scope。记录原始JSON摘要及原资源ID→专属schema ID映射；只做等价ID映射，不把[]改null或增加权限。迁移默认version1不能替代已有策略；策略缺失或初始化错误不运行。Agent策略与行动policy/verifier是不同配置，均须审查。 |
 | llm_providers/场景绑定 | 只有调查确需模型时导入3306已有deepseek-flash配置及其原场景路由；凭据重新加密。不能启用原停用Provider或换模型。无调用时不导入秘密以证明可用。 |
 | 排除 | 原workflow jobs/outbox、批准及bindings、行动执行、session/checkpoint、调查/证据/结构化结果、观测/发布/事件、通知、cron、队列/预算表都不复制。产品预算始终从P01唯一canonical文件读，不以新schema预算初始化清零。 |
 
 publish/activate沿原 `POST /api/metrics/policy/resources/:type/:id/preview|publish` 和 config activate接口（原JWT、expected_revision、package pin和完整overrides），先只读核catalog/inventory后提交准确请求。收集值只来自后续生产job。runner不提供任意SQL导入功能。每次发布/导入后更新配置文件、hash和父锁，核恢复点；运行期间不改这些配置。
 
-CLI运行时要求 `METRICS_COLLECTION_ENABLED=false`、`INVESTIGATION_OPS_AUTO_ENABLED=false`、`OPERATIONS_ACTION_DISPATCH_ENABLED=false`、`OPERATIONS_STOP_NEW_DISPATCH=true`；计划阶段额外启用PLANS，其余功能按已审装配配置。无需克隆常驻worker。每阶段自己持外部租约，plan阶段先独占bind核端口空闲，再启动同cwd/HEAD的真实API子进程；记录PID→端口→cwd→命令→head→日志，必须同时看到自有日志API-only standby和ready成功，拒绝重定向。只停止自己spawn的准确PID，先SIGTERM并收尾；不得按端口或可执行名强杀。stage结束清理SSH池/实例连接并释放自己的租约。
+CLI运行时要求 `METRICS_COLLECTION_ENABLED=false`、`INVESTIGATION_OPS_AUTO_ENABLED=false`、`OPERATIONS_ACTION_DISPATCH_ENABLED=false`、`OPERATIONS_STOP_NEW_DISPATCH=true`；计划阶段额外启用PLANS，其余功能按已审装配配置。无需克隆常驻worker。每阶段自己持外部租约，plan阶段先独占bind核端口空闲，再启动同cwd/HEAD的真实API子进程；记录PID→端口→cwd→命令→head→日志，必须同时看到自有日志API-only standby、存活HTTP成功及本入口外部租约有效；worker ready在standby按设计为false，不作为这个API子进程的就绪条件，业务验收以真实create/submit为准，拒绝重定向。只停止自己spawn的准确PID，先SIGTERM并收尾；不得按端口或可执行名强杀。stage结束清理SSH池/实例连接并释放自己的租约。
 
 ## 受控现场顺序与恢复清单
 

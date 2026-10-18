@@ -80,6 +80,7 @@ describe('standalone investigation bootstrap precedes any claim or provider send
     const engine = await import('../../adapter/get-agent-engine.js');
     const { OperationsBudgetJournal } = await import('../product-budget.js');
     const order: string[] = [];
+    vi.spyOn(policy, 'get').mockReturnValue({ version: 7 } as never);
     vi.spyOn(policy, 'initialize').mockImplementation(async () => { order.push('policy'); });
     vi.spyOn(engine, 'loadPlatformTools').mockImplementation(async () => { order.push('tools'); return {} as never; });
     vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { order.push('budget'); throw Error('stop before send'); });

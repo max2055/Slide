@@ -99,7 +99,10 @@ async function main() {
       while (Date.now() < readyUntil && api.exitCode === null && !childError && !ready) {
         await control.assertActive();
         const standby = (await readFile(join(output, 'api.log'), 'utf8')).includes('WORKER_LEASE_UNAVAILABLE: API-only standby');
-        try { ready = standby && (await fetch(config.api + '/api/health/ready', {
+        // Worker readiness is deliberately false on an API-only standby.
+        // Our live external lease + this child's standby receipt gate the API;
+        // actual create/submit below supplies the business acceptance.
+        try { ready = standby && (await fetch(config.api + '/api/health', {
           redirect: 'error', signal: AbortSignal.any([control.signal, AbortSignal.timeout(1000)]) })).ok; } catch { /* bounded own child readiness */ }
         if (!ready) await new Promise(done => setTimeout(done, 100));
       }
