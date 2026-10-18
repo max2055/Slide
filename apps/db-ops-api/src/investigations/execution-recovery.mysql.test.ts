@@ -210,6 +210,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       beforeTool?: () => Promise<void>;
       toolCalls?: boolean;
       missingUsage?: boolean;
+      toolError?: boolean;
     } = {},
   ) {
     providerCalls = 0;
@@ -231,7 +232,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
           finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
-              ? [{ id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } }]
+              ? [{ id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
+                ...(options.toolError ? [{ id: 'rejected-call', name: 'get_instance_summary', arguments: { instance_id: 101, range: '24h' } }] : [])]
               : [],
           hasToolCalls: providerCalls === 1 && options.toolCalls !== false,
           shouldExecuteTools: providerCalls === 1 && options.toolCalls !== false,
@@ -292,6 +294,58 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       await pool.query(`DELETE FROM ${table}`);
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
+
+  it('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once', async () => {
+    await admit(owner);
+    const run = await execute(fixture({ toolError: true }));
+    expect(run.state).toBe('partial');
+    // The source orchestrator terminally records a handler's partial outcome.
+    await new MysqlWorkflowStore(() => pool as never).fail({ id: binding.jobId, attempts: 1, maxAttempts: 1,
+      fencingToken: binding.fencingToken } as never, binding.workerId, new Error('V23_SOURCE_RESULT_UNCERTAIN'), null);
+    const [result] = await rows('SELECT * FROM investigation_results WHERE investigation_id=? ORDER BY version DESC', [binding.investigationId]);
+    const previous = { requestId: binding.requestId, runId: binding.runId, resultVersion: Number(result.version) };
+    const snapshot = async () => ({
+      request: await rows('SELECT * FROM investigation_requests WHERE id=?', [binding.requestId]),
+      run: await rows('SELECT * FROM agent_runs WHERE id=?', [binding.runId]),
+      result: await rows('SELECT * FROM investigation_results WHERE request_id=?', [binding.requestId]),
+      evidence: await rows('SELECT * FROM investigation_evidence WHERE request_id=? ORDER BY id', [binding.requestId]),
+      ledger: await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [binding.requestId]),
+      job: await rows('SELECT * FROM workflow_jobs WHERE id=?', [binding.jobId]),
+    });
+    const before = await snapshot();
+    const app = Fastify(), secret = 'continuation-synthetic-jwt-secret';
+    await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), bridge);
+    const [inv] = await rows('SELECT version FROM investigations WHERE id=?', [binding.investigationId]);
+    const send = (continuationOf = previous, expectedVersion = Number(inv.version), key = randomUUID()) => app.inject({ method: 'POST',
+      url: `/api/investigations/${binding.investigationId}/runs`, headers: { authorization: `Bearer ${signAccessToken(owner, secret)}`, 'idempotency-key': key },
+      payload: { message: 'Explicit follow-up; retain original partial', expectedVersion, continuationOf } });
+    try {
+      expect((await send({ ...previous, runId: randomUUID() })).statusCode).toBe(409);
+      // Contradictory durable states must win over an otherwise exact binding.
+      for (const mutate of [
+        (x: any) => { x.investigationExecution.usageUnknown = true; },
+        (x: any) => { x.investigationExecution.provider = { status: 'sent' }; },
+        (x: any) => { x.investigationExecution.tools.uncertain = { status: 'running' }; },
+      ]) {
+        const original = before.run[0].result_json;
+        const changed = typeof original === 'string' ? JSON.parse(original) : structuredClone(original); mutate(changed);
+        await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(changed), binding.runId]);
+        expect((await send()).statusCode).toBe(409);
+        await pool.execute('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(typeof original === 'string' ? JSON.parse(original) : original), binding.runId]);
+      }
+      const replies = await Promise.all([send(), send()]);
+      expect(replies.map(r => r.statusCode).sort()).toEqual([202,409]);
+      const next = replies.find(r => r.statusCode === 202)!.json();
+      expect(next.investigationId).toBe(binding.investigationId);
+      const [stored] = await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [next.requestId]);
+      const snap = typeof stored.request_snapshot === 'string' ? JSON.parse(stored.request_snapshot) : stored.request_snapshot;
+      expect(snap.continuationOf).toEqual(previous);
+      expect(await snapshot()).toEqual(before);
+      expect((await send(previous, next.version)).statusCode).toBe(409);
+      expect(providerCalls).toBe(1);
+    } finally { await app.close(); }
+  });
+
   async function automatic(reserveTokens = 32000, claim = true) {
     await pool.query("UPDATE workflow_jobs SET state='completed'");
     const trusted: TriggerBinding = {
