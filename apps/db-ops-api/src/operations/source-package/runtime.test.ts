@@ -78,32 +78,37 @@ describe('standalone investigation bootstrap precedes any claim or provider send
   it('loads persisted policy and tools before reading the batch budget', async () => {
     const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
     const engine = await import('../../adapter/get-agent-engine.js');
-    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    const budget = await import('../product-budget.js');
     const order: string[] = [];
     vi.spyOn(policy, 'get').mockReturnValue({ version: 7 } as never);
     vi.spyOn(policy, 'initialize').mockImplementation(async () => { order.push('policy'); });
     vi.spyOn(engine, 'loadPlatformTools').mockImplementation(async () => { order.push('tools'); return {} as never; });
-    vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { order.push('budget'); throw Error('stop before send'); });
+    const read = vi.fn(() => { order.push('budget'); throw Error('stop before send'); });
+    // Replace the factory before its constructor resolves the canonical batch
+    // directory. This ordering test must never open the real batch journal.
+    const openBudget = vi.spyOn(budget, 'operationsProductBudget').mockReturnValue({ read } as never);
     await expect(investigateSource({} as SourceControl)).rejects.toThrow('stop before send');
     expect(order).toEqual(['policy', 'tools', 'budget']);
+    expect(openBudget).toHaveBeenCalledExactlyOnceWith();
   });
   it('refuses initialization failure before budget/claim even if an old cache exists', async () => {
     const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
-    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    const budget = await import('../product-budget.js');
     vi.spyOn(policy, 'initialize').mockRejectedValue(Error('AGENT_POLICY_STORE_UNAVAILABLE'));
-    const read = vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { throw Error('budget must not be reached'); });
+    const openBudget = vi.spyOn(budget, 'operationsProductBudget').mockImplementation(() => { throw Error('budget must not be reached'); });
     await expect(investigateSource({} as SourceControl)).rejects.toThrow('AGENT_POLICY_STORE_UNAVAILABLE');
-    expect(read).not.toHaveBeenCalled();
+    expect(openBudget).not.toHaveBeenCalled();
   });
   it('rejects an absent policy instead of inheriting version zero', async () => {
     const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
     const engine = await import('../../adapter/get-agent-engine.js');
-    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    const budget = await import('../product-budget.js');
     vi.spyOn(policy, 'initialize').mockResolvedValue();
     vi.spyOn(engine, 'loadPlatformTools').mockResolvedValue({} as never);
     vi.spyOn(policy, 'get').mockReturnValue({ version: 0 } as never);
-    vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { throw Error('budget reached'); });
+    const openBudget = vi.spyOn(budget, 'operationsProductBudget').mockImplementation(() => { throw Error('budget reached'); });
     await expect(investigateSource({} as SourceControl)).rejects.toThrow('AGENT_POLICY_REQUIRED');
+    expect(openBudget).not.toHaveBeenCalled();
   });
 
 });
