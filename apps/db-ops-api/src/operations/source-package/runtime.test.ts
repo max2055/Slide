@@ -5,7 +5,7 @@ import { InvestigationResultStore } from '../../investigations/result-schema.js'
 import { InvestigationEvidenceStore } from '../../investigations/evidence-store.js';
 import { operationsContentHash } from '../contracts.js';
 import { sourceTestConfig } from './config.fixture.js';
-import { exactSource, proposeSource, sourceHostClock } from './runtime.js';
+import { exactSource, investigateSource, proposeSource, sourceHostClock } from './runtime.js';
 import type { SourceControl } from './control.js';
 
 describe('exact source and durable proposal boundaries (synthetic)', () => {
@@ -69,5 +69,29 @@ describe('exact source and durable proposal boundaries (synthetic)', () => {
     await expect(sourceHostClock({ resolve: async () => ({ resource: {} as never, credential_ref: 'synthetic', evidence: {},
       resolve: async () => ({ method: 'ssh', client: {} as never,
         pool: { execCommands: async () => [{ stdout: 'unknown', stderr: '', exitCode: 0 }] as never } }) }) })).rejects.toThrow('CLOCK_PROTOCOL');
+  });
+});
+
+
+describe('standalone investigation bootstrap precedes any claim or provider send', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('loads persisted policy and tools before reading the batch budget', async () => {
+    const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
+    const engine = await import('../../adapter/get-agent-engine.js');
+    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    const order: string[] = [];
+    vi.spyOn(policy, 'initialize').mockImplementation(async () => { order.push('policy'); });
+    vi.spyOn(engine, 'loadPlatformTools').mockImplementation(async () => { order.push('tools'); return {} as never; });
+    vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { order.push('budget'); throw Error('stop before send'); });
+    await expect(investigateSource({} as SourceControl)).rejects.toThrow('stop before send');
+    expect(order).toEqual(['policy', 'tools', 'budget']);
+  });
+  it('refuses initialization failure before budget/claim even if an old cache exists', async () => {
+    const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
+    const { OperationsBudgetJournal } = await import('../product-budget.js');
+    vi.spyOn(policy, 'initialize').mockRejectedValue(Error('AGENT_POLICY_STORE_UNAVAILABLE'));
+    const read = vi.spyOn(OperationsBudgetJournal.prototype, 'read').mockImplementation(() => { throw Error('budget must not be reached'); });
+    await expect(investigateSource({} as SourceControl)).rejects.toThrow('AGENT_POLICY_STORE_UNAVAILABLE');
+    expect(read).not.toHaveBeenCalled();
   });
 });
