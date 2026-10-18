@@ -282,9 +282,29 @@ export class InvestigationsController {
     if (result && observe) { await this.select(result.id); await this.loadList(); }
     return result;
   }
+  get partialContinuation() {
+    const detail = this.detail, snapshot = this.snapshot;
+    if (detail?.derivedRunState !== 'partial' || !snapshot || snapshot.investigationId !== detail.id
+      || snapshot.metadata.version !== detail.version) return;
+    const run = snapshot.runs.at(-1);
+    const result = this.results.items.reduce<(typeof this.results.items)[number] | undefined>((latest, item) =>
+      !latest || item.version > latest.version ? item : latest, undefined);
+    if (!run || run.state !== 'partial' || run.resolution !== 'known' || !result
+      || result.requestId !== run.requestId || result.runId !== run.runId) return;
+    return { requestId: run.requestId, runId: run.runId, resultVersion: result.version };
+  }
+  get continuationUnavailable() {
+    return this.detail?.derivedRunState === 'unknown' || this.snapshot?.runs.at(-1)?.resolution === 'outcome_unknown'
+      || (this.detail?.derivedRunState === 'partial' && !this.partialContinuation);
+  }
   async continue(message: string) {
     if (!this.detail || this.detail.activeRequestId || !message.trim()) return;
-    const result = await this.submit<InvestigationAccepted>(`/${this.id}/runs`, { message, expectedVersion: this.detail.version });
+    if (this.continuationUnavailable) {
+      this.error = '当前结果尚未确认或关联信息未就绪，请刷新核对后再继续。'; this.update(); return;
+    }
+    const continuationOf = this.partialContinuation;
+    const result = await this.submit<InvestigationAccepted>(`/${this.id}/runs`, { message, expectedVersion: this.detail.version,
+      ...(continuationOf ? { continuationOf } : {}) });
     if (result) await this.refreshFacts();
     return result;
   }
