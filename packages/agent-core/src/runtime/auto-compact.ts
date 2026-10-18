@@ -58,6 +58,7 @@ const summaryHook: AgentHook = {
 export async function autoCompact(
   manager: ContextManager, raw: Message[], provider: LLMProvider, recovery: RecoveryPolicy, tracker: RapidRefill,
   persist: (record?: SummaryRecord, compactState?: ReturnType<RapidRefill['snapshot']>) => Promise<void>,
+  reactive = false,
 ): Promise<void> {
   const spec = manager.spec;
   if (spec.signal?.aborted) throw cancellationError(spec.signal);
@@ -82,7 +83,8 @@ export async function autoCompact(
     streamIdleTimeoutS: Math.min(spec.streamIdleTimeoutS && spec.streamIdleTimeoutS > 0 ? spec.streamIdleTimeoutS : 60, 60) };
   const summaryManager = new ContextManager(summarySpec, provider);
   summaryManager.assertFits(messages);
-  if (recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
+  // Zero disables failure retries, not successful lifecycle compaction.
+  if ((reactive || recovery.limits.context > 0) && recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
   const reservation = summaryManager.requestReservation();
   assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();
