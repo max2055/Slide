@@ -2,6 +2,10 @@
  * scheduler, adapters, formalization, alert evaluator and event admission.
  * No source/result/evidence rows are inserted as test enrichment. */
 import { readFileSync } from 'node:fs';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -100,6 +104,21 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
       const jobs = await rows("SELECT attempts,state FROM workflow_jobs WHERE job_type='investigation.execute'");
       expect(jobs).toHaveLength(1); expect(jobs[0]).toMatchObject({ attempts: 0, state: 'queued' });
       await e.close(true);
+      const directory = await mkdtemp(resolve('.qualification/source-bootstrap-'));
+      const childConfig = { ...config(), phase: 'investigate', operationId: crypto.randomUUID(),
+        investigationId: result.investigationId, requestId: result.requestId };
+      const file = resolve(directory, 'config.json');
+      await writeFile(file, JSON.stringify(childConfig), { mode: 0o600 });
+      const child = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', 'src/operations/source-package/investigate.mysql.test.ts'], {
+        cwd: process.cwd(), env: { ...process.env, V23_SOURCE_CHILD_CONFIG: file, V23_SOURCE_CHILD_DIRECTORY: directory,
+          DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: '', DB_NAME: database,
+          ENCRYPTION_KEY: randomBytes(32).toString('hex'), JWT_SECRET_KEY: randomBytes(32).toString('hex') }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = ''; child.stdout!.on('data', b => { output += b; }); child.stderr!.on('data', b => { output += b; });
+      const timer = setTimeout(() => child.kill('SIGTERM'), 90_000);
+      const [exit] = await once(child, 'exit'); clearTimeout(timer);
+      await writeFile(resolve(directory, 'child.log'), output);
+      expect(exit, output).toBe(0);
     } finally { await e.close(); }
-  }, 30000);
+  }, 120000);
 });
