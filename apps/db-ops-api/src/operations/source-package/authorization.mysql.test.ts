@@ -1,7 +1,7 @@
 /** Exclusive synthetic SQL/JWT/HTTP only; never the existing source/restore. */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -38,6 +38,7 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
     return values;
   };
   beforeAll(async () => {
+    await mkdir(resolve('.qualification'), { recursive: true });
     root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', timezone: 'Z' });
     await root.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, timezone: 'Z' });
@@ -68,7 +69,19 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
       allowedEffects: ['read'], resourceScope: { instanceIds: [], serverIds: [3], networkDeviceIds: [] }, changeNote: 'synthetic only' }, 1);
     token = signAccessToken(await contexts.loadActiveActor(1), secret);
   }, 120000);
-  afterAll(async () => { await writeFile(resolve('.qualification/authority-sql-http-result.json'), JSON.stringify({ database, realSql: true, realJwt: true, modelSends: 0, reports }, null, 2)); await pool?.end(); if (root) { await root.query(`DROP DATABASE ${database}`); await root.end(); } });
+  afterAll(async () => {
+    try {
+      await writeFile(resolve('.qualification/authority-sql-http-result.json'), JSON.stringify({ database, realSql: true, realJwt: true, modelSends: 0, reports }, null, 2));
+    } finally {
+      try { await pool?.end(); }
+      finally {
+        if (root) {
+          try { await root.query(`DROP DATABASE IF EXISTS ${database}`); }
+          finally { await root.end(); }
+        }
+      }
+    }
+  });
   const authorize = (c = config, jwt = token) => authorizeSourceContinuation(pool, c, jwt, secret);
   it('read detail is permitted but a global-admin viewer cannot continue', async () => {
     const before = await snapshot();
