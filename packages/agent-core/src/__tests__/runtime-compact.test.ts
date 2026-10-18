@@ -49,6 +49,41 @@ it('summary sources exclude rollback snapshots and historical reasoning while ca
   expect(wire).not.toMatch(/messageParts|private-history-reasoning|opaque-signature/);
   expect(wire).toContain('historical record'); expect(f.raw).toEqual(before);
 });
+it('compacts complete protected facts above the soft target while preserving the hard input cap', async () => {
+  const f = fixture();
+  f.raw[0].content = 'Read only. Evidence e-1; unknown write-2 must not replay. ' + 'x'.repeat(7000);
+  f.raw[2].content = 'historical record '.repeat(100);
+  const before = structuredClone(f.raw);
+  const split = f.manager.split(f.raw);
+  expect(f.manager.tokens([...split.pins, ...split.retained])).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.calls).toHaveLength(1);
+  const projected = f.manager.project(f.raw);
+  expect(f.manager.tokens(projected)).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  expect(() => f.manager.assertFits(projected)).not.toThrow();
+  expect(projected.filter(m => m.role === 'system')).toEqual([before[0]]);
+  expect(f.raw).toEqual(before);
+  expect(JSON.stringify(projected)).toContain('write-2');
+  expect(f.manager.inputBudget).toBe(13476);
+});
+it('accepts a complete summary above the soft target without publishing an over-cap summary', async () => {
+  const f = fixture();
+  f.provider.chatStream = async () => reply(JSON.stringify({ ...valid, evidence: ['e-1 ' + 'x'.repeat(7000)] }));
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.manager.tokens(f.manager.project(f.raw))).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  expect(() => f.manager.assertFits(f.manager.project(f.raw))).not.toThrow();
+  const oversized = fixture();
+  oversized.provider.chatStream = async () => reply(JSON.stringify({ ...valid, evidence: ['x'.repeat(15000)] }));
+  await expect(autoCompact(oversized.manager, oversized.raw, oversized.provider, oversized.recovery, oversized.tracker, async () => {})).rejects.toMatchObject({ code: 'CONTEXT_UNRECOVERABLE' });
+  expect(oversized.manager.summary).toBeUndefined();
+});
+it('rejects protected facts above the hard input cap before summary dispatch', async () => {
+  const f = fixture();
+  f.raw[0].content = 'x'.repeat(15000);
+  await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toMatchObject({ code: 'CONTEXT_UNRECOVERABLE' });
+  expect(f.calls).toHaveLength(0);
+  expect(f.manager.summary).toBeUndefined();
+});
 it('persists a source-bound summary before projection, retains goal/authority/evidence/uncertainty and original history', async () => {
   const f = fixture(); const before = structuredClone(f.raw); let record: unknown;
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async value => {
