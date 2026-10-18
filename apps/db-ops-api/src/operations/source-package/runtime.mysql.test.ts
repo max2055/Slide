@@ -2,7 +2,7 @@
  * scheduler, adapters, formalization, alert evaluator and event admission.
  * No source/result/evidence rows are inserted as test enrichment. */
 import { readFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -104,6 +104,7 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
       const jobs = await rows("SELECT attempts,state FROM workflow_jobs WHERE job_type='investigation.execute'");
       expect(jobs).toHaveLength(1); expect(jobs[0]).toMatchObject({ attempts: 0, state: 'queued' });
       await e.close(true);
+      await mkdir(resolve('.qualification'), { recursive: true });
       const directory = await mkdtemp(resolve('.qualification/source-bootstrap-'));
       const childConfig = { ...config(), phase: 'investigate', operationId: crypto.randomUUID(),
         investigationId: result.investigationId, requestId: result.requestId };
