@@ -8,6 +8,8 @@ import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { bytesHash, sourcePackageSchema, sourceDefinitions, sourceFailure } from './config.js';
 
+import { waitForSourceApi } from './api-readiness.js';
+
 const outputRoot = '/Users/max/Coding/40-Slide/outputs';
 async function protectedBytes(path: string) {
   const { constants } = await import('node:fs');
@@ -103,18 +105,15 @@ async function main() {
       let childError = false;
       api.once('error', () => { childError = true; });
       await record({ api: { pid: api.pid, port: new URL(config.api).port, cwd: resolve('.'), command: 'node --import tsx server.ts', head, log: 'api.log' } });
-      const readyUntil = Date.now() + 30_000;
-      let ready = false;
-      while (Date.now() < readyUntil && api.exitCode === null && !childError && !ready) {
-        await control.assertActive();
-        const standby = (await readFile(join(output, 'api.log'), 'utf8')).includes('WORKER_LEASE_UNAVAILABLE: API-only standby');
-        // Worker readiness is deliberately false on an API-only standby.
-        // Our live external lease + this child's standby receipt gate the API;
-        // actual create/submit below supplies the business acceptance.
-        try { ready = standby && (await fetch(config.api + '/api/health', {
-          redirect: 'error', signal: AbortSignal.any([control.signal, AbortSignal.timeout(1000)]) })).ok; } catch { /* bounded own child readiness */ }
-        if (!ready) await new Promise(done => setTimeout(done, 100));
-      }
+      const ready = await waitForSourceApi({
+        assertActive: () => control.assertActive(),
+        childRunning: () => api.exitCode === null && !childError,
+        standby: async () => (await readFile(join(output, 'api.log'), 'utf8'))
+          .includes('WORKER_LEASE_UNAVAILABLE: API-only standby'),
+        health: async () => (await fetch(config.api + '/api/health', {
+          redirect: 'error', signal: AbortSignal.any([control.signal, AbortSignal.timeout(1000)]),
+        })).ok,
+      });
       await log.close();
       if (!ready) sourceFailure('API_NOT_READY');
       const token = (await protectedBytes(process.env.V23_SOURCE_JWT_FILE ?? '')).toString().trim();
