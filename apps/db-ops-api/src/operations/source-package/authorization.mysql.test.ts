@@ -125,7 +125,7 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
         await connection.query('START TRANSACTION READ ONLY');
         const investigation = await capped.load(connection as never, c.investigationId);
         const live = await contexts.loadInvestigationActorFrom(connection as never, 7, 'service', 1);
-        const admitted = await capped.authorize(connection as never, { ...live, ...{ permissions: frozen.authority.permissions, instanceScopes: frozen.authority.instanceScopes, resourceBoundary: frozen.authority.resourceBoundary } }, investigation, 'continue', [], frozen.authority);
+        const admitted = await capped.authorize(connection as never, { ...live, permissions: frozen.authority.permissions, instanceScopes: frozen.authority.instanceScopes, resourceBoundary: frozen.authority.resourceBoundary }, investigation, 'continue', [], frozen.authority);
         expect([...capped.freeze(admitted).toolAllowlist].sort()).toEqual([...sourceReadTools].sort());
       } finally { await connection.rollback(); connection.release(); }
       const result = await authorize(c);
@@ -133,6 +133,21 @@ describe.skipIf(!port)('pre-consumption CLI authorization with real SQL/JWT/HTTP
       expect([...result.operatorTools].sort()).toEqual([...sourceReadTools].sort());
       expect(result.execution.resourceBoundary).toEqual({ instanceIds: [], serverIds: [3], networkDeviceIds: [] });
       expect(await snapshot()).toEqual(before);
+      const app = Fastify();
+      const cappedBridge = new InvestigationSessionBridge(() => pool, capped);
+      await registerInvestigationRoutes(app, createVerifyToken(secret, contexts), cappedBridge);
+      try {
+        const response = await app.inject({ method: 'POST', url: '/api/investigations',
+          headers: { authorization: `Bearer ${token}`, 'idempotency-key': randomUUID() },
+          payload: { title: 'synthetic capped HTTP', goal: 'read server3', profileId: 'ops',
+            subject: { kind: 'resource', resource: { type: 'server', id: 3 } },
+            resourceRefs: [{ type: 'server', id: 3, role: 'primary' }] } });
+        expect(response.statusCode).toBe(202);
+        const accepted = response.json();
+        const [stored] = await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?', [accepted.requestId]);
+        const snapshot = typeof stored.request_snapshot === 'string' ? JSON.parse(stored.request_snapshot) : stored.request_snapshot;
+        expect([...snapshot.authority.toolAllowlist].sort()).toEqual([...sourceReadTools].sort());
+      } finally { await app.close(); }
       // Extra grants cannot compensate for a revoked required source tool.
       const [policy] = await rows('SELECT tool_allowlist FROM agent_security_policies WHERE agent_id=?', [DEFAULT_AGENT_ID]);
       try {

@@ -84,6 +84,7 @@ export async function verifySessionApi(
       sourceFailure('SESSION_NOT_ACTIVE');
     const identity = JSON.parse((await privateFile(d.directory + '/api-identity.json')).toString());
     if (
+      identity.sourceToolCeiling !== 'server-read-v1' ||
       identity.pid !== current.apiPid ||
       identity.head !== head ||
       identity.cwd !== resolve('.') ||

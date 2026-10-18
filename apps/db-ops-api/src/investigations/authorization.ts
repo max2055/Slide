@@ -1,3 +1,4 @@
+import { sourceToolCeiling } from './source-tool-ceiling.js';
 import { ActorAuthenticationError, ActorContextService, type ActorContext } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
@@ -73,7 +74,8 @@ interface ListReadFacts {
 export class InvestigationAuthorization {
   private readonly listReads = new WeakMap<AuthorityExecutor, ListReadFacts>();
   constructor(private readonly contexts = new ActorContextService(),
-    private readonly toolPolicy: LiveInvestigationToolPolicy = () => true) {}
+    private readonly toolPolicy: LiveInvestigationToolPolicy = () => true,
+    private readonly toolCeiling: readonly string[] | undefined = sourceToolCeiling()) {}
 
   forActor(caller: ActorContext): AdmissionAuthorizer {
     const ceiling = freezeInvestigationCaller(caller);
@@ -228,7 +230,7 @@ export class InvestigationAuthorization {
     if (!['read', 'watch', 'content'].includes(action) && role !== 'operator') throw forbidden();
     const tools = profile.toolAllowlist.filter(name => {
       const security = getToolSecurityDefinition(name);
-      return !!security && security.audience === 'actor' && security.effect === 'read'
+      return (!this.toolCeiling || this.toolCeiling.includes(name)) && !!security && security.audience === 'actor' && security.effect === 'read'
         && security.credentials !== 'read' && security.approval === 'never' && this.toolPolicy(name)
         && (!frozen || frozen.toolAllowlist.includes(name)) && security.permissions.every(permitted);
     });

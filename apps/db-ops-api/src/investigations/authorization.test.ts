@@ -9,6 +9,17 @@ import { InvestigationAuthorization } from './authorization.js';
 import type { AdmissionInvestigation } from './store.js';
 
 describe('repository Profile and service identity authority', () => {
+  it('rejects unknown deployment tool ceilings without selecting a broader mode', () => {
+    const previous = process.env.INVESTIGATION_SOURCE_TOOL_CEILING;
+    try {
+      process.env.INVESTIGATION_SOURCE_TOOL_CEILING = 'unknown';
+      expect(() => new InvestigationAuthorization()).toThrow('INVESTIGATION_SOURCE_TOOL_CEILING_INVALID');
+    } finally {
+      if (previous === undefined) delete process.env.INVESTIGATION_SOURCE_TOOL_CEILING;
+      else process.env.INVESTIGATION_SOURCE_TOOL_CEILING = previous;
+    }
+  });
+
   it('both immutable profiles follow the public schema and deterministic content hash', () => {
     for (const profile of Object.values(INVESTIGATION_PROFILES)) {
       expect(Value.Check(InvestigationProfileSchema, profile)).toBe(true);

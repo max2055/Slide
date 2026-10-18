@@ -102,6 +102,8 @@ init只创建新匹配schema，正式MigrationRunner连续运行两次并记录�
 
 publish/activate沿原 `POST /api/metrics/policy/resources/:type/:id/preview|publish` 和 config activate接口（原JWT、expected_revision、package pin和完整overrides），先只读核catalog/inventory后提交准确请求。收集值只来自后续生产job。runner不提供任意SQL导入功能。每次发布/导入后更新配置文件、hash和父锁，核恢复点；运行期间不改这些配置。
 
+专属来源 CLI 固定设置 `INVESTIGATION_SOURCE_TOOL_CEILING=server-read-v1`，会话监督器向自身及实际 API 子进程传递同一模式。该模式在调查授权器构造时固定，只允许 `get_server_metrics`、`get_server_alerts`、`get_resource_observations`、`get_resource_relations`，再与实时策略、原冻结授权和完整 ACL 取交集；HTTP 准入写入的新 authority 与 executor 重验使用相同上限，不修改旧请求或持久策略。未设置时保持普通服务行为，未知值拒绝启动；HTTP/模型不能选择模式。复用的自有 API 身份回执必须记录该模式，缺失或不匹配在父审计消费前拒绝。仅在前检过滤集合不能替代这些执行约束。
+
 CLI运行时要求 `METRICS_COLLECTION_ENABLED=false`、`INVESTIGATION_OPS_AUTO_ENABLED=false`、`OPERATIONS_ACTION_DISPATCH_ENABLED=false`、`OPERATIONS_STOP_NEW_DISPATCH=true`；计划阶段额外启用PLANS，其余功能按已审装配配置。无需克隆常驻worker。每阶段自己持外部租约，plan阶段先独占bind核端口空闲，再启动同cwd/HEAD的真实API子进程；记录PID→端口→cwd→命令→head→日志，必须同时看到自有日志API-only standby、存活HTTP成功及本入口外部租约有效；worker ready在standby按设计为false，不作为这个API子进程的就绪条件，业务验收以真实create/submit为准，拒绝重定向。只停止自己spawn的准确PID，先SIGTERM并收尾；不得按端口或可执行名强杀。stage结束清理SSH池/实例连接并释放自己的租约。
 
 ## 受控现场顺序与恢复清单

@@ -4,7 +4,8 @@ import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from 
 import { AgentSecurityPolicyService, DEFAULT_AGENT_ID } from '../../security/agent-security-policy-service.js';
 import { assertSourceDeadline, sourceFailure, type SourcePackage } from './config.js';
 
-export const sourceReadTools = Object.freeze(['get_server_metrics', 'get_server_alerts', 'get_resource_observations', 'get_resource_relations']);
+import { sourceReadTools } from '../../investigations/source-tool-ceiling.js';
+export { sourceReadTools };
 
 /** Same JWT and live investigation authorizer as HTTP, before acquiring a
  * worker lease or consuming a technical receipt. No admission, model, tool,

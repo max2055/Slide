@@ -44,6 +44,9 @@ async function main() {
   if (process.env.OPERATIONS_ACTION_DISPATCH_ENABLED !== 'false' || process.env.OPERATIONS_STOP_NEW_DISPATCH !== 'true'
     || process.env.INVESTIGATION_OPS_AUTO_ENABLED !== 'false' || process.env.METRICS_COLLECTION_ENABLED !== 'false')
     sourceFailure('DISPATCH_MUST_BE_DISABLED');
+  // Every source child (HTTP admission and executor included) shares this
+  // immutable narrowing; a preflight-only subset would not constrain the Run.
+  process.env.INVESTIGATION_SOURCE_TOOL_CEILING = 'server-read-v1';
   const { sourceAuditPublicKeyPath } = await import('./audit.js');
   // Fixed parent-provisioned trust anchor, no operator-supplied key override.
   // Credential parsing below runs inside the foreground cleanup boundary.
