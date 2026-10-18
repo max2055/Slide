@@ -42,7 +42,7 @@ class ServerAlertEvaluator {
    * checks latest metrics against rule thresholds and creates alerts
    * when thresholds are breached.
    */
-  async evaluateServerRules(): Promise<void> {
+  async evaluateServerRules(qualificationDimensions?: ReadonlyMap<number, Readonly<Record<string, string>>>): Promise<void> {
     if (!dbConnection.isConnected()) {
       console.warn('[ServerAlertEvaluator] database not connected, skipping server rule evaluation');
       return;
@@ -52,7 +52,9 @@ class ServerAlertEvaluator {
       // 1. Fetch enabled server alert rules (target_type='server') via shared API
       assertWorkflowActive();
       const allRules = await alertDatabaseService.getAlertRules(true);
-      const rules = allRules.filter(r => r.target_type === 'server');
+      const rules = allRules.filter(r => r.target_type === 'server'
+        && (!qualificationDimensions || qualificationDimensions.has(r.id)))
+        .map(r => qualificationDimensions ? { ...r, dimensions: qualificationDimensions.get(r.id) } : r);
 
       if (!rules || rules.length === 0) {
         return; // No server rules configured

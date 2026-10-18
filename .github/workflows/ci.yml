@@ -278,6 +278,8 @@ jobs:
         run: bash scripts/qualification/run-investigation-bridges.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL
         run: bash scripts/qualification/run-metric-retention.sh
+      - name: Bounded V23 source claims, lease loss and production formal publication
+        run: bash scripts/qualification/run-v23-source.sh
       - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL
         run: bash scripts/qualification/run-alert-event-transitions.sh
       - name: Instance removal, connection release and retry in isolated MySQL
