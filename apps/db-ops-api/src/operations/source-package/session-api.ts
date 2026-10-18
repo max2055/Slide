@@ -7,15 +7,18 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { bytesHash, sourceFailure, type SourcePackage } from './config.js';
-async function privateFile(path: string) {
+const descriptorLimit = 262144;
+const identityLimit = 65536;
+async function privateFile(path: string, limit: number) {
   const f = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const st = await f.stat();
-    if (!st.isFile() || st.uid !== process.getuid?.() || st.mode & 0o077 || st.size > 65536)
+    if (!st.isFile() || st.uid !== process.getuid?.() || st.mode & 0o077 || st.size > limit)
       sourceFailure('SESSION_PRIVATE_FILE');
-    const bytes = await f.readFile();
-    if (bytes.length > 65536) sourceFailure('SESSION_INPUT_LIMIT');
-    return bytes;
+    const buffer = Buffer.alloc(limit + 1);
+    const { bytesRead } = await f.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > limit) sourceFailure('SESSION_INPUT_LIMIT');
+    return buffer.subarray(0, bytesRead);
   } finally {
     await f.close();
   }
@@ -53,7 +56,7 @@ export async function verifySessionApi(
   expectedHash: string,
 ) {
   try {
-    const bytes = await privateFile(file);
+    const bytes = await privateFile(file, descriptorLimit);
     if (!/^[a-f0-9]{64}$/.test(expectedHash) || bytesHash(bytes) !== expectedHash)
       sourceFailure('SESSION_DESCRIPTOR_CHANGED');
     const d = JSON.parse(bytes.toString());
@@ -82,7 +85,7 @@ export async function verifySessionApi(
       current.expiresAt !== d.sessionExpiresAt
     )
       sourceFailure('SESSION_NOT_ACTIVE');
-    const identity = JSON.parse((await privateFile(d.directory + '/api-identity.json')).toString());
+    const identity = JSON.parse((await privateFile(d.directory + '/api-identity.json', identityLimit)).toString());
     if (
       identity.sourceToolCeiling !== 'server-read-v1' ||
       identity.pid !== current.apiPid ||
