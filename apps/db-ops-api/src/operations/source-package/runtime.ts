@@ -172,7 +172,17 @@ export async function evaluateSource(control: SourceControl) {
   return { alertId: Number(alerts[0].id), eventId: events[0].id, investigationId: result.investigationId, requestId: result.requestId };
 }
 
+/** Standalone lane: load the same persisted policy and catalog as the API,
+ * without starting an Agent, cron, worker or recovering global connections. */
+export async function initializeSourceRuntime() {
+  const { agentSecurityPolicyService } = await import('../../security/agent-security-policy-service.js');
+  const { loadPlatformTools } = await import('../../adapter/get-agent-engine.js');
+  await agentSecurityPolicyService.initialize(); // propagate failure; never use a stale/inherited cache on error
+  await loadPlatformTools();
+}
+
 export async function investigateSource(control: SourceControl) {
+  await initializeSourceRuntime();
   const { InvestigationExecutor } = await import('../../investigations/executor.js');
   const { createLLMProvider, createActorBoundToolRegistry } = await import('../../adapter/get-agent-engine.js');
   const { investigationBudgetConfiguration } = await import('../../investigations/session-bridge.js');
@@ -180,7 +190,22 @@ export async function investigateSource(control: SourceControl) {
   const { operationsProductBudget } = await import('../product-budget.js');
   const budget = operationsProductBudget(); budget.read(); // never initialize/reset
   const executor = new InvestigationExecutor({ pool: () => control.pool, budget: investigationBudgetConfiguration(),
-    toolsForActor: createActorBoundToolRegistry,
+    toolsForActor: actor => {
+      const registry = createActorBoundToolRegistry(actor);
+      for (const name of registry.toolNames) {
+        const tool = registry.get(name)!;
+        const execute = tool.execute.bind(tool);
+        tool.execute = async (args, context) => {
+          await control.assertActive();
+          const { agentSecurityPolicyService } = await import('../../security/agent-security-policy-service.js');
+          await agentSecurityPolicyService.initialize();
+          // The original tool wrapper checks the refreshed policy, including
+          // effect/resource constraints, immediately before its handler.
+          return execute(args, context);
+        };
+      }
+      return registry;
+    },
     providerForPurpose: async purpose => bindSourceProvider(await createLLMProvider(purpose), budget) });
   const c = control.config;
   const [jobs] = await control.pool.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE job_type='investigation.execute'
