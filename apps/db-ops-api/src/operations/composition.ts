@@ -8,6 +8,7 @@ import { InvestigationStoreError } from '../investigations/store.js';
 import { OperationsAuthorization } from './authorization.js';
 import { OperationsError } from './contracts.js';
 import { operationsFlags } from './feature-flags.js';
+import { RegisteredActionEnvironment } from './action-environment.js';
 import { InvestigationRelationEvidence, PlanSources, PlanStore, type ActionEnvironment } from './actions/plan-store.js';
 import { ActionPlanService } from './actions/plan-service.js';
 import { registerActionPlanRoutes } from './actions/routes.js';
@@ -68,11 +69,7 @@ export function createOperationsComposition(pool: () => Pool | null, options: {
   const relations = new RelationService(new MysqlRelationStore(pool), authorization, evidence, flags);
   const baselines = new BaselineStore(pool, formalBaselineSource, authorization, flags);
   const attention = new AttentionStore(pool, contexts, evidence, {}, flags);
-  // Missing P07 environment wiring must never become an allow validator. The
-  // current main can expose the contract safely, but cannot create eligible plans.
-  const environment: ActionEnvironment = options.actionEnvironment ?? {
-    async validate() { throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE'); },
-  };
+  const environment = options.actionEnvironment ?? new RegisteredActionEnvironment(options.env ?? process.env);
   const plans = new ActionPlanService(new PlanStore({ async getConnection() {
     const current = pool();
     if (!current) throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
@@ -81,7 +78,8 @@ export function createOperationsComposition(pool: () => Pool | null, options: {
     new InvestigationRelationEvidence(investigations)), authorization, flags);
   return {
     flags, knowledge, relations, baselines, attention, plans,
-    actionEnvironmentAvailable: Boolean(options.actionEnvironment),
+    actionEnvironmentAvailable: Boolean(options.actionEnvironment || ((options.env ?? process.env).OPERATIONS_PILOT_MANIFEST_FILE
+      && (options.env ?? process.env).OPERATIONS_PILOT_PUBLIC_KEY_FILE && (options.env ?? process.env).OPERATIONS_PILOT_SSH_KEY_FILE)),
     async register(app: FastifyInstance) {
       await app.register(async app => {
       app.addHook('onRequest', async (_request, reply) => { reply.header('Cache-Control', 'private, no-store'); });
