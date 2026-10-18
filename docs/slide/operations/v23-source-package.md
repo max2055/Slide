@@ -17,7 +17,7 @@ pnpm --filter slide-api exec tsx ../../scripts/qualification/v23-source-package.
 
 `alertRules`必须绑定1～2个不重复的实际规则ID及metricName/operator/threshold/durationSeconds、完整dimensions（mount/device/fs_type）。只支持文件系统used/size字节指标，拒绝动态阈值和threshold_template。现有规则表没有dimensions列；受控入口把锁内维度作为内部参数传给**原ServerAlertEvaluator**，只评估准确规则，再沿原consumer做过滤/判定/告警写入。不是新表或第二套评估器；默认生产调用保持原行为。入口复核库中启用规则集合及实际参数，告警必须绑定相同rule/dimensions和新鲜窗口，未知不造采样时间。
 
-`SourceControl` 先核 schema、DB UTC/会话时区，再持 schema 专属 SQL GET_LOCK 及原 `slide-singleton-workers` 外部租约。5秒续约/30秒租期；只精确 claim 本次 tick 或准确 request 产生的既有 workflow job，不扫描领取其他任务，不收回 expired-running、不retry、不dead-letter replay。intent以原 workflow_jobs 的 `qualification.source`、maxAttempts=1保存（无全局handler）。异常/取消/失租将准确任务及intent留为dead_letter/待审计；进程丢失则保留running/过期租约，也不自动续发。新入口见未完成/未知旧工作即拒绝。唯一例外是 investigate 可接自己明确指定、从未执行的准确排队request。
+`SourceControl` 先核 schema、DB UTC/会话时区，再持 schema 专属 SQL GET_LOCK 及原 `slide-singleton-workers` 外部租约。5秒续约/30秒租期；只精确 claim 本次 tick 或准确 request 产生的既有 workflow job，不扫描领取其他任务，不收回 expired-running、不retry、不dead-letter replay。intent以原 workflow_jobs 的 `qualification.source`、maxAttempts=1保存（无全局handler）。异常/取消/失租将准确任务及intent留为dead_letter/待审计；进程丢失则保留running/过期租约，也不自动续发。新入口见未完成/未知旧工作即拒绝。investigate 可接自己明确指定、从未执行的准确排队request；已审明确执行前连接失败仅可按下节一次性接续，不是 dead-letter replay。
 
 现有 workflow 表的可用时间是秒精度；精确 claim 最多等待该行1秒到期，不改时间，不选择另一任务。lease_owner保持原36字符UUID。`JobRegistry.execute`的 signal/workerId/fencingToken、调度器保留的SQL核权/claim及commit fence不被替代。步骤之间和采集前后复核完整资源授权与策略版本。
 
@@ -31,6 +31,23 @@ pnpm --filter slide-api exec tsx ../../scripts/qualification/v23-source-package.
 | plan | 自启动真实API standby子进程、原JWT/live ACL、POST actions/plans及submit | 原ActionEnvironment、P06 PlanSources和事务内ACL/版本/证据到期校验保留。只create/submit；保存完整不可变计划、policy/verifier哈希和来源。确认执行表空、批准仍pending且used_count=0；没有review/execute入口调用。 |
 
 生产采集只使用唯一 metrics store/packages/scheduler/formalization；`trialCurrent`不在本包调用链，不使用旧 collector 写入。`assertSourceInventory`拒绝其他资产/全局规则/通知渠道。正式源读取还核原formal store的sourceState、generation、revision、normalized与120秒新鲜窗口；unknown不补0。调查结果必须是最新版本；计划证据必须在该结果实际引用、同request/run、未过期且确实支持server3。本包不INSERT观测、告警、结果或证据，不以调查的额外资源补证据支持范围。
+
+## 已审执行前失败的一次性接续
+
+`PRIOR_WORK_REQUIRES_AUDIT`不能用换operationId、复制空schema、删除失败记录或SQL改成completed/cancelled解除。受支持入口仍是上述CLI；仅在父独立审查确认collect尚未创建metrics job、无观测/调查/模型发送后，由父签发准确后继的Ed25519凭据。未知发送、running/过期租约、已执行任务及其他死信不能使用本入口。当前阶段只交候选，不签发真实凭据、不发正式phase。
+
+信任公钥由父独立配置在固定位置 `/Users/max/Coding/40-Slide/outputs/2026-10-18-v23-source/parent-source-audit-public-key.pem`，0600普通文件；实现owner不得生成/替换该真实信任锚或持有父签名私钥。父交接时独立记录公钥原字节hash，核文件与签名身份；本地测试临时密钥仅是synthetic fixture，不部署为信任锚。这里沿用受控本机文件的操作信任边界，不声称相同Unix账号之间存在OS隔离；父审材料和签名密钥须在非实现上下文管理。没有信任锚或有效父签名即拒绝，没有自签、通用allow或签发CLI。
+
+设置 `V23_SOURCE_PARENT_AUDIT_FILE` 指向0600、拒绝符号链接的JSON envelope：`{payload: base64, signature: base64}`。signature为父对payload解码后的**原字节**执行Ed25519签名（Node `sign(null, bytes, privateKey)`）；不能重序列化后沿用签名。payload的严格schema是 `sourceAuditSchema`：
+
+- schemaVersion=1；reviewId为唯一UUID；reviewerId固定为本批父owner `1ef5122f-7ac8-4a18-8f18-cae01ffd527d`；reviewEvidenceHash为准确独立审查材料原字节SHA256。父签名表明其已核相应材料，字符串本身不等于审查通过。
+- decision=`pre_execution_connection_failure_zero_usage`、failureCode=`V23_SOURCE_INSTANCE_CONNECTION`、metricsJobs=0、modelUsage=0；reviewedAt/expiresAt为毫秒UTC，不能未来、过期或短于后继deadline。
+- predecessor含准确intentId、operationId、configHash、40位head、jobHash。jobHash为UTC mysql2连接读取 `SELECT * FROM workflow_jobs WHERE id=?` 单行组成数组后 `SHA256(JSON.stringify([row]))`；覆盖全部字段，不能只hash状态或payload。
+- successor含新operationId、准确配置原文件configHash、新head、准确目标锁原文件lockHash、database、实际本机动态databasePort、实际 `@@server_uuid` 的databaseServerUuid、deadline。CLI从自身git/原配置/原锁/DB_PORT取绑定，SQL事务再核实际server UUID，拒绝换库或端口。锁必须仍满足原目标、准确operation/head/hash与覆盖deadline；新head须先经父审和必要gate，旧锁不授权它。
+
+同一schema GET_LOCK与外部worker lease内，事务锁定workflow行，验证完整旧记录hash/准确失败状态、现有零metrics工作/观测/publication/调查，核签名/绑定/期限；一次插入已完成的 `qualification.source.audit` **审计消费记录**及新的未发送source intent。消费记录保存原签名envelope、父审内容、前驱hash和后继intentId，使用前驱唯一idempotency key和唯一reviewId。它不改旧intent任何字段，也不把旧失败伪装成功。commit前重核签名期限、DB UTC和实时worker lease；任一拒绝整笔回滚。
+
+审计成功后仍走原inventory/hostpin/实时ACL/配置与策略/来源有效期及采集门禁；事务提交后崩溃会保留新的未发送或在途intent，不退回重用批准。以后phase仅能略过与已消费记录hash仍完全一致的那一条历史失败；第二次使用凭据、其他未审死信、旧operation及并发竞争仍拒绝。旧失败、父审消费记录与后继工作共同进入快照和恢复材料，不DROP/清空历史。
 
 ## 固定定义、注册与 P08 消费接口
 

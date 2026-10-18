@@ -18,6 +18,8 @@ import { admin } from '../../metrics/policy/test-support.js';
 import { MYSQL_STATUS_SQL } from '../../metrics/packages/adapters.js';
 import { SourceControl, claimSourceJob } from './control.js';
 import { sourceTestConfig } from './config.fixture.js';
+import { auditFixture } from './audit.fixture.js';
+import { sourceIntentHash } from './audit.js';
 
 const port = Number(process.env.V23_SOURCE_TEST_MYSQL_PORT ?? 0);
 describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => {
@@ -118,6 +120,78 @@ describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => 
       expect(calls).toBe(1);
       expect((await rows('SELECT payload FROM workflow_jobs WHERE id=?', [id]))[0].payload).toEqual({});
     } finally { await c.close(); }
+  });
+  async function failedAudit() {
+    const original = control(); await original.open(); await original.close();
+    const [row] = await rows("SELECT * FROM workflow_jobs WHERE job_type='qualification.source'");
+    const fixture = auditFixture(); fixture.config.database = database;
+    fixture.receipt.predecessor = { ...fixture.receipt.predecessor, intentId: row.id,
+      operationId: row.payload.operationId, jobHash: sourceIntentHash(row) };
+    fixture.binding.databasePort = port;
+    const [identity] = await rows('SELECT @@server_uuid AS uuid');
+    fixture.receipt.successor = { ...fixture.receipt.successor, database, databasePort: port, databaseServerUuid: identity.uuid };
+    return { ...fixture, oldRow: row };
+  }
+  it('atomically consumes one signed audit, preserves every old field, and permits later phases without replay', async () => {
+    const f = await failedAudit(), auth = f.authorize();
+    const next = new SourceControl(pool, f.config, undefined, auth);
+    try { await next.open(); await next.close(true); } finally { await next.close(); }
+    expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [f.oldRow.id]))[0]).toEqual(f.oldRow);
+    const audit = await rows("SELECT * FROM workflow_jobs WHERE job_type='qualification.source.audit'");
+    expect(audit).toHaveLength(1); expect(audit[0].state).toBe('completed');
+    const replay = new SourceControl(pool, f.config, undefined, auth);
+    try { await expect(replay.open()).rejects.toThrow('OPERATION_ALREADY_RECORDED'); } finally { await replay.close(); }
+    const anotherConfig = { ...f.config, operationId: randomUUID() };
+    const rebound = f.authorize({ ...f.receipt, successor: { ...f.receipt.successor, operationId: anotherConfig.operationId } });
+    const reuse = new SourceControl(pool, anotherConfig, undefined, rebound);
+    try { await expect(reuse.open()).rejects.toThrow('AUDIT_ALREADY_USED_OR_UNKNOWN'); } finally { await reuse.close(); }
+    const later = control(); try { await later.open(); await later.close(true); } finally { await later.close(); }
+    expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [f.oldRow.id]))[0]).toEqual(f.oldRow);
+  });
+  it.each(['hash', 'unknown', 'running', 'completed', 'attempts', 'lease', 'otherDeadLetter', 'metrics', 'completedMetric', 'identity', 'expired', 'signature'])('rejects audited continuation on %s and leaves no consumed receipt/new intent', async kind => {
+    const f = await failedAudit();
+    if (kind === 'hash') f.receipt.predecessor.jobHash = 'f'.repeat(64);
+    if (kind === 'unknown') f.receipt.predecessor.intentId = randomUUID();
+    if (kind === 'identity') f.receipt.successor.databaseServerUuid = randomUUID();
+    if (kind === 'completed') await pool.execute("UPDATE workflow_jobs SET state='completed' WHERE id=?", [f.oldRow.id]);
+    if (kind === 'otherDeadLetter') { const id = randomUUID(); await pool.execute("INSERT INTO workflow_jobs(id,job_type,schema_version,payload,idempotency_key,state) VALUES(?,'qualification.source',1,'{}',?,'dead_letter')", [id,id]); }
+    if (kind === 'running') await pool.execute("UPDATE workflow_jobs SET state='running' WHERE id=?", [f.oldRow.id]);
+    if (kind === 'attempts') await pool.execute('UPDATE workflow_jobs SET attempts=2 WHERE id=?', [f.oldRow.id]);
+    if (kind === 'lease') await pool.execute('UPDATE workflow_jobs SET lease_owner=? WHERE id=?', [randomUUID(), f.oldRow.id]);
+    if (kind === 'metrics') { const id = randomUUID(); await new MysqlWorkflowStore(() => pool as never).enqueue({ id, type: 'metrics.collect', schemaVersion: 1, payload: {}, idempotencyKey: id }); }
+    // A completed metric job is also proof of execution, even without observations.
+    if (kind === 'completedMetric') { const id = randomUUID(); await new MysqlWorkflowStore(() => pool as never).enqueue({ id, type: 'metrics.collect', schemaVersion: 1, payload: {}, idempotencyKey: id }); await pool.execute("UPDATE workflow_jobs SET state='completed' WHERE id=?", [id]); }
+    if (kind === 'expired') f.receipt.expiresAt = new Date(0).toISOString();
+    const auth = f.authorize(); if (kind === 'signature') auth.envelope[20] ^= 1;
+    const before = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+    const next = new SourceControl(pool, f.config, undefined, auth);
+    try { await expect(next.open()).rejects.toThrow(); } finally { await next.close(); }
+    expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(before);
+  });
+  it('rolls back receipt consumption and new intent when expiry occurs during a SQL row-lock wait', async () => {
+    const f = await failedAudit(), blocker = await pool.getConnection();
+    f.config.deadline = new Date(Date.now() + 500).toISOString();
+    f.receipt.successor.deadline = f.config.deadline; f.receipt.expiresAt = f.config.deadline;
+    const next = new SourceControl(pool, f.config, undefined, f.authorize());
+    const before = await rows('SELECT * FROM workflow_jobs ORDER BY id');
+    try {
+      await blocker.beginTransaction(); await blocker.execute('SELECT id FROM workflow_jobs WHERE id=? FOR UPDATE', [f.oldRow.id]);
+      const attempt = next.open().then(() => null, error => error);
+      await delay(650); await blocker.rollback();
+      expect(await attempt).toBeInstanceOf(Error);
+      expect(await rows('SELECT * FROM workflow_jobs ORDER BY id')).toEqual(before);
+    } finally { await blocker.rollback(); blocker.release(); await next.close(); }
+  });
+  it('serializes concurrent audit consumers with exactly one successor and one immutable predecessor', async () => {
+    const f = await failedAudit(), auth = f.authorize();
+    const a = new SourceControl(pool, f.config, undefined, auth), b = new SourceControl(pool, f.config, undefined, auth);
+    try {
+      const results = await Promise.allSettled([a.open(), b.open()]);
+      expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      expect(await rows("SELECT id FROM workflow_jobs WHERE job_type='qualification.source.audit'")).toHaveLength(1);
+      expect(await rows('SELECT id FROM workflow_jobs WHERE idempotency_key=?', [`v23-source:${f.config.operationId}`])).toHaveLength(1);
+      expect((await rows('SELECT * FROM workflow_jobs WHERE id=?', [f.oldRow.id]))[0]).toEqual(f.oldRow);
+    } finally { await a.close(); await b.close(); }
   });
   it('uses exact claims to run production collection, raw lineage, formal acceptance and publication (actual local SQL)', async () => {
     const c = control(), packages = createConfigurationRegistry(), ref = { type: 'instance' as const, id: 101 };

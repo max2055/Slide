@@ -29,7 +29,8 @@ async function main() {
   const configBytes = await protectedBytes(process.argv[3]);
   const config = sourcePackageSchema.parse(JSON.parse(configBytes.toString()));
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const lock = JSON.parse((await protectedBytes(process.env.V23_SOURCE_TARGET_LOCK_FILE ?? '')).toString());
+  const lockBytes = await protectedBytes(process.env.V23_SOURCE_TARGET_LOCK_FILE ?? '');
+  const lock = JSON.parse(lockBytes.toString());
   if (lock.issue !== 'MAX-203' || lock.operationId !== config.operationId || lock.configHash !== bytesHash(configBytes)
     || lock.head !== head || lock.target !== '192.168.49.130:22/mysql:3308'
     || !Number.isFinite(Date.parse(lock.expiresAt)) || Date.parse(lock.expiresAt) <= Date.now()
@@ -40,6 +41,14 @@ async function main() {
   if (process.env.OPERATIONS_ACTION_DISPATCH_ENABLED !== 'false' || process.env.OPERATIONS_STOP_NEW_DISPATCH !== 'true'
     || process.env.INVESTIGATION_OPS_AUTO_ENABLED !== 'false' || process.env.METRICS_COLLECTION_ENABLED !== 'false')
     sourceFailure('DISPATCH_MUST_BE_DISABLED');
+  const { sourceAuditPublicKeyPath } = await import('./audit.js');
+  // Fixed parent-provisioned trust anchor, no operator-supplied key override.
+  // Load before initializing DB so malformed authorization cannot leak a pool.
+  const auditInput = process.env.V23_SOURCE_PARENT_AUDIT_FILE ? {
+    envelope: await protectedBytes(process.env.V23_SOURCE_PARENT_AUDIT_FILE),
+    publicKey: await protectedBytes(sourceAuditPublicKeyPath),
+    binding: { head, configHash: bytesHash(configBytes), lockHash: bytesHash(lockBytes), databasePort: Number(process.env.DB_PORT) },
+  } : undefined;
   const { dbConnection } = await import('../../db-connection.js');
   const { SourceControl } = await import('./control.js');
   const runtime = await import('./runtime.js');
@@ -48,7 +57,7 @@ async function main() {
   const controller = new AbortController();
   const cancel = () => controller.abort(new Error('V23_SOURCE_CANCELLED'));
   process.once('SIGTERM', cancel); process.once('SIGINT', cancel);
-  const control = new SourceControl(pool, config, controller.signal);
+  const control = new SourceControl(pool, config, controller.signal, auditInput);
   let success = false, api: ChildProcess | undefined;
   const output = join(outputRoot, '2026-10-18-v23-source', config.operationId);
   let audit: FileHandle;

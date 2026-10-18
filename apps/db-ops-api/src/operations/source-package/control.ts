@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sourceIntentHash, verifySourceAudit, type SourceAuditInput } from './audit.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { WorkerLease } from '../../lifecycle/worker-lease.js';
@@ -51,7 +52,7 @@ export class SourceControl {
   private active?: ClaimedJob;
   private queue: MysqlWorkflowStore;
   private lockName = '';
-  constructor(readonly pool: Pool, readonly config: SourcePackage, readonly cancel?: AbortSignal) {
+  constructor(readonly pool: Pool, readonly config: SourcePackage, readonly cancel?: AbortSignal, readonly audit?: SourceAuditInput) {
     this.signal = this.controller.signal;
     this.queue = new MysqlWorkflowStore(() => pool as never);
     this.lease = new WorkerLease(pool);
@@ -94,20 +95,7 @@ export class SourceControl {
     const [rows] = await this.lock.execute<RowDataPacket[]>('SELECT GET_LOCK(?,0) AS held', [this.lockName]);
     if (Number(rows[0].held) !== 1) sourceFailure('LOCK_BUSY');
     if (!await this.lease.acquire()) sourceFailure('WORKER_LEASE_BUSY');
-    // Never re-adopt active/unknown work from a previous package operation.
-    const [pending] = await this.pool.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs
-      WHERE state NOT IN ('completed','cancelled')
-      AND NOT (?='investigate' AND job_type='investigation.execute' AND state='queued' AND attempts=0
-        AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.investigationId'))=?
-        AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.requestId'))=?) LIMIT 1`,
-    [this.config.phase, this.config.investigationId ?? '', this.config.requestId ?? '']);
-    if (pending.length) sourceFailure('PRIOR_WORK_REQUIRES_AUDIT');
-    const [prior] = await this.pool.execute<RowDataPacket[]>('SELECT id FROM workflow_jobs WHERE idempotency_key=?', [`v23-source:${this.config.operationId}`]);
-    if (prior.length) sourceFailure('OPERATION_ALREADY_RECORDED');
-    const intentId = randomUUID();
-    await this.queue.enqueue({ id: intentId, type: 'qualification.source', schemaVersion: 1,
-      payload: { operationId: this.config.operationId, phase: this.config.phase },
-      idempotencyKey: `v23-source:${this.config.operationId}`, maxAttempts: 1 });
+    const intentId = await this.recordIntent();
     this.intent = await claimSourceJob(this.pool, intentId, 'qualification.source', this.workerId);
     this.cancel?.addEventListener('abort', this.onCancel, { once: true });
     if (this.cancel?.aborted) this.onCancel();
@@ -119,6 +107,71 @@ export class SourceControl {
         .finally(() => { this.renewing = undefined; });
     }, 5000);
     await this.assertActive();
+  }
+  /** The failure stays byte-for-byte unchanged. Audit consumption and the new
+   * unsent intent commit together, under both schema lock and row locks. A crash
+   * after commit leaves an unsent/running intent, never a reusable approval. */
+  private async recordIntent() {
+    const connection = this.lock!;
+    await connection.beginTransaction();
+    try {
+      const receipt = this.audit ? verifySourceAudit(this.audit, this.config) : undefined;
+      const [jobs] = await connection.query<RowDataPacket[]>('SELECT * FROM workflow_jobs ORDER BY id FOR UPDATE');
+      if (jobs.some(j => j.idempotency_key === `v23-source:${this.config.operationId}`)) sourceFailure('OPERATION_ALREADY_RECORDED');
+      const historical = new Map(jobs.filter(j => j.job_type === 'qualification.source.audit' && j.state === 'completed')
+        .map(j => { const p = typeof j.payload === 'string' ? JSON.parse(j.payload) : j.payload;
+          return [p.predecessorId, p.predecessorHash]; }));
+      let used = false;
+      for (const job of jobs) {
+        if (['completed', 'cancelled'].includes(job.state)) continue;
+        const payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
+        if (this.config.phase === 'investigate' && job.job_type === 'investigation.execute' && job.state === 'queued'
+          && job.attempts === 0 && payload.investigationId === this.config.investigationId && payload.requestId === this.config.requestId) continue;
+        const terminal = job.job_type === 'qualification.source' && job.state === 'dead_letter' && job.attempts === 1
+          && job.max_attempts === 1 && job.lease_owner === null && job.lease_expires_at === null
+          && job.last_error === 'V23_SOURCE_REQUIRES_AUDIT' && payload.phase === 'collect';
+        const digest = sourceIntentHash(job);
+        if (terminal && historical.get(job.id) === digest) continue;
+        if (!receipt || used || !terminal || receipt.predecessor.intentId !== job.id
+          || receipt.predecessor.operationId !== payload.operationId || receipt.predecessor.jobHash !== digest)
+          sourceFailure('PRIOR_WORK_REQUIRES_AUDIT');
+        used = true;
+      }
+      if (receipt) {
+        const [identity] = await connection.query<RowDataPacket[]>('SELECT @@server_uuid AS uuid');
+        if (identity[0]?.uuid !== receipt.successor.databaseServerUuid) sourceFailure('AUDIT_DATABASE_IDENTITY');
+        if (!used || historical.has(receipt.predecessor.intentId)) sourceFailure('AUDIT_ALREADY_USED_OR_UNKNOWN');
+        // This narrowly supported failure occurred before any collection or model
+        // work. A signed assertion cannot override contradictory durable facts.
+        if (jobs.some(j => !['qualification.source', 'qualification.source.audit'].includes(j.job_type))) sourceFailure('AUDIT_EXECUTION_EXISTS');
+        for (const table of ['metric_observations', 'metric_publications', 'investigations']) {
+          const [rows] = await connection.query<RowDataPacket[]>(`SELECT 1 FROM ${table} LIMIT 1`);
+          if (rows.length) sourceFailure('AUDIT_EXECUTION_EXISTS');
+        }
+      }
+      const id = randomUUID(), queue = new MysqlWorkflowStore(() => connection as never);
+      if (receipt) {
+        // Unique predecessor idempotency key + unique review UUID enforce single
+        // consumption even if another caller bypasses this process's mutex.
+        await connection.execute(`INSERT INTO workflow_jobs
+          (id,job_type,schema_version,payload,idempotency_key,state,attempts,max_attempts)
+          VALUES (?,'qualification.source.audit',1,?,?,'completed',1,1)`,
+        [receipt.reviewId, JSON.stringify({ predecessorId: receipt.predecessor.intentId,
+          predecessorHash: receipt.predecessor.jobHash, successorIntentId: id, receipt,
+          signedEnvelope: this.audit!.envelope.toString() }), `v23-source-audit:${receipt.predecessor.intentId}`]);
+      }
+      await queue.enqueue({ id, type: 'qualification.source', schemaVersion: 1,
+        payload: { operationId: this.config.operationId, phase: this.config.phase },
+        idempotencyKey: `v23-source:${this.config.operationId}`, maxAttempts: 1 });
+      // Recheck expiry at commit, after all SQL/lock waits.
+      if (this.audit) verifySourceAudit(this.audit, this.config);
+      await sourceDatabaseGuard(connection as unknown as Pool, this.config);
+      const [lease] = await connection.execute<RowDataPacket[]>(`SELECT owner_id,expires_at>NOW(3) AS live FROM worker_leases
+        WHERE lease_name='slide-singleton-workers' FOR UPDATE`);
+      if (lease[0]?.owner_id !== this.lease.ownerId || Number(lease[0]?.live) !== 1) sourceFailure('LEASE_LOST');
+      await connection.commit();
+      return id;
+    } catch (error) { await connection.rollback(); throw error; }
   }
   async execute(id: string, type: 'metrics.collect' | 'investigation.execute', registry: JobRegistry,
     validate: (job: ClaimedJob) => void) {
