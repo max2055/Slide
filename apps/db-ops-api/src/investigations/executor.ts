@@ -836,6 +836,10 @@ export class InvestigationExecutor {
           if (!state.provider) modelMessageId = undefined;
         },
       });
+      // Runtime races cancellation/timeouts against the original I/O promise.
+      // Finish its fenced writes (including known-unsent cleanup) while this
+      // Run is still running, before reading the terminal receipt or settling.
+      await Promise.allSettled(operations);
       access = await this.transaction((c) => this.canonical.lockInvestigationExecution(c, actor, binding));
       state = decode(access.run.result_json).investigationExecution;
       if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
@@ -877,6 +881,7 @@ export class InvestigationExecutor {
       await this.settle(terminal, base);
       return terminal;
     } catch (error) {
+      await Promise.allSettled(operations);
       let code = this.reason(control.signal.aborted ? control.signal.reason : error);
       const persisted = await this.runs.getForActor(binding.runId, actor.userId, run.sessionId);
       if (persisted?.state === 'running' && (persisted.result as { completionPending?: boolean })?.completionPending && !control.signal.aborted) {
