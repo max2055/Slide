@@ -12,7 +12,8 @@ import { CaseCursorCodec } from './search.js';
 import { KnowledgeStore, type CaseView } from './store.js';
 import { KnowledgeService, KnowledgeWatchService, type CandidateInput } from './service.js';
 import { registerKnowledgeRoutes } from './routes.js';
-import { ToolRegistry } from '@slide/agent-core';
+import { AgentRunner, ToolRegistry } from '@slide/agent-core';
+import { AgentRunService } from '../../adapter/agent-run-service.js';
 import { InvestigationCaseReferences } from '../../investigations/case-references.js';
 import { InvestigationExecutor } from '../../investigations/executor.js';
 import { investigationBudgetConfiguration } from '../../investigations/session-bridge.js';
@@ -202,6 +203,59 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
     const execution = (result.run.result as any).investigationExecution;
     expect(execution.provider).toBeNull(); expect(execution.usageUnknown).toBe(false);
     expect(execution.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 });
+  });
+
+  it('B18 drains a known-unsent request before terminal persistence and settlement after live revocation', async () => {
+    await publish();
+    let release!: () => void, boundary!: () => void, terminal!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const runtimeBoundary = new Promise<void>(resolve => { boundary = resolve; });
+    const terminalAttempt = new Promise<void>(resolve => { terminal = resolve; });
+    let held = false, terminalWhileHeld = false;
+    const originalRun = AgentRunner.prototype.run;
+    const runtime = vi.spyOn(AgentRunner.prototype, 'run').mockImplementation(async function (...args) {
+      try { return await originalRun.apply(this, args); }
+      finally { boundary(); }
+    });
+    const originalTerminal = AgentRunService.prototype.terminateInvestigation;
+    const termination = vi.spyOn(AgentRunService.prototype, 'terminateInvestigation').mockImplementation(async function (...args) {
+      if (held) { terminalWhileHeld = true; terminal(); }
+      return originalTerminal.apply(this, args);
+    });
+    const running = caseRun(async currentId => {
+      await f.rows('UPDATE investigations SET owner_id=101 WHERE id=?', [currentId]);
+      held = true;
+      // The real 250ms ACL poll aborts Runtime while its original request is
+      // still blocked in the final reference check, before beginSend.
+      await gate;
+      held = false;
+    });
+    try {
+      await runtimeBoundary;
+      // Give the old terminal path an observable chance to enter. A corrected
+      // Executor must wait at the held request, independently of SQL speed.
+      await Promise.race([terminalAttempt, new Promise(resolve => setTimeout(resolve, 100))]);
+      expect(terminalWhileHeld).toBe(false);
+    } finally {
+      release();
+      runtime.mockRestore(); termination.mockRestore();
+      await running;
+    }
+    const result = await running;
+    expect(result.sent).toHaveLength(1);
+    expect(result.run.state).not.toBe('completed');
+    const [durable] = await f.rows('SELECT state,result_json FROM agent_runs WHERE id=?', [result.run.id]);
+    for (const execution of [(result.run.result as any).investigationExecution, durable.result_json.investigationExecution]) {
+      expect(execution.provider).toBeNull();
+      expect(execution.usageUnknown).toBe(false);
+      expect(execution.usage).toMatchObject({ inputTokens: 20, cachedInputTokens: 5, outputTokens: 10 });
+    }
+    expect(durable.state).toBe(result.run.state);
+    const [allocation] = await f.rows('SELECT state,charged_tokens,cost_status,usage_snapshot FROM investigation_budget_ledger WHERE request_id=?', [result.acceptance.requestId]);
+    expect(allocation.state).toBe('settled');
+    expect(Number(allocation.charged_tokens)).toBe(30);
+    expect(allocation.cost_status).toBe('known');
+    expect(allocation.usage_snapshot).toMatchObject({ inputTokens: 20, cachedInputTokens: 5, outputTokens: 10 });
   });
 
   it('B18 reloads durable dependencies before a successor Run even when old text is only summarized', async () => {
