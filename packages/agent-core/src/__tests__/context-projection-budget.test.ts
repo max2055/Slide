@@ -82,6 +82,32 @@ it('budgets reasoning once when the opaque transport extra overrides the local c
   expect(withExtra[2].reasoning_content).toBe('required thinking');
 });
 
+it('repeated projection preserves the real SDK body for every reasoning override',async()=>{
+  const http=await import('node:http');
+  const bodies:any[]=[];
+  const server=http.createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
+    bodies.push(JSON.parse(Buffer.concat(chunks).toString()));
+    res.setHeader('content-type','application/json');
+    res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'ok'},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1}}));
+  });
+  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try{
+    const p=new OpenAIProvider({apiKey:'test-only',model:'deepseek-flash',baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
+    for(const override of ['required thinking','overridden wire reasoning','',null,undefined]){
+      const raw=structuredClone(messages);
+      (raw[2] as any)._extra={reasoning_content:override,custom_field:'preserved'};
+      raw.push({role:'user',source:'runtime',content:'Current Time: test clock'});
+      const before=JSON.stringify(raw);
+      await p.chat(raw,[],{maxTokens:8});
+      await p.chat(p.projectMessages(p.projectMessages(raw)),[],{maxTokens:8});
+      expect(bodies.at(-1).messages).toEqual(bodies.at(-2).messages);
+      expect(JSON.stringify(raw)).toBe(before);
+    }
+    expect(bodies).toHaveLength(10);
+  }finally{await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
+});
+
 it('protected evidence references encode repeated field names once without losing calls or uncertainty',()=>{
   const calls=Array.from({length:5},(_,i)=>({id:'call_'+String(i).repeat(30),type:'function' as const,function:{name:'get_server_metrics',arguments:JSON.stringify({serverId:i+1,maxRows:1,from:'2026-10-20T00:00:00Z'})}}));
   const raw:Message[]=[messages[0],messages[1],{role:'assistant',content:null,tool_calls:calls},...calls.slice(0,4).map(call=>({role:'tool' as const,tool_call_id:call.id,content:'untrusted evidence'}))];

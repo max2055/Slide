@@ -83,10 +83,14 @@ export class OpenAIProvider implements LLMProvider {
       // Keep transport inputs plus the source boundary used by repeated projection.
       // Extras remain opaque so SDK-specific overrides retain existing behavior.
       const { role, content, tool_calls, tool_call_id, reasoning_content, source } = message;
+      const extra = (message as any)._extra;
       // Preserve source through repeated projection so the runtime clock never
       // becomes the latest factual user turn and drops required tool reasoning.
-      return { role, content, tool_calls, tool_call_id, reasoning_content, source,
-        ...((message as any)._extra ? { _extra: structuredClone((message as any)._extra) } : {}) };
+      return { role, content, tool_calls, tool_call_id, source,
+        // The transport spreads extras last. Do not budget the overwritten
+        // local reasoning copy; retain the complete effective extra unchanged.
+        ...(extra && Object.hasOwn(extra, 'reasoning_content') ? {} : { reasoning_content }),
+        ...(extra ? { _extra: structuredClone(extra) } : {}) };
     });
   }
   private client: OpenAI;
