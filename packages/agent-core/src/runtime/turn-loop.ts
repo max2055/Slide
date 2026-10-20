@@ -2,7 +2,7 @@ import { StreamBoundary } from './stream-boundary.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
+import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
 import { ModelStep, TimeoutError } from "./model-step.js";
@@ -206,7 +206,24 @@ export class TurnLoop {
       };
       currentContext = context;
       reminder = undefined;
-      const reservation = manager.requestReservation();
+      let reservation = manager.requestReservation();
+      let requestSpec = spec;
+      // A nearly spent execution allowance need not buy an entire context
+      // window. With no unsettled usage, bound this request by its complete
+      // conservative input estimate and an affordable output ceiling. The
+      // original context cap remains in force; a late hook/schema change must
+      // also fit this smaller envelope at the actual provider boundary.
+      if (spec.budgetLimits && recovery.state.unknownRequests === 0) {
+        const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state);
+        if (remaining < reservation) {
+          const input = manager.tokens(messagesForModel);
+          const output = Math.min(manager.contextConfig.maxTokens, remaining - input);
+          if (Number.isSafeInteger(output) && output > 0) {
+            reservation = remaining;
+            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, remaining - output) };
+          }
+        }
+      }
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;
@@ -228,7 +245,7 @@ export class TurnLoop {
       // ── Request LLM ──
       let response: LLMResponse;
       try {
-        response = await new ModelStep(this.getProvider()).request(spec, messagesForModel, hook, context);
+        response = await new ModelStep(this.getProvider()).request(requestSpec, messagesForModel, hook, context);
       } catch (e: unknown) {
         const isTimeout = e instanceof TimeoutError;
         const errMsg = isTimeout ? e.message : (e instanceof Error ? e.message : String(e));

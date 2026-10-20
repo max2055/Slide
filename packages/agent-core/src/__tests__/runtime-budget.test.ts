@@ -242,3 +242,19 @@ it.each(['no-input-room', 'unsettled-usage', 'hook-growth'] as const)(
     expect(result.resolution?.reasonCode).toBe(mode === 'hook-growth' ? 'CONTEXT_UNRECOVERABLE' : 'TOKEN_BUDGET');
   },
 );
+
+it('retains the smaller request reservation when usage is unknown and cannot spend it again', async () => {
+  const recovery = new RecoveryPolicy();
+  recovery.state.usage = { prompt_tokens: 18009, completion_tokens: 0 };
+  const config = spec({ initialMessages: [{ role: 'user', content: 'x'.repeat(10000) }], tools: new ToolRegistry(),
+    contextWindowTokens: 16000, resumeCheckpoint: { runtime_state_v1: recovery.snapshot() } });
+  config.budgetLimits!.maxTotalTokens = 32000;
+  const chat = vi.fn(async () => ({ ...ok, usage: {} }));
+  const first = await new AgentRunner(provider(chat)).run(config);
+  expect(chat).toHaveBeenCalledTimes(1);
+  expect(first.runtimeState).toMatchObject({ reservedTokens: 13991, unknownRequests: 1 });
+  const second = await new AgentRunner(provider(chat)).run({ ...config, resumeCheckpoint: { runtime_state_v1: first.runtimeState } });
+  expect(second.resolution?.reasonCode).toBe('TOKEN_BUDGET');
+  expect(second.runtimeState).toMatchObject({ reservedTokens: 13991, unknownRequests: 1 });
+  expect(chat).toHaveBeenCalledTimes(1);
+});
