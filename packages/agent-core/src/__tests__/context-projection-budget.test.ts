@@ -70,3 +70,15 @@ it("repeated projection keeps tool-turn reasoning across the runtime clock bound
   expect(first[2].reasoning_content).toBe("required thinking");
   expect(second[2].reasoning_content).toBe(first[2].reasoning_content);
 });
+
+it('protected evidence references encode repeated field names once without losing calls or uncertainty',()=>{
+  const calls=Array.from({length:5},(_,i)=>({id:'call_'+String(i).repeat(30),type:'function' as const,function:{name:'get_server_metrics',arguments:JSON.stringify({serverId:i+1,maxRows:1,from:'2026-10-20T00:00:00Z'})}}));
+  const raw:Message[]=[messages[0],messages[1],{role:'assistant',content:null,tool_calls:calls},...calls.slice(0,4).map(call=>({role:'tool' as const,tool_call_id:call.id,content:'untrusted evidence'}))];
+  const before=JSON.stringify(raw);const refs=new ContextManager(spec,provider).pins(raw,raw.length).find(m=>m.role==='tool'&&m.name==='runtime_evidence_references')!;
+  const payload=JSON.parse(String(refs.content).split('\n').slice(1).join('\n'));
+  const expected=calls.map((call,i)=>({sourceIndex:2,toolCallId:call.id,toolName:call.function.name,arguments:call.function.arguments,status:i<4?'result_recorded_not_success_assertion':'uncertain_do_not_replay'}));
+  const decoded=Array.isArray(payload)?payload:payload.rows.map((row:any[])=>Object.fromEntries(payload.columns.map((key:string,i:number)=>[key==='statusIndex'?'status':key,key==='statusIndex'?payload.statuses[row[i]]:row[i]])));
+  expect(decoded).toEqual(expected);
+  expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(Buffer.byteLength(JSON.stringify(expected)));
+  expect(JSON.stringify(raw)).toBe(before);
+});
