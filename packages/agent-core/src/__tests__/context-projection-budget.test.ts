@@ -28,3 +28,10 @@ it('the conservative UTF8 byte bound and genuine oversized content still fail cl
  expect(manager.lastEstimate?.method).toBe('conservative-heuristic');
  expect(manager.lastEstimate?.margin.floorTokens).toBe(manager.lastEstimate?.tokens);
 });
+
+it('repeated projection keeps tool-turn reasoning across the runtime clock boundary',()=>{
+ const withClock:Message[]=[...messages,{role:'user',source:'runtime',content:'Current Time: test clock'}];
+ const first=provider.projectMessages(withClock);const second=provider.projectMessages(first);
+ expect(first[2].reasoning_content).toBe('required thinking');
+ expect(second[2].reasoning_content).toBe(first[2].reasoning_content);
+});
