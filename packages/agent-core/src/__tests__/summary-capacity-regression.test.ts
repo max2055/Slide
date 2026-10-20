@@ -27,7 +27,7 @@ it("summary output must coexist with protected context", async () => {
   const cases: any[] = [];
   for (const mode of ["respects-budget", "ignores-budget", "persistence-fails", "no-room"]) {
     let sends = 0,
-      ceiling = 0;
+      ceiling = 0, byteTarget = 0;
     const receipts: any[] = [];
     const spec: any = {
       initialMessages: raw,
@@ -49,8 +49,9 @@ it("summary output must coexist with protected context", async () => {
       chatStream: async (_m: any, _t: any, _c: any, options: any) => {
         sends++;
         ceiling = options.maxTokens;
+        byteTarget = Number(_m[0].content.match(/within (\d+) UTF-8/)[1]);
         return {
-          content: JSON.stringify(mode === "ignores-budget" || ceiling >= 1419 ? verbose : brief),
+          content: JSON.stringify(mode === "ignores-budget" || byteTarget >= Buffer.byteLength(JSON.stringify(verbose)) ? verbose : brief),
           finishReason: "stop",
           toolCalls: [],
           hasToolCalls: false,
@@ -86,7 +87,7 @@ it("summary output must coexist with protected context", async () => {
           String(error),
       );
       assert.equal(sends, 1);
-      assert(ceiling < 1419);
+      assert(ceiling <= byteTarget);
       assert.equal(receipts[0].status, "accepted");
       assert.deepEqual(manager.summary.summary, brief);
       manager.assertFits(manager.project(raw));

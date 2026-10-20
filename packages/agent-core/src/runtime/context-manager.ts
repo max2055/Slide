@@ -121,7 +121,16 @@ export class ContextManager {
       arguments: call.function.arguments,
       status: raw.slice(index + 1, end).some(r => r.role === 'tool' && (!r.source || r.source === 'fact') && r.tool_call_id === call.id) ? 'result_recorded_not_success_assertion' : 'uncertain_do_not_replay',
     })) : []);
-    if (evidence.length) pins.push(...historicalData('evidence_references', evidence, sourceHash(raw.slice(0, end))));
+    if (evidence.length) {
+      // Lossless column encoding avoids paying repeated keys/status text for
+      // every protected call. All IDs, arguments, order and uncertainty survive.
+      const statuses = ['result_recorded_not_success_assertion', 'uncertain_do_not_replay'];
+      const references = {
+        columns: ['sourceIndex', 'toolCallId', 'toolName', 'arguments', 'statusIndex'], statuses,
+        rows: evidence.map(e => [e.sourceIndex, e.toolCallId, e.toolName, e.arguments, statuses.indexOf(e.status)]),
+      };
+      pins.push(...historicalData('evidence_references', references, sourceHash(raw.slice(0, end))));
+    }
     return pins;
   }
 }
