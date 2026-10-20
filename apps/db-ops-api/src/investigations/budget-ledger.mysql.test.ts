@@ -85,6 +85,30 @@ describe('durable investigation budget, real MySQL and formal migrations', () =>
     return service.settle(reservation.id, { inputTokens: tokens, cachedInputTokens: 0, outputTokens: 0 });
   }
 
+  it('persists and restores a million-token allocation without rewriting frozen authority', async () => {
+    const command = await input([1], { mode: 'manual', operationId: 'unused', reserveTokens: 1000000, reserveCostMicros:1000000 });
+    const before = (await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=?', [command.requestId]))[0][0].request_snapshot;
+    const authority = (typeof before === 'string' ? JSON.parse(before) : before).authority;
+    const service = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+    const { operationId: _unused, ...execution } = command;
+    const allocation = accepted(await service.reserveExecution(execution));
+    expect(allocation.reservedTokens).toBe(1000000);
+    const fresh = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      expect(await fresh.reuseExecutionInTransaction(connection, command.requestId, { domain:command.domain,mode:command.mode,profile:command.profile })).toEqual(allocation);
+      await connection.commit();
+    } finally { connection.release(); }
+    const after = (await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=?', [command.requestId]))[0][0].request_snapshot;
+    expect((typeof after === 'string' ? JSON.parse(after) : after).authority).toEqual(authority);
+    expect(command.profile.budget.maxTokens).toBe(32000);
+    await service.markSent(allocation.id);
+    await service.markUnknown(allocation.id);
+    expect(await fresh.read(allocation.id)).toMatchObject({ state:'unknown',reservedTokens:1000000,chargedTokens:1000000 });
+    await expect(ledger().reserveExecution(execution)).rejects.toThrow('BUDGET_INPUT_INVALID');
+  });
+
   it('formal migration is registered once and repeats with unchanged ledger', async () => {
     const before = await new MigrationRunner(pool).inspect();
     expect(before.filter(row => row.migration_id === '114_investigation_budget_ledger.sql')).toHaveLength(1);
