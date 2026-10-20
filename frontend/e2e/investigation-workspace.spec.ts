@@ -5,7 +5,9 @@ test.describe.configure({ mode: 'default' });
 let env: Awaited<ReturnType<typeof startInvestigationServer>>;
 let investigationId = '';
 test.beforeAll(async () => {
-  env = await startInvestigationServer();
+  // The controlled provider reports a fixed 20-token prompt for every request.
+  // Match its counter so pagination exercises completed Runs, not context exhaustion.
+  env = await startInvestigationServer({ syntheticPromptTokens: 20 });
   const created = await env.bridge.create(env.owner, { title: '共享浏览器场景', goal: '再次读取合成指标', profileId: 'ops', profileVersion: 1,
     resources: [{ type: 'instance', id: 101, role: 'primary' }], context: { subject: { kind: 'resource', resource: { type: 'instance', id: 101 } } }, idempotencyKey: crypto.randomUUID() },
     { message: '再次读取合成指标', idempotencyKey: crypto.randomUUID() });
@@ -16,7 +18,7 @@ test.afterAll(async () => { if (env) { try { expect(env.workerErrors).toEqual([]
 test.setTimeout(60_000);
 let observationStart = 0;
 test.beforeEach(() => { observationStart = env.observationErrors.length; });
-test.afterEach(() => { env.hold(false); env.holdChat(false); expect(env.observationErrors.slice(observationStart), 'Authorized observation must not fail storage/revoke the owner').toEqual([]); });
+test.afterEach(() => { env.hold(false); env.holdChat(false); env.exhaustProviderSteps(false); expect(env.observationErrors.slice(observationStart), 'Authorized observation must not fail storage/revoke the owner').toEqual([]); });
 
 async function login(page: Page, viewer = false) {
   const actor = viewer ? env.viewer : env.owner;
@@ -155,7 +157,60 @@ test('unknown is partial/outcome_unknown; no automatic rerun or recovery claim',
   await expect(page.locator('.investigation-states')).toContainText('结果未知');
   await expect(page.locator('.investigation-states')).toContainText('未确认');
   await page.reload(); await expect(page.locator('.investigation-states')).toContainText('结果未知');
+  await page.getByRole('textbox', { name: '继续调查', exact: true }).fill('未知结果不能继续');
+  await expect(page.getByRole('button', { name: '提交新 Run', exact: true })).toBeDisabled();
   expect(env.counts()).toEqual(before);
+});
+
+test('known partial continues through the product HTTP path without changing its predecessor', async ({ page }) => {
+  env.exhaustProviderSteps(true);
+  let id: string, requestId: string;
+  try {
+    const created = await env.bridge.create(env.owner, { title: '显式接续部分结果', goal: '保留旧结果继续调查', profileId: 'ops', profileVersion: 1,
+      resources: [{ type: 'instance', id: 101, role: 'primary' }], context: { subject: { kind: 'resource', resource: { type: 'instance', id: 101 } } },
+      idempotencyKey: crypto.randomUUID() }, { message: '合成模型耗尽本次执行步数，保留已知部分结果', idempotencyKey: crypto.randomUUID() });
+    id = created.investigation.id; requestId = created.acceptance!.requestId;
+    await expect.poll(async () => {
+      const [jobs] = await env.pool.query('SELECT state,lease_owner,lease_expires_at FROM workflow_jobs WHERE id=?', [created.acceptance!.jobId]);
+      return jobs[0]?.state === 'completed' && jobs[0].lease_owner === null && jobs[0].lease_expires_at === null;
+    }).toBe(true);
+  } finally { env.exhaustProviderSteps(false); }
+  const oldFacts = async () => {
+    const [requests] = await env.pool.query('SELECT * FROM investigation_requests WHERE id=?', [requestId]);
+    const [runs] = await env.pool.query('SELECT * FROM agent_runs WHERE idempotency_key=?', [`investigation:${requestId}`]);
+    const [results] = await env.pool.query('SELECT * FROM investigation_results WHERE request_id=?', [requestId]);
+    const [evidence] = await env.pool.query('SELECT * FROM investigation_evidence WHERE request_id=? ORDER BY id', [requestId]);
+    const [ledger] = await env.pool.query('SELECT * FROM investigation_budget_ledger WHERE request_id=?', [requestId]);
+    return { requests, runs, results, evidence, ledger };
+  };
+  const before = await oldFacts();
+  expect(before.runs[0].state).toBe('partial'); expect(before.ledger[0].state).toBe('settled');
+  await login(page); await page.goto(`${env.url}/investigations?investigation=${id}`);
+  await observed(page);
+  await page.getByRole('textbox', { name: '继续调查', exact: true }).fill('显式继续读取合成指标');
+  const button = page.getByRole('button', { name: '从部分结果继续', exact: true });
+  await expect(button).toBeEnabled();
+  const accepted = page.waitForResponse(r => r.url() === `${env.url}/api/investigations/${id}/runs` && r.request().method() === 'POST');
+  await button.focus(); await expect(button).toBeFocused();
+  await page.keyboard.press('Enter'); const response = await accepted;
+  expect(response.status()).toBe(202);
+  expect(response.request().postDataJSON().continuationOf).toEqual({ requestId, runId: before.runs[0].id, resultVersion: Number(before.results[0].version) });
+  const successor = await response.json();
+  await expect.poll(async () => {
+    const [runs] = await env.pool.query('SELECT state FROM agent_runs WHERE idempotency_key=?', [`investigation:${successor.requestId}`]);
+    return runs[0]?.state;
+  }).toBe('completed');
+  expect(await oldFacts()).toEqual(before);
+  const [current] = await env.pool.query('SELECT version FROM investigations WHERE id=?', [id]);
+  const reused = await page.request.post(`${env.url}/api/investigations/${id}/runs`, {
+    headers: { Authorization: `Bearer ${env.token()}`, 'Idempotency-Key': crypto.randomUUID() },
+    data: { message: '不得重用旧部分结果', expectedVersion: Number(current[0].version),
+      continuationOf: response.request().postDataJSON().continuationOf },
+  });
+  expect(reused.status()).toBe(409);
+  expect(await oldFacts()).toEqual(before);
+  const [requests] = await env.pool.query('SELECT COUNT(*) AS n FROM investigation_requests WHERE investigation_id=?', [id]);
+  expect(Number(requests[0].n)).toBe(2);
 });
 
 test('viewer cannot append; same-JWT live resource revocation hides content and caches', async ({ page }) => {
@@ -267,10 +322,12 @@ test('Profiles settings consumes readonly facts, responds to live SQL rejection 
     const response = await page.request.get(`${env.url}/api/investigation-profiles`, { headers: { Authorization: `Bearer ${env.token(actor)}` } });
     expect(response.status()).toBe(200); expect(response.headers()['cache-control']).toContain('no-store');
     const facts = await response.json();
+    expect(facts.items.map((item: any) => `${item.profile.id}:${item.profile.version}`).sort()).toEqual(['ops:1', 'ops:2', 'system:1']);
     for (const item of facts.items) {
-      const row = profiles.getByRole('row').filter({ has: page.locator(`[data-profile="${item.profile.id}"]`) });
+      const row = profiles.getByRole('row').filter({ has: page.locator(`[data-profile="${item.profile.id}"][data-profile-version="${item.profile.version}"]`) });
       await expect(row).toContainText(item.profile.responsibility);
       const details = row.getByRole('button');
+      await expect(details).toHaveAccessibleName(`查看${item.profile.id === 'ops' ? '资源调查' : '平台调查'} V${item.profile.version} 预置详情 →`);
       await details.click();
       const dialog = profiles.locator('app-dialog').filter({ has: page.locator('dialog[open]') });
       await dialog.getByText('版本与技术标识', { exact: true }).click();
@@ -308,7 +365,7 @@ test('a late authorized Profiles HTTP response cannot restore facts after live S
   let first = true;
   await page.goto(`${env.url}/settings/ai/profiles`);
   const profiles = page.locator('investigation-profiles-page');
-  await expect(profiles.locator('[data-profile]')).toHaveCount(2);
+  await expect(profiles.locator('[data-profile]')).toHaveCount(3);
   await page.route('**/api/investigation-profiles', async route => {
     if (!first) { await route.continue(); return; }
     first = false;
@@ -517,6 +574,10 @@ test('more than 20 durable result versions page, remain after snapshot, and reco
   const [versions] = await env.pool.query('SELECT id,run_id FROM investigation_results WHERE investigation_id=? ORDER BY version DESC', [id]);
   expect(await select.locator('option').evaluateAll(options => options.map(o => (o as HTMLOptionElement).value))).toEqual(versions.map((v: any) => v.id));
   expect(new Set(versions.map((v: any) => v.run_id)).size).toBe(22);
+  const [runs] = await env.pool.query(`SELECT state FROM agent_runs
+    WHERE id IN (SELECT run_id FROM investigation_results WHERE investigation_id=?)`, [id]);
+  expect(runs).toHaveLength(22);
+  expect(runs.every((run: any) => run.state === 'completed')).toBe(true);
   await select.selectOption(versions.at(-1).id);
   // Await actual snapshot refresh HTTP delivery before asserting retained pages.
   const refreshed = page.waitForResponse(response => response.url() === `${env.url}/api/investigations/${id}/results` && response.status() === 200);

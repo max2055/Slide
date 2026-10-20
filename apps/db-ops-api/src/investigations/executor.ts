@@ -1,3 +1,4 @@
+import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool } from 'mysql2/promise';
 import {
@@ -21,7 +22,8 @@ import { AgentRunService, type AgentRun, type AgentRunState } from '../adapter/a
 import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtime.js';
 import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
-import { INVESTIGATION_PROMPTS, resolveInvestigationProfile } from './profiles.js';
+import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
+import { InvestigationCaseReferences } from './case-references.js';
 import {
   MysqlInvestigationBudgetLedger,
   budgetUsage,
@@ -34,11 +36,39 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
+import { investigationToolContract } from './tool-contract.js';
 import { systemInvestigationHistory } from './system-tools.js';
 
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+/** Model projection only; the complete bounded receipt is persisted first.
+ * Keep live Ops batches small enough to leave room for protected history.
+ * This cap is a planning limit; ContextManager still enforces final admission.
+ */
+export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string): unknown {
+  if (result === null || typeof result !== 'object' || (result as any).success !== true
+    || (result as any).status === 'error') return result;
+  const json = JSON.stringify(result);
+  if (profile !== 'ops' || Buffer.byteLength(json) <= 1024) return json;
+  return JSON.stringify({ success: true, status: 'warning',
+    summary: '完整工具结果已持久化；本上下文仅含证据引用，未包含观测值，不可据此推断健康或根因。请使用相同资源和时间范围，以 maxRows=1 或 limit=1 缩小只读查询。',
+    data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
+      evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
+}
+/** Ephemeral model view only. Durable facts and checkpoints retain full results. */
+export function investigationContextMessages(messages: Message[], profile: string): Message[] {
+  if (profile !== 'ops') return messages;
+  return messages.map(message => {
+    if (message.name === 'search_case_references') return message;
+    if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
+    let result: unknown;
+    try { result = JSON.parse(message.content); } catch { return message; }
+    const content = investigationToolContextResult(result, message.tool_call_id, profile);
+    return typeof content === 'string' && content !== message.content
+      ? { ...message, content, messageParts: undefined } : message;
+  });
+}
 // Only these reviewed handlers require no browser, approval, credential read or
 // interactive session. Profile membership alone never grants background safety.
 const BACKGROUND_SAFE = new Set([
@@ -50,6 +80,7 @@ const BACKGROUND_SAFE = new Set([
   'get_resource_observations',
   'get_resource_relations',
   'get_platform_observations',
+  'search_case_references',
 ]);
 export interface InvestigationExecuteCommand {
   investigationId: string;
@@ -63,9 +94,21 @@ export interface InvestigationRuntimeDependencies {
 }
 export interface InvestigationExecutorOptions extends InvestigationRuntimeDependencies {
   pool: () => Pool | null;
+  caseReferences?: InvestigationCaseReferences;
+  /** Trusted server-side test configuration; never taken from workflow payloads. */
+  contextInputLimit?: number;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
-  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices };
+  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number };
+}
+export function investigationContextLimits(providerWindow: number | undefined, inputLimit?: number) {
+  if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit < 1 || inputLimit > 100_000)) {
+    throw new Error('INVESTIGATION_CONTEXT_INPUT_LIMIT');
+  }
+  return {
+    contextWindowTokens: Math.min(providerWindow ?? 16_000, inputLimit === undefined ? 16_000 : inputLimit + 4096 + 1024),
+    ...(inputLimit === undefined ? {} : { contextBlockLimit: inputLimit }),
+  };
 }
 interface ExecutionState {
   schemaVersion: 1;
@@ -77,7 +120,8 @@ interface ExecutionState {
   reservedTokens: number;
   usage: BudgetUsage;
   usageUnknown: boolean;
-  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received' } | null;
+  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
+  lastSummaryReceipt?: unknown;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
 }
 const usageOf = (response: LLMResponse): BudgetUsage | null => {
@@ -213,12 +257,14 @@ export class InvestigationExecutor {
   private readonly authorization: InvestigationAuthorization;
   private readonly bridge: InvestigationSessionBridge;
   private readonly ledger: MysqlInvestigationBudgetLedger;
+  private readonly cases: InvestigationCaseReferences;
   constructor(private readonly options: InvestigationExecutorOptions) {
     this.authorization = options.authorization ?? new InvestigationAuthorization();
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
     this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
-    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy);
+    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens);
+    this.cases = options.caseReferences ?? InvestigationCaseReferences.create(options.pool);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
     // Ingress owns domain before newly created Session rows. Executor owns
@@ -402,7 +448,7 @@ export class InvestigationExecutor {
               domain: this.options.budget.domain,
               mode,
               profile,
-              reserveTokens: profile.budget.maxTokens,
+              reserveTokens: this.options.budget.maxExecutionTokens ?? profile.budget.maxTokens,
               reserveCostMicros: this.options.budget.reserveCostMicros,
               prices: this.options.budget.prices,
             });
@@ -534,21 +580,23 @@ export class InvestigationExecutor {
         };
         await this.persistCheckpoint(actor, binding, checkpoint);
       }
+      if ((checkpoint?.context_request_v1 as any)?.status === 'rejected') throw new Error('SUMMARY_INVALID');
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
       const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
-      const dispatch = async (send: () => Promise<LLMResponse>, input: unknown): Promise<LLMResponse> => {
+      const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
         if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-        const id = randomUUID();
+        if(identity && (identity.purpose!=='summary' || !uuid.test(identity.id) || !/^[a-f0-9]{64}$/.test(identity.sourceHash)))throw Error('INVESTIGATION_PROVIDER_UNKNOWN');
+        const id = identity?.id ?? randomUUID();
         await update(async (s, c) => {
           // Recheck the immutable receipt at each new intent, including after
           // tool I/O and recovery. Neither a stale snapshot nor model/event
           // supplied lane/domain may authorize this provider call.
           receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-          s.provider = { id, inputHash: hash(input), messageId: modelMessageId ?? null, status: 'sent' };
+          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
         // turns. Only the Run's durable terminal receipt may release it.
@@ -560,14 +608,47 @@ export class InvestigationExecutor {
           if (!sent.dispatchAllowed) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           receipt.state = 'sent';
         } else if (receipt.state !== 'sent') throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-        await this.transaction((c) => this.canonical.lockInvestigationExecution(c, actor, binding));
-        control.signal.throwIfAborted();
-        const response = await send();
+        let started = false;
+        const beginSend = () => { control.signal.throwIfAborted(); started = true; return send(); };
+        let response: LLMResponse;
+        try {
+          const egress = await this.transaction(async c => {
+            await this.canonical.lockInvestigationExecution(c, actor, binding);
+            if (profile.id !== 'ops' || profile.version !== 2) return { actor, refs: [] };
+            const live = await this.authorization.authorize(c, actor, await this.authorization.load(c, investigationId), 'continue', [], frozen);
+            return { actor: live.actor, refs: await this.cases.load(c, investigationId) };
+          });
+          response = await this.cases.send(egress.actor, egress.refs, beginSend, async c => {
+            await this.canonical.lockInvestigationExecution(c as unknown as InvestigationConnection, actor, binding);
+          });
+        } catch (error) {
+          // A failed final reference check did not send a provider request.
+          // Preserve earlier usage, without inventing unknown usage/noReplay.
+          if (!started) await this.transaction(async c => {
+            // Cleanup has no content side effect and must remain possible
+            // after ACL withdrawal. Follow the terminal owner's lock order,
+            // proving the exact original request, actor, Run and live fence.
+            await c.query('SELECT session_id FROM chat_sessions WHERE session_id=? FOR UPDATE', [run.sessionId]);
+            await c.query('SELECT id FROM investigations WHERE id=? FOR UPDATE', [investigationId]);
+            const [request] = await c.query<any[]>('SELECT message_id,job_id FROM investigation_requests WHERE id=? AND investigation_id=? FOR UPDATE', [requestId, investigationId]);
+            await this.canonical.assertInvestigationLease(c, binding);
+            const [rows] = await c.query<any[]>('SELECT result_json FROM agent_runs WHERE id=? AND actor_id=? AND session_id=? AND message_id=? AND idempotency_key=? AND state=\'running\' FOR UPDATE',
+              [run.id, actor.userId, run.sessionId, request[0]?.message_id, `investigation:${requestId}`]);
+            if (request[0]?.job_id !== job.id || !rows.length) throw new Error('INVESTIGATION_RUN_INVALID');
+            const result = decode(rows[0].result_json), next: ExecutionState = result.investigationExecution;
+            if (next.provider?.id !== id || next.fencingToken !== context.fencingToken) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
+            next.provider = null;
+            await c.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(result), run.id]);
+            state = next;
+          });
+          throw error;
+        }
         control.signal.throwIfAborted();
         const usage = usageOf(response);
         await update((s) => {
           if (s.provider?.id !== id) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           s.provider.status = 'received';
+          if(identity) s.provider.response = structuredClone(response);
           if (!usage) s.usageUnknown = true;
           else {
             s.usage.inputTokens += usage.inputTokens;
@@ -581,17 +662,15 @@ export class InvestigationExecutor {
         getDefaultModel: () => actual.getDefaultModel(),
         getModelCapabilities: actual.getModelCapabilities?.bind(actual),
         countPromptTokens: actual.countPromptTokens?.bind(actual),
-        projectMessages: actual.projectMessages?.bind(actual),
-        chat: (messages, tools, options) => dispatch(() => actual.chat(messages, tools, options), [messages, tools]),
+        projectMessages: (messages, model) => investigationContextMessages(actual.projectMessages?.(messages, model) ?? messages, profile.id),
+        chat: (messages, tools, options) => dispatch(() => actual.chat(messages, tools, options), [messages, tools], (options as any)?.requestIdentity),
         chatStream: (messages, tools, callbacks, options) =>
-          dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools]),
+          dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools], (options as any)?.requestIdentity),
       };
-      // Compact only successful System JSON in the live model context. Keep the
-      // complete structured receipt for SQL evidence/recovery and preserve
-      // object failure semantics in ToolExecutor. No field or source text is cut.
-      const contextToolResult = (result: unknown) => profile.id === 'system' && result !== null
-        && typeof result === 'object' && (result as { success?: boolean }).success === true
-        && (result as { status?: string }).status !== 'error'
+      // Keep lossless JSON in Runtime facts/checkpoints and SQL evidence.
+      // Only provider.projectMessages above may replace it with a reference.
+      const contextToolResult = (result: unknown, _toolId: string) => result !== null && typeof result === 'object'
+        && (result as { success?: boolean }).success === true && (result as { status?: string }).status !== 'error'
         ? JSON.stringify(result) : result;
       let currentToolId: string | undefined;
       const effective = await this.transaction(async (c) =>
@@ -604,9 +683,13 @@ export class InvestigationExecutor {
           frozen,
         ),
       );
-      const scopedRegistry = (actor: ActorContext) => profile.id === 'system'
-        ? this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry()
-        : runtime.toolsForActor(actor);
+      const scopedRegistry = (actor: ActorContext) => {
+        if (profile.id === 'system') return this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry();
+        const base = runtime.toolsForActor(actor), registry = new ToolRegistry();
+        for (const name of base.toolNames) registry.register(base.get(name)!);
+        if (profile.version === 2) this.cases.register(registry, actor);
+        return registry;
+      };
       const source = scopedRegistry(effective.actor),
         tools = new ToolRegistry();
       for (const name of effective.tools) {
@@ -621,8 +704,11 @@ export class InvestigationExecutor {
           security?.effect !== 'read'
         )
           continue;
+        const contract = profile.id === 'system' ? tool : investigationToolContract(tool, snapshot.resources, profile.budget);
+        if (!contract) continue;
         tools.register({
           ...tool,
+          ...contract,
           concurrencySafe: false,
           exclusive: true,
           timeoutMs: Math.min(tool.timeoutMs ?? 10_000, 10_000),
@@ -651,7 +737,7 @@ export class InvestigationExecutor {
             if (existing) {
               if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
                 throw new Error('INVESTIGATION_TOOL_UNKNOWN');
-              return contextToolResult(existing.result);
+              return contextToolResult(existing.result, toolId);
             }
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
@@ -668,10 +754,16 @@ export class InvestigationExecutor {
             );
             toolContext?.signal?.throwIfAborted();
             control.signal.throwIfAborted();
-            await update((s) => {
+            await this.transaction(async c => {
+              await this.canonical.lockInvestigationExecution(c, actor, binding);
+              await this.authorization.authorizeTool(c, actor, await this.authorization.load(c, investigationId), frozen, name,
+                targets.length ? targets : security.resource === 'instance' ? snapshot.resources.filter((r: any) => r.type === 'instance') : []);
+            });
+            await update(async (s, c) => {
+              if (name === 'search_case_references') await this.cases.retain(c, investigationId, result);
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });
-            return contextToolResult(result);
+            return contextToolResult(result, toolId);
           },
         });
       }
@@ -690,7 +782,7 @@ export class InvestigationExecutor {
           role: 'system',
           source: 'runtime',
           contextAuthority: 'policy',
-          content: INVESTIGATION_PROMPTS[profile.id as 'ops' | 'system'],
+          content: investigationPrompt(profile),
         },
         ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];
@@ -703,11 +795,11 @@ export class InvestigationExecutor {
         initialMessages,
         tools,
         model: provider.getDefaultModel(),
-        contextWindowTokens: Math.min(modelCapabilities?.contextWindowTokens ?? 16_000, 16_000),
+        ...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
         maxIterations: profile.budget.maxProviderAttempts,
         // Context admission must reserve the same configured output ceiling
         // as dispatch, including qualification-only reductions. Keep the
-        // existing hard context and execution-token ceilings unchanged.
+        // configured context and execution-token ceilings unchanged.
         maxTokens: Math.min(4096, state.reservedTokens,
           modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
         maxToolResultChars: profile.budget.maxBytes,
@@ -730,7 +822,8 @@ export class InvestigationExecutor {
         recoveryLimits: { total: 0, empty: 0, continuation: 0, stream: 0, repetition: 0, context: 0 },
         // System uses deterministic history references; do not attempt an
         // unbudgeted summary at the soft watermark. The hard context cap stays.
-        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } } : {}),
+        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } }
+          : profile.id === 'ops' ? { contextPolicy: { recentToolBatches: 1 as const } } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {
@@ -867,11 +960,19 @@ export class InvestigationExecutor {
         Number(payload.iteration ?? 0),
         checkpoint,
       );
+      {
+        const result = decode(access.run.result_json), state: ExecutionState = result?.investigationExecution;
+        if(acknowledgeSummary(state?.provider, payload)) {
+          state.lastSummaryReceipt = { ...payload.context_request_v1 as object, response:state.provider!.response };
+          state.provider = null;
+          await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
+        }
+      }
       if (['awaiting_tools', 'tools_completed', 'final_response'].includes(String(payload.phase))) {
         const result = decode(access.run.result_json),
           state: ExecutionState = result?.investigationExecution;
         if (
-          state?.provider?.status === 'received' &&
+          state?.provider?.purpose !== 'summary' && state?.provider?.status === 'received' &&
           state.provider.messageId &&
           (payload.assistantMessage as { id?: string } | undefined)?.id === state.provider.messageId
         ) {

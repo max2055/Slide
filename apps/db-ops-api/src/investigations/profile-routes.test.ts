@@ -7,7 +7,7 @@ import { MigrationRunner } from '../migrations/runner.js';
 import { ActorContextService, signAccessToken } from '../auth/actor-context.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { provisionInvestigationServiceIdentity, type AuthorityExecutor } from './authorization.js';
-import { INVESTIGATION_PROFILES, INVESTIGATION_PROMPTS, investigationProfileHash } from './profiles.js';
+import { INVESTIGATION_PROFILES, INVESTIGATION_PROMPTS, investigationProfileHash, resolveInvestigationProfile } from './profiles.js';
 import { InvestigationProfilesResponseSchema } from './profile-contracts.js';
 import { registerInvestigationProfileRoutes } from './profile-routes.js';
 import { buildClientTypes, buildOpenApiDocument } from '../contracts/generate-public-api.js';
@@ -75,9 +75,9 @@ describe.skipIf(!port)('T03-D Profile facts: real MySQL migration/JWT/TCP HTTP',
     const body = await response.json() as any;
     expect(Value.Check(InvestigationProfilesResponseSchema, body)).toBe(true);
     expect(body).toMatchObject({ schemaVersion: 1, source: 'repository', allowlistSemantics: 'authority_ceiling' });
-    expect(body.items).toHaveLength(2);
+    expect(body.items).toHaveLength(3);
     for (const item of body.items) {
-      const profile = INVESTIGATION_PROFILES[item.profile.id as 'ops' | 'system'];
+      const profile = resolveInvestigationProfile(item.profile.id, item.profile.version);
       expect(item).toEqual({ profile, profileHash: investigationProfileHash(profile),
         configurationStatus: 'preset', toolAvailability: 'not_evaluated', outputSchemaId: 'InvestigationResult' });
       expect(item.profile.prompt.hash).toMatch(/^[a-f0-9]{64}$/);

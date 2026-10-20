@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { redactSensitiveText } from '../../security/log-redaction.js';
 import { freezeInvestigationCaller } from '../../investigations/authorization.js';
 import { assertExpectedVersion, OperationsError, operationsContentHash } from '../contracts.js';
@@ -179,7 +180,8 @@ export class KnowledgeService {
       return page;
     });
   }
-  async references(caller: ActorContext, bindings: readonly CaseReferenceBinding[], send: (payload: Record<string, unknown>) => void): Promise<void> {
+  async references(caller: ActorContext, bindings: readonly CaseReferenceBinding[], send: (payload: Record<string, unknown>) => void,
+    beforeSend?: (connection: PoolConnection) => Promise<void>): Promise<void> {
     this.enabled();
     const refs = parse(z.array(z.strictObject({ id: key, version: z.number().int().positive(), contentHash: z.string().regex(/^[a-f0-9]{64}$/) })).max(20), bindings);
     await this.store.transaction(caller, async (c, actor) => {
@@ -198,6 +200,9 @@ export class KnowledgeService {
         const item = await this.store.load(c, ref.id), view = await this.store.view(c, actor, item);
         if (view.tombstone || item.state !== 'published' || item.version !== ref.version || item.contentHash !== ref.contentHash) throw precondition();
       }
+      // Trusted composition can also lock the consuming investigation/fence in
+      // this same transaction. No network await occurs under these locks.
+      await beforeSend?.(c);
       if (expiries.some(expiry => expiry <= Date.now())) throw precondition();
       send({ case_references: references, evidence: [] });
     });

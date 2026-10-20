@@ -30,16 +30,20 @@ describe.skipIf(!port)('MAX-175 bounded executor evidence / isolated MySQL, cont
     await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(101,101,'read-only')");
   }, 60000);
   afterAll(async () => { await pool?.end(); if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); } });
-  async function persisted(value: unknown) {
+  async function persisted(value: unknown, expectReference = false) {
     const actor = await contexts.loadActiveActor(101);
     const created = await bridge.create(actor, { idempotencyKey: randomUUID(), title: 'MAX175 evidence', goal: 'Read', profileId: 'ops', profileVersion: 1,
       resources: [{ type: 'instance', id: 101, role: 'primary' }] }, { message: 'Read', idempotencyKey: randomUUID() });
     const requestId = created.acceptance!.requestId;
     const job = (await new MysqlWorkflowStore(() => pool as never).claim('max175-evidence', 60, { types: ['investigation.execute'], exclude: false }))!;
     let calls = 0;
+    let modelToolContent: string | undefined;
+    let checkpointDuringRequest: unknown;
     const provider: LLMProvider = { getDefaultModel: () => 'fixture',
       getModelCapabilities: () => ({ model: 'fixture', contextWindowTokens: 32768, preferredOutputTokens: 4096, source: 'configuration', version: 'fixture/v1' }),
-      chat: async () => { calls++; return { content: calls === 1 ? null : '根因待核验', finishReason: calls === 1 ? 'tool_calls' : 'stop',
+      chat: async (messages) => { calls++; modelToolContent = messages.find(m => m.role === 'tool')?.content as string | undefined;
+        if (expectReference && calls > 1) checkpointDuringRequest = await rows('SELECT metadata FROM chat_sessions WHERE session_id=?', [created.investigation.sessionId]);
+        return { content: calls === 1 ? null : '根因待核验', finishReason: calls === 1 ? 'tool_calls' : 'stop',
         toolCalls: calls === 1 ? [{ id: 'max175-call', name: 'get_instance_summary', arguments: { instance_id: 101 } }] : [],
         hasToolCalls: calls === 1, shouldExecuteTools: calls === 1, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } }; },
       chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); } };
@@ -53,6 +57,12 @@ describe.skipIf(!port)('MAX-175 bounded executor evidence / isolated MySQL, cont
     await pool.query("UPDATE workflow_jobs SET state='completed' WHERE id=?", [job.id]);
     const evidence = await rows('SELECT raw_json FROM investigation_evidence WHERE investigation_id=?', [created.investigation.id]);
     expect(evidence).toHaveLength(1);
+    if (expectReference) {
+      expect(JSON.parse(modelToolContent!)).toMatchObject({data:{evidenceOmitted:true,requiresNarrowerRead:true,
+        contextReference:{toolCallId:'max175-call'}}});
+      expect(modelToolContent).not.toContain('bounded-row');
+      expect(JSON.stringify(checkpointDuringRequest)).toContain('bounded-row');
+    }
     return JSON.stringify(evidence[0].raw_json);
   }
   it('persists nested ISO dates, null invalid dates and redaction after bounded copying', async () => {
@@ -64,7 +74,7 @@ describe.skipIf(!port)('MAX-175 bounded executor evidence / isolated MySQL, cont
   it('preserves row and depth bounds when dates are present', async () => {
     let deep: unknown = { beyond: 'must-be-cut', date: new Date() };
     for (let i = 0; i < 25; i++) deep = { child: deep };
-    const json = await persisted({ success: true, deep, observedAt: new Date(), rows: Array(201).fill('bounded-row') });
+    const json = await persisted({ success: true, deep, observedAt: new Date(), rows: Array(201).fill('bounded-row') }, true);
     expect(json.match(/bounded-row/g)).toHaveLength(200); expect(json).toContain('[depth limit]'); expect(json).not.toContain('must-be-cut');
   });
   it('rejects results over the byte ceiling after Date serialization', async () => {

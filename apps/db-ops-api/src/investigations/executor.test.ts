@@ -4,6 +4,10 @@ import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 const now = Date.parse('2026-10-12T12:00:00Z'),
   budget = { maxBytes: 128_000, maxRows: 200, maxWindowMs: 3_600_000 };
 describe('restricted investigation arguments', () => {
+  it('rejects the originally emitted 24h server call and keeps the legal 1h call', () => {
+    expect(() => boundedInvestigationArguments('get_server_metrics', { serverId: 3, range: '24h' }, budget, now)).toThrow('INVESTIGATION_TOOL_WINDOW_LIMIT');
+    expect(boundedInvestigationArguments('get_server_metrics', { serverId: 3, range: '1h' }, budget, now).targets).toEqual([{ type: 'server', id: 3 }]);
+  });
   it('resolves exact trusted resource IDs', () => {
     expect(boundedInvestigationArguments('get_instance_summary', { instance_id: 101 }, budget, now).targets).toEqual([
       { type: 'instance', id: 101 },
@@ -60,5 +64,23 @@ describe('restricted investigation arguments', () => {
     await expect(
       handler({ investigationId: 'id', requestId: 'request', actor: { id: 1 } }, {} as never, {} as never),
     ).rejects.toThrow('INVESTIGATION_JOB_INVALID');
+  });
+});
+
+describe('trusted investigation context configuration', () => {
+  it.each([
+    [undefined, undefined, 16000, undefined],
+    [1048576, undefined, 16000, undefined],
+    [1048576, 100000, 105120, 100000],
+    [64000, 100000, 64000, 100000],
+    [undefined, 100000, 16000, 100000],
+  ])('bounds provider %s and scoped input %s', async (window, input, expectedWindow, expectedInput) => {
+    const { investigationContextLimits } = await import('./executor.js');
+    expect(investigationContextLimits(window, input)).toEqual({ contextWindowTokens: expectedWindow,
+      ...(expectedInput === undefined ? {} : { contextBlockLimit: expectedInput }) });
+  });
+  it.each([0, -1, 100001, 1.5, Infinity])('rejects invalid scoped input %s', async input => {
+    const { investigationContextLimits } = await import('./executor.js');
+    expect(() => investigationContextLimits(1048576, input)).toThrow('INVESTIGATION_CONTEXT_INPUT_LIMIT');
   });
 });

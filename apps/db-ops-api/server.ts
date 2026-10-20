@@ -1,3 +1,4 @@
+import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
@@ -416,6 +417,7 @@ async function start() {
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
   await registerFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationRoutes(fastify, verifyToken);
+  await createOperationsComposition(() => dbConnection.getPool(), { jwtSecret: JWT_SECRET }).register(fastify);
   await registerInvestigationFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
@@ -3127,7 +3129,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
         let metricDef: any = null;
         if (data.metric_name) {
-          metricDef = metricRegistry.getById(data.metric_name);
+          metricDef = metricRegistry.getById(data.metric_name, data.target_type || 'instance');
           if (!metricDef) {
             reply.code(400).send({ error: `指标 "${data.metric_name}" 不存在` });
             return;
@@ -3176,21 +3178,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
         const data = request.body as any;
-        if (!await requireAlertRuleAccess(request, reply, Number(id))) return;
+        const existingRule = await requireAlertRuleAccess(request, reply, Number(id));
+        if (!existingRule) return;
         let instanceIds: number[] | null | undefined;
         if (data.instance_ids !== undefined) {
           instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids);
           if (instanceIds === undefined) return;
         }
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
-        if (data.metric_name) {
-          const def = metricRegistry.getById(data.metric_name);
+        if (data.metric_name || data.target_type !== undefined) {
+          const metricName = data.metric_name ?? existingRule.metric_name;
+          const def = metricRegistry.getById(metricName, data.target_type ?? existingRule.target_type ?? 'instance');
           if (!def) {
-            reply.code(400).send({ error: `指标 "${data.metric_name}" 不存在` });
+            reply.code(400).send({ error: `指标 "${metricName}" 不存在` });
             return;
           }
           if (!def.is_collected) {
-            reply.code(400).send({ error: `指标 "${data.metric_name}" 未启用采集，无法更新告警规则` });
+            reply.code(400).send({ error: `指标 "${metricName}" 未启用采集，无法更新告警规则` });
             return;
           }
         }

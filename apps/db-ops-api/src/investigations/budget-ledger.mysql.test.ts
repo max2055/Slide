@@ -4,9 +4,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import mysql, { type Pool, type PoolOptions, type RowDataPacket } from 'mysql2/promise';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadMigrations, MigrationRunner } from '../migrations/runner.js';
 import { OutboxService, type TransactionConnection, type TransactionPool } from '../workflows/outbox-service.js';
+import { investigationBudgetConfiguration } from './session-bridge.js';
 import { INVESTIGATION_PROFILES, investigationProfileHash } from './profiles.js';
 import { MysqlInvestigationBudgetLedger, type BudgetAdmission, type BudgetPolicy, type BudgetReservationInput } from './budget-ledger.js';
 
@@ -84,6 +85,86 @@ describe('durable investigation budget, real MySQL and formal migrations', () =>
     await service.markSent(reservation.id);
     return service.settle(reservation.id, { inputTokens: tokens, cachedInputTokens: 0, outputTokens: 0 });
   }
+
+  afterEach(() => vi.unstubAllEnvs());
+  it('uses the exact factory policy for a new automatic million allocation while preserving old domains', async () => {
+    vi.stubEnv('INVESTIGATION_MAX_TOKENS', '1000000');
+    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', undefined);
+    vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN', undefined);
+    const original = investigationBudgetConfiguration();
+    const originalLedger = new MysqlInvestigationBudgetLedger(() => pool, original.policy, original.maxExecutionTokens);
+    const command = await input([1], {domain:original.domain, reserveTokens:1000000,reserveCostMicros:1000000});
+    const { operationId: _unused, ...execution } = command;
+    expect(await originalLedger.reserveExecution(execution)).toEqual({accepted:false,reason:'AUTOMATIC_DAILY_TOKENS'});
+    const oldDomain = (await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key=?',[original.domain]))[0][0];
+    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS','1000000');
+    // Changing the frozen old policy remains forbidden; it requires a new domain.
+    const changed = investigationBudgetConfiguration();
+    await expect(new MysqlInvestigationBudgetLedger(() => pool, changed.policy, changed.maxExecutionTokens)
+      .reserveExecution(execution)).rejects.toMatchObject({code:'BUDGET_POLICY_CONFLICT'});
+    vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN','max207-investigation-1m-v1');
+    const configured = investigationBudgetConfiguration();
+    const service = new MysqlInvestigationBudgetLedger(() => pool,configured.policy,configured.maxExecutionTokens);
+    const freshCommand = await input([2],{domain:configured.domain,reserveTokens:1000000,reserveCostMicros:1000000});
+    const {operationId: _fresh, ...freshExecution} = freshCommand;
+    const allocation = accepted(await service.reserveExecution(freshExecution));
+    expect(allocation).toMatchObject({reservedTokens:1000000,domain:configured.domain});
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      expect(await new MysqlInvestigationBudgetLedger(() => pool,configured.policy,configured.maxExecutionTokens)
+        .reuseExecutionInTransaction(connection as unknown as TransactionConnection,freshCommand.requestId,
+          {domain:configured.domain,mode:'automatic',profile:INVESTIGATION_PROFILES.ops})).toEqual(allocation);
+      await connection.commit();
+    } finally {await connection.rollback();connection.release();}
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key=?',[original.domain]))[0][0]).toEqual(oldDomain);
+    await service.markSent(allocation.id);
+    await service.settle(allocation.id,null);
+    const next = await input([3],{mode:'manual',domain:configured.domain,reserveTokens:1,reserveCostMicros:1});
+    const {operationId: _next,...nextExecution}=next;
+    expect(await service.reserveExecution(nextExecution)).toEqual({accepted:false,reason:'TOTAL_DAILY_TOKENS'});
+    expect((await service.read(allocation.id)).chargedTokens).toBe(1000000);
+  });
+
+  it('persists and restores a million-token allocation without rewriting frozen authority', async () => {
+    const command = await input([1], { mode: 'manual', operationId: 'unused', reserveTokens: 1000000, reserveCostMicros:1000000 });
+    const before = (await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=?', [command.requestId]))[0][0].request_snapshot;
+    const authority = (typeof before === 'string' ? JSON.parse(before) : before).authority;
+    const service = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+    const { operationId: _unused, ...execution } = command;
+    const allocation = accepted(await service.reserveExecution(execution));
+    expect(allocation.reservedTokens).toBe(1000000);
+    const fresh = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      expect(await fresh.reuseExecutionInTransaction(connection as unknown as TransactionConnection, command.requestId, { domain:command.domain,mode:command.mode,profile:command.profile })).toEqual(allocation);
+      await connection.commit();
+    } finally { connection.release(); }
+    const after = (await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=?', [command.requestId]))[0][0].request_snapshot;
+    expect((typeof after === 'string' ? JSON.parse(after) : after).authority).toEqual(authority);
+    expect(command.profile.budget.maxTokens).toBe(32000);
+    await service.markSent(allocation.id);
+    await service.settle(allocation.id, null);
+    expect(await fresh.read(allocation.id)).toMatchObject({ state:'unknown',reservedTokens:1000000,chargedTokens:1000000 });
+    expect(() => ledger().reserveExecution(execution)).toThrow('BUDGET_INPUT_INVALID');
+  });
+
+  it('preserves an existing 32000 receipt under the expanded deployment ceiling', async () => {
+    const command = await input([1], { mode:'manual',reserveTokens:32000,reserveCostMicros:32000 });
+    const { operationId: _unused, ...execution } = command;
+    const allocation = accepted(await ledger().reserveExecution(execution));
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const expanded = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+      const restored = await expanded.reuseExecutionInTransaction(connection as unknown as TransactionConnection, command.requestId,
+        { domain:command.domain,mode:command.mode,profile:command.profile });
+      expect(restored).toEqual(allocation);
+      expect(restored.reservedTokens).toBe(32000);
+      await connection.commit();
+    } finally { connection.release(); }
+  });
 
   it('formal migration is registered once and repeats with unchanged ledger', async () => {
     const before = await new MigrationRunner(pool).inspect();

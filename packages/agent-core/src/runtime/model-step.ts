@@ -11,7 +11,7 @@ export class TimeoutError extends RuntimeError {
 /** Timers belong at the model boundary, including providers that ignore abort. */
 export class ModelStep {
   constructor(private readonly provider: import('../types.js').LLMProvider) {}
-  async request(spec: AgentRunSpec, messages: Message[], hook: AgentHook, context: AgentHookContext): Promise<LLMResponse> {
+  async request(spec: AgentRunSpec, messages: Message[], hook: AgentHook, context: AgentHookContext, requestIdentity?: import('./summary-receipt.js').SummaryIdentity): Promise<LLMResponse> {
     const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
     const idleS = spec.streamIdleTimeoutS ?? spec.llmTimeoutS ?? (parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined);
     const controller = new AbortController();
@@ -47,7 +47,7 @@ export class ModelStep {
         merge: (a, b) => a.type === 'text' && b.type === 'text' ? { type: 'text', delta: a.delta + b.delta } : undefined,
         onError: stop,
       });
-      const options = { model: spec.model, temperature: spec.temperature, maxTokens: spec.maxTokens,
+      const options = { ...(requestIdentity ? {requestIdentity} : {}), model: spec.model, temperature: spec.temperature, maxTokens: spec.maxTokens,
         reasoningEffort: spec.reasoningEffort, timeoutS, streamIdleTimeoutS: idleS, signal: controller.signal };
       let outputStarted = false;
       const output = async () => {

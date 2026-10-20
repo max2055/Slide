@@ -38,7 +38,7 @@ export function conservativeTextTokens(text: string | null): number {
   return text ? Buffer.byteLength(text, 'utf8') : 0;
 }
 function validEstimate(value: PromptTokenEstimate, model: string): boolean {
-  return value.model === model && ['exact', 'family-tokenizer'].includes(value.method) &&
+  const valid = !!value && value.model === model && ['exact', 'family-tokenizer', 'conservative-heuristic'].includes(value.method) &&
     typeof value.version === 'string' && value.version.length > 0 && value.version.length <= 256 &&
     Number.isSafeInteger(value.tokens) && value.tokens >= 0 &&
     Number.isSafeInteger(value.rawTokens) && value.rawTokens >= 0 &&
@@ -46,6 +46,12 @@ function validEstimate(value: PromptTokenEstimate, model: string): boolean {
     Number.isSafeInteger(value.margin.fixedTokens) && value.margin.fixedTokens >= 0 &&
     Number.isSafeInteger(value.margin.floorTokens) && value.margin.floorTokens >= 0 &&
     value.tokens >= Math.max(value.margin.floorTokens, Math.ceil(value.rawTokens * (1 + value.margin.ratio)) + value.margin.fixedTokens);
+  if (!valid) return false;
+  // A provider may supply the same conservative bound over its actual wire
+  // representation. Accept only this known, fully labeled byte-bound format.
+  return value.method !== 'conservative-heuristic' ||
+    (value.version === TOKEN_ESTIMATOR_VERSION && value.margin.ratio === 0 && value.margin.fixedTokens === 0 &&
+      value.margin.floorTokens === value.rawTokens && value.tokens === value.rawTokens);
 }
 /** A method's existence is not evidence that this particular request was counted. */
 export function estimateWithProvider(messages: Message[], tools: ToolSchema[], model: string, provider?: LLMProvider): PromptTokenEstimate {

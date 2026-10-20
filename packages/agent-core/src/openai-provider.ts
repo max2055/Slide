@@ -7,7 +7,7 @@
 
 import OpenAI from "openai";
 import { projectProviderMessages, hasMessageAttachments } from './message-parts.js';
-import { FamilyTokenCounter } from './token-estimation.js';
+import { conservativePromptEstimate, FamilyTokenCounter, hasMedia } from './token-estimation.js';
 import { isNativeOpenAIEndpoint, openAIModelCapabilities, type ModelCapabilities } from './model-context.js';
 import type {
   LLMProvider,
@@ -79,7 +79,19 @@ function normalizeError(error: unknown): NormalizedProviderError {
 export class OpenAIProvider implements LLMProvider {
   projectMessages(messages: Message[], model = this.getDefaultModel()): Message[] {
     return projectProviderMessages(messages, { supportsVision: this.getModelCapabilities(model)?.supportsVision === true,
-      reasoning: /deepseek|kimi|glm/i.test(model) ? 'tool-turn' : 'omit' });
+      reasoning: /deepseek|kimi|glm/i.test(model) ? 'tool-turn' : 'omit' }).map(message => {
+      // Keep transport inputs plus the source boundary used by repeated projection.
+      // Extras remain opaque so SDK-specific overrides retain existing behavior.
+      const { role, content, tool_calls, tool_call_id, reasoning_content, source } = message;
+      const extra = (message as any)._extra;
+      // Preserve source through repeated projection so the runtime clock never
+      // becomes the latest factual user turn and drops required tool reasoning.
+      return { role, content, tool_calls, tool_call_id, source,
+        // The transport spreads extras last. Do not budget the overwritten
+        // local reasoning copy; retain the complete effective extra unchanged.
+        ...(extra && Object.hasOwn(extra, 'reasoning_content') ? {} : { reasoning_content }),
+        ...(extra ? { _extra: structuredClone(extra) } : {}) };
+    });
   }
   private client: OpenAI;
   private model: string;
@@ -110,7 +122,13 @@ export class OpenAIProvider implements LLMProvider {
     return this.nativeOpenAI ? openAIModelCapabilities(model) : undefined;
   }
   countPromptTokens(messages: Message[], tools: ToolSchema[], model = this.model) {
-    return this.nativeOpenAI ? this.tokenCounter.count(messages, tools, model) : undefined;
+    if (hasMedia(messages)) return undefined;
+    const native = this.nativeOpenAI ? this.tokenCounter.count(messages, tools, model) : undefined;
+    if (native) return native;
+    // Count exactly the representation sent by chat/chatStream. Local routing,
+    // permission metadata and fields overwritten by extras are not wire input.
+    // This remains a byte upper bound, never a tokenizer or provider usage.
+    return conservativePromptEstimate(messages.map(toOpenAIMessage) as Message[], tools.map(toOpenAITool), model, 'TOKENIZER_UNSUPPORTED');
   }
   invalidateTokenCache(): void { this.tokenCounter.invalidate(); }
 
