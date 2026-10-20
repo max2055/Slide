@@ -62,6 +62,18 @@ it('opt-in durable retention keeps the latest batch atomic and pins every older 
   expect(()=>new ContextManager(spec({contextPolicy:{recentToolBatches:1}}))).toThrow();
   expect(()=>new ContextManager(spec({checkpointCallback:async()=>{},contextPolicy:{recentToolBatches:0} as any}))).toThrow();
 });
+it('a later user message cannot move durable retention past the latest atomic tool batch', () => {
+  const latest: Message[] = [call, { role: 'tool', tool_call_id: 'a', content: 'evidence-a' }, { role: 'tool', tool_call_id: 'b', content: 'evidence-b' }];
+  const raw: Message[] = [{ role: 'system', content: 'Read only' }, { role: 'user', content: 'original goal' }, ...latest, { role: 'user', content: 'continue checking' }];
+  const before = structuredClone(raw);
+  const manager = new ContextManager(spec({ checkpointCallback: async () => {}, contextPolicy: { recentToolBatches: 1 } }));
+  const split = manager.split(raw);
+  expect(split.end).toBe(2);
+  expect(split.retained).toEqual([...latest, raw.at(-1)]);
+  expect(split.pins).toContainEqual(raw[0]);
+  expect(split.pins).toContainEqual(raw[1]);
+  expect(raw).toEqual(before);
+});
 it('checkpoint or hook schema changes are checked again at the actual provider boundary', async () => {
   const tools = new ToolRegistry(); let calls = 0;
   const runner = new AgentRunner({ getDefaultModel: () => 'test', chat: async () => { calls++; throw new Error('dispatch'); }, chatStream: async () => { throw new Error('dispatch'); } });

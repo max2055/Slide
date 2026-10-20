@@ -112,7 +112,7 @@ export class ContextManager {
     const batches = raw.flatMap((m, i) => m.role === 'assistant' && (!m.source || m.source === 'fact') && m.tool_calls?.length ? [i] : []);
     const latest = users.at(-1) ?? raw.length;
     const end = this.spec.contextPolicy?.recentToolBatches === 1
-      ? Math.max(latest, batches.at(-1) ?? latest)
+      ? batches.at(-1) ?? latest
       : batches.at(-2) ?? latest;
     return { end, pins: this.pins(raw, end), retained: raw.slice(end) };
   }
