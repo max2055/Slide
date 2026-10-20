@@ -145,3 +145,30 @@ it('protected evidence references encode repeated field names once without losin
   expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(Buffer.byteLength(JSON.stringify(expected)));
   expect(JSON.stringify(raw)).toBe(before);
 });
+
+it('summary source uses the model projection before enclosing full durable tool history', async () => {
+  const {autoCompact}=await import('../runtime/auto-compact.js');
+  const {RecoveryPolicy}=await import('../runtime/recovery-policy.js');
+  const {RapidRefill}=await import('../runtime/rapid-refill.js');
+  const {sourceHash}=await import('../runtime/context-manager.js');
+  const raw:Message[]=[{role:'system',content:'read only'},{role:'user',content:'inspect server 3'}];
+  for(let i=0;i<3;i++) raw.push(
+    {role:'assistant',content:null,tool_calls:[{id:`receipt-${i}`,type:'function',function:{name:'read_only',arguments:'{}'}}]},
+    {role:'tool',tool_call_id:`receipt-${i}`,content:JSON.stringify({success:true,rows:i===0?Array(3000).fill('bounded-row'):['small']})});
+  const before=JSON.stringify(raw);let sends=0;let summarySource='';
+  const actual=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
+  const provider:any={getDefaultModel:()=> 'deepseek-flash',countPromptTokens:actual.countPromptTokens.bind(actual),
+    projectMessages:(messages:Message[])=>actual.projectMessages(messages).map(m=>{
+      if(m.role!=='tool'||!m.tool_call_id||typeof m.content!=='string')return m;
+      let value:any;try{value=JSON.parse(m.content);}catch{return m;}
+      return value.success===true&&value.rows?.length>200?{...m,content:JSON.stringify({success:true,evidenceOmitted:true,toolCallId:m.tool_call_id})}:m;
+    }),chat:async()=>{throw Error('NO_ORDINARY_SEND');},chatStream:async(messages:Message[])=>{
+      sends++;summarySource=JSON.stringify(messages);
+      return {content:JSON.stringify({goal:['inspect server 3'],constraints:[],done:[],pending:[],evidence:[],uncertain:[]}),finishReason:'stop',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:20,completion_tokens:20}};
+    }};
+  const manager=new ContextManager({...spec,initialMessages:raw,checkpointCallback:async()=>{}},provider);
+  await autoCompact(manager,raw,provider,new RecoveryPolicy(),new RapidRefill(),async()=>{});
+  expect(sends).toBe(1);expect(summarySource).not.toContain('bounded-row');expect(summarySource).toContain('evidenceOmitted');
+  expect(manager.summary?.sourceHash).toBe(sourceHash(raw.slice(0,manager.summary!.sourceEnd)));
+  expect(JSON.stringify(raw)).toBe(before);manager.assertFits(manager.project(raw));
+});
