@@ -172,3 +172,26 @@ it('summary source uses the model projection before enclosing full durable tool 
   expect(manager.summary?.sourceHash).toBe(sourceHash(raw.slice(0,manager.summary!.sourceEnd)));
   expect(JSON.stringify(raw)).toBe(before);manager.assertFits(manager.project(raw));
 });
+
+it('compacts eligible history before tool growth makes the two retained batches irreducible', async () => {
+  const {AgentRunner}=await import('../runner.js');
+  const tools=new ToolRegistry();let executions=0;
+  tools.register({name:'read_only',description:'Read bounded evidence',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:true,exclusive:false,execute:async()=>{executions++;return 'new evidence '.repeat(280);}});
+  const raw:Message[]=[{role:'system',content:'Read only.'},{role:'user',content:'Inspect server 3.'},
+    {role:'assistant',content:'prior read',tool_calls:[{id:'prior',type:'function',function:{name:'read_only',arguments:'{}'}}]},
+    {role:'tool',tool_call_id:'prior',name:'read_only',content:'old evidence '.repeat(520)},
+    {role:'user',content:'Continue the read-only investigation and report the evidence.'}];
+  const before=JSON.stringify(raw);const events:string[]=[];let ordinary=0;
+  const actual=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
+  const response=(content:string|null,toolCalls:any[]=[])=>({content,finishReason:toolCalls.length?'tool_calls':'stop',toolCalls,hasToolCalls:!!toolCalls.length,shouldExecuteTools:!!toolCalls.length,usage:{prompt_tokens:10,completion_tokens:10}});
+  const p:any={getDefaultModel:()=>actual.getDefaultModel(),projectMessages:actual.projectMessages.bind(actual),countPromptTokens:actual.countPromptTokens.bind(actual),
+    chatStream:async()=>{events.push('summary');return response(JSON.stringify({goal:['Inspect server 3'],constraints:['Read only'],done:[],pending:[],evidence:[],uncertain:[]}));},
+    chat:async()=>{events.push('ordinary');ordinary++;return ordinary===1?response(null,[{id:'current',name:'read_only',arguments:{}}]):response('The read-only evidence was collected. Root cause remains unverified.');}};
+  const runSpec={...spec,tools,initialMessages:raw,maxIterations:5,checkpointCallback:async()=>{}};
+  const manager=new ContextManager(runSpec,p);const initial=manager.tokens(raw);
+  expect(initial).toBeLessThan(manager.inputBudget*manager.watermark);
+  expect(initial+manager.contextConfig.maxTokens).toBeGreaterThan(manager.inputBudget);
+  const result=await new AgentRunner(p).run(runSpec);
+  expect(result.stopReason).toBe('completed');expect(events).toEqual(['summary','ordinary','ordinary']);
+  expect(executions).toBe(1);expect(JSON.stringify(raw)).toBe(before);
+});
