@@ -55,7 +55,7 @@ P01–P06已历史合入；P07–P11是已审开放候选，不称已merge/部�
 
 `functionalEvidence`仅表示这份受控fixture协议/算法材料可独立审查，不能替代全批CI/代码审查/最终接受。默认CLI退出0/2依此字段，qualification模式依历史dataEvidenceStatus；缺输入为2，格式/输出错误为1。五个synthetic案例足以验证功能；固定分母5、全部相关集recall、macro不变。低于0.80及对照无改善仍如实输出，取消其作为本批结束阈值。基线仍用P04的14/28天语义算法，合成时间窗立即运行，不等待真实天数；缺测/reset维持unknown。
 
-历史顶层`dataEvidenceStatus/B04/B06/B07`单独保留，`productQualificationChanged=false`、`finalAcceptance=not_evaluated`不变。synthetic的真实计数为0、真实有效天数为null，不改写真实资格通过。pnpm可能包装退出2为1；从API目录直接`node --import tsx ../../tests/qualification/operations-readiness.ts`可取得原码。
+历史顶层`dataEvidenceStatus/B04/B06/B07`单独保留；functional模式顶层检索/对照质量为null，合成分数仅在标记synthetic的`functionalEvidence`中输出，`productQualificationChanged=false`、`finalAcceptance=not_evaluated`不变。synthetic的真实计数为0、真实有效天数为null，不改写真实资格通过。pnpm可能包装退出2为1；从API目录直接`node --import tsx ../../tests/qualification/operations-readiness.ts`可取得原码。
 
 ## 验证、边界与接续
 

@@ -68,6 +68,12 @@ test('agent, future or pre-freeze review cannot meet the human freeze gate', () 
 test('synthetic and unknown provenance never count toward real cases or windows', () => {
   const d = dataset(); d.cases.forEach(c => c.provenance = 'synthetic'); d.baselines.forEach(b => b.provenance = 'unknown');
   const r = inspect(d); assert.equal(r.B04.trustedRealInvestigations, 0);
+  assert.equal(r.B04.precisionAt5, null); assert.equal(r.B04.recallAt5, null);
+  assert.equal(r.B04.humanPrecisionAt5, null); assert.equal(r.B04.humanRecallAt5, null);
+  assert(r.B06.series.every(s => s.comparison.baselineFalsePositiveRate === null
+    && s.comparison.staticFalsePositiveRate === null && s.comparison.newImportantMisses === null));
+  assert.equal(r.functionalEvidence.B04.precisionAt5, 1);
+  assert.equal(r.functionalEvidence.B06.series[0].comparison.baselineFalsePositiveRate, 0);
   assert(r.B06.series.every(s => s.validDays === null && s.status === 'blocked'));
 });
 test('versions and near duplicate investigations/incidents cannot pad the thirty-case threshold', () => {
@@ -255,6 +261,12 @@ test('current policy accepts five synthetic cases and synthetic windows without 
   assert.equal(r.functionalEvidence.status, 'ready_for_independent_review');
   assert.equal(r.functionalEvidence.B04.syntheticInvestigations, 5);
   assert.equal(r.B04.trustedRealInvestigations, 0);
+  assert.equal(r.B04.precisionAt5, null); assert.equal(r.B04.recallAt5, null);
+  assert.equal(r.B04.humanPrecisionAt5, null); assert.equal(r.B04.humanRecallAt5, null);
+  assert(r.B06.series.every(s => s.comparison.baselineFalsePositiveRate === null
+    && s.comparison.staticFalsePositiveRate === null && s.comparison.newImportantMisses === null));
+  assert.equal(r.functionalEvidence.B04.precisionAt5, 1);
+  assert.equal(r.functionalEvidence.B06.series[0].comparison.baselineFalsePositiveRate, 0);
   assert(r.B06.series.every(s => s.validDays === null));
   assert.equal(r.dataEvidenceStatus, 'blocked');
   assert.equal(r.productQualificationChanged, false); assert.equal(r.finalAcceptance, 'not_evaluated');

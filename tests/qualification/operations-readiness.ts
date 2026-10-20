@@ -241,7 +241,14 @@ export function inspectFunctionalEvidence(bytes?: string, review?: FreezeReview,
   const dataset = bytes === undefined ? undefined : parseDataset(JSON.parse(bytes));
   const result = evaluateReadiness(dataset, review, now, true);
   const { trustedRealInvestigations, distinctRealIncidents, ...retrieval } = result.B04;
+  // This mode never establishes real quality. Keep measured synthetic scores
+  // exclusively under functionalEvidence, even when the legacy inspector can
+  // mechanically score the unqualified exported cohort.
   return { ...historical, policy: 'functional-delivery-1',
+    B04: { ...historical.B04, precisionAt5: null, recallAt5: null, humanPrecisionAt5: null, humanRecallAt5: null },
+    B06: { ...historical.B06, series: historical.B06.series.map(s => ({ ...s,
+      comparison: { ...s.comparison, baselineFalsePositiveRate: null, staticFalsePositiveRate: null, newImportantMisses: null },
+    })) },
     externalGates: ['current_candidate_CI', 'independent_code_review', 'Max_batch_final_acceptance'],
     functionalEvidence: { status: result.dataEvidenceStatus, provenance: 'synthetic',
       scope: 'controlled_fixture_protocol_and_algorithms_only',
