@@ -151,8 +151,13 @@ export class TurnLoop {
           manager = new ContextManager({ ...spec, checkpointCallback: saveCheckpoint }, this.getProvider());
           if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
+        // Capture one request-only suffix for planning, compaction validation
+        // and dispatch. It must not enter durable facts or summary source hashes.
+        const requestSuffix = [...continuation.project([]), ...projectContextBlocks([
+          runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
+        ])];
         messagesForModel = manager.project(state.messages);
-        const inputTokens = manager.tokens(messagesForModel);
+        const inputTokens = manager.tokens([...messagesForModel, ...requestSuffix]);
         const aboveWatermark = inputTokens > manager.inputBudget * manager.watermark;
         // A valid current request can grow into two irreducible recent batches.
         // Use the same next-batch planning reserve as autoCompact while older
@@ -166,14 +171,13 @@ export class TurnLoop {
           if (forceCompact || (split.end > previousEnd && hasOlderHistory)) {
             await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState, receipt) => {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
-            }, forceCompact);
+            }, forceCompact, requestSuffix);
             state.usage = { ...recovery.state.usage };
             messagesForModel = manager.project(state.messages);
           }
         }
         forceCompact = false;
-        messagesForModel = continuation.project(messagesForModel);
-        messagesForModel = [...messagesForModel, ...projectContextBlocks([runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : [])])];
+        messagesForModel = [...messagesForModel, ...requestSuffix];
         manager.assertFits(messagesForModel);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');

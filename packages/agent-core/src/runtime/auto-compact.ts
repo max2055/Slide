@@ -61,15 +61,17 @@ export async function autoCompact(
   manager: ContextManager, raw: Message[], provider: LLMProvider, recovery: RecoveryPolicy, tracker: RapidRefill,
   persist: (record?: SummaryRecord, compactState?: ReturnType<RapidRefill['snapshot']>, receipt?: SummaryReceipt) => Promise<void>,
   reactive = false,
+  requestSuffix: Message[] = [],
 ): Promise<void> {
   const spec = manager.spec;
+  const requestView = (messages: Message[]) => [...messages, ...requestSuffix];
   if (spec.signal?.aborted) throw cancellationError(spec.signal);
   if (!spec.checkpointCallback) throw new RuntimeError('SUMMARY_PERSISTENCE_REQUIRED', 'Compaction requires durable checkpoint persistence');
   const { end, pins, retained } = manager.split(raw);
   if (!end || (manager.summary && end <= manager.summary.sourceEnd)) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'No older atomic history can be summarized');
   // The target is a compaction goal, not a second input cap. Complete pins,
   // references and recent batches may legitimately exceed that goal.
-  manager.assertFits([...pins, ...prepareMessages(spec, retained)]);
+  manager.assertFits(requestView([...pins, ...prepareMessages(spec, retained)]));
   const original = structuredClone(raw.slice(0, end));
   const hash = sourceHash(original);
   // The summary has to coexist with all protected pins and retained batches.
@@ -79,7 +81,7 @@ export async function autoCompact(
   minimum.summary = { schemaVersion: 1, sourceStart: 0, sourceEnd: end, sourceHash: hash,
     generation: (manager.summary?.generation ?? 0) + 1, provenance: 'legacy/unknown',
     summary: { goal: ['pending'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] } };
-  const headroom = manager.inputBudget - minimum.tokens(minimum.project(raw));
+  const headroom = manager.inputBudget - minimum.tokens(requestView(minimum.project(raw)));
   // A planning target, not a tokenizer guarantee. Leave framing/escaping room;
   // the unchanged actual projection check remains the final admission guard.
   // Plan room for one subsequent tool batch. This is a growth target, not a
@@ -159,12 +161,12 @@ export async function autoCompact(
     assertSource();
     // Validate candidate without changing the active projection.
     const candidate = new ContextManager(spec, provider); candidate.summary = record;
-    candidate.assertFits(candidate.project(raw));
+    candidate.assertFits(requestView(candidate.project(raw)));
     const committedTracker = new RapidRefill(tracker.snapshot()); committedTracker.commit();
     await persist(record, committedTracker.snapshot(), {...receipt, status:'accepted'});
     assertSource();
     // New input may arrive while persistence is pending. Revalidate against the current suffix.
-    candidate.assertFits(candidate.project(raw), manager.inputBudget);
+    candidate.assertFits(requestView(candidate.project(raw)), manager.inputBudget);
     tracker.commit();
     manager.summary = record;
   } catch (error) {

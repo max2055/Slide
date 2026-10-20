@@ -168,3 +168,30 @@ it('a future-growth target cannot truncate a summary that fits actual headroom',
   assert.deepEqual(manager.summary?.summary, summary);
   manager.assertFits(manager.project(raw));
 });
+
+it('summary capacity includes the same clock and continuation suffix as the ordinary request', async () => {
+  const { autoCompact } = await import('../runtime/auto-compact.js');
+  const { ContextManager, sourceHash } = await import('../runtime/context-manager.js');
+  const { RecoveryPolicy } = await import('../runtime/recovery-policy.js');
+  const { RapidRefill } = await import('../runtime/rapid-refill.js');
+  const { ToolRegistry } = await import('../tool-registry.js');
+  const { NoopHook } = await import('../runner.js');
+  const { currentTime, projectContextBlocks, runtimeBlock } = await import('../context-block.js');
+  const raw: any[] = [{ role: 'system', content: 'Read only' }, { role: 'user', content: 'inspect db-42' }, { role: 'assistant', content: 'historical '.repeat(500) }, { role: 'user', content: 'protected '.repeat(440) }];
+  const before = structuredClone(raw);
+  const suffix: any[] = [{ role: 'assistant', content: 'continuation '.repeat(40) }, ...projectContextBlocks([runtimeBlock('runtime', currentTime()), runtimeBlock('reminder', 'Finish the evidence review.')])];
+  const targets: number[] = [];
+  for (const extra of [[], suffix]) {
+    const spec: any = { initialMessages: raw, tools: new ToolRegistry(), model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, checkpointCallback: async () => {} };
+    const provider: any = { getDefaultModel: () => 'unknown-tokenizer', chatStream: async (messages: any) => {
+      targets.push(Number(messages[0].content.match(/within (\d+) UTF-8/)[1]));
+      return { content: JSON.stringify({ goal: ['inspect db-42'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] }), finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 100, completion_tokens: 100 } };
+    } };
+    const manager = new ContextManager(spec, provider);
+    await autoCompact(manager, raw, provider, new RecoveryPolicy(), new RapidRefill(), async () => {}, false, extra);
+    manager.assertFits([...manager.project(raw), ...extra]);
+    assert.equal(manager.summary?.sourceHash, sourceHash(raw.slice(0, manager.summary!.sourceEnd)));
+  }
+  assert(targets[1] < targets[0], 'request-only suffix must reduce summary headroom');
+  assert.deepEqual(raw, before);
+});
