@@ -199,3 +199,46 @@ it('tool timeout during child admission cannot start a child after persistence r
   expect(settled).toBe(false); release(); await vi.advanceTimersByTimeAsync(0);
   expect(settled).toBe(true); expect(children).toBe(0);
 });
+
+it('finishes within the remaining investigation allowance by bounding the next output', async () => {
+  const recovery = new RecoveryPolicy();
+  Object.assign(recovery.state, { modelSteps: 3, providerAttempts: 6, toolCalls: 6,
+    usage: { prompt_tokens: 15335, completion_tokens: 2674, cached_tokens: 4736 } });
+  let admitted: any;
+  const config = spec({ initialMessages: [{ role: 'user', content: 'x'.repeat(10000) }], tools: new ToolRegistry(),
+    contextWindowTokens: 16000, maxIterations: 8, resumeCheckpoint: { runtime_state_v1: recovery.snapshot() },
+    checkpointCallback: async c => { admitted = c.runtime_state_v1; } });
+  config.budgetLimits!.maxTotalTokens = 32000;
+  const chat = vi.fn(async (messages, _tools, options) => {
+    const { ContextManager } = await import('../runtime/context-manager.js');
+    const input = new ContextManager(config).tokens(messages);
+    expect(options!.maxTokens).toBeGreaterThan(0);
+    expect(options!.maxTokens).toBeLessThan(4096);
+    expect(input + options!.maxTokens!).toBeLessThanOrEqual(32000 - 18009);
+    expect(admitted).toMatchObject({ reservedTokens: 32000 - 18009, unknownRequests: 1, providerAttempts: 7 });
+    return ok;
+  });
+  const result = await new AgentRunner(provider(chat)).run(config);
+  expect(chat).toHaveBeenCalledTimes(1);
+  expect(result.stopReason).toBe('completed');
+  expect(result.runtimeState).toMatchObject({ reservedTokens: 0, unknownRequests: 0 });
+  expect(config.maxTokens).toBe(4096);
+  expect(config.budgetLimits!.maxTotalTokens).toBe(32000);
+});
+
+it.each(['no-input-room', 'unsettled-usage', 'hook-growth'] as const)(
+  'remaining-budget admission fails closed for %s', async mode => {
+    const recovery = new RecoveryPolicy();
+    recovery.state.usage = { prompt_tokens: mode === 'no-input-room' ? 23000 : 18009, completion_tokens: 0 };
+    if (mode === 'unsettled-usage') { recovery.state.unknownRequests = 1; recovery.state.reservedTokens = 1; recovery.state.providerAttempts = 1; }
+    const hook = new NoopHook();
+    if (mode === 'hook-growth') hook.beforeIteration = async context => { context.messages.push({ role: 'user', content: 'extra '.repeat(20) }); };
+    const config = spec({ initialMessages: [{ role: 'user', content: 'x'.repeat(10000) }], tools: new ToolRegistry(), hook,
+      contextWindowTokens: 16000, resumeCheckpoint: { runtime_state_v1: recovery.snapshot() } });
+    config.budgetLimits!.maxTotalTokens = 32000;
+    const chat = vi.fn(async () => ok);
+    const result = await new AgentRunner(provider(chat)).run(config);
+    expect(chat).not.toHaveBeenCalled();
+    expect(result.resolution?.reasonCode).toBe(mode === 'hook-growth' ? 'CONTEXT_UNRECOVERABLE' : 'TOKEN_BUDGET');
+  },
+);
