@@ -258,3 +258,24 @@ it('retains the smaller request reservation when usage is unknown and cannot spe
   expect(second.runtimeState).toMatchObject({ reservedTokens: 13991, unknownRequests: 1 });
   expect(chat).toHaveBeenCalledTimes(1);
 });
+
+
+it('reserves a bounded request rather than the large authorized context window', async () => {
+  let admitted: any;
+  const config = spec({ initialMessages: [{ role: 'user', content: 'x'.repeat(1000) }], tools: new ToolRegistry(),
+    contextWindowTokens: 105120, contextBlockLimit: 100000,
+    checkpointCallback: async c => { admitted = c.runtime_state_v1; } });
+  config.budgetLimits!.maxTotalTokens = 1000000;
+  const chat = vi.fn(async (messages, _tools, options) => {
+    const { ContextManager } = await import('../runtime/context-manager.js');
+    const input = new ContextManager(config).tokens(messages);
+    expect(options!.maxTokens).toBe(4096);
+    expect(admitted.reservedTokens).toBe(input + 4096);
+    expect(admitted.reservedTokens).toBeLessThan(105120);
+    return ok;
+  });
+  const result = await new AgentRunner(provider(chat)).run(config);
+  expect(result.stopReason).toBe('completed');
+  expect(chat).toHaveBeenCalledTimes(1);
+  expect(result.runtimeState).toMatchObject({ reservedTokens: 0, unknownRequests: 0 });
+});
