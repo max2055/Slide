@@ -84,5 +84,5 @@ export async function assertContinuationDeadline(c: TransactionConnection, notAf
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(notAfter) || !Number.isFinite(Date.parse(notAfter))) conflict();
   const [rows] = await c.execute('SELECT UTC_TIMESTAMP(3) AS utc') as [RowDataPacket[], unknown];
   const deadline = Date.parse(notAfter), now = Math.max(Date.now(), new Date(rows[0].utc).getTime());
-  if (!(deadline > now) || deadline - now > 600000) conflict();
+  if (!(deadline > now) || deadline - now > 3600000) conflict();
 }

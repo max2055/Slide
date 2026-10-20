@@ -47,5 +47,5 @@ export function assertSourceClock(before: number, after: number, remote: number)
 }
 export function assertSourceDeadline(config: SourcePackage, now = Date.now()) {
   const remaining = Date.parse(config.deadline) - now;
-  if (remaining <= 0 || remaining > 600_000) sourceFailure('DEADLINE');
+  if (!Number.isFinite(remaining) || !Number.isFinite(now) || remaining <= 0 || remaining > 3_600_000) sourceFailure('DEADLINE');
 }

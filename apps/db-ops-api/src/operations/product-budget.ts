@@ -11,9 +11,19 @@ export const OPERATIONS_PRODUCT_BUDGET = Object.freeze({ batchId: 'AI-Operations
   canonicalDirectory: '/Users/max/Coding/40-Slide/outputs/2026-10-16-v23/budget/',
   journalName: 'product-llm.jsonl', modelSource: 'mysql-3306/deepseek-flash', cachedInputIsSubset: true });
 type Send = { kind: 'send'; sequence: number; inputUpperBound: number; outputCeiling: number; at: string };
+// Max's approval is specific to this stopped send. It is not a general reset
+// capability, a usage receipt, or permission to replay the original request.
+const AUTHORIZED_UNKNOWN = Object.freeze({
+  authorizationCommentId: '01a156ae-9f84-7acd-b1a5-a48bed356da9',
+  priorJournalSha256: '6f071978def110c5645ba56529989381311149cb931c68d8be9233570e6f998b',
+  priorJournalBytes: 1016, sequence: 4, tokens: 17221,
+  sendAt: '2026-10-20T00:13:24.133Z', stopAt: '2026-10-20T00:13:24.145Z',
+  noReplay: true, actualUsageUnknown: true,
+});
+type ConservativeDisposition = typeof AUTHORIZED_UNKNOWN & { kind: 'conservative-disposition'; at: string };
 type Entry = { kind: 'init'; schemaVersion: 1; batchId: string; tokenLimit: number; at: string }
   | Send | { kind: 'usage'; sequence: number; usage: BudgetUsage; at: string }
-  | { kind: 'stop' | 'checkpoint'; reason: string; at: string };
+  | { kind: 'stop' | 'checkpoint'; reason: string; at: string } | ConservativeDisposition;
 const fail = (code: string): never => { throw new Error(`OPERATIONS_BUDGET_${code}`); };
 const integer = (n: unknown): n is number => Number.isSafeInteger(n) && Number(n) >= 0;
 const digest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -46,6 +56,19 @@ export class OperationsBudgetJournal {
     });
   }
   read() { return this.locked(() => this.snapshot()); }
+  /** Explicit one-time audit append for the approved sequence; never invoked
+   * by read/reserve/settle or startup. The original unknown receipt stays unknown. */
+  conservativelyAccountAuthorizedUnknown(authorizationCommentId: string) {
+    return this.locked(() => {
+      if (authorizationCommentId !== AUTHORIZED_UNKNOWN.authorizationCommentId) fail('AUTHORIZATION_INVALID');
+      const state = this.snapshot();
+      if (digest(this.path) !== AUTHORIZED_UNKNOWN.priorJournalSha256
+        || !state.stopped || state.pending?.sequence !== AUTHORIZED_UNKNOWN.sequence
+        || state.reservedTokens !== AUTHORIZED_UNKNOWN.tokens) fail('DISPOSITION_INVALID');
+      this.append([{ kind: 'conservative-disposition', ...AUTHORIZED_UNKNOWN, at: new Date().toISOString() }]);
+      return this.snapshot();
+    });
+  }
   reserve(inputUpperBound: number, outputCeiling: number): Send {
     return this.locked(() => {
       const state = this.snapshot();
@@ -80,17 +103,35 @@ export class OperationsBudgetJournal {
   }
   private snapshot() {
     if (readFileSync(`${this.path}.sha256`, 'utf8') !== digest(this.path)) fail('JOURNAL_INVALID');
+    const raw = readFileSync(this.path);
+    const lines = raw.toString('utf8').trim().split('\n');
     let entries: Entry[];
-    try { entries = readFileSync(this.path, 'utf8').trim().split('\n').map(line => JSON.parse(line)); }
+    try { entries = lines.map(line => JSON.parse(line)); }
     catch { return fail('JOURNAL_INVALID'); }
     const header = entries[0];
     if (header?.kind !== 'init' || header.schemaVersion !== 1 || header.batchId !== OPERATIONS_PRODUCT_BUDGET.batchId
       || header.tokenLimit !== OPERATIONS_PRODUCT_BUDGET.tokenLimit) fail('JOURNAL_INVALID');
-    let usedTokens = 0, requests = 0, pending: Send | null = null, stopped = false;
+    let usedTokens = 0, measuredTokens = 0, conservativelyAccountedTokens = 0;
+    let requests = 0, pending: Send | null = null, stopped = false;
+    let previous: Entry | null = null, prefixBytes = 0;
     const checkpoints: string[] = [];
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
+      const priorBytes = prefixBytes;
+      prefixBytes += Buffer.byteLength(lines[index] + '\n');
       if (!entry || !Number.isFinite(Date.parse(entry.at))) fail('JOURNAL_INVALID');
       if (entry === header) continue;
+      if (entry.kind === 'conservative-disposition') {
+        if (Object.entries(AUTHORIZED_UNKNOWN).some(([key, value]) => entry[key] !== value)
+          || priorBytes !== AUTHORIZED_UNKNOWN.priorJournalBytes
+          || createHash('sha256').update(raw.subarray(0, priorBytes)).digest('hex') !== AUTHORIZED_UNKNOWN.priorJournalSha256
+          || !stopped || previous?.kind !== 'stop' || previous.reason !== 'USAGE_UNKNOWN'
+          || previous.at !== AUTHORIZED_UNKNOWN.stopAt || pending?.sequence !== 4
+          || pending.at !== AUTHORIZED_UNKNOWN.sendAt || pending.inputUpperBound !== 15173 || pending.outputCeiling !== 2048
+          || usedTokens !== 12397 || requests !== 4 || conservativelyAccountedTokens !== 0) fail('JOURNAL_INVALID');
+        conservativelyAccountedTokens = entry.tokens;
+        usedTokens += entry.tokens; pending = null; stopped = false; previous = entry;
+        continue;
+      }
       if (stopped) fail('JOURNAL_INVALID');
       if (entry.kind === 'send') {
         if (pending || entry.sequence !== requests + 1 || !integer(entry.inputUpperBound) || !integer(entry.outputCeiling)
@@ -100,14 +141,16 @@ export class OperationsBudgetJournal {
         if (!pending || entry.sequence !== pending.sequence) fail('JOURNAL_INVALID');
         let usage: BudgetUsage;
         try { usage = budgetUsage(entry.usage); } catch { return fail('JOURNAL_INVALID'); }
+        measuredTokens += usage.inputTokens + usage.outputTokens;
         usedTokens += usage.inputTokens + usage.outputTokens; pending = null;
         if (!integer(usedTokens)) fail('JOURNAL_INVALID');
       } else if (entry.kind === 'stop') stopped = true;
       else if (entry.kind === 'checkpoint') checkpoints.push(entry.reason);
       else fail('JOURNAL_INVALID');
+      previous = entry;
     }
     const reservedTokens = pending ? pending.inputUpperBound + pending.outputCeiling : 0;
-    return { usedTokens, reservedTokens, remainingTokens: Math.max(0, OPERATIONS_PRODUCT_BUDGET.tokenLimit - usedTokens - reservedTokens),
+    return { usedTokens, measuredTokens, conservativelyAccountedTokens, reservedTokens, remainingTokens: Math.max(0, OPERATIONS_PRODUCT_BUDGET.tokenLimit - usedTokens - reservedTokens),
       requests, pending, stopped, checkpoints, phase: phase(usedTokens) };
   }
   private append(entries: Entry[]): void {
@@ -119,7 +162,21 @@ export class OperationsBudgetJournal {
     renameSync(temporary, `${this.path}.sha256`); syncDirectory(this.path);
   }
   private locked<T>(action: () => T): T {
-    const lock = `${this.path}.lock`, fd = openSync(lock, 'wx', 0o600);
+    const lock = `${this.path}.lock`;
+    // Chief/receiver checks and provider reservation share this same protocol.
+    // Wait only for acquisition: never repeat an action or remove another lock.
+    const deadline = performance.now() + 5000;
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    let fd: number;
+    for (;;) {
+      try { fd = openSync(lock, 'wx', 0o600); break; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) fail('LOCK_TIMEOUT');
+        Atomics.wait(pause, 0, 0, Math.min(remaining, 5 + Math.random() * 10));
+      }
+    }
     try { return action(); } finally { closeSync(fd); unlinkSync(lock); }
   }
 }

@@ -25,6 +25,10 @@ describe('source package configuration and UTC gates', () => {
     for (const clock of [[0, 1001, 500], [0, 1, 2002], [100, 99, 100], [0, 0, NaN]])
       expect(() => assertSourceClock(...clock as [number, number, number])).toThrow('CLOCK_UNTRUSTED');
     expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(0).toISOString() })).toThrow('DEADLINE');
-    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(Date.now() + 700_000).toISOString() })).toThrow('DEADLINE');
+    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(Date.now() + 3_600_001).toISOString() })).toThrow('DEADLINE');
+    const now = 1_000_000;
+    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_000).toISOString() }, now)).not.toThrow();
+    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_001).toISOString() }, now)).toThrow('DEADLINE');
+    expect(() => assertSourceDeadline(sourceTestConfig(), NaN)).toThrow('DEADLINE');
   });
 });

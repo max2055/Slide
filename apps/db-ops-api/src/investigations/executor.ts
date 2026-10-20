@@ -1,3 +1,4 @@
+import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool } from 'mysql2/promise';
 import {
@@ -40,6 +41,20 @@ import { systemInvestigationHistory } from './system-tools.js';
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+/** Model projection only; the complete bounded receipt is persisted first.
+ * Keep live Ops batches small enough to leave room for protected history.
+ * This cap is a planning limit; ContextManager still enforces final admission.
+ */
+export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string): unknown {
+  if (result === null || typeof result !== 'object' || (result as any).success !== true
+    || (result as any).status === 'error') return result;
+  const json = JSON.stringify(result);
+  if (profile !== 'ops' || Buffer.byteLength(json) <= 1024) return json;
+  return JSON.stringify({ success: true, status: 'warning',
+    summary: '完整工具结果已持久化；本上下文仅含证据引用，未包含观测值，不可据此推断健康或根因。请使用相同资源和时间范围，以 maxRows=1 或 limit=1 缩小只读查询。',
+    data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
+      evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
+}
 // Only these reviewed handlers require no browser, approval, credential read or
 // interactive session. Profile membership alone never grants background safety.
 const BACKGROUND_SAFE = new Set([
@@ -78,7 +93,8 @@ interface ExecutionState {
   reservedTokens: number;
   usage: BudgetUsage;
   usageUnknown: boolean;
-  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received' } | null;
+  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
+  lastSummaryReceipt?: unknown;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
 }
 const usageOf = (response: LLMResponse): BudgetUsage | null => {
@@ -535,21 +551,23 @@ export class InvestigationExecutor {
         };
         await this.persistCheckpoint(actor, binding, checkpoint);
       }
+      if ((checkpoint?.context_request_v1 as any)?.status === 'rejected') throw new Error('SUMMARY_INVALID');
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
       const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
-      const dispatch = async (send: () => Promise<LLMResponse>, input: unknown): Promise<LLMResponse> => {
+      const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
         if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-        const id = randomUUID();
+        if(identity && (identity.purpose!=='summary' || !uuid.test(identity.id) || !/^[a-f0-9]{64}$/.test(identity.sourceHash)))throw Error('INVESTIGATION_PROVIDER_UNKNOWN');
+        const id = identity?.id ?? randomUUID();
         await update(async (s, c) => {
           // Recheck the immutable receipt at each new intent, including after
           // tool I/O and recovery. Neither a stale snapshot nor model/event
           // supplied lane/domain may authorize this provider call.
           receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-          s.provider = { id, inputHash: hash(input), messageId: modelMessageId ?? null, status: 'sent' };
+          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
         // turns. Only the Run's durable terminal receipt may release it.
@@ -569,6 +587,7 @@ export class InvestigationExecutor {
         await update((s) => {
           if (s.provider?.id !== id) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           s.provider.status = 'received';
+          if(identity) s.provider.response = structuredClone(response);
           if (!usage) s.usageUnknown = true;
           else {
             s.usage.inputTokens += usage.inputTokens;
@@ -583,17 +602,14 @@ export class InvestigationExecutor {
         getModelCapabilities: actual.getModelCapabilities?.bind(actual),
         countPromptTokens: actual.countPromptTokens?.bind(actual),
         projectMessages: actual.projectMessages?.bind(actual),
-        chat: (messages, tools, options) => dispatch(() => actual.chat(messages, tools, options), [messages, tools]),
+        chat: (messages, tools, options) => dispatch(() => actual.chat(messages, tools, options), [messages, tools], (options as any)?.requestIdentity),
         chatStream: (messages, tools, callbacks, options) =>
-          dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools]),
+          dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools], (options as any)?.requestIdentity),
       };
-      // Compact only successful System JSON in the live model context. Keep the
-      // complete structured receipt for SQL evidence/recovery and preserve
-      // object failure semantics in ToolExecutor. No field or source text is cut.
-      const contextToolResult = (result: unknown) => profile.id === 'system' && result !== null
-        && typeof result === 'object' && (result as { success?: boolean }).success === true
-        && (result as { status?: string }).status !== 'error'
-        ? JSON.stringify(result) : result;
+      // Keep full SQL evidence; oversized live Ops receipts become explicit
+      // references so the model can request a narrower authorized read.
+      const contextToolResult = (result: unknown, toolId: string) =>
+        investigationToolContextResult(result, toolId, profile.id);
       let currentToolId: string | undefined;
       const effective = await this.transaction(async (c) =>
         this.authorization.authorize(
@@ -655,7 +671,7 @@ export class InvestigationExecutor {
             if (existing) {
               if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
                 throw new Error('INVESTIGATION_TOOL_UNKNOWN');
-              return contextToolResult(existing.result);
+              return contextToolResult(existing.result, toolId);
             }
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
@@ -680,7 +696,7 @@ export class InvestigationExecutor {
             await update((s) => {
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });
-            return contextToolResult(result);
+            return contextToolResult(result, toolId);
           },
         });
       }
@@ -876,11 +892,19 @@ export class InvestigationExecutor {
         Number(payload.iteration ?? 0),
         checkpoint,
       );
+      {
+        const result = decode(access.run.result_json), state: ExecutionState = result?.investigationExecution;
+        if(acknowledgeSummary(state?.provider, payload)) {
+          state.lastSummaryReceipt = { ...payload.context_request_v1 as object, response:state.provider!.response };
+          state.provider = null;
+          await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
+        }
+      }
       if (['awaiting_tools', 'tools_completed', 'final_response'].includes(String(payload.phase))) {
         const result = decode(access.run.result_json),
           state: ExecutionState = result?.investigationExecution;
         if (
-          state?.provider?.status === 'received' &&
+          state?.provider?.purpose !== 'summary' && state?.provider?.status === 'received' &&
           state.provider.messageId &&
           (payload.assistantMessage as { id?: string } | undefined)?.id === state.provider.messageId
         ) {

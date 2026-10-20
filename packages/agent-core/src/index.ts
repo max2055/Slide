@@ -106,3 +106,6 @@ export type { MemoryQuery, MemoryReference, MemoryRetrievalResult, MemoryRetriev
 export type { ContextRequest } from './context.js';
 
 export type { StreamAnchor, StreamSnapshot, StreamReset } from './runtime/stream-boundary.js';
+
+export { acknowledgeSummary, responseHash, summaryRejection } from './runtime/summary-receipt.js';
+export type { SummaryIdentity, SummaryReceipt, SummaryRejection } from './runtime/summary-receipt.js';

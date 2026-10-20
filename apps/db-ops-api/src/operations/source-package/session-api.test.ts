@@ -134,13 +134,14 @@ describe('bounded complete session descriptor', () => {
     expect(Object.keys(f.descriptor.files)).toHaveLength(322);
     expect((await f.verify()).pid).toBe(process.pid);
   });
-  it('accepts exactly 262144 bytes', async () => {
+  it('accepts prior 256KiB and complete 1MiB descriptors', async () => {
     const f = await fixture();
     expect((await f.verify(262144)).pid).toBe(process.pid);
+    expect((await f.verify(1048576)).pid).toBe(process.pid);
   });
-  it('rejects 262145 bytes before SQL', async () => {
+  it('rejects 1048577 bytes before SQL', async () => {
     const f = await fixture();
-    await expect(f.verify(262145)).rejects.toThrow('SESSION_API_REJECTED');
+    await expect(f.verify(1048577)).rejects.toThrow('SESSION_API_REJECTED');
     expect(f.query).not.toHaveBeenCalled();
   });
   it('retains the API identity boundary at 65536/65537 bytes', async () => {

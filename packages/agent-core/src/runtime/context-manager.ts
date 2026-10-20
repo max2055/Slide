@@ -70,7 +70,10 @@ export class ContextManager {
     }
   }
   estimate(messages: Message[], tools: unknown[] = this.spec.tools.getDefinitions()): PromptTokenEstimate {
-    this.lastEstimate = estimateWithProvider(messages, tools as import('../types.js').ToolSchema[], this.spec.model, this.provider);
+    // Count the same provider projection used at the final model boundary. Raw
+    // facts and source hashes remain unchanged; fallback retains the byte floor.
+    const projection = this.provider?.projectMessages?.(messages, this.spec.model) ?? messages;
+    this.lastEstimate = estimateWithProvider(projection, tools as import('../types.js').ToolSchema[], this.spec.model, this.provider);
     if (this.lastEstimate.fallbackReason === 'MEDIA_UNCALIBRATED') {
       // Unknown dimensions/provider image accounting has no proven upper bound.
       // Fail admission rather than treating a fixed image allowance as exact.

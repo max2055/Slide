@@ -155,8 +155,8 @@ export class TurnLoop {
         if (forceCompact || manager.tokens(messagesForModel) > manager.inputBudget * manager.watermark) {
           const split = manager.split(state.messages);
           if (forceCompact || split.end > (manager.summary?.sourceEnd ?? 0)) {
-            await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState) => {
-              await emitCheckpoint(spec, { ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
+            await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState, receipt) => {
+              await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact);
             state.usage = { ...recovery.state.usage };
             messagesForModel = manager.project(state.messages);

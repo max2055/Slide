@@ -7,7 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { bytesHash, sourceFailure, type SourcePackage } from './config.js';
-const descriptorLimit = 262144;
+// Complete reviewed dependency closures exceed 256 KiB; keep a fixed 1 MiB bound.
+const descriptorLimit = 1048576;
 const identityLimit = 65536;
 async function privateFile(path: string, limit: number) {
   const f = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);

@@ -79,7 +79,15 @@ function normalizeError(error: unknown): NormalizedProviderError {
 export class OpenAIProvider implements LLMProvider {
   projectMessages(messages: Message[], model = this.getDefaultModel()): Message[] {
     return projectProviderMessages(messages, { supportsVision: this.getModelCapabilities(model)?.supportsVision === true,
-      reasoning: /deepseek|kimi|glm/i.test(model) ? 'tool-turn' : 'omit' });
+      reasoning: /deepseek|kimi|glm/i.test(model) ? 'tool-turn' : 'omit' }).map(message => {
+      // Keep transport inputs plus the source boundary used by repeated projection.
+      // Extras remain opaque so SDK-specific overrides retain existing behavior.
+      const { role, content, tool_calls, tool_call_id, reasoning_content, source } = message;
+      // Preserve source through repeated projection so the runtime clock never
+      // becomes the latest factual user turn and drops required tool reasoning.
+      return { role, content, tool_calls, tool_call_id, reasoning_content, source,
+        ...((message as any)._extra ? { _extra: structuredClone((message as any)._extra) } : {}) };
+    });
   }
   private client: OpenAI;
   private model: string;

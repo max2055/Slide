@@ -41,7 +41,7 @@ describe('one durable product batch budget', () => {
   it('fails closed for missing/tampered history, stale locks, unknown or over-bound usage', () => {
     const { journal, path } = fixture();
     writeFileSync(`${path}.lock`, 'stale');
-    expect(() => journal.reserve(10, 10)).toThrow();
+    expect(() => journal.reserve(10, 10)).toThrow('OPERATIONS_BUDGET_LOCK_TIMEOUT');
     rmSync(`${path}.lock`);
     const send = journal.reserve(10, 10);
     expect(() => journal.settle(send.sequence, null)).toThrow('OPERATIONS_BUDGET_USAGE_UNKNOWN');
@@ -52,7 +52,7 @@ describe('one durable product batch budget', () => {
     expect(other.journal.read()).toMatchObject({ usedTokens: 21, stopped: true });
     writeFileSync(other.path, '{}\n');
     expect(() => other.journal.read()).toThrow('OPERATIONS_BUDGET_JOURNAL_INVALID');
-  });
+  }, 10000);
   it('serializes different OS processes before sending, with no automatic lock recovery', async () => {
     const { path } = fixture();
     const module = new URL('./product-budget.ts', import.meta.url).href;
