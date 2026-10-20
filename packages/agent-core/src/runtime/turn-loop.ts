@@ -208,19 +208,19 @@ export class TurnLoop {
       reminder = undefined;
       let reservation = manager.requestReservation();
       let requestSpec = spec;
-      // A nearly spent execution allowance need not buy an entire context
-      // window. With no unsettled usage, bound this request by its complete
+      // An explicitly bounded input or nearly spent execution allowance need
+      // not buy an entire context window. With no unsettled usage, use the complete
       // conservative input estimate and an affordable output ceiling. The
       // original context cap remains in force; a late hook/schema change must
       // also fit this smaller envelope at the actual provider boundary.
       if (spec.budgetLimits && recovery.state.unknownRequests === 0) {
         const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state);
-        if (remaining < reservation) {
+        if (remaining < reservation || spec.contextBlockLimit !== undefined) {
           const input = manager.tokens(messagesForModel);
-          const output = Math.min(manager.contextConfig.maxTokens, remaining - input);
+          const output = Math.min(manager.contextConfig.maxTokens, Math.min(remaining, reservation) - input);
           if (Number.isSafeInteger(output) && output > 0) {
-            reservation = remaining;
-            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, remaining - output) };
+            reservation = spec.contextBlockLimit === undefined ? remaining : input + output;
+            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, reservation - output) };
           }
         }
       }

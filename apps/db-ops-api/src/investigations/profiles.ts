@@ -8,6 +8,14 @@ export const INVESTIGATION_PROMPTS = Object.freeze({
 });
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+// Trusted process configuration shared by admission and execution. Never read
+// an allocation override from request/model input or rewrite a stored receipt.
+const configuredTokens = process.env.INVESTIGATION_MAX_TOKENS;
+const maxInvestigationTokens = configuredTokens === undefined ? 32_000 : Number(configuredTokens);
+if (!configuredTokens?.trim() && configuredTokens !== undefined
+  || !Number.isSafeInteger(maxInvestigationTokens) || maxInvestigationTokens < 1 || maxInvestigationTokens > 1_000_000) {
+  throw new Error('INVESTIGATION_MAX_TOKENS');
+}
 function profile(id: 'ops' | 'system', tools: string[]): Readonly<InvestigationProfile> {
   return Object.freeze({ id, version: 1, responsibility: id === 'ops' ? '纳管资源只读调查' : '平台只读调查',
     supportedSubjectKinds: Object.freeze([id === 'ops' ? 'resource' : 'platform']) as unknown as InvestigationProfile['supportedSubjectKinds'],
@@ -16,7 +24,7 @@ function profile(id: 'ops' | 'system', tools: string[]): Readonly<InvestigationP
     toolAllowlist: Object.freeze(tools) as unknown as string[], outputSchemaVersion: 2,
     resourceBoundary: 'all_required_scopes', readonly: true, outputLanguage: 'zh-CN',
     budget: Object.freeze({ deadlineMs: 120_000, maxToolCalls: 20, maxProviderAttempts: 8,
-      maxTokens: 32_000, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 }),
+      maxTokens: maxInvestigationTokens, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 }),
   }) as Readonly<InvestigationProfile>;
 }
 
