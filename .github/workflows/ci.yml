@@ -191,7 +191,16 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
+      - name: Install isolated trusted TLS browser prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
+          pnpm --filter slide-frontend exec playwright install --with-deps chromium firefox
+      - name: Trusted HTTPS same-origin WSS, messages, reconnect and revocation
+        env:
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
       - name: Login, authorization and persistent Agent cancellation
         run: >-
           pnpm --filter slide-frontend exec playwright test
@@ -212,16 +221,6 @@ jobs:
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
-      - name: Install isolated trusted TLS browser prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libnss3-tools
-          pnpm --filter slide-frontend exec playwright install --with-deps firefox
-      - name: Trusted HTTPS same-origin WSS, messages, reconnect and revocation
-        env:
-          T06_TEST_MYSQL_PORT: '3306'
-          T06_TEST_MYSQL_PASSWORD: qualification-test-password
-        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
       - name: Instance query states with live MySQL and permissions
         env:
           MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
