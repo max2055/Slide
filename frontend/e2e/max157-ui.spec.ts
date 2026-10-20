@@ -58,7 +58,7 @@ for (const width of [1280,390]) for (const theme of ['dark','light']) {
       await expect(page.locator(selector).locator('app-data-table').first()).toBeVisible();
       await capture(page,`${name}-${width}-${theme}-controlled`);
       if(name === 'profiles') {
-        const button=page.getByRole('button',{name:'查看资源调查预置详情 →'});await button.click();
+        const button=page.getByRole('button',{name:'查看资源调查 V1 预置详情 →',exact:true});await button.click();
         await expect(page.locator('app-dialog').filter({has:page.locator('dialog[open]')})).toContainText('执行限制');await capture(page,`profile-dialog-${width}-${theme}`);
         await page.keyboard.press('Escape');await expect(button).toBeFocused();
       }

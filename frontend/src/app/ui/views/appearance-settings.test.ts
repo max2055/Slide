@@ -33,7 +33,7 @@ describe('appearance labels and stored-value compatibility', () => {
     const fields = await mount({ defaultTab: 'instances-db', visibleTabs: ['chat', 'instances-db'] });
     expect(fields[1].options).toEqual(DEFAULT_TAB_OPTIONS.map(tab => ({ value: tab, label: titleForTab(tab) })));
     expect(fields[1].value).toBe('instances-db');
-    expect([...view.shadowRoot!.querySelectorAll('app-toggle')].slice(1, 18).map(toggle => toggle.textContent?.trim()))
+    expect([...view.shadowRoot!.querySelectorAll('app-toggle')].slice(1, 1 + TAB_GROUPS.flatMap(group => group.tabs).length + UTILITY_TABS.length).map(toggle => toggle.textContent?.trim()))
       .toEqual([...TAB_GROUPS.flatMap(group => group.tabs), ...UTILITY_TABS].map(titleForTab));
     expect(fields[2].options[0].label).toBe(locale === 'en' ? '10 rows' : '10 条');
     expect(view.shadowRoot!.querySelector('h1')!.textContent).toBe(t('tabs.appearance'));

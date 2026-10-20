@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, preHandlerHookHandler } from 'fastify';
 import { requirePermission } from '../auth/require-permission.js';
-import { INVESTIGATION_PROFILES, investigationProfileHash } from './profiles.js';
+import { INVESTIGATION_PROFILE_VERSIONS, investigationProfileHash } from './profiles.js';
 import { InvestigationProfilesResponseSchema, type InvestigationProfilesResponse } from './profile-contracts.js';
 import { Type } from '@sinclair/typebox';
 
@@ -18,7 +18,7 @@ export async function registerInvestigationProfileRoutes(app: FastifyInstance, v
     }
     return {
       schemaVersion: 1, source: 'repository', allowlistSemantics: 'authority_ceiling',
-      items: Object.values(INVESTIGATION_PROFILES).map(profile => {
+      items: INVESTIGATION_PROFILE_VERSIONS.map(profile => {
         const identity = profile.id === 'ops'
           ? { id: profile.id, supportedSubjectKinds: profile.supportedSubjectKinds }
           : { id: profile.id, supportedSubjectKinds: profile.supportedSubjectKinds };

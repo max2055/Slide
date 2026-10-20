@@ -2,7 +2,7 @@ import { StreamBoundary } from './stream-boundary.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
+import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
 import { ModelStep, TimeoutError } from "./model-step.js";
@@ -151,20 +151,33 @@ export class TurnLoop {
           manager = new ContextManager({ ...spec, checkpointCallback: saveCheckpoint }, this.getProvider());
           if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
+        // Capture one request-only suffix for planning, compaction validation
+        // and dispatch. It must not enter durable facts or summary source hashes.
+        const requestSuffix = [...continuation.project([]), ...projectContextBlocks([
+          runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
+        ])];
         messagesForModel = manager.project(state.messages);
-        if (forceCompact || manager.tokens(messagesForModel) > manager.inputBudget * manager.watermark) {
+        const inputTokens = manager.tokens([...messagesForModel, ...requestSuffix]);
+        const aboveWatermark = inputTokens > manager.inputBudget * manager.watermark;
+        // A valid current request can grow into two irreducible recent batches.
+        // Use the same next-batch planning reserve as autoCompact while older
+        // history can still be summarized. This is not a future-output bound.
+        const growthPressure = !!saveCheckpoint && spec.tools.getDefinitions().length > 0
+          && inputTokens + manager.contextConfig.maxTokens > manager.inputBudget;
+        if (forceCompact || aboveWatermark || growthPressure) {
           const split = manager.split(state.messages);
-          if (forceCompact || split.end > (manager.summary?.sourceEnd ?? 0)) {
-            await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState) => {
-              await emitCheckpoint(spec, { ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
-            });
+          const previousEnd = manager.summary?.sourceEnd ?? 0;
+          const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
+          if (forceCompact || (split.end > previousEnd && hasOlderHistory)) {
+            await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState, receipt) => {
+              await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
+            }, forceCompact, requestSuffix);
             state.usage = { ...recovery.state.usage };
             messagesForModel = manager.project(state.messages);
           }
         }
         forceCompact = false;
-        messagesForModel = continuation.project(messagesForModel);
-        messagesForModel = [...messagesForModel, ...projectContextBlocks([runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : [])])];
+        messagesForModel = [...messagesForModel, ...requestSuffix];
         manager.assertFits(messagesForModel);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
@@ -193,7 +206,24 @@ export class TurnLoop {
       };
       currentContext = context;
       reminder = undefined;
-      const reservation = manager.requestReservation();
+      let reservation = manager.requestReservation();
+      let requestSpec = spec;
+      // An explicitly bounded input or nearly spent execution allowance need
+      // not buy an entire context window. With no unsettled usage, use the complete
+      // conservative input estimate and an affordable output ceiling. The
+      // original context cap remains in force; a late hook/schema change must
+      // also fit this smaller envelope at the actual provider boundary.
+      if (spec.budgetLimits && recovery.state.unknownRequests === 0) {
+        const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state);
+        if (remaining < reservation || spec.contextBlockLimit !== undefined) {
+          const input = manager.tokens(messagesForModel);
+          const output = Math.min(manager.contextConfig.maxTokens, Math.min(remaining, reservation) - input);
+          if (Number.isSafeInteger(output) && output > 0) {
+            reservation = spec.contextBlockLimit === undefined ? remaining : input + output;
+            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, reservation - output) };
+          }
+        }
+      }
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;
@@ -215,7 +245,7 @@ export class TurnLoop {
       // ── Request LLM ──
       let response: LLMResponse;
       try {
-        response = await new ModelStep(this.getProvider()).request(spec, messagesForModel, hook, context);
+        response = await new ModelStep(this.getProvider()).request(requestSpec, messagesForModel, hook, context);
       } catch (e: unknown) {
         const isTimeout = e instanceof TimeoutError;
         const errMsg = isTimeout ? e.message : (e instanceof Error ? e.message : String(e));

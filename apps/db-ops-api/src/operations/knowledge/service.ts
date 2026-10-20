@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { InvestigationAuthorization } from '../../investigations/authorization.js';
+import { OutboxService } from '../../workflows/outbox-service.js';
+import { rows } from './store.js';
 import type { ActorContext } from '../../auth/actor-context.js';
+import type { PoolConnection } from 'mysql2/promise';
 import { redactSensitiveText } from '../../security/log-redaction.js';
 import { freezeInvestigationCaller } from '../../investigations/authorization.js';
 import { assertExpectedVersion, OperationsError, operationsContentHash } from '../contracts.js';
@@ -157,6 +161,45 @@ export class KnowledgeService {
     });
   }
 
+  /** Human selected historical reference, never current evidence or permission. */
+  async bind(caller: ActorContext, id: string, value: unknown) {
+    this.enabled(); this.human(caller); parse(key,id);
+    const input = parse(z.strictObject({ investigationId:key,resultVersion:z.number().int().positive(),
+      expectedVersion:z.number().int().positive(),version:z.number().int().positive(),
+      contentHash:z.string().regex(/^[a-f0-9]{64}$/),applicabilityConfirmed:z.literal(true) }),value);
+    return this.store.transaction(caller,async(c,actor)=>{
+      // Serialize the reference limit with other writes to this investigation,
+      // using the established session -> investigation lock order.
+      const [target] = await rows(c,'SELECT session_id FROM investigations WHERE id=?',[input.investigationId]);
+      if(!target) throw precondition();
+      await rows(c,'SELECT id FROM chat_sessions WHERE session_id=? FOR UPDATE',[target.session_id]);
+      await rows(c,'SELECT id FROM investigations WHERE id=? FOR UPDATE',[input.investigationId]);
+      const item = await this.store.load(c,id,true), view = await this.store.view(c,actor,item);
+      if (view.tombstone || item.state !== 'published' || item.version !== input.version || item.contentHash !== input.contentHash) throw precondition();
+      const investigations = new InvestigationAuthorization(), inv = await investigations.load(c as never,input.investigationId);
+      await investigations.authorize(c as never,actor,inv,'continue');
+      assertExpectedVersion(input.expectedVersion,inv.version);
+      const [result] = await rows(c,'SELECT version FROM investigation_results WHERE investigation_id=? ORDER BY version DESC LIMIT 1 FOR SHARE',[inv.id]);
+      if (Number(result?.version)!==input.resultVersion || ['closed','archived'].includes(inv.lifecycle)) throw precondition();
+      const [old] = await rows(c,'SELECT * FROM investigation_case_dependencies WHERE investigation_id=? AND case_id=? FOR UPDATE',[inv.id,id]);
+      if(old && (Number(old.case_version)!==item.version || old.content_hash!==item.contentHash)) throw precondition();
+      const [count] = await rows(c,'SELECT COUNT(*) AS n FROM investigation_case_dependencies WHERE investigation_id=?',[inv.id]);
+      if(!old && Number(count.n)>=20) throw precondition();
+      if(!old) {
+        await c.execute('INSERT INTO investigation_case_dependencies(investigation_id,case_id,case_version,content_hash) VALUES(?,?,?,?)',[inv.id,id,item.version,item.contentHash]);
+        await new OutboxService({getConnection:async()=>c as never}).append(c as never,{
+          eventType:'operations.case.manually_bound',schemaVersion:1,aggregateType:'investigation',aggregateId:inv.id,
+          aggregateVersion:inv.version,idempotencyKey:`manual-case:${inv.id}:${id}:${item.version}`,
+          payload:{schemaVersion:1,eventId:randomUUID(),investigationId:inv.id,resultVersion:input.resultVersion,
+            caseId:id,caseVersion:item.version,contentHash:item.contentHash,actorId:actor.userId,referenceOnly:true,applicabilityConfirmed:true},
+        });
+      }
+      // No cached reference bypasses source withdrawal/ACL/expiry checks.
+      if ((await this.store.view(c,actor,item)).tombstone) throw precondition();
+      return {investigationId:inv.id,id,version:item.version,contentHash:item.contentHash,referenceOnly:true};
+    });
+  }
+
   /** `send` must synchronously enqueue/serialize to its authenticated transport.
    * Never await enrichment between this check and model/HTTP/WS delivery. */
   async detail(caller: ActorContext, id: string, send?: (view: CaseView) => void): Promise<CaseView> {
@@ -179,7 +222,8 @@ export class KnowledgeService {
       return page;
     });
   }
-  async references(caller: ActorContext, bindings: readonly CaseReferenceBinding[], send: (payload: Record<string, unknown>) => void): Promise<void> {
+  async references(caller: ActorContext, bindings: readonly CaseReferenceBinding[], send: (payload: Record<string, unknown>) => void,
+    beforeSend?: (connection: PoolConnection) => Promise<void>): Promise<void> {
     this.enabled();
     const refs = parse(z.array(z.strictObject({ id: key, version: z.number().int().positive(), contentHash: z.string().regex(/^[a-f0-9]{64}$/) })).max(20), bindings);
     await this.store.transaction(caller, async (c, actor) => {
@@ -198,6 +242,9 @@ export class KnowledgeService {
         const item = await this.store.load(c, ref.id), view = await this.store.view(c, actor, item);
         if (view.tombstone || item.state !== 'published' || item.version !== ref.version || item.contentHash !== ref.contentHash) throw precondition();
       }
+      // Trusted composition can also lock the consuming investigation/fence in
+      // this same transaction. No network await occurs under these locks.
+      await beforeSend?.(c);
       if (expiries.some(expiry => expiry <= Date.now())) throw precondition();
       send({ case_references: references, evidence: [] });
     });

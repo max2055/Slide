@@ -1,3 +1,4 @@
+import { sourceToolCeiling } from './source-tool-ceiling.js';
 import { ActorAuthenticationError, ActorContextService, type ActorContext } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
@@ -61,18 +62,100 @@ function canRead(actor: ActorContext, resource: Pick<InvestigationResource, 'typ
     || !actor.resourceBoundary && (actor.permissions.includes('*') || actor.permissions.includes('instance:*'));
 }
 
+interface ListReadFacts {
+  current?: ActorContext;
+  authenticationFailed: boolean;
+  members: Map<string, 'operator' | 'viewer'>;
+  live: Set<string>;
+}
+
 /** Each caller is server-bound. Actor/model commands cannot choose another
  * identity, expand the caller ceiling, or replace this port with cached ACLs. */
 export class InvestigationAuthorization {
+  private readonly listReads = new WeakMap<AuthorityExecutor, ListReadFacts>();
   constructor(private readonly contexts = new ActorContextService(),
-    private readonly toolPolicy: LiveInvestigationToolPolicy = () => true) {}
+    private readonly toolPolicy: LiveInvestigationToolPolicy = () => true,
+    private readonly toolCeiling: readonly string[] | undefined = sourceToolCeiling()) {}
 
   forActor(caller: ActorContext): AdmissionAuthorizer {
     const ceiling = freezeInvestigationCaller(caller);
-    return async (connection, actor, investigation, operation) => {
+    const bound = (actor: InvestigationActor) => {
       if (actor.id !== ceiling.userId || actor.kind !== (ceiling.principalKind ?? 'user')) throw forbidden();
-      await this.authorize(connection, ceiling, investigation, operation);
     };
+    const authorizer = async (connection: AuthorityExecutor, actor: InvestigationActor, investigation: Readonly<AdmissionInvestigation>, operation: InvestigationAction) => {
+      bound(actor);
+      await this.authorize(connection, ceiling, investigation, operation, [], undefined,
+        operation === 'read' ? this.listReads.get(connection) : undefined);
+    };
+    return Object.assign(authorizer, {
+      prepareReadList: async (connection: AuthorityExecutor, actor: InvestigationActor, investigations: readonly Readonly<AdmissionInvestigation>[]) => {
+        bound(actor);
+        this.listReads.set(connection, await this.loadListReadFacts(connection, ceiling, investigations));
+      },
+      clearReadList: (connection: AuthorityExecutor) => { this.listReads.delete(connection); },
+    });
+  }
+
+  private async loadListReadFacts(connection: AuthorityExecutor, ceiling: ActorContext,
+    investigations: readonly Readonly<AdmissionInvestigation>[]): Promise<ListReadFacts> {
+    const kind = ceiling.principalKind ?? 'user';
+    const facts: ListReadFacts = { authenticationFailed: false, members: new Map(), live: new Set() };
+    if (kind === 'service' && !ceiling.resourceBoundary) return facts;
+    try {
+      facts.current = await this.contexts.loadInvestigationActorFrom(connection, ceiling.userId, kind, ceiling.sessionVersion, ceiling.requestId);
+    } catch (error) {
+      if (error instanceof ActorAuthenticationError) {
+        facts.authenticationFailed = true;
+        return facts;
+      }
+      throw error;
+    }
+    if (kind === 'user') {
+      const memberRows = await rows(connection, `SELECT investigation_id, role FROM investigation_members
+        WHERE user_id = ? AND (expires_at IS NULL OR expires_at > NOW()) FOR SHARE`, [facts.current.userId]);
+      for (const member of memberRows) {
+        if (member.role === 'operator' || member.role === 'viewer') facts.members.set(String(member.investigation_id), member.role);
+      }
+    }
+    const needed: Record<'instance' | 'server' | 'network_device', Set<number>> = {
+      instance: new Set(), server: new Set(), network_device: new Set(),
+    };
+    for (const investigation of investigations) {
+      for (const ref of this.refsNeedingLiveProof(ceiling, facts.current, investigation, facts.members)) needed[ref.type].add(ref.id);
+    }
+    const tables = { instance: 'database_instances', server: 'servers', network_device: 'network_devices' } as const;
+    for (const type of ['instance', 'server', 'network_device'] as const) {
+      const ids = [...needed[type]];
+      const predicate = type === 'instance' ? " AND lifecycle_state = 'available'" : '';
+      for (let offset = 0; offset < ids.length; offset += 1000) {
+        const chunk = ids.slice(offset, offset + 1000);
+        const found = await rows(connection, `SELECT id FROM ${tables[type]} WHERE id IN (${chunk.map(() => '?').join(',')})${predicate} FOR SHARE`, chunk);
+        for (const row of found) facts.live.add(`${type}:${Number(row.id)}`);
+      }
+    }
+    return facts;
+  }
+
+  /** Refs whose existence authorize() will still query after the role and scope checks. */
+  private refsNeedingLiveProof(ceiling: ActorContext, current: ActorContext, investigation: Readonly<AdmissionInvestigation>,
+    members: ReadonlyMap<string, 'operator' | 'viewer'>): Array<Pick<InvestigationResource, 'type' | 'id'>> {
+    const kind = ceiling.principalKind ?? 'user';
+    if (kind === 'service' && !ceiling.resourceBoundary) return [];
+    const role = investigation.owner.id === current.userId && investigation.owner.kind === kind ? 'operator'
+      : kind === 'user' ? members.get(investigation.id) : undefined;
+    if (!role) return [];
+    const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
+    const permitted = (required: string) => permission(current, required) && permission(ceiling, required);
+    if (!permitted('chat:view') || profile.id === 'system' && !permitted('config:view')) return [];
+    const globalInstanceAccess = !ceiling.resourceBoundary && permission(current, 'instance:*') && permission(ceiling, 'instance:*');
+    const needed: Array<Pick<InvestigationResource, 'type' | 'id'>> = [];
+    for (const ref of investigation.resources) {
+      if (!['instance', 'server', 'network_device'].includes(ref.type) || !Number.isSafeInteger(ref.id) || ref.id <= 0
+        || !canRead(current, ref) || !canRead(ceiling, ref)
+        || ref.type === 'instance' && !current.instanceScopes[ref.id] && !globalInstanceAccess) break;
+      needed.push(ref);
+    }
+    return needed;
   }
 
   async load(connection: AuthorityExecutor, id: string): Promise<Readonly<AdmissionInvestigation>> {
@@ -89,23 +172,32 @@ export class InvestigationAuthorization {
 
   async authorize(connection: AuthorityExecutor, caller: ActorContext, investigation: Readonly<AdmissionInvestigation>,
     action: InvestigationAction, contentResources: readonly Pick<InvestigationResource, 'type' | 'id'>[] = [],
-    frozen?: InvestigationAuthoritySnapshot): Promise<InvestigationAuthority> {
+    frozen?: InvestigationAuthoritySnapshot, facts?: ListReadFacts): Promise<InvestigationAuthority> {
     const ceiling = freezeInvestigationCaller(caller);
     const kind = ceiling.principalKind ?? 'user';
     if (kind === 'service' && !ceiling.resourceBoundary) throw invisible();
+    const useFacts = !!facts && action === 'read' && !frozen && contentResources.length === 0;
     let current: ActorContext;
-    try {
-      current = await this.contexts.loadInvestigationActorFrom(connection, ceiling.userId, kind, ceiling.sessionVersion, ceiling.requestId);
-    } catch (error) {
-      if (error instanceof ActorAuthenticationError) throw invisible();
-      throw error; // SQL failures are infrastructure failures, never hidden counts.
+    if (useFacts) {
+      if (facts.authenticationFailed || !facts.current) throw invisible();
+      current = facts.current;
+    } else {
+      try {
+        current = await this.contexts.loadInvestigationActorFrom(connection, ceiling.userId, kind, ceiling.sessionVersion, ceiling.requestId);
+      } catch (error) {
+        if (error instanceof ActorAuthenticationError) throw invisible();
+        throw error; // SQL failures are infrastructure failures, never hidden counts.
+      }
     }
     let role: 'operator' | 'viewer' | undefined;
     if (investigation.owner.id === current.userId && investigation.owner.kind === kind) role = 'operator';
     else if (action !== 'create' && kind === 'user') {
-      const [member] = await rows(connection, `SELECT role FROM investigation_members
-        WHERE investigation_id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at > NOW()) FOR SHARE`, [investigation.id, current.userId]);
-      role = member?.role;
+      if (useFacts) role = facts.members.get(investigation.id);
+      else {
+        const [member] = await rows(connection, `SELECT role FROM investigation_members
+          WHERE investigation_id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at > NOW()) FOR SHARE`, [investigation.id, current.userId]);
+        role = member?.role;
+      }
     }
     if (!role) throw invisible();
     const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
@@ -127,14 +219,18 @@ export class InvestigationAuthorization {
       if (!['instance', 'server', 'network_device'].includes(ref.type) || !Number.isSafeInteger(ref.id) || ref.id <= 0
         || !canRead(current, ref) || !canRead(ceiling, ref) || frozenActor && !canRead(frozenActor, ref)) throw invisible();
       if (ref.type === 'instance' && !current.instanceScopes[ref.id] && !globalInstanceAccess) throw invisible();
-      const table = ref.type === 'instance' ? 'database_instances' : ref.type === 'server' ? 'servers' : 'network_devices';
-      const found = await rows(connection, `SELECT id FROM ${table} WHERE id = ?${ref.type === 'instance' ? " AND lifecycle_state = 'available'" : ''} FOR SHARE`, [ref.id]);
-      if (!found.length) throw invisible();
+      if (useFacts) {
+        if (!facts.live.has(`${ref.type}:${ref.id}`)) throw invisible();
+      } else {
+        const table = ref.type === 'instance' ? 'database_instances' : ref.type === 'server' ? 'servers' : 'network_devices';
+        const found = await rows(connection, `SELECT id FROM ${table} WHERE id = ?${ref.type === 'instance' ? " AND lifecycle_state = 'available'" : ''} FOR SHARE`, [ref.id]);
+        if (!found.length) throw invisible();
+      }
     }
     if (!['read', 'watch', 'content'].includes(action) && role !== 'operator') throw forbidden();
     const tools = profile.toolAllowlist.filter(name => {
       const security = getToolSecurityDefinition(name);
-      return !!security && security.audience === 'actor' && security.effect === 'read'
+      return (!this.toolCeiling || this.toolCeiling.includes(name)) && !!security && security.audience === 'actor' && security.effect === 'read'
         && security.credentials !== 'read' && security.approval === 'never' && this.toolPolicy(name)
         && (!frozen || frozen.toolAllowlist.includes(name)) && security.permissions.every(permitted);
     });

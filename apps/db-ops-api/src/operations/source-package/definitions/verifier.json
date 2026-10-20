@@ -1,0 +1,16 @@
+{
+  "id": "v23-demo-service-health",
+  "version": "1",
+  "target": "server:3/slide-action-demo.service",
+  "beforeSeconds": 120,
+  "readinessSeconds": 60,
+  "observationSeconds": 300,
+  "intervalSeconds": 10,
+  "maxExtraRestarts": 0,
+  "requireAllHealthy": true,
+  "requiredSignals": ["pinned host and exact helper/unit/config hashes", "systemd active/running with nonzero MainPID", "new InvocationID after the approved invocation", "HTTP 18087 readiness status 200", "systemd NRestarts delta excluding the approved restart equals zero"],
+  "missingOrStale": "unknown; never healthy",
+  "sampling": "P08 must bind each sample to execution/plan/version/definitionHash and preserve observation timestamps; a gap or cancellation is unknown",
+  "clock": { "maxSkewMs": 2000, "maxProbeRttMs": 1000 },
+  "implementationStatus": "definition only; P08 consumption and actual effect acceptance remain required"
+}

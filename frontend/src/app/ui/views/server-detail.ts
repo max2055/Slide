@@ -1,3 +1,4 @@
+import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/resource-collection-section.js";
@@ -519,7 +520,7 @@ export class ServerDetailPage extends LitElement {
 
   private _renderOverview() {
     const item = this.overview, state = item ? runState(item) : 'unknown';
-    return html`<div class="overview-grid">
+    return html`<operations-resource-relations resourceType="server" .resourceId=${this.serverId}></operations-resource-relations><div class="overview-grid">
       <app-card><h2 slot="header">当前需要关注</h2>
         ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
         ${this.overviewError ? html`<p role="alert">${this.overviewError}</p>` : nothing}

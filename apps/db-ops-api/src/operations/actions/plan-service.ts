@@ -162,20 +162,18 @@ export class ActionPlanService {
       return plan;
     });
   }
+  async readIn(c: PlanConnection, caller: ActorContext, planId: string): Promise<ActionPlanVersion> {
+    const plan = await this.store.load(c, planId);
+    const resources = await this.sources.scope(c, caller, plan.content);
+    await this.authorization.authorize(c, caller, resources, 'actions:read');
+    if (Date.parse(plan.content.validUntil) <= (await this.store.now(c)).getTime()
+      && ['draft', 'pending_approval', 'approved'].includes(plan.state)) return { ...plan, state: 'expired' };
+    return plan;
+  }
   async get(caller: ActorContext, planId: string): Promise<ActionPlanVersion> {
     parse(refSchema, { planId, expectedVersion: 1 });
     caller = freezeInvestigationCaller(caller);
-    return this.store.transaction(async (c) => {
-      const plan = await this.store.load(c, planId);
-      const resources = await this.sources.scope(c, caller, plan.content);
-      await this.authorization.authorize(c, caller, resources, 'actions:read');
-      if (
-        Date.parse(plan.content.validUntil) <= (await this.store.now(c)).getTime() &&
-        ['draft', 'pending_approval', 'approved'].includes(plan.state)
-      )
-        return { ...plan, state: 'expired' };
-      return plan;
-    });
+    return this.store.transaction(c => this.readIn(c, caller, planId));
   }
   async submit(
     caller: ActorContext,

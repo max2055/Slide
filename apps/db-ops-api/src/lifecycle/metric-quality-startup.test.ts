@@ -1,3 +1,4 @@
+import { excludeActionJobs } from '../operations/actions/worker.js';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
@@ -55,7 +56,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     systemComposition: { enabled: false, toolsForInvestigation: vi.fn() },
     registerAnalysisDispatchHandler: vi.fn(), registerAnalysisRecoveryHandler: vi.fn(),
     authorizeAnalysisRequest: vi.fn(), analysisConfigurationVersion: vi.fn(), createAnalysisRecoveryJob: vi.fn(),
-    workflowConcurrency: () => 3,
+    workflowConcurrency: () => 3, excludeActionJobs,
     setInterval: vi.fn(), clearInterval: vi.fn(),
   };
   for (const name of ['metricRegistry', 'notificationDatabaseService', 'notificationService',

@@ -1,3 +1,5 @@
+import { ActionVerificationStore } from '../operations/actions/verification-store.js';
+import { PlanStore } from '../operations/actions/plan-store.js';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection } from 'mysql2/promise';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -11,9 +13,11 @@ import { validateFeedback, feedbackEvidenceIds, coversRecoveryWindow, type Inves
 
 export class InvestigationFeedbackStore extends InvestigationObservationDatabase {
   private readonly results: InvestigationResultStore;
+  private readonly actionReports: ActionVerificationStore;
   constructor(poolProvider: () => Pool | null = () => dbConnection.getPool(), authorization = new InvestigationAuthorization()) {
     super(poolProvider, authorization);
     this.results = new InvestigationResultStore(poolProvider, authorization);
+    this.actionReports = new ActionVerificationStore(new PlanStore(poolProvider() as never));
   }
   private async result(c: PoolConnection, investigation: Readonly<AdmissionInvestigation>, id: string, version: number): Promise<VersionedInvestigationResult> {
     const [row] = await observationRows(c, 'SELECT * FROM investigation_results WHERE id = ? AND investigation_id = ? AND version = ? FOR SHARE', [id, investigation.id, version]);
@@ -24,6 +28,14 @@ export class InvestigationFeedbackStore extends InvestigationObservationDatabase
   private async references(c: PoolConnection, actor: ActorContext, investigation: Readonly<AdmissionInvestigation>,
     result: VersionedInvestigationResult, command: InvestigationFeedbackRequest, available: boolean) {
     const ids = feedbackEvidenceIds(command);
+    if ('verification' in command && command.verification?.actionReport) {
+      try { await this.actionReports.reference(c as never, actor, investigation.id, command.verification.actionReport); }
+      catch (error) {
+        if (error instanceof Error && ['OPERATIONS_NOT_FOUND', 'OPERATIONS_FORBIDDEN'].includes(error.message)) throw absentObservation();
+        if (error instanceof Error && error.message === 'OPERATIONS_PRECONDITION_FAILED') throw invalidObservation();
+        throw error;
+      }
+    }
     // Reading feedback also rechecks every scope of the result it refers to.
     await this.results.authorizedBindings(c, actor, investigation, result, [...new Set([...resultEvidenceIds(result.result), ...ids])]);
     await this.results.authorizedBindings(c, actor, investigation, result, ids, available);
@@ -64,9 +76,17 @@ export class InvestigationFeedbackStore extends InvestigationObservationDatabase
         const [row] = await observationRows(c, 'SELECT active_request_id FROM investigations WHERE id = ?', [investigationId]);
         if (row.active_request_id) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
       }
+      const actionProof = 'verification' in command && command.verification?.actionReport
+        ? await this.actionReports.forFeedback(c as never, actor, investigationId, result.id, result.version,
+          investigation.version, command.verification.actionReport, command.verification.from, command.verification.to).catch(error => {
+            if (error instanceof Error && error.message === 'OPERATIONS_NOT_FOUND') throw absentObservation();
+            if (error instanceof Error && error.message === 'OPERATIONS_FORBIDDEN') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+            if (error instanceof Error && ['OPERATIONS_PRECONDITION_FAILED', 'OPERATIONS_VERSION_CONFLICT', 'OPERATIONS_EXPIRED'].includes(error.message)) throw invalidObservation();
+            throw error;
+          }) : null;
       if ((command.kind === 'recovery' || command.kind === 'close') && 'verification' in command && command.verification
-        && (!coversRecoveryWindow(command.verification, metadata) || investigation.resources.some(resource =>
-          !coversRecoveryWindow(command.verification, metadata.filter(row => row.resources.some((ref: { type: string; id: number }) =>
+        && (!actionProof && !coversRecoveryWindow(command.verification, metadata) || investigation.resources.some(resource =>
+          !(actionProof && actionProof.resource.type === resource.type && actionProof.resource.id === resource.id) && !coversRecoveryWindow(command.verification, metadata.filter(row => row.resources.some((ref: { type: string; id: number }) =>
             ref.type === resource.type && ref.id === resource.id)))))) throw invalidObservation();
       const [clock] = await observationRows(c, 'SELECT CURRENT_TIMESTAMP(3) AS now');
       const createdAt = new Date(clock.now).toISOString();
@@ -96,7 +116,22 @@ export class InvestigationFeedbackStore extends InvestigationObservationDatabase
       for (const row of rows.slice(0, limit)) {
         const result = await this.result(c, investigation, row.result_id, Number(row.result_version));
         const { references } = await this.references(c, actor, investigation, result, decode(row.command_json), false);
-        items.push(this.record(row, references, Number(latest.version)));
+        const record = this.record(row, references, Number(latest.version));
+        if (record.verification?.actionReport) {
+          record.staleVerification = record.staleResult || investigation.version !== record.version;
+          if (!record.staleVerification) {
+            try {
+              await this.actionReports.forFeedback(c as never, actor, investigationId, result.id, result.version,
+                Number(row.accepted_version) - 1, record.verification.actionReport, record.verification.from, record.verification.to);
+            } catch (error) {
+              // Revoked callers must still fail the entire content read; expired/old proof is retained as stale history.
+              if (error instanceof Error && ['OPERATIONS_PRECONDITION_FAILED', 'OPERATIONS_VERSION_CONFLICT', 'OPERATIONS_EXPIRED'].includes(error.message)) record.staleVerification = true;
+              else if (error instanceof Error && ['OPERATIONS_NOT_FOUND', 'OPERATIONS_FORBIDDEN'].includes(error.message)) throw absentObservation();
+              else throw error;
+            }
+          }
+        }
+        items.push(record);
       }
       return { items, nextBefore: rows.length > limit ? items.at(-1)!.version : null };
     });

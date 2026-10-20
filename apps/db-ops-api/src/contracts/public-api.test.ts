@@ -135,6 +135,34 @@ describe('generated public API contract', () => {
       '/api/network-devices/{id}/probe',
       '/api/network-devices/{id}/relations',
       '/api/network-devices/test-connection',
+      '/api/operations/action-executions/{id}',
+      '/api/operations/action-executions/{id}/cancel',
+      '/api/operations/action-executions/{id}/reconcile',
+      '/api/operations/action-executions/{id}/verification',
+      '/api/operations/action-executions/{id}/verification/versions/{version}',
+      '/api/operations/action-plans/{id}/versions/{version}/execute',
+      '/api/operations/actions/drafts',
+      '/api/operations/actions/plans',
+      '/api/operations/actions/plans/{id}',
+      '/api/operations/actions/plans/{id}/review',
+      '/api/operations/actions/plans/{id}/submit',
+      '/api/operations/actions/plans/{id}/versions',
+      '/api/operations/attention',
+      '/api/operations/attention/{id}',
+      '/api/operations/attention/{id}/overrides',
+      '/api/operations/baselines',
+      '/api/operations/baselines/{id}',
+      '/api/operations/knowledge',
+      '/api/operations/knowledge/{id}',
+      '/api/operations/knowledge/{id}/bind',
+      '/api/operations/knowledge/{id}/review',
+      '/api/operations/knowledge/{id}/submit',
+      '/api/operations/knowledge/{id}/watch',
+      '/api/operations/knowledge/{id}/withdraw',
+      '/api/operations/relations',
+      '/api/operations/relations/{id}/review',
+      '/api/operations/relations/{id}/revisions',
+      '/api/operations/resources/{type}/{id}/relations',
       '/api/platform/observations',
       '/api/platform/system-events',
       '/api/platform/system-events/{id}',
@@ -148,6 +176,10 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
+    expect(document.paths['/api/operations/knowledge'].post.security).toEqual([{ bearerAuth: [] }]);
+    expect(document.paths['/api/operations/knowledge'].post.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/OperationsCaseCandidate');
+    expect(document.paths['/api/operations/actions/execute']).toBeUndefined();
+    expect(buildClientTypes()).toContain('export type OperationsCaseCandidate');
     expect(document.paths['/api/health/ready'].get.security).toEqual([]);
     expect(document.paths['/api/health/ready'].get.responses['503']).toBeDefined();
     expect(buildClientTypes()).toContain('export interface InfrastructureReadiness { ready: boolean; }');

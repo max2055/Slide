@@ -65,12 +65,17 @@ export class ContextManager {
     this.inputBudget = Math.min(spec.contextBlockLimit ?? Infinity, this.contextConfig.contextWindowTokens - this.contextConfig.maxTokens - 1024);
     this.watermark = spec.contextPolicy?.watermark ?? 0.8;
     this.target = spec.contextPolicy?.target ?? 0.5;
-    if (!Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
+    const recentBatches = spec.contextPolicy?.recentToolBatches ?? 2;
+    if (![1, 2].includes(recentBatches) || (recentBatches === 1 && !spec.checkpointCallback)
+      || !Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
       throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid context budget or watermarks');
     }
   }
   estimate(messages: Message[], tools: unknown[] = this.spec.tools.getDefinitions()): PromptTokenEstimate {
-    this.lastEstimate = estimateWithProvider(messages, tools as import('../types.js').ToolSchema[], this.spec.model, this.provider);
+    // Count the same provider projection used at the final model boundary. Raw
+    // facts and source hashes remain unchanged; fallback retains the byte floor.
+    const projection = this.provider?.projectMessages?.(messages, this.spec.model) ?? messages;
+    this.lastEstimate = estimateWithProvider(projection, tools as import('../types.js').ToolSchema[], this.spec.model, this.provider);
     if (this.lastEstimate.fallbackReason === 'MEDIA_UNCALIBRATED') {
       // Unknown dimensions/provider image accounting has no proven upper bound.
       // Fail admission rather than treating a fixed image allowance as exact.
@@ -101,12 +106,14 @@ export class ContextManager {
     }
     return prepareMessages(this.spec, isolate(raw));
   }
-  /** Keep original goals, all system authority, latest user and two recent complete batches. */
+  /** Keep goals/policy/latest user and atomic batches; one-batch mode requires durable summaries. */
   split(raw: Message[]): { end: number; retained: Message[]; pins: Message[] } {
     const users = raw.flatMap((m, i) => m.role === 'user' ? [i] : []);
     const batches = raw.flatMap((m, i) => m.role === 'assistant' && (!m.source || m.source === 'fact') && m.tool_calls?.length ? [i] : []);
     const latest = users.at(-1) ?? raw.length;
-    const end = batches.at(-2) ?? latest;
+    const end = this.spec.contextPolicy?.recentToolBatches === 1
+      ? batches.at(-1) ?? latest
+      : batches.at(-2) ?? latest;
     return { end, pins: this.pins(raw, end), retained: raw.slice(end) };
   }
   pins(raw: Message[], end: number): Message[] {
@@ -118,7 +125,16 @@ export class ContextManager {
       arguments: call.function.arguments,
       status: raw.slice(index + 1, end).some(r => r.role === 'tool' && (!r.source || r.source === 'fact') && r.tool_call_id === call.id) ? 'result_recorded_not_success_assertion' : 'uncertain_do_not_replay',
     })) : []);
-    if (evidence.length) pins.push(...historicalData('evidence_references', evidence, sourceHash(raw.slice(0, end))));
+    if (evidence.length) {
+      // Lossless column encoding avoids paying repeated keys/status text for
+      // every protected call. All IDs, arguments, order and uncertainty survive.
+      const statuses = ['result_recorded_not_success_assertion', 'uncertain_do_not_replay'];
+      const references = {
+        columns: ['sourceIndex', 'toolCallId', 'toolName', 'arguments', 'statusIndex'], statuses,
+        rows: evidence.map(e => [e.sourceIndex, e.toolCallId, e.toolName, e.arguments, statuses.indexOf(e.status)]),
+      };
+      pins.push(...historicalData('evidence_references', references, sourceHash(raw.slice(0, end))));
+    }
     return pins;
   }
 }

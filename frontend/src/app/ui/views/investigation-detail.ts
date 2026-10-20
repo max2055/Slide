@@ -6,6 +6,7 @@ import { renderMessageGroup } from '../chat/grouped-render.ts';
 import { apiClient } from '../../../api/index.ts';
 import '../components/investigation-context.ts';
 import '../components/investigation-feedback.ts';
+import '../components/investigation-operation-context.ts';
 
 export const executionLabels: Record<string, string> = {
   queued: '排队中', running: '运行中', completed: '执行完成', failed: '执行失败', cancelled: '已取消',
@@ -44,6 +45,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
+    <investigation-operation-context .investigationId=${detail.id} .resultVersion=${result?.version ?? 0} .resources=${detail.resources}></investigation-operation-context>
     <investigation-feedback .investigationId=${detail.id} .resultId=${result?.id ?? ''}
       .resultVersion=${result?.version ?? 0} .investigationVersion=${detail.version}
       .activeRequest=${active} .readonly=${controller.operationForbidden || !controller.online}
@@ -57,12 +59,12 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
           { showReasoning: false, showToolCalls: true, autoExpandToolCalls: false, assistantAttachmentAuthToken: apiClient.getToken() })))
           : html`<app-empty-state title="暂无消息"></app-empty-state>`}
       </div>
-      <app-form-field label="继续调查" hint=${active ? '本次执行结束后可提交新目标；草稿会保留。' : '新请求将创建新的 Run，保留历次结果。'}>
+      <app-form-field label="继续调查" hint=${active ? '本次执行结束后可提交新目标；草稿会保留。' : controller.continuationUnavailable ? '当前结果尚未确认或关联信息未就绪，请刷新核对。' : execution === 'partial' ? '保留部分结果，创建关联的新 Run，不重放原执行。' : '新请求将创建新的 Run，保留历次结果。'}>
         <textarea aria-label="继续调查" rows="3" maxlength="2000" .value=${options.draft}
           @input=${(e: Event) => options.onDraft((e.target as HTMLTextAreaElement).value)}></textarea>
       </app-form-field>
-      <button class="btn-primary" ?disabled=${active || controller.busy || controller.operationForbidden || controller.acceptanceUnknown || !controller.online || !options.draft.trim() || detail.lifecycle === 'archived' || detail.lifecycle === 'closed'}
-        @click=${options.onContinue}>提交新 Run</button>
+      <button class="btn-primary" ?disabled=${active || controller.continuationUnavailable || controller.busy || controller.operationForbidden || controller.acceptanceUnknown || !controller.online || !options.draft.trim() || detail.lifecycle === 'archived' || detail.lifecycle === 'closed'}
+        @click=${options.onContinue}>${execution === 'partial' ? '从部分结果继续' : '提交新 Run'}</button>
       <p class="muted">操作需要调查 operator 权限，服务器实时校验。</p>
     </app-card>`;
 }

@@ -183,3 +183,38 @@ it('authorized snapshots preserve loaded result versions and their pagination cu
   expect(c.results.items.map(r => r.id)).toEqual(['newest', 'oldest']);
   expect(c.results.nextBefore).toBeNull();
 });
+
+function partialController() {
+  const c = new InvestigationsController(() => {}, null);
+  (c as any).id = 'one';
+  c.detail = { id: 'one', version: 3, derivedRunState: 'partial' } as any;
+  c.snapshot = snapshot(); c.snapshot.metadata.version = 3;
+  c.snapshot.runs = [{ requestId: 'latest-request', runId: 'latest-run', state: 'partial', resolution: 'known' }];
+  c.results = { items: [{ requestId: 'latest-request', runId: 'latest-run', version: 4 },
+    { requestId: 'old-request', runId: 'old-run', version: 1 }], nextBefore: null } as any;
+  return c;
+}
+it('explicit partial continuation binds the latest result and retries the identical request', async () => {
+  api.mockRejectedValue(new InvestigationApiError(503, 'INVESTIGATION_QUEUE_UNAVAILABLE'));
+  const c = partialController(); await c.continue('继续核对');
+  expect(JSON.parse(api.mock.calls[0][1]!.body as string)).toEqual({ message: '继续核对', expectedVersion: 3,
+    continuationOf: { requestId: 'latest-request', runId: 'latest-run', resultVersion: 4 } });
+  c.results.items[0].version = 5; c.detail!.version = 4; await c.retryPending();
+  expect(api.mock.calls[1][1]?.body).toBe(api.mock.calls[0][1]?.body);
+  expect(api.mock.calls[1][1]?.headers).toEqual(api.mock.calls[0][1]?.headers);
+});
+it.each(['unknown', 'resolution', 'missing', 'mismatch', 'stale', 'active'])('%s cannot submit a partial successor', async kind => {
+  const c = partialController();
+  if (kind === 'unknown') c.detail!.derivedRunState = 'unknown';
+  if (kind === 'resolution') c.snapshot!.runs[0].resolution = 'outcome_unknown';
+  if (kind === 'missing') c.results.items = [];
+  if (kind === 'mismatch') c.results.items[0].runId = 'different';
+  if (kind === 'stale') c.snapshot!.metadata.version = 2;
+  if (kind === 'active') c.detail!.activeRequestId = 'in-flight';
+  await c.continue('不应发送'); expect(api).not.toHaveBeenCalled();
+});
+it('ordinary completed continuation keeps its original payload', async () => {
+  api.mockRejectedValue(new InvestigationApiError(503, 'INVESTIGATION_QUEUE_UNAVAILABLE'));
+  const c = partialController(); c.detail!.derivedRunState = 'completed'; await c.continue('新目标');
+  expect(JSON.parse(api.mock.calls[0][1]!.body as string)).toEqual({ message: '新目标', expectedVersion: 3 });
+});

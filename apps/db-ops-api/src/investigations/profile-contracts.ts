@@ -11,7 +11,7 @@ export const InvestigationProfilesResponseSchema = Type.Object({
     configurationStatus: Type.Literal('preset'),
     toolAvailability: Type.Literal('not_evaluated'),
     outputSchemaId: Type.Literal('InvestigationResult'),
-  }, { additionalProperties: false }), { minItems: 2, maxItems: 2 }),
+  }, { additionalProperties: false }), { minItems: 3, maxItems: 3 }),
 }, { $id: 'InvestigationProfilesResponse', additionalProperties: false });
 
 export type InvestigationProfilesResponse = Static<typeof InvestigationProfilesResponseSchema>;

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { OperationsError } from '../contracts.js';
-import { KnowledgeService } from './service.js';
+import { KnowledgeService, KnowledgeWatchService } from './service.js';
 import type { CaseSearchInput } from './search.js';
 
 /** Internal composition export. P10 owns server registration/public generated
@@ -38,6 +38,31 @@ export async function registerKnowledgeRoutes(app: FastifyInstance, verifyToken:
   });
   route('GET', '/api/operations/knowledge/:id', async (r, reply, actor) => {
     await service.detail(actor, idOf(r), view => { reply.send(view); });
+    return reply;
+  });
+  // Authenticated, read-only stream for B15. Uses the existing live Watch
+  // service; never broadcasts audit payloads or replays a command. Bounded
+  // server refresh also covers expiry/ACL changes without an outbox event.
+  route('GET', '/api/operations/knowledge/:id/watch', async (r, reply, actor) => {
+    const watch = new KnowledgeWatchService(service);
+    let closed = false, timer: ReturnType<typeof setTimeout> | undefined, previous = '';
+    const close = () => { closed=true; if(timer)clearTimeout(timer);watch.unwatch(peer); };
+    const peer = { send(value:Record<string,unknown>) {
+      if(closed)return;
+      const encoded=JSON.stringify(value);
+      if(encoded!==previous){previous=encoded;reply.raw.write(encoded+'\n');}
+      if(value.type==='operations.case.invalidated'){reply.raw.end();close();}
+    } };
+    reply.hijack();
+    reply.raw.writeHead(200,{'Content-Type':'application/x-ndjson','Cache-Control':'private, no-store','X-Accel-Buffering':'no'});
+    reply.raw.on('close',close);
+    const refresh = async () => {
+      if(closed)return;
+      try { await watch.refresh(); } catch { peer.send({type:'operations.case.invalidated'}); }
+      if(!closed)timer=setTimeout(()=>void refresh(),1000);
+    };
+    try { await watch.watch(peer,actor,idOf(r)); if(!closed)timer=setTimeout(()=>void refresh(),1000); }
+    catch {peer.send({type:'operations.case.invalidated'});reply.raw.end();close();}
     return reply;
   });
   route('POST', '/api/operations/knowledge', async (r, reply, actor) => reply.code(201).send(await service.create(actor, r.body)));
