@@ -5,11 +5,11 @@ it('summary responses require durable matched disposition',async()=>{
 const base=new URL('../',import.meta.url).href;
 
 const {autoCompact}=await import(base+'runtime/auto-compact.js');
-const {ContextManager}=await import(pathToFileURL(base+'runtime/context-manager.ts').href);
-const {RecoveryPolicy}=await import(pathToFileURL(base+'runtime/recovery-policy.ts').href);
-const {RapidRefill}=await import(pathToFileURL(base+'runtime/rapid-refill.ts').href);
-const {ToolRegistry}=await import(pathToFileURL(base+'tool-registry.ts').href);
-const {NoopHook}=await import(pathToFileURL(base+'runner.ts').href);
+const {ContextManager}=await import(base+'runtime/context-manager.ts');
+const {RecoveryPolicy}=await import(base+'runtime/recovery-policy.ts');
+const {RapidRefill}=await import(base+'runtime/rapid-refill.ts');
+const {ToolRegistry}=await import(base+'tool-registry.ts');
+const {NoopHook}=await import(base+'runner.ts');
 const valid={goal:['inspect db-42'],constraints:['read only'],done:[],pending:['review'],evidence:['e-1'],uncertain:['no replay']};
 const results:any[]=[];const diagnostics:any[]=[];const originalInfo=console.info;console.info=(value:any)=>{diagnostics.push(JSON.parse(value));};
 for(const kind of ['valid','json','schema','length','tool','error','lost','save','rejected-save']) {
@@ -39,5 +39,5 @@ for(const kind of ['valid','json','schema','length','tool','error','lost','save'
  }catch(e){results.push({kind,ok:false,error:String(e)});}
 }
 
-console.info=originalInfo;
+console.info=originalInfo;assert(results.every(r=>r.ok),JSON.stringify(results));
 });
