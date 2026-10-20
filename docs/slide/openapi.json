@@ -5982,13 +5982,37 @@
                         "verification": {
                           "additionalProperties": false,
                           "properties": {
+                            "actionReport": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "hash": {
+                                  "pattern": "^[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "version",
+                                "hash"
+                              ],
+                              "type": "object"
+                            },
                             "evidenceIds": {
                               "items": {
                                 "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                                 "type": "string"
                               },
                               "maxItems": 100,
-                              "minItems": 1,
+                              "minItems": 0,
                               "type": "array",
                               "uniqueItems": true
                             },
@@ -6060,13 +6084,37 @@
                         "verification": {
                           "additionalProperties": false,
                           "properties": {
+                            "actionReport": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "hash": {
+                                  "pattern": "^[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "version",
+                                "hash"
+                              ],
+                              "type": "object"
+                            },
                             "evidenceIds": {
                               "items": {
                                 "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                                 "type": "string"
                               },
                               "maxItems": 100,
-                              "minItems": 1,
+                              "minItems": 0,
                               "type": "array",
                               "uniqueItems": true
                             },
@@ -6171,13 +6219,37 @@
                         "verification": {
                           "additionalProperties": false,
                           "properties": {
+                            "actionReport": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "hash": {
+                                  "pattern": "^[a-f0-9]{64}$",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "version",
+                                "hash"
+                              ],
+                              "type": "object"
+                            },
                             "evidenceIds": {
                               "items": {
                                 "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                                 "type": "string"
                               },
                               "maxItems": 100,
-                              "minItems": 1,
+                              "minItems": 0,
                               "type": "array",
                               "uniqueItems": true
                             },
@@ -6274,16 +6346,43 @@
                 "staleResult": {
                   "type": "boolean"
                 },
+                "staleVerification": {
+                  "type": "boolean"
+                },
                 "verification": {
                   "additionalProperties": false,
                   "properties": {
+                    "actionReport": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "hash": {
+                          "pattern": "^[a-f0-9]{64}$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                          "type": "string"
+                        },
+                        "version": {
+                          "maximum": 9007199254740991,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "hash"
+                      ],
+                      "type": "object"
+                    },
                     "evidenceIds": {
                       "items": {
                         "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                         "type": "string"
                       },
                       "maxItems": 100,
-                      "minItems": 1,
+                      "minItems": 0,
                       "type": "array",
                       "uniqueItems": true
                     },
@@ -6523,13 +6622,37 @@
                   "verification": {
                     "additionalProperties": false,
                     "properties": {
+                      "actionReport": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "hash": {
+                            "pattern": "^[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                            "type": "string"
+                          },
+                          "version": {
+                            "maximum": 9007199254740991,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version",
+                          "hash"
+                        ],
+                        "type": "object"
+                      },
                       "evidenceIds": {
                         "items": {
                           "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                           "type": "string"
                         },
                         "maxItems": 100,
-                        "minItems": 1,
+                        "minItems": 0,
                         "type": "array",
                         "uniqueItems": true
                       },
@@ -6601,13 +6724,37 @@
                   "verification": {
                     "additionalProperties": false,
                     "properties": {
+                      "actionReport": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "hash": {
+                            "pattern": "^[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                            "type": "string"
+                          },
+                          "version": {
+                            "maximum": 9007199254740991,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version",
+                          "hash"
+                        ],
+                        "type": "object"
+                      },
                       "evidenceIds": {
                         "items": {
                           "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                           "type": "string"
                         },
                         "maxItems": 100,
-                        "minItems": 1,
+                        "minItems": 0,
                         "type": "array",
                         "uniqueItems": true
                       },
@@ -6712,13 +6859,37 @@
                   "verification": {
                     "additionalProperties": false,
                     "properties": {
+                      "actionReport": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "hash": {
+                            "pattern": "^[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "id": {
+                            "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                            "type": "string"
+                          },
+                          "version": {
+                            "maximum": 9007199254740991,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version",
+                          "hash"
+                        ],
+                        "type": "object"
+                      },
                       "evidenceIds": {
                         "items": {
                           "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                           "type": "string"
                         },
                         "maxItems": 100,
-                        "minItems": 1,
+                        "minItems": 0,
                         "type": "array",
                         "uniqueItems": true
                       },
@@ -6815,16 +6986,43 @@
           "staleResult": {
             "type": "boolean"
           },
+          "staleVerification": {
+            "type": "boolean"
+          },
           "verification": {
             "additionalProperties": false,
             "properties": {
+              "actionReport": {
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "id": {
+                    "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "id",
+                  "version",
+                  "hash"
+                ],
+                "type": "object"
+              },
               "evidenceIds": {
                 "items": {
                   "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                   "type": "string"
                 },
                 "maxItems": 100,
-                "minItems": 1,
+                "minItems": 0,
                 "type": "array",
                 "uniqueItems": true
               },
@@ -7033,13 +7231,37 @@
               "verification": {
                 "additionalProperties": false,
                 "properties": {
+                  "actionReport": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hash": {
+                        "pattern": "^[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "id": {
+                        "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                        "type": "string"
+                      },
+                      "version": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "hash"
+                    ],
+                    "type": "object"
+                  },
                   "evidenceIds": {
                     "items": {
                       "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                       "type": "string"
                     },
                     "maxItems": 100,
-                    "minItems": 1,
+                    "minItems": 0,
                     "type": "array",
                     "uniqueItems": true
                   },
@@ -7111,13 +7333,37 @@
               "verification": {
                 "additionalProperties": false,
                 "properties": {
+                  "actionReport": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hash": {
+                        "pattern": "^[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "id": {
+                        "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                        "type": "string"
+                      },
+                      "version": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "hash"
+                    ],
+                    "type": "object"
+                  },
                   "evidenceIds": {
                     "items": {
                       "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                       "type": "string"
                     },
                     "maxItems": 100,
-                    "minItems": 1,
+                    "minItems": 0,
                     "type": "array",
                     "uniqueItems": true
                   },
@@ -7222,13 +7468,37 @@
               "verification": {
                 "additionalProperties": false,
                 "properties": {
+                  "actionReport": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hash": {
+                        "pattern": "^[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "id": {
+                        "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+                        "type": "string"
+                      },
+                      "version": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "hash"
+                    ],
+                    "type": "object"
+                  },
                   "evidenceIds": {
                     "items": {
                       "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
                       "type": "string"
                     },
                     "maxItems": 100,
-                    "minItems": 1,
+                    "minItems": 0,
                     "type": "array",
                     "uniqueItems": true
                   },
