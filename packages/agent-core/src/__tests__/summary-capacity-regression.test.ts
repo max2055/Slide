@@ -87,7 +87,7 @@ it("summary output must coexist with protected context", async () => {
           String(error),
       );
       assert.equal(sends, 1);
-      assert(ceiling <= byteTarget);
+      assert(ceiling <= 2048);
       assert.equal(receipts[0].status, "accepted");
       assert.deepEqual(manager.summary.summary, brief);
       manager.assertFits(manager.project(raw));
@@ -134,4 +134,37 @@ it('a compliant UTF8 summary may need more than one output token per four bytes'
  const manager=new ContextManager(spec,provider);
  await autoCompact(manager,raw,provider,new RecoveryPolicy(),new RapidRefill(),async()=>{});
  assert.equal(sends,1);assert.deepEqual(manager.summary?.summary,generated);manager.assertFits(manager.project(raw));
+});
+
+it('a future-growth target cannot truncate a summary that fits actual headroom', async () => {
+  const { autoCompact } = await import('../runtime/auto-compact.js');
+  const { ContextManager, sourceHash } = await import('../runtime/context-manager.js');
+  const { RecoveryPolicy } = await import('../runtime/recovery-policy.js');
+  const { RapidRefill } = await import('../runtime/rapid-refill.js');
+  const { ToolRegistry } = await import('../tool-registry.js');
+  const { NoopHook } = await import('../runner.js');
+  const tools = new ToolRegistry();
+  tools.register({ name: 'inspect', description: 'read only', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async () => null });
+  const raw: any[] = [{ role: 'system', content: 'Read only' }, { role: 'user', content: 'inspect db-42' }, { role: 'assistant', content: 'old facts '.repeat(600) }, { role: 'user', content: 'protected '.repeat(440) }];
+  const summary = { goal: ['inspect db-42'], constraints: ['read only'], done: [], pending: ['verify'], evidence: ['e-1 ' + 'x'.repeat(800)], uncertain: ['unknown'] };
+  const spec: any = { initialMessages: raw, tools, model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, checkpointCallback: async () => {} };
+  const minimum = new ContextManager(spec);
+  minimum.summary = { schemaVersion: 1, sourceStart: 0, sourceEnd: 3, sourceHash: sourceHash(raw.slice(0, 3)), generation: 1, provenance: 'legacy/unknown', summary: { goal: ['pending'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] } };
+  spec.contextBlockLimit = minimum.tokens(minimum.project(raw)) + 4096 + 400;
+  let sends = 0;
+  let ceiling = 0;
+  const provider: any = { getDefaultModel: () => 'unknown-tokenizer', chatStream: async (messages: any, _tools: any, _config: any, options: any) => {
+    sends++;
+    ceiling = options.maxTokens;
+    const target = Number(messages[0].content.match(/within (\d+) UTF-8/)[1]);
+    assert.equal(target, 300);
+    const complete = ceiling >= 500;
+    return { content: JSON.stringify(summary).slice(0, complete ? undefined : -1), finishReason: complete ? 'stop' : 'length', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 100, completion_tokens: Math.min(ceiling, 500) } };
+  } };
+  const manager = new ContextManager(spec, provider);
+  await autoCompact(manager, raw, provider, new RecoveryPolicy(), new RapidRefill(), async () => {});
+  assert.equal(sends, 1);
+  assert(ceiling >= 500 && ceiling <= 2048);
+  assert.deepEqual(manager.summary?.summary, summary);
+  manager.assertFits(manager.project(raw));
 });
