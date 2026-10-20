@@ -92,6 +92,52 @@ describe.skipIf(!port)('P04 B06 real MySQL/HTTP with explicitly separated synthe
     const response = await request(undefined, 'POST', { ...input, state: 'qualified', canary: 'PRIVATE_BASELINE' });
     expect(response.status).toBe(422); expect(JSON.stringify(response.body)).not.toContain('PRIVATE_BASELINE'); expect(await count()).toBe(0);
   });
+  it('does not deliver success when the version transaction fails to commit', async () => {
+    const get = f.pool.getConnection.bind(f.pool); let commits = 0;
+    vi.spyOn(f.pool, 'getConnection').mockImplementation(async () => {
+      const c = await get(), commit = c.commit.bind(c);
+      c.commit = async () => { if (++commits === 2) throw new Error('controlled commit failure'); await commit(); };
+      return c;
+    });
+    const deliver = vi.fn();
+    await expect(service.compute(actor, input, deliver)).rejects.toThrow('controlled commit failure');
+    expect(deliver).not.toHaveBeenCalled();
+    expect(await count()).toBe(0);
+  });
+  it('delivers only committed versions, with current source and expiry checked after commit', async () => {
+    const get = f.pool.getConnection.bind(f.pool); let commits = 0;
+    vi.spyOn(f.pool, 'getConnection').mockImplementation(async () => {
+      const c = await get(), commit = c.commit.bind(c);
+      c.commit = async () => {
+        await commit();
+        if (++commits === 2) {
+          await f.rows("UPDATE database_instances SET host='after-commit.invalid' WHERE id=101");
+          now += 180_000;
+        }
+      };
+      return c;
+    });
+    let visible: Promise<number> | undefined;
+    const result = await service.compute(actor, input, () => { visible = count(); });
+    expect(await visible).toBe(1);
+    expect(result.result.status).toBe('unknown');
+    expect(['expired', 'source_configuration_changed', 'resource_changed_reaccumulating']).toContain(result.result.reason);
+  });
+  it('blocks delivery after revocation between commit and the response lock', async () => {
+    const get = f.pool.getConnection.bind(f.pool); let commits = 0;
+    vi.spyOn(f.pool, 'getConnection').mockImplementation(async () => {
+      const c = await get(), commit = c.commit.bind(c);
+      c.commit = async () => {
+        await commit();
+        if (++commits === 2) await f.rows('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
+      };
+      return c;
+    });
+    const deliver = vi.fn();
+    await expect(service.compute(actor, input, deliver)).rejects.toThrow();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(await count()).toBe(1);
+  });
   it('filters cross-resource, revoked permission, expired grant and service delegation before source IO', async () => {
     const spy = vi.spyOn(source, 'load');
     await f.rows('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
