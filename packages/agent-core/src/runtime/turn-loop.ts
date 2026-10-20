@@ -163,7 +163,7 @@ export class TurnLoop {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
           const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
-          if (forceCompact || (split.end > previousEnd && (aboveWatermark || hasOlderHistory))) {
+          if (forceCompact || (split.end > previousEnd && hasOlderHistory)) {
             await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState, receipt) => {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact);

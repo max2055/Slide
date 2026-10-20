@@ -85,7 +85,12 @@ export async function autoCompact(
   // Plan room for one subsequent tool batch. This is a growth target, not a
   // bound on arbitrary future model output; assertFits still gates every send.
   const futureBatchReserve = spec.tools.getDefinitions().length ? (spec.maxTokens ?? 4096) : 0;
-  const summaryByteTarget = Math.floor((headroom - futureBatchReserve) * 0.75);
+  const plannedTarget = Math.floor((headroom - futureBatchReserve) * 0.75);
+  // Growth is a planning target. When protected context fits but cannot also
+  // reserve a whole future batch, compact within actual headroom rather than
+  // rejecting a summary that could safely admit the next ordinary request.
+  const minimumSummaryBytes = Buffer.byteLength(JSON.stringify(minimum.summary.summary));
+  const summaryByteTarget = plannedTarget >= minimumSummaryBytes ? plannedTarget : Math.floor(headroom * 0.75);
   // No provider contract guarantees four UTF8 bytes per output token. The
   // byte target itself is the conservative token ceiling for compliant text;
   // the configured summary ceiling and actual candidate admission still apply.

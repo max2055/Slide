@@ -65,7 +65,9 @@ export class ContextManager {
     this.inputBudget = Math.min(spec.contextBlockLimit ?? Infinity, this.contextConfig.contextWindowTokens - this.contextConfig.maxTokens - 1024);
     this.watermark = spec.contextPolicy?.watermark ?? 0.8;
     this.target = spec.contextPolicy?.target ?? 0.5;
-    if (!Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
+    const recentBatches = spec.contextPolicy?.recentToolBatches ?? 2;
+    if (![1, 2].includes(recentBatches) || (recentBatches === 1 && !spec.checkpointCallback)
+      || !Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
       throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid context budget or watermarks');
     }
   }
@@ -104,12 +106,14 @@ export class ContextManager {
     }
     return prepareMessages(this.spec, isolate(raw));
   }
-  /** Keep original goals, all system authority, latest user and two recent complete batches. */
+  /** Keep goals/policy/latest user and atomic batches; one-batch mode requires durable summaries. */
   split(raw: Message[]): { end: number; retained: Message[]; pins: Message[] } {
     const users = raw.flatMap((m, i) => m.role === 'user' ? [i] : []);
     const batches = raw.flatMap((m, i) => m.role === 'assistant' && (!m.source || m.source === 'fact') && m.tool_calls?.length ? [i] : []);
     const latest = users.at(-1) ?? raw.length;
-    const end = batches.at(-2) ?? latest;
+    const end = this.spec.contextPolicy?.recentToolBatches === 1
+      ? Math.max(latest, batches.at(-1) ?? latest)
+      : batches.at(-2) ?? latest;
     return { end, pins: this.pins(raw, end), retained: raw.slice(end) };
   }
   pins(raw: Message[], end: number): Message[] {

@@ -216,3 +216,19 @@ it('compacts eligible history before tool growth makes the two retained batches 
   expect(result.stopReason).toBe('completed');expect(events).toEqual(['summary','ordinary','ordinary']);
   expect(executions).toBe(1);expect(JSON.stringify(raw)).toBe(before);
 });
+it('durable one-batch retention can advance across repeated tools without replaying any batch',async()=>{
+  const tools=new ToolRegistry();let executions=0,ordinary=0,summaries=0;const saved:any[]=[];
+  tools.register({name:'read_only',description:'Read bounded evidence',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:true,exclusive:false,execute:async()=>{executions++;return 'observed value '.repeat(350);}});
+  const raw:Message[]=[{role:'system',content:'Read only'},{role:'user',content:'Inspect server 3'},
+    {role:'assistant',content:null,tool_calls:[{id:'prior',type:'function',function:{name:'read_only',arguments:'{}'}}]},
+    {role:'tool',tool_call_id:'prior',content:'prior evidence '.repeat(450)},{role:'user',content:'Continue the read-only investigation'}];
+  const before=structuredClone(raw);const actual=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
+  const reply=(content:string|null,toolCalls:any[]=[])=>({content,finishReason:toolCalls.length?'tool_calls':'stop',toolCalls,hasToolCalls:!!toolCalls.length,shouldExecuteTools:!!toolCalls.length,usage:{prompt_tokens:10,completion_tokens:10}});
+  const p:any={getDefaultModel:()=>actual.getDefaultModel(),projectMessages:actual.projectMessages.bind(actual),countPromptTokens:actual.countPromptTokens.bind(actual),
+    chatStream:async()=>{summaries++;return reply(JSON.stringify({goal:['Inspect server 3'],constraints:['Read only'],done:[],pending:[],evidence:[],uncertain:[]}));},
+    chat:async()=>++ordinary<=3?reply(null,[{id:`batch-${ordinary}`,name:'read_only',arguments:{}}]):reply('Evidence collected; root cause remains unverified.')};
+  const result=await new (await import('../runner.js')).AgentRunner(p).run({...spec,initialMessages:raw,tools,maxIterations:6,contextPolicy:{recentToolBatches:1},checkpointCallback:async(c)=>{saved.push(structuredClone(c));}});
+  expect(result.error).toBeNull();expect(result.stopReason).toBe('completed');expect(executions).toBe(3);expect(ordinary).toBe(4);expect(summaries).toBeGreaterThanOrEqual(2);
+  expect(saved.some(c=>c.context_summary_v1?.sourceEnd>raw.length)).toBe(true);expect(raw).toEqual(before);
+  for(const id of ['prior','batch-1','batch-2','batch-3'])expect(JSON.stringify(result.messages)).toContain(id);
+});

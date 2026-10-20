@@ -51,6 +51,17 @@ it('current user and recent complete tool groups remain protected in a long sing
   expect(split.pins).toContainEqual(raw[1]);
   expect(JSON.stringify(split.pins)).toContain('result_recorded_not_success_assertion');
 });
+it('opt-in durable retention keeps the latest batch atomic and pins every older call',()=>{
+  const raw:Message[]=[{role:'system',content:'Read only'},{role:'user',content:'inspect db-42'}];
+  for(let i=0;i<3;i++)raw.push({role:'assistant',content:null,tool_calls:[{id:`read-${i}`,type:'function',function:{name:'inspect',arguments:'{"id":"db-42"}'}}]},{role:'tool',tool_call_id:`read-${i}`,content:`evidence-${i}`});
+  const before=structuredClone(raw);
+  const manager=new ContextManager(spec({checkpointCallback:async()=>{},contextPolicy:{recentToolBatches:1}}));
+  const split=manager.split(raw);expect(split.end).toBe(6);expect(split.retained).toEqual(raw.slice(6));
+  expect(JSON.stringify(split.pins)).toContain('read-0');expect(JSON.stringify(split.pins)).toContain('read-1');
+  expect(raw).toEqual(before);
+  expect(()=>new ContextManager(spec({contextPolicy:{recentToolBatches:1}}))).toThrow();
+  expect(()=>new ContextManager(spec({checkpointCallback:async()=>{},contextPolicy:{recentToolBatches:0} as any}))).toThrow();
+});
 it('checkpoint or hook schema changes are checked again at the actual provider boundary', async () => {
   const tools = new ToolRegistry(); let calls = 0;
   const runner = new AgentRunner({ getDefaultModel: () => 'test', chat: async () => { calls++; throw new Error('dispatch'); }, chatStream: async () => { throw new Error('dispatch'); } });

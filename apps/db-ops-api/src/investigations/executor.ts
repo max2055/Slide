@@ -768,7 +768,8 @@ export class InvestigationExecutor {
         recoveryLimits: { total: 0, empty: 0, continuation: 0, stream: 0, repetition: 0, context: 0 },
         // System uses deterministic history references; do not attempt an
         // unbudgeted summary at the soft watermark. The hard context cap stays.
-        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } } : {}),
+        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } }
+          : profile.id === 'ops' ? { contextPolicy: { recentToolBatches: 1 as const } } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {

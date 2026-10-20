@@ -84,6 +84,15 @@ it('rejects protected facts above the hard input cap before summary dispatch', a
   expect(f.calls).toHaveLength(0);
   expect(f.manager.summary).toBeUndefined();
 });
+it('does not turn optional future growth planning into a second hard input limit',async()=>{
+  const f=fixture({contextWindowTokens:16000,maxTokens:4096});
+  f.spec.tools.register({name:'read',description:'Read evidence',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:true,exclusive:false,execute:async()=>null});
+  f.raw[2].content='historical record '.repeat(100);f.raw[3].content='current user '+ 'x'.repeat(6200);
+  const split=f.manager.split(f.raw);expect(f.manager.tokens([...split.pins,...split.retained])).toBeLessThan(f.manager.inputBudget);
+  await autoCompact(f.manager,f.raw,f.provider,f.recovery,f.tracker,async()=>{});
+  expect(f.calls).toHaveLength(1);expect(()=>f.manager.assertFits(f.manager.project(f.raw))).not.toThrow();
+  expect(f.manager.inputBudget).toBe(10880);expect(f.spec.maxTokens).toBe(4096);
+});
 it('zero failure retries still permits budgeted lifecycle compaction without authorizing a retry', async () => {
   const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.6 } });
   const result = await new AgentRunner(f.provider).run(f.spec);
