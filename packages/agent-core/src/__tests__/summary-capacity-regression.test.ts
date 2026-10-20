@@ -111,3 +111,26 @@ it("summary output must coexist with protected context", async () => {
     cases.push({ mode, sends, outputCeiling: ceiling, ok: true });
   }
 });
+
+it('a compliant UTF8 summary may need more than one output token per four bytes',async()=>{
+ const {autoCompact}=await import('../runtime/auto-compact.js');
+ const {ContextManager}=await import('../runtime/context-manager.js');
+ const {RecoveryPolicy}=await import('../runtime/recovery-policy.js');
+ const {RapidRefill}=await import('../runtime/rapid-refill.js');
+ const {ToolRegistry}=await import('../tool-registry.js');
+ const {NoopHook}=await import('../runner.js');
+ const tools=new ToolRegistry();tools.register({name:'read_only',description:'bounded read',parameters:{type:'object'},execute:async()=>null});
+ const raw:any[]=[{role:'system',content:'Read only.'},{role:'user',content:'original goal'},{role:'assistant',content:'historical '.repeat(600)},{role:'user',content:'protected '.repeat(440)}];
+ const summary={goal:['inspect'],constraints:['read only'],done:[],pending:['verify'],evidence:[],uncertain:['unknown']};
+ let generated:any;let sends=0;
+ const provider:any={getDefaultModel:()=> 'unknown-tokenizer',chatStream:async(m:any,_t:any,_c:any,o:any)=>{
+  sends++;const target=Number(m[0].content.match(/within (\d+) UTF-8/)[1]);generated={...summary,evidence:['x'.repeat(Math.floor(target/2))]};const content=JSON.stringify(generated);assert(Buffer.byteLength(content)<=target);
+  // A legitimate conservative counterexample: no model contract promises 4 bytes/token.
+  const required=Buffer.byteLength(content);const complete=o.maxTokens>=required;
+  return {content:complete?content:content.slice(0,-1),finishReason:complete?'stop':'length',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:100,completion_tokens:Math.min(required,o.maxTokens)}};
+ }};
+ const spec:any={initialMessages:raw,tools,model:'unknown-tokenizer',maxIterations:4,maxToolResultChars:128000,hook:new NoopHook(),contextWindowTokens:16000,maxTokens:4096,checkpointCallback:async()=>{}};
+ const manager=new ContextManager(spec,provider);
+ await autoCompact(manager,raw,provider,new RecoveryPolicy(),new RapidRefill(),async()=>{});
+ assert.equal(sends,1);assert.deepEqual(manager.summary?.summary,generated);manager.assertFits(manager.project(raw));
+});
