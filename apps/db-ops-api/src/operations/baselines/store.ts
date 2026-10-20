@@ -82,7 +82,7 @@ export class BaselineStore {
     let result = calculateBaseline(input, source);
     if (!before.collectionEnabled) result = invalidateBaseline(result, 'resource_collection_disabled');
     if (before.targetSince && Date.parse(source.from) < Date.parse(before.targetSince)) result = invalidateBaseline(result, 'resource_changed_reaccumulating');
-    return this.transaction(async c => {
+    const committed = await this.transaction(async c => {
       const final = await this.snapshot(c, actor, input);
       assertOperationsEnabled(this.flags(), 'baselines');
       // There may be no historical row at all on the first computation. Carry
@@ -115,20 +115,25 @@ export class BaselineStore {
         payload: { schemaVersion: 1, eventId: randomUUID(), objectType: 'baseline', objectId: id, version,
           state: result.state, contentHash, occurredAt: this.clock().toISOString() },
       });
-      // No asynchronous step after the final ACL reload/time check and send.
       await this.authorization.authorize(c as never, actor, [input.resource], 'context:read');
       assertOperationsEnabled(this.flags(), 'baselines');
-      const outward = (result.status === 'known' || result.staticComparison.status === 'known') && Date.parse(result.validUntil) <= +this.clock()
-        ? { ...stored, result: invalidateBaseline(result, 'expired') } : stored;
-      deliver?.(outward); return outward;
+      return stored;
     });
+    // The append must commit before publishing success. Reacquire current ACL,
+    // target/control locks for the exact committed version; a revoke, source
+    // replacement or expiry during commit cannot authorize the response.
+    return this.readCommitted(actor, committed.id, deliver, committed.version);
   }
 
   async read(caller: ActorContext, id: string, deliver?: (value: StoredBaseline) => void): Promise<StoredBaseline> {
+    return this.readCommitted(caller, id, deliver);
+  }
+
+  private async readCommitted(caller: ActorContext, id: string, deliver?: (value: StoredBaseline) => void, version?: number): Promise<StoredBaseline> {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new OperationsError('OPERATIONS_INPUT_INVALID');
     const actor = freezeInvestigationCaller(caller);
     return this.transaction(async c => {
-      const [rows] = await c.execute<RowDataPacket[]>('SELECT reference_bands FROM behavior_baseline_versions WHERE id=? ORDER BY version DESC LIMIT 1 FOR SHARE', [id]);
+      const [rows] = await c.execute<RowDataPacket[]>(`SELECT reference_bands FROM behavior_baseline_versions WHERE id=?${version === undefined ? '' : ' AND version=?'} ORDER BY version DESC LIMIT 1 FOR SHARE`, version === undefined ? [id] : [id, version]);
       if (!rows.length) throw absent();
       const envelope = decode(rows[0].reference_bands), input = baselineInputSchema.parse(envelope.input);
       const final = await this.snapshot(c, actor, input);
