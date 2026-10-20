@@ -109,18 +109,18 @@ const quality = (ranked: string[], relevant: string[]) => {
   return { precision: hits / 5, recall: relevant.length ? hits / relevant.length : null };
 };
 
-function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, now = Date.now()) {
+function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, now = Date.now(), functional = false) {
   const freezeGaps: string[] = [];
   if (!dataset) freezeGaps.push('authorized_frozen_dataset_missing');
-  if (!review) freezeGaps.push('human_freeze_review_missing');
+  if (!review) freezeGaps.push(functional ? 'synthetic_freeze_review_missing' : 'human_freeze_review_missing');
   if (dataset && Date.parse(dataset.frozenAt) > now) freezeGaps.push('future_freeze');
   if (review && (!humanReview(review) || review.schemaVersion !== 1 || !HASH.test(review.datasetSha256)
-    || review.kind !== 'human' || Date.parse(review.reviewedAt) > now
-    || dataset && Date.parse(review.reviewedAt) < Date.parse(dataset.frozenAt))) freezeGaps.push('human_freeze_review_invalid');
+    || review.kind !== (functional ? 'agent' : 'human') || Date.parse(review.reviewedAt) > now
+    || dataset && Date.parse(review.reviewedAt) < Date.parse(dataset.frozenAt))) freezeGaps.push(functional ? 'synthetic_freeze_review_invalid' : 'human_freeze_review_invalid');
   // Byte binding is verified by inspectEvidence(), before evaluation.
   const cases = dataset?.cases ?? [], queries = dataset?.queries ?? [];
-  const validCases = cases.filter(c => c.provenance === 'real' && c.state === 'published'
-    && c.review.kind === 'human' && c.review.reviewer !== c.author
+  const validCases = cases.filter(c => c.provenance === (functional ? 'synthetic' : 'real') && c.state === 'published'
+    && c.review.kind === (functional ? 'agent' : 'human') && c.review.reviewer !== c.author
     && c.review.version === c.version && c.review.contentHash === c.contentHash
     && Date.parse(c.review.reviewedAt) <= Date.parse(dataset!.frozenAt)
     && Date.parse(c.validUntil) > now);
@@ -134,13 +134,14 @@ function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, no
     && unique(cases.map(c => c.incidentGroup));
   const b04 = [...freezeGaps];
   if (!independentCohort) b04.push('duplicate_investigation_or_incident_in_cohort');
-  if (investigationCount < 30 || incidentCount < 30) b04.push('fewer_than_30_distinct_real_reviewed_investigations_and_incidents');
+  if (!functional && (investigationCount < 30 || incidentCount < 30)) b04.push('fewer_than_30_distinct_real_reviewed_investigations_and_incidents');
+  if (functional && !validCases.length) b04.push('synthetic_case_fixture_missing');
   if (validCases.length !== cases.length) b04.push('unqualified_case_in_cohort');
   if (!queries.length) b04.push('real_labelled_queries_and_human_search_missing');
   const scores: ReturnType<typeof quality>[] = [], humanScores: ReturnType<typeof quality>[] = [];
   const caseIds = new Set(validCases.map(c => c.id)), groups = new Set(cases.map(c => c.incidentGroup));
   for (const q of queries) {
-    if (q.provenance !== 'real') b04.push('non_real_query');
+    if (q.provenance !== (functional ? 'synthetic' : 'real')) b04.push('non_real_query');
     if (q.role !== dataset!.permission.role || q.permissionRevision !== dataset!.permission.revision
       || q.visibleCaseIds.some(id => !caseIds.has(id))
       || [...q.relevantCaseIds, ...q.rankedCaseIds, ...q.humanCaseIds].some(id => !q.visibleCaseIds.includes(id))) b04.push('query_permission_or_case_binding_invalid');
@@ -156,12 +157,12 @@ function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, no
   }
   if (!unique(queries.map(q => q.incidentGroup))) b04.push('duplicate_query_incident');
   const precision = mean(scores.map(s => s.precision)), recall = mean(scores.flatMap(s => s.recall === null ? [] : [s.recall]));
-  if (precision === null || recall === null || precision < .8 || recall < .8) b04.push('retrieval_precision_or_recall_below_0_80');
+  if (!functional && (precision === null || recall === null || precision < .8 || recall < .8)) b04.push('retrieval_precision_or_recall_below_0_80');
 
   const baselineGaps = [...freezeGaps], comparisonGaps = [...freezeGaps];
   const series = (dataset?.baselines ?? []).map(b => {
     const gaps: string[] = [];
-    if (b.provenance !== 'real') gaps.push('non_real_observations');
+    if (b.provenance !== (functional ? 'synthetic' : 'real')) gaps.push('non_real_observations');
     const s = b.source;
     if (Date.parse(s.evaluatedAt) > Date.parse(dataset!.frozenAt) || Date.parse(s.validUntil) <= now
       || Date.parse(s.evaluatedAt) > now || s.latest.observedAt && Date.parse(s.latest.observedAt) > Date.parse(s.evaluatedAt)) gaps.push('source_snapshot_future_or_expired');
@@ -195,8 +196,8 @@ function evaluateReadiness(dataset?: ReadinessDataset, review?: FreezeReview, no
     }
     if (!normal) cg.push('normal_labels_missing');
     if (!b.labels.some(l => l.label !== 'normal')) cg.push('anomaly_labels_missing');
-    if (baselineFP > staticFP) cg.push('false_positive_rate_worse_than_static');
-    if (newImportantMisses) cg.push('new_important_anomaly_misses');
+    if (!functional && baselineFP > staticFP) cg.push('false_positive_rate_worse_than_static');
+    if (!functional && newImportantMisses) cg.push('new_important_anomaly_misses');
     comparisonGaps.push(...cg);
     return { mode: b.input.mode, ...gate(gaps), methodVersion: result.methodVersion, staticRuleSha256: evidenceSha256(b.staticRuleVersion),
       validDays: b.provenance === 'real' ? result.quality.validDays : null, coverage: result.quality.coverage,
@@ -232,11 +233,28 @@ export function inspectEvidence(bytes?: string, review?: FreezeReview, now = Dat
   return { ...evaluateReadiness(dataset, review, now), datasetSha256: evidenceSha256(bytes) };
 }
 
+/** Current batch policy: exercise the same algorithms on explicitly synthetic
+ * fixtures with agent reviews. Historical real-data qualification stays intact
+ * alongside the fixture result and never determines functional-delivery exit. */
+export function inspectFunctionalEvidence(bytes?: string, review?: FreezeReview, now = Date.now()) {
+  const historical = inspectEvidence(bytes, review, now);
+  const dataset = bytes === undefined ? undefined : parseDataset(JSON.parse(bytes));
+  const result = evaluateReadiness(dataset, review, now, true);
+  const { trustedRealInvestigations, distinctRealIncidents, ...retrieval } = result.B04;
+  return { ...historical, policy: 'functional-delivery-1',
+    externalGates: ['current_candidate_CI', 'independent_code_review', 'Max_batch_final_acceptance'],
+    functionalEvidence: { status: result.dataEvidenceStatus, provenance: 'synthetic',
+      scope: 'controlled_fixture_protocol_and_algorithms_only',
+      B04: { ...retrieval, syntheticInvestigations: trustedRealInvestigations, syntheticIncidents: distinctRealIncidents },
+      B06: result.B06, B07: result.B07 },
+  };
+}
+
 async function main() {
   try {
     const args = process.argv.slice(2), options = new Map<string, string>();
     for (let i = 0; i < args.length; i += 2) {
-      assert(['--input', '--review', '--output'].includes(args[i]) && args[i + 1] && !options.has(args[i]));
+      assert(['--input', '--review', '--output', '--mode'].includes(args[i]) && args[i + 1] && !options.has(args[i]));
       options.set(args[i], args[i + 1]);
     }
     assert(!options.has('--review') || options.has('--input'));
@@ -245,12 +263,17 @@ async function main() {
     const output = options.has('--output') ? resolve(options.get('--output')!) : undefined;
     // Never overwrite a frozen source or its review with a report.
     assert(!output || output !== input && output !== reviewFile);
-    const report = inspectEvidence(input ? await readFile(input, 'utf8') : undefined,
-      reviewFile ? JSON.parse(await readFile(reviewFile, 'utf8')) : undefined);
+    const mode = options.get('--mode') ?? 'functional';
+    assert(['functional', 'qualification'].includes(mode));
+    const bytes = input ? await readFile(input, 'utf8') : undefined;
+    const review = reviewFile ? JSON.parse(await readFile(reviewFile, 'utf8')) : undefined;
+    const report = mode === 'functional' ? inspectFunctionalEvidence(bytes, review)
+      : { ...inspectEvidence(bytes, review), functionalEvidence: undefined };
     const rendered = JSON.stringify(report, null, 2) + '\n';
     if (output) await writeFile(output, rendered, { flag: 'wx' });
     process.stdout.write(rendered);
-    process.exitCode = report.dataEvidenceStatus === 'blocked' ? 2 : 0;
+    const status = report.functionalEvidence?.status ?? report.dataEvidenceStatus;
+    process.exitCode = status === 'blocked' ? 2 : 0;
   } catch {
     // Invalid inputs may contain hidden case text, credentials or arbitrary paths.
     process.stderr.write('OPERATIONS_READINESS_INPUT_OR_OUTPUT_INVALID\n');

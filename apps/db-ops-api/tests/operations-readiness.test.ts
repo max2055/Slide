@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { evidenceSha256, inspectEvidence, type ReadinessDataset, type FreezeReview } from '../../../tests/qualification/operations-readiness.js';
+import { evidenceSha256, inspectEvidence, inspectFunctionalEvidence, type ReadinessDataset, type FreezeReview } from '../../../tests/qualification/operations-readiness.js';
 import { syntheticInput, syntheticWindow } from '../src/operations/baselines/test-support.js';
 
 const freeze = '2026-10-17T12:00:02.000Z', reviewTime = '2026-10-17T12:00:03.000Z';
@@ -232,5 +232,102 @@ test('CLI exits 2 for gaps; error output is redacted; reports never overwrite in
     assert.equal(await readFile(input, 'utf8'), original);
     const out = join(directory, 'output.json'); assert.equal(cli(['--output', out]).status, 2);
     assert.equal(cli(['--output', out]).status, 1);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+// No real/human claims in current-policy fixtures, including the freeze review.
+function functionalDataset() {
+  const d = dataset(); d.cases = d.cases.slice(0, 5);
+  d.cases.forEach(c => { c.provenance = 'synthetic'; c.review.kind = 'agent'; });
+  d.queries.forEach(q => q.provenance = 'synthetic');
+  d.baselines.forEach(b => b.provenance = 'synthetic');
+  return d;
+}
+function functional(d = functionalDataset()) {
+  const bytes = JSON.stringify(d), review: FreezeReview = { schemaVersion: 1,
+    datasetSha256: evidenceSha256(bytes), kind: 'agent', reviewer: 'synthetic-fixture-reviewer',
+    reviewedAt: reviewTime, evidenceRef: 'synthetic-fixture-review' };
+  return inspectFunctionalEvidence(bytes, review, now);
+}
+test('current policy accepts five synthetic cases and synthetic windows without changing real qualification', async () => {
+  const r = functional();
+  assert.equal(r.policy, 'functional-delivery-1');
+  assert.equal(r.functionalEvidence.status, 'ready_for_independent_review');
+  assert.equal(r.functionalEvidence.B04.syntheticInvestigations, 5);
+  assert.equal(r.B04.trustedRealInvestigations, 0);
+  assert(r.B06.series.every(s => s.validDays === null));
+  assert.equal(r.dataEvidenceStatus, 'blocked');
+  assert.equal(r.productQualificationChanged, false); assert.equal(r.finalAcceptance, 'not_evaluated');
+  assert(!r.externalGates.some(g => /MAX-192|merge/.test(g)));
+  if (process.env.P12_REPORT_DIR) {
+    await writeFile(join(process.env.P12_REPORT_DIR, 'synthetic-report.json'), JSON.stringify(r, null, 2));
+  }
+});
+test('current policy measures fixed-five and full recall even below historical quality targets', () => {
+  const d = functionalDataset(); d.queries[0].rankedCaseIds = ['case-0'];
+  const r = functional(d); assert.equal(r.functionalEvidence.status, 'ready_for_independent_review');
+  assert.equal(r.functionalEvidence.B04.precisionAt5, .2); assert.equal(r.functionalEvidence.B04.recallAt5, .2);
+  assert.equal(r.functionalEvidence.B04.humanPrecisionAt5, 1);
+});
+test('current policy rejects duplicates in the whole cohort before either search is scored', () => {
+  for (const key of ['investigationId', 'incidentGroup'] as const) {
+    const d = functionalDataset(); d.cases.push({ ...structuredClone(d.cases[0]), id: 'unused-copy' });
+    if (key === 'investigationId') d.cases.at(-1)!.incidentGroup = 'different';
+    else d.cases.at(-1)!.investigationId = 'different';
+    const r = functional(d).functionalEvidence;
+    assert.equal(r.status, 'blocked'); assert.equal(r.B04.precisionAt5, null); assert.equal(r.B04.humanPrecisionAt5, null);
+  }
+});
+test.each(['permission', 'version', 'hash', 'self_review', 'labels', 'incident', 'mixed_unit', 'expired'])(
+  'current policy retains %s binding and fails invalid controlled evidence', kind => {
+    const d = functionalDataset();
+    if (kind === 'permission') d.queries[0].permissionRevision = 'stale';
+    if (kind === 'version') d.cases[0].version++;
+    if (kind === 'hash') d.cases[0].contentHash = 'b'.repeat(64);
+    if (kind === 'self_review') d.cases[0].review.reviewer = d.cases[0].author;
+    if (kind === 'labels') d.baselines[0].labels.pop();
+    if (kind === 'incident') d.queries[0].incidentGroup = d.cases[0].incidentGroup;
+    if (kind === 'mixed_unit') d.baselines[0].source.buckets[0].unit = 'By';
+    if (kind === 'expired') d.cases[0].validUntil = freeze;
+    assert.equal(functional(d).functionalEvidence.status, 'blocked');
+  });
+test('current policy cannot relabel unknown/real provenance or human review as synthetic', () => {
+  for (const kind of ['real', 'unknown'] as const) {
+    const d = functionalDataset(); d.cases[0].provenance = kind;
+    assert.equal(functional(d).functionalEvidence.status, 'blocked');
+  }
+  const d = functionalDataset(); d.cases[0].review.kind = 'human';
+  assert.equal(functional(d).functionalEvidence.status, 'blocked');
+});
+test('current policy byte binding, source reset unknown and missing inventory remain fail closed', () => {
+  assert.equal(inspectFunctionalEvidence(undefined, undefined, now).functionalEvidence.status, 'blocked');
+  const d = functionalDataset(); d.baselines[0].source.reason = 'counter_reset';
+  const r = functional(d); assert.equal(r.functionalEvidence.status, 'blocked');
+  assert.equal(r.functionalEvidence.B06.series[0].comparison.newImportantMisses, null);
+  assert.throws(() => inspectFunctionalEvidence(JSON.stringify(d), { schemaVersion: 1, kind: 'agent',
+    reviewer: 'synthetic', reviewedAt: reviewTime, evidenceRef: 'fixture', datasetSha256: '0'.repeat(64) }, now), /FREEZE_HASH_MISMATCH/);
+});
+test('CLI defaults to functional policy; historical qualification remains explicit', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'operations-functional-'));
+  const script = resolve(import.meta.dirname, '../../../tests/qualification/operations-readiness.ts');
+  const cli = (args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8' });
+  try {
+    const d = functionalDataset();
+    // Frozen algorithm windows stay synthetic; only evidence export expiry is future.
+    d.baselines.forEach(b => b.source.validUntil = '2099-01-01T00:00:00.000Z');
+    d.cases.forEach(c => c.validUntil = '2099-01-01T00:00:00.000Z');
+    const bytes = JSON.stringify(d), input = join(directory, 'synthetic-input.json'), review = join(directory, 'agent-review.json');
+    await writeFile(input, bytes);
+    await writeFile(review, JSON.stringify({ schemaVersion: 1, datasetSha256: evidenceSha256(bytes), kind: 'agent',
+      reviewer: 'synthetic-fixture-reviewer', reviewedAt: reviewTime, evidenceRef: 'synthetic-freeze-review' }));
+    const passed = cli(['--input', input, '--review', review]);
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.equal(JSON.parse(passed.stdout).dataEvidenceStatus, 'blocked');
+    assert.equal(cli(['--mode', 'qualification', '--input', input, '--review', review]).status, 2);
+    const missing = cli([]); assert.equal(missing.status, 2);
+    assert.equal(JSON.parse(missing.stdout).policy, 'functional-delivery-1');
+    const legacy = cli(['--mode', 'qualification']); assert.equal(legacy.status, 2);
+    assert.equal(JSON.parse(legacy.stdout).functionalEvidence, undefined);
+    assert.equal(cli(['--mode', 'invented']).status, 1);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

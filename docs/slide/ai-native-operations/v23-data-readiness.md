@@ -1,3 +1,77 @@
+# V2＋V3 当前功能交付与历史资格记录
+
+当前规则 **functional-delivery-1**（Max决定 `01a158e3-e259-796a-b2df-722b012b74e4`）替代下方历史记录中的长期案例、观察天数、真实质量阈值、生产/shared Edge、MAX-192资格及先merge要求。产品权限、不可变版本、双主体、once、审计和unknown不重发保持。开发交付in_review，done及全批最终接受由Max确认。
+
+## 当前候选与范围
+
+沿PR211保留旧工具head `552fdb0d11d887af8b87997b2c29d9ad4383eae7` 全部历史，普通merge纳入已审P11 head `42b2dfb9bb141620bb6e804773c67eb940bb1c4c`。下列P01–P10准确候选逐一核实为P11祖先。PR211改以P11分支为base，增量仍仅本包工具、直接测试和本报告三个文件。准确最终head/CI见任务交付及矩阵附件，不在本文嵌入自身提交hash。
+
+P01–P06已历史合入；P07–P11是已审开放候选，不称已merge/部署。P10为MAX-203部分归档＋MAX-207唯一承接，203的done不代表完整P10已合并。
+
+| 包 | 实现范围 | 准确代码候选 | CI | 独立审查定位 |
+|---|---|---|---|---|
+| P01/MAX-194 | 内部契约/权限/flags/schema | [PR201](https://github.com/max2055/Slide/pull/201) @ `09193e6f6f130a981be082f610d76647b37af938` | [准确候选](https://github.com/max2055/Slide/actions/runs/38933826940) | `01a145a7-4e46-775d-bdf9-c668be5314fc` |
+| P02/MAX-195 | 可信资源关系 | [PR203](https://github.com/max2055/Slide/pull/203) @ `e15d2146b9ea0085938a40932deeb85f0ef53482` | [准确候选](https://github.com/max2055/Slide/actions/runs/38945689535) | `01a145fc-effe-789d-b85c-549dc6a52123` |
+| P03/MAX-196 | 案例治理/检索/引用 | [PR205](https://github.com/max2055/Slide/pull/205) @ `bac0a71bd87db4c2c8de6162b9b6827d1d0a277f` | [准确候选](https://github.com/max2055/Slide/actions/runs/38940769842) | `01a145d5-de5a-7469-935d-3f5d02c62a75` |
+| P04/MAX-197 | 语义指标基线/正式来源 | [PR207](https://github.com/max2055/Slide/pull/207) @ `2ef6e5c11c9bd7cf0f6013186ed5c355fd0cae2a` | [准确候选](https://github.com/max2055/Slide/actions/runs/39003355864) | `01a14838-7aad-7c86-a2fb-81172b925aef` |
+| P05/MAX-198 | 多事件关联/评分 | [PR210](https://github.com/max2055/Slide/pull/210) @ `8508ccaadc3cdb402e6fe0bdc7e8ace442d8f3ae` | [准确候选](https://github.com/max2055/Slide/actions/runs/39008852756) | `01a1488a-78f4-7f36-a6c8-8723836cda5b` |
+| P06/MAX-199 | 不可变计划/准确审批 | [PR204](https://github.com/max2055/Slide/pull/204) @ `67853ceb20db48f7f365a96872e4771a40b7f128` | [准确候选](https://github.com/max2055/Slide/actions/runs/38947190261) | `01a14605-8e3d-75f9-a2c1-9a9494015446` |
+| P07/MAX-200 | 独立执行/固定helper/once | [PR206](https://github.com/max2055/Slide/pull/206) @ `89435614b8cba11b5cfb48bfb2f60b760fa884ff` | [准确候选](https://github.com/max2055/Slide/actions/runs/39411420893) | `01a15902-e35c-76d2-b00e-cd1c0b5ab1fb` |
+| P08/MAX-201 | 效果验证/人工结案 | [PR213](https://github.com/max2055/Slide/pull/213) @ `af2637a0084a9458bdc3c36acffdc1976877838d` | [准确候选](https://github.com/max2055/Slide/actions/runs/39427910847) | `01a15980-c5cf-795e-97a4-0db3dd93e30e` |
+| P09/MAX-202 | 真实页面/资源上下文/导航 | [PR214](https://github.com/max2055/Slide/pull/214) @ `f1839a8eddcd6ff7e3bfd070e6015711e6ddc706` | [准确候选](https://github.com/max2055/Slide/actions/runs/39448727895) | `01a15a0f-6587-76f2-b9a0-fb7f5dd882b3` |
+| P10/MAX-207 | 迁移/装配/性能/模型引用 | [PR212](https://github.com/max2055/Slide/pull/212) @ `c9fe7452c27e8f9f13d12d12847afbbe699e936e` | [准确候选](https://github.com/max2055/Slide/actions/runs/39403377567) | `01a158f3-5352-777e-99e8-554bf1df488a` |
+| P11/MAX-204 | 正式server/独立worker/受控全链 | [PR215](https://github.com/max2055/Slide/pull/215) @ `42b2dfb9bb141620bb6e804773c67eb940bb1c4c` | [准确候选](https://github.com/max2055/Slide/actions/runs/39456896283) | `01a15a3a-2dd5-7ce3-b767-06b76b25a61d` |
+
+审查定位为Chief独立run或评论UUID，在对应Multica任务可回读。数量有交叠不相加，路径/环境条件跳过不计通过。
+
+## B01–B18 功能矩阵
+
+| 项目 | 已实现功能及owner | 回归与已审证据 |
+|---|---|---|
+| B01 | P03：作者/审者分离、准确版本、脱敏canary | `apps/db-ops-api/src/operations/knowledge/knowledge.mysql.test.ts`；P03独立21项SQL/JWT/HTTP；P11案例闭环 |
+| B02 | P03/P09/P10：实时撤权/过期、WS/深链/计数及迟到响应 | `apps/db-ops-api/src/operations/knowledge/knowledge.mysql.test.ts`、`frontend/e2e/operations-ui.spec.ts`；P09真实服务浏览器9；P10持久引用出站撤权33项 |
+| B03 | P03/P10：固定来源/版本/hash，referenceOnly与当前证据分离、tombstone | `apps/db-ops-api/src/operations/composition-evidence-scope.mysql.test.ts`；P03/P10独立审查；P11重开案例失效 |
+| B04 | P12：全cohort去重、固定分母5/完整相关集recall/macro、标签/版本/权限绑定 | `apps/db-ops-api/tests/operations-readiness.test.ts`；42项受控协议回归，5例synthetic可验功能；真实质量unknown |
+| B05 | P02：双端权限、过期/循环/2跳100边、legacy hosts | `apps/db-ops-api/src/operations/relations/store.test.ts`；P02 39项/真实SQL21，独立R1反例复验 |
+| B06 | P04：正式source身份/单位/dimensions/reset及不足窗口unknown | `apps/db-ops-api/src/operations/baselines/baselines.mysql.test.ts`、`apps/db-ops-api/src/operations/baselines/calculator.test.ts`；P04 SQL60/父5项R1；P10提交后实时授权19项 |
+| B07 | P12：同holdout标签、两算法误报分母/重要漏报及unknown空值 | `apps/db-ops-api/tests/operations-readiness.test.ts`；原28项+功能模式14项；synthetic对照不是业务改善结论 |
+| B08 | P05：确定性关联/评分/拆分/分页、unknown区间、零额外LLM | `apps/db-ops-api/src/operations/attention/attention.mysql.test.ts`；P05 43项/SQL27/父29项及授权过期时序 |
+| B09 | P06/P11：不可变全字段hash、独立主体/once/过期撤权与范围 | `apps/db-ops-api/src/operations/actions/plan-service.mysql.test.ts`；P06 SQL86；P11正式composition/JWT/HTTP准确审批 |
+| B10 | P07/P11：并发/重复/双worker、持久intent/outbox、副作用一次 | `apps/db-ops-api/src/operations/actions/execution.mysql.test.ts`、`apps/db-ops-api/src/operations/actions/verification.mysql.test.ts`；P07 Q01–18；P11双worker磁盘计数1 |
+| B11 | P07/P11：发送前后故障/崩溃、unknown不重发、原回执只读恢复 | `apps/db-ops-api/src/operations/actions/execution.mysql.test.ts`、`apps/db-ops-api/src/operations/actions/adapters/restart-demo-service.test.ts`；helper子进程SIGKILL/磁盘回执；P11丢SSH后reconcile计数仍1 |
+| B12 | P07/P11：取消/撤权发送竞态、flags停新写/保留审计 | `apps/db-ops-api/src/operations/actions/execution.mysql.test.ts`；前后边界0/1副作用；P11正式composition回归 |
+| B13 | P08/P11：120/60/300/10，exit0非resolved、缺样本/无改善、不可变报告和人工重开 | `apps/db-ops-api/src/operations/actions/verification.mysql.test.ts`、`apps/db-ops-api/src/operations/actions/evidence-adapter.test.ts`；P08行动反馈234；P11报告→关闭→发布→重开→tombstone |
+| B14 | P06/P07/P11：固定host/unit/pin/helper，签名/文件权限/注入/普通工具旁路 | `apps/db-ops-api/src/operations/action-environment.test.ts`、`apps/db-ops-api/src/operations/actions/runtime-ports.test.ts`、`apps/db-ops-api/src/operations/actions/adapters/restart-demo-service.test.ts`；P07工具威胁/R1审查；P11独立配置/公开契约13项 |
+| B15 | P09/P11：四入口/三类资源/调查上下文，明暗/1600/1024/390/键盘/a11y | `frontend/e2e/operations-ui.spec.ts`；P09已批R1对照95项证据；P11真实Lit/SQL/JWT/HTTP浏览器9 |
+| B16 | P10：同机同角色/规模聚合分页、避免N+1 | `apps/db-ops-api/src/investigations/list-aggregation.test.ts`；1万调查/10万synthetic事件，780样本，六组P95 173.99–252.80ms≤500ms；cold仅重建服务/连接池 |
+| B17 | P10/P11：128/129/130增量/重入/保留回退、旧Chat/审批/unknown/WSS | `apps/db-ops-api/src/migrations/operations-upgrade.mysql.test.ts`、`frontend/e2e/investigation-tls.spec.ts`；P10 SQL迁移/装配23；V1兼容CI；P11正式server/独立worker |
+| B18 | P10/P11：受限案例→Provider草案、实时出站ACL、usage/noReplay、不可跳审批 | `apps/db-ops-api/src/operations/knowledge/knowledge.mysql.test.ts`、`apps/db-ops-api/src/investigations/execution-recovery.mysql.test.ts`；P10受控Provider/SQL/HTTP33；历史真实deepseek主链/恢复按准确版本复用；P08修复未发送清理时序 |
+
+每行按owner关联上表准确候选、CI与独立审查；当前P12新组合候选的CI和Chief独立审查见任务交付，owner不自签通过。
+
+## 工具模式与兼容性
+
+`inspectEvidence`及显式`--mode qualification`保留原冻结协议和历史真实资格算法。CLI默认`--mode functional`使用相同去重/检索/基线/对照算法，要求输入provenance全部synthetic、案例/冻结审核kind为agent且主体分离，不接受real/unknown/human冒充。准确bytes hash、版本/权限/标签/事故/有效期校验、固定脱敏错误、输出wx不覆盖原件均保留。
+
+`functionalEvidence`仅表示这份受控fixture协议/算法材料可独立审查，不能替代全批CI/代码审查/最终接受。默认CLI退出0/2依此字段，qualification模式依历史dataEvidenceStatus；缺输入为2，格式/输出错误为1。五个synthetic案例足以验证功能；固定分母5、全部相关集recall、macro不变。低于0.80及对照无改善仍如实输出，取消其作为本批结束阈值。基线仍用P04的14/28天语义算法，合成时间窗立即运行，不等待真实天数；缺测/reset维持unknown。
+
+历史顶层`dataEvidenceStatus/B04/B06/B07`单独保留，`productQualificationChanged=false`、`finalAcceptance=not_evaluated`不变。synthetic的真实计数为0、真实有效天数为null，不改写真实资格通过。pnpm可能包装退出2为1；从API目录直接`node --import tsx ../../tests/qualification/operations-readiness.ts`可取得原码。
+
+## 验证、边界与接续
+
+原28项历史回归保留，新增14项功能模式/CLI检查：5例synthetic、低P/R数值、重复cohort零评分、标签/权限/版本/hash/主体/事故/单位/过期/reset及bytes绑定。最终受影响模块、准确head完整CI、产物hash在交付附件记录；未变产品/UI/模型/真实现场证据按准确代码复用。
+
+2026-10-17只读盘点中的真实可信案例0、有效观察日0、真实质量unknown原样保留。原生VM三次40条、3308三次16/16及恢复见历史评论`01a14979-6d27-7d02-8d2e-f0ae926207dc`，仅为当时短时采集/恢复，本轮不重采、不注入、不操作旧对象。
+
+P11真实部分为隔离MySQL/JWT/HTTP/Lit/持久worker/SSH2/签名adapter/helper源码与磁盘副作用；身份、环境验证器、健康事实及虚拟等待为synthetic。root/固定路径/systemctl仅fixture替换，不声称VM/systemd生产资格。部署者仍须提供受保护签名材料和独立持续健康采样源，不属于本批部署或长期质量承诺。
+
+当前矩阵记录已实现功能；本P12增量的Chief独立审查与Max全批确认尚待接续。长期数据/生产现场不是待补工程项。没有merge/deploy/生产行动授权；回退停新派发、核在途/unknown、撤入口/worker、保留数据/审计，不DROP或重放。无人工读屏/VoiceOver门禁。
+
+本轮产品模型调用0、子代理0，canonical预算和历史unknown/保守计入不清零；编码token/费用实测不可用。
+
+---
+
+下方为 **2026-10-17历史记录**：保留原始数字/失败和当时规则，不再用作当前结束或接续条件。
 # V2＋V3 数据资格与阶段交付
 
 本报告为 MAX-205/P12 的第一阶段工程和证据盘点，核验日期 2026-10-17。实施依据是 MAX-193 附件 implementation-1.2，SHA256 `459c81c1b67a3867db8ba181e91da6ebe075e8e676f5d77a3ff735ccae48e915`。真实数据资格 **blocked**；全批工程、P11 和 Max 最终接受尚未完成。工程工具可独立审查，不因此关闭 P12。
