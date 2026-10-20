@@ -22,7 +22,11 @@ type CreateCommand = Omit<InvestigationCreate, 'actor'>;
 
 /** One trusted configuration for HTTP cancellation and Workflow execution. */
 export function investigationBudgetConfiguration() {
-  return { domain: 'investigation-v1', reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
+  const configured = process.env.INVESTIGATION_MAX_TOKENS;
+  const maxExecutionTokens = configured === undefined ? undefined : Number(configured);
+  if (configured !== undefined && (!configured.trim() || !Number.isSafeInteger(maxExecutionTokens)
+    || maxExecutionTokens! < 1 || maxExecutionTokens! > 1_000_000)) throw new Error('INVESTIGATION_MAX_TOKENS');
+  return { ...(maxExecutionTokens === undefined ? {} : { maxExecutionTokens }), domain: 'investigation-v1', reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
     policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2,
       maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay: 256_000, maxTotalTokensPerDay: 1_000_000,
       maxCostMicrosPerDay: Number(process.env.INVESTIGATION_DAILY_COST_MICROS ?? 10_000_000) } };
@@ -35,13 +39,15 @@ export class InvestigationSessionBridge {
   private readonly ledger: MysqlInvestigationBudgetLedger;
   private readonly budgetDomain: string;
   private readonly reserveCostMicros: number;
+  private readonly maxExecutionTokens?: number;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
-    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number } = investigationBudgetConfiguration()) {
+    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number } = investigationBudgetConfiguration()) {
     this.chat = new ChatDatabaseService(poolProvider, authorization);
     this.budgetDomain = cancellationBudget.domain;
     this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
-    this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, cancellationBudget.policy);
+    this.maxExecutionTokens = cancellationBudget.maxExecutionTokens;
+    this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, cancellationBudget.policy, this.maxExecutionTokens);
   }
 
   storeFor(actor: ActorContext): MysqlInvestigationStore {
@@ -172,7 +178,7 @@ export class InvestigationSessionBridge {
     if (frozen) {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
       const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
-        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: profile.budget.maxTokens,
+        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: this.maxExecutionTokens ?? profile.budget.maxTokens,
         reserveCostMicros: this.reserveCostMicros });
       if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');
     }

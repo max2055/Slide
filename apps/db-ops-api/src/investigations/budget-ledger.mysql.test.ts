@@ -97,16 +97,32 @@ describe('durable investigation budget, real MySQL and formal migrations', () =>
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      expect(await fresh.reuseExecutionInTransaction(connection, command.requestId, { domain:command.domain,mode:command.mode,profile:command.profile })).toEqual(allocation);
+      expect(await fresh.reuseExecutionInTransaction(connection as unknown as TransactionConnection, command.requestId, { domain:command.domain,mode:command.mode,profile:command.profile })).toEqual(allocation);
       await connection.commit();
     } finally { connection.release(); }
     const after = (await pool.query<RowDataPacket[]>('SELECT request_snapshot FROM investigation_requests WHERE id=?', [command.requestId]))[0][0].request_snapshot;
     expect((typeof after === 'string' ? JSON.parse(after) : after).authority).toEqual(authority);
     expect(command.profile.budget.maxTokens).toBe(32000);
     await service.markSent(allocation.id);
-    await service.markUnknown(allocation.id);
+    await service.settle(allocation.id, null);
     expect(await fresh.read(allocation.id)).toMatchObject({ state:'unknown',reservedTokens:1000000,chargedTokens:1000000 });
-    await expect(ledger().reserveExecution(execution)).rejects.toThrow('BUDGET_INPUT_INVALID');
+    expect(() => ledger().reserveExecution(execution)).toThrow('BUDGET_INPUT_INVALID');
+  });
+
+  it('preserves an existing 32000 receipt under the expanded deployment ceiling', async () => {
+    const command = await input([1], { mode:'manual',reserveTokens:32000,reserveCostMicros:32000 });
+    const { operationId: _unused, ...execution } = command;
+    const allocation = accepted(await ledger().reserveExecution(execution));
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const expanded = new MysqlInvestigationBudgetLedger(() => pool, basePolicy, 1000000);
+      const restored = await expanded.reuseExecutionInTransaction(connection as unknown as TransactionConnection, command.requestId,
+        { domain:command.domain,mode:command.mode,profile:command.profile });
+      expect(restored).toEqual(allocation);
+      expect(restored.reservedTokens).toBe(32000);
+      await connection.commit();
+    } finally { connection.release(); }
   });
 
   it('formal migration is registered once and repeats with unchanged ledger', async () => {

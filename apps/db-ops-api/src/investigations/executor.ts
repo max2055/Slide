@@ -95,7 +95,7 @@ export interface InvestigationExecutorOptions extends InvestigationRuntimeDepend
   contextInputLimit?: number;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
-  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices };
+  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number };
 }
 export function investigationContextLimits(providerWindow: number | undefined, inputLimit?: number) {
   if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit < 1 || inputLimit > 100_000)) {
@@ -258,7 +258,7 @@ export class InvestigationExecutor {
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
     this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
-    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy);
+    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
     // Ingress owns domain before newly created Session rows. Executor owns
@@ -442,7 +442,7 @@ export class InvestigationExecutor {
               domain: this.options.budget.domain,
               mode,
               profile,
-              reserveTokens: profile.budget.maxTokens,
+              reserveTokens: this.options.budget.maxExecutionTokens ?? profile.budget.maxTokens,
               reserveCostMicros: this.options.budget.reserveCostMicros,
               prices: this.options.budget.prices,
             });
