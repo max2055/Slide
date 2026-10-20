@@ -91,9 +91,20 @@ export interface InvestigationRuntimeDependencies {
 }
 export interface InvestigationExecutorOptions extends InvestigationRuntimeDependencies {
   pool: () => Pool | null;
+  /** Trusted server-side test configuration; never taken from workflow payloads. */
+  contextInputLimit?: number;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
   budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices };
+}
+export function investigationContextLimits(providerWindow: number | undefined, inputLimit?: number) {
+  if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit < 1 || inputLimit > 100_000)) {
+    throw new Error('INVESTIGATION_CONTEXT_INPUT_LIMIT');
+  }
+  return {
+    contextWindowTokens: Math.min(providerWindow ?? 16_000, inputLimit === undefined ? 16_000 : inputLimit + 4096 + 1024),
+    ...(inputLimit === undefined ? {} : { contextBlockLimit: inputLimit }),
+  };
 }
 interface ExecutionState {
   schemaVersion: 1;
@@ -741,11 +752,11 @@ export class InvestigationExecutor {
         initialMessages,
         tools,
         model: provider.getDefaultModel(),
-        contextWindowTokens: Math.min(modelCapabilities?.contextWindowTokens ?? 16_000, 16_000),
+        ...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
         maxIterations: profile.budget.maxProviderAttempts,
         // Context admission must reserve the same configured output ceiling
         // as dispatch, including qualification-only reductions. Keep the
-        // existing hard context and execution-token ceilings unchanged.
+        // configured context and execution-token ceilings unchanged.
         maxTokens: Math.min(4096, state.reservedTokens,
           modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
         maxToolResultChars: profile.budget.maxBytes,

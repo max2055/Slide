@@ -192,6 +192,8 @@ export async function investigateSource(control: SourceControl) {
   const { operationsProductBudget } = await import('../product-budget.js');
   const budget = operationsProductBudget(); budget.read(); // never initialize/reset
   const executor = new InvestigationExecutor({ pool: () => control.pool, budget: investigationBudgetConfiguration(),
+    // MAX-207 source-only authorization; actual provider capacity remains authoritative.
+    contextInputLimit: 100_000,
     toolsForActor: actor => {
       const registry = createActorBoundToolRegistry(actor);
       for (const name of registry.toolNames) {
