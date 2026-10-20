@@ -43,7 +43,9 @@ export class InvestigationEvidenceStore extends InvestigationObservationDatabase
    * Unknown observation windows stay null; collection time is the first SQL
    * receipt, reused across recovery rather than invented on each replay. */
   async captureToolResult(c: PoolConnection, actor: ActorContext, investigation: Readonly<AdmissionInvestigation>,
-    binding: ResultBinding, entry: { id: string; content: unknown; tool_call_id?: string; timestamp?: string }): Promise<void> {
+    binding: ResultBinding, entry: { id: string; content: unknown; name?: string; tool_call_id?: string; timestamp?: string }): Promise<void> {
+    // Historical case text is reference material, never current observation.
+    if (entry.name === 'search_case_references') return;
     const key = `canonical-tool:${entry.id}`;
     const [existing] = await observationRows(c, 'SELECT metadata_json FROM investigation_evidence WHERE investigation_id = ? AND source_key = ?', [investigation.id, Buffer.from(key)]);
     const [clock] = await observationRows(c, 'SELECT NOW(3) AS collected_at');

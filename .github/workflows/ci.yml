@@ -76,6 +76,8 @@ jobs:
       - name: Verify generated API contracts
         run: pnpm contracts:check
       - run: pnpm --filter slide-api typecheck
+      - name: Test native recovery audit policies
+        run: node --test tests/qualification/*.test.mjs
       - name: Verify qualification coverage
         run: pnpm qualification:matrix
       - name: Run tests when not covered by the full MySQL candidate
@@ -189,7 +191,16 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
+      - name: Install isolated trusted TLS browser prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
+          pnpm --filter slide-frontend exec playwright install --with-deps chromium firefox
+      - name: Trusted HTTPS same-origin WSS, messages, reconnect and revocation
+        env:
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
       - name: Login, authorization and persistent Agent cancellation
         run: >-
           pnpm --filter slide-frontend exec playwright test
@@ -233,7 +244,9 @@ jobs:
         if: always()
         with:
           name: investigation-qualification-${{ github.sha }}
-          path: frontend/test-results-investigation/
+          path: |
+            frontend/test-results-investigation/
+            frontend/test-results-investigation-tls/
           include-hidden-files: true
           retention-days: 30
       - name: Streaming real MySQL, WebSocket, Gateway, UI and refresh
@@ -278,6 +291,8 @@ jobs:
         run: bash scripts/qualification/run-investigation-bridges.sh
       - name: Metrics retention through production workflow assembly and isolated MySQL
         run: bash scripts/qualification/run-metric-retention.sh
+      - name: Bounded V23 source claims, lease loss and production formal publication
+        run: bash scripts/qualification/run-v23-source.sh
       - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL
         run: bash scripts/qualification/run-alert-event-transitions.sh
       - name: Instance removal, connection release and retry in isolated MySQL

@@ -1,3 +1,4 @@
+import { resourceMetricRead } from './metrics/consumers/resource-api.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Server Report Service
@@ -28,6 +29,7 @@ export interface ServerReportEntry {
   metrics_fresh: boolean;
   metrics_recorded_at: string | null;
   overall_score: number;
+  semantic_metrics?: Awaited<ReturnType<typeof resourceMetricRead>>['semantic_metrics'];
   metrics_summary: {
     cpu_usage_pct: number | null;
     memory_usage_pct: number | null;
@@ -131,22 +133,10 @@ export class ServerReportService {
 
     for (const server of servers) {
       // Get latest metric values
-      const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
-         FROM server_metrics sm
-         INNER JOIN (
-           SELECT metric_name, dimensions, MAX(recorded_at) AS max_time
-           FROM server_metrics
-           WHERE server_id = ?
-           GROUP BY metric_name, dimensions
-         ) latest ON sm.metric_name = latest.metric_name
-           AND ((sm.dimensions = latest.dimensions) OR (sm.dimensions IS NULL AND latest.dimensions IS NULL))
-           AND sm.recorded_at = latest.max_time
-         WHERE sm.server_id = ?
-         ORDER BY sm.metric_name`,
-        [server.id, server.id]
-      ) as any;
-
+      const semantic=await resourceMetricRead({userId:0,username:'server-report',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-report:${server.id}`},{type:'server',id:server.id});
+      const aliases:Record<string,string>={'linux.cpu.user_system_percent':'cpu_usage','linux.memory.used_percent':'memory_usage'};
+      const rows=semantic.metrics.filter(r=>aliases[r.metric_id]&&Object.keys(r.dimensions).length===0&&r.quality.status==='good'&&r.freshness==='fresh')
+        .flatMap(r=>r.value&&'value'in r.value?[{metric_name:aliases[r.metric_id],metric_value:r.value.value,dimensions:r.dimensions,recorded_at:r.recorded_at}]:[]);
       const metrics: Record<string, number> = {};
       const diskMetrics: { mount: string; value: number }[] = [];
       let networkErrors = 0;
@@ -197,7 +187,8 @@ export class ServerReportService {
       }
 
       const load_score = scoreLoad(metrics.load_1min ?? null);
-      const reachability_score = scoreReachability(server.status);
+      const checkedAt=server.last_check_at?new Date(server.last_check_at).getTime():NaN;
+      const reachability_score = Number.isFinite(checkedAt)&&checkedAt<=this.now().getTime()&&this.now().getTime()-checkedAt<=300000?scoreReachability(server.status):null;
       const network_score = scoreNetwork(networkSeen ? networkErrors : null, networkSeen ? networkDrops : null);
       const io_score = scoreIo(metrics.load_1min ?? null, diskIoTime);
       const fresh = latestRecordedAt !== null && this.now().getTime() - latestRecordedAt.getTime() <= 5 * 60 * 1000;
@@ -218,6 +209,7 @@ export class ServerReportService {
         ? 'unknown' : overall_score >= 80 ? 'healthy' : overall_score >= 60 ? 'warning' : 'critical';
 
       serverEntries.push({
+        semantic_metrics: semantic.semantic_metrics,
         host: server.host,
         label: server.label,
         status: server.status,

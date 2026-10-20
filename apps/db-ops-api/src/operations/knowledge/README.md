@@ -18,7 +18,7 @@ P10 安装 `operations/schema/operations-v1.sql`、注册权限、注入 pool/�
 
 搜索支持 `query/state/faultType/resourceType/productVersion/resourceVersion/limit/cursor`，默认只搜 published。中文词由双字切分匹配，固定 ID 顺序与快照上界分页；页码和全局排序位置不进入游标。权限/来源变化可能返回 409，调用方应清空当前列表与游标后重新搜索。候选列表只向管理者/独立审核者开放。服务不缓存内容，HTTP 使用 no-store。
 
-模型出站用 `service.references(actor, [{id,version,contentHash}], synchronousSend)`，不得重用早先 detail/search 的返回值作为出站权限。`case_references` 是不可信参考数据，与当前 `evidence` 分开；P10 必须在系统提示中保留参考隔离策略。WS 使用 `KnowledgeWatchService.watch/unwatch/refresh`；P10 在重连、授权变化及 outbox 事件后 refresh，按连接清理 unwatch。严禁把 outbox 审计 payload 直接广播给客户端。P09 清空 invalidated 或切换资源后的旧内容；本包没有前端装配。
+模型出站用 `service.references(actor, [{id,version,contentHash}], synchronousSend)`，不得重用早先 detail/search 的返回值作为出站权限。可信服务端还可提供 `beforeSend(connection)`，在同一事务中锁定消费调查的实时权限和 lease/fence；最终有效期检查后同步启动发送，不能在回调中等待模型响应。`case_references` 是不可信参考数据，与当前 `evidence` 分开。P10 的显式 `ops` v2 通过调查级持久依赖和统一 dispatch，覆盖普通、摘要、后继和恢复出站；v1/hash 保持，参考隔离策略见该版本系统提示。WS 使用 `KnowledgeWatchService.watch/unwatch/refresh`；P10 在重连、授权变化及 outbox 事件后 refresh，按连接清理 unwatch。严禁把 outbox 审计 payload 直接广播给客户端。P09 清空 invalidated 或切换资源后的旧内容；本包没有前端装配。
 
 真实 SQL/HTTP focused 复验：`OPERATIONS_TEST_MYSQL_PORT=<隔离端口> pnpm --filter slide-api exec vitest run src/operations/knowledge`；密码从同名 `..._PASSWORD` 环境变量读取，兼容 `AGENT_RUN_TEST_MYSQL_PORT/PASSWORD`。测试建立随机数据库并清理，不连接平台业务库。
 

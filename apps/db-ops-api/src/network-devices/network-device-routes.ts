@@ -1,3 +1,4 @@
+import { resourceMetricRead } from '../metrics/consumers/resource-api.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { requirePermission } from '../auth/require-permission.js';
 import { strictBody, warnUnknown } from '../utils/strict-body.js';
@@ -167,7 +168,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const result = await collector.collectDevice(id);
+      const result = await collector.collectDevice(id, []);
       return reply.code(result.success ? 200 : 502).send(result);
     } catch (error) {
       const failure = safeNetworkError(error);
@@ -231,12 +232,10 @@ export async function registerNetworkDeviceRoutes(
   fastify.get('/api/network-devices/:id/metrics', { preHandler: view }, async (request, reply) => {
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
-    const pool = dbConnection.getPool();
-    if (!pool) return reply.code(500).send({ error: '数据库未连接' });
-    const [rows] = await pool.execute<any[]>(
-      `SELECT metric_id AS metricId, metric_value AS value, observed_at AS observedAt, quality, source, dimensions
-       FROM network_device_observations WHERE device_id = ? ORDER BY observed_at DESC, id DESC LIMIT 1000`, [id]);
-    return reply.send({ deviceId: id, metrics: rows.map((row) => ({ ...row, observedAt: row.observedAt ? new Date(row.observedAt).toISOString() : null, dimensions: typeof row.dimensions === 'string' ? JSON.parse(row.dimensions) : row.dimensions })) });
+    try {
+      if (!await networkDeviceDatabaseService.getDeviceById(id)) return reply.code(404).send({ error: '网络设备不存在' });
+      return reply.send({ deviceId: id, ...await resourceMetricRead(actor(request), { type: 'network_device', id }) });
+    } catch { return reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' }); }
   });
 
   fastify.get('/api/network-devices/:id/interfaces', { preHandler: view }, async (request, reply) => {

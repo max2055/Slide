@@ -4,10 +4,10 @@ import {
   NetworkDeviceAlertEvaluator,
   type NetworkDeviceAlertObservation,
   type NetworkDeviceAlertStore,
-} from './network-device-alert-evaluator.js';
+} from '../migrations/metric-history/network-device-alert-evaluator.js';
 
 // The injected observation store is a legacy source; test its alert behavior independently of the real rollout database.
-vi.mock('../metrics-v2/consumers/operational.js', () => ({ evaluateOperationalRule: (...args: unknown[]) => mocks.semantic(...args) }));
+vi.mock('../metrics/consumers/operational.js', () => ({ evaluateOperationalRule: (...args: unknown[]) => mocks.semantic(...args) }));
 
 const device = { id: 7, name: 'edge-1', label: 'edge-1', status: 'online', collectionEnabled: true };
 
@@ -112,7 +112,7 @@ describe('NetworkDeviceAlertEvaluator', () => {
 
   it('retains the semantic bucket window and partial quality without inventing a collection time',async()=>{
     const from='2026-08-25T23:59:00.000Z',to='2026-08-26T00:00:00.000Z';
-    mocks.semantic.mockResolvedValue({handled:true,level:'error',value:91,dimensions:{},migration:{version:1},
+    mocks.semantic.mockResolvedValue({handled:true,state:'firing',level:'error',value:91,dimensions:{},migration:{version:1},
       observation:{from,to,observedAt:null,quality:'partial'}});
     const evaluator=new NetworkDeviceAlertEvaluator({store:store(),clock:()=>new Date('2026-08-26T00:01:00.000Z')});
     await evaluator.evaluateNetworkDeviceRules();

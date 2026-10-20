@@ -65,7 +65,7 @@ try {
     JWT_SECRET_KEY: 'qualification-jwt-key-at-least-32-bytes', ENCRYPTION_KEY: 'qualification-e2e-key-32-bytes!!',
     AGENT_APPROVAL_HMAC_KEY: 'qualification-approval-key-at-least-32-bytes',
     AGENT_WORKSPACE: join(directory, 'workspace'), PROMPT_VERSIONS_DIR: join(directory, 'prompts'), PROMPT_HOT_RELOAD: 'false',
-    ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '', METRICS_V2_COLLECTION_ENABLED: 'true', SLIDE_MEMORY_PIPELINE_ENABLED: 'true',
+    ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '', METRICS_COLLECTION_ENABLED: 'true', SLIDE_MEMORY_PIPELINE_ENABLED: 'true',
     SLIDE_MEMORY_WORKSPACE_ID: 'qualification-private-workspace', SLIDE_MEMORY_RETRIEVAL_MAX_COUNT: '3', SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS: '512' };
   await exec(process.execPath, ['--import', 'tsx', 'init-db.ts'], { cwd: api, env, maxBuffer: 16 * 1024 * 1024 });
   await exec(process.execPath, [join(root, 'scripts/qualification/bootstrap-admin.mjs')], { cwd: api,
@@ -175,14 +175,14 @@ try {
   // Render only fake configuration, then use Compose itself to launch a probe container.
   const configFile = join(directory, 'compose.env');
   const example = await readFile(join(root, 'deploy/.env.production.example'), 'utf8');
-  await writeFile(configFile, example.replace('METRICS_V2_COLLECTION_ENABLED=false', 'METRICS_V2_COLLECTION_ENABLED=true')
+  await writeFile(configFile, example.replace('METRICS_COLLECTION_ENABLED=false', 'METRICS_COLLECTION_ENABLED=true')
     .replace('SLIDE_MEMORY_PIPELINE_ENABLED=false', 'SLIDE_MEMORY_PIPELINE_ENABLED=true')
     .replace('SLIDE_MEMORY_WORKSPACE_ID=', 'SLIDE_MEMORY_WORKSPACE_ID=qualification-private-workspace')
     .replace('SLIDE_MEMORY_RETRIEVAL_MAX_COUNT=5', 'SLIDE_MEMORY_RETRIEVAL_MAX_COUNT=3')
     .replace('SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS=4096', 'SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS=512'));
   const composeArgs = ['compose', '-p', composeProject, '--env-file', configFile, '--project-directory', directory, '-f', join(root, 'compose.production.yaml')];
   const rendered = JSON.parse((await exec('docker', [...composeArgs, 'config', '--format', 'json'], { maxBuffer: 8 * 1024 * 1024 })).stdout);
-  const keys = ['METRICS_V2_COLLECTION_ENABLED', 'SLIDE_MEMORY_PIPELINE_ENABLED', 'SLIDE_MEMORY_WORKSPACE_ID', 'SLIDE_MEMORY_RETRIEVAL_MAX_COUNT', 'SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS'];
+  const keys = ['METRICS_COLLECTION_ENABLED', 'SLIDE_MEMORY_PIPELINE_ENABLED', 'SLIDE_MEMORY_WORKSPACE_ID', 'SLIDE_MEMORY_RETRIEVAL_MAX_COUNT', 'SLIDE_MEMORY_RETRIEVAL_MAX_TOKENS'];
   const expected = Object.fromEntries(keys.map(key => [key, rendered.services.api.environment[key]]));
   assert.deepEqual(Object.values(expected), ['true', 'true', 'qualification-private-workspace', '3', '512']);
   assert.ok(rendered.services.api.healthcheck.test.at(-1).includes('/api/health/ready'));

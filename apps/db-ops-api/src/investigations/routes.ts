@@ -82,7 +82,7 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     const idempotencyKey = key(request);
     if (!Value.Check(InvestigationCreateRequestSchema, request.body)) throw invalid();
     const body = request.body;
-    const profile = resolveInvestigationProfile(body.profileId, 1);
+    const profile = resolveInvestigationProfile(body.profileId, body.profileVersion ?? 1);
     if (!profile.supportedSubjectKinds.includes(body.subject.kind as never)) throw new InvestigationStoreError('PROFILE_SUBJECT_UNSUPPORTED');
     const subject = body.subject;
     if (subject.kind === 'resource' && !body.resourceRefs.some(ref => ref.type === subject.resource.type && ref.id === subject.resource.id)) throw invalid();

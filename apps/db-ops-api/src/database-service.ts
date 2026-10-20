@@ -1,5 +1,5 @@
 import { instanceAccessLifecycle, cleanupDeadline } from './resources/instance-access-lifecycle.js';
-import { migrateOperationalChecks } from './metrics-v2/consumers/operational.js';
+import { migrateOperationalChecks } from './metrics/consumers/operational.js';
 /**
  * 数据库服务模块 - 真实的数据库连接和数据采集
  */
@@ -448,19 +448,13 @@ class DatabaseService {
   /**
    * 获取实时指标
    */
-  async getRealtimeMetrics(id: number): Promise<RealtimeMetrics | null> {
-    return this._withAutoReconnect(id, async (conn) => {
-      if (conn.db_type === 'postgresql' && conn.pgClient) {
-        return this.getPostgreSQLMetrics(conn, id);
-      } else if (conn.db_type === 'mysql' && conn.pool) {
-        return this.getMySQLMetrics(conn, id);
-      } else if (conn.db_type === 'oracle' && conn.oraclePool) {
-        return this.getOracleMetrics(conn, id);
-      } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        return this.getDamengMetrics(conn, id);
-      }
-      return null;
-    }, 'getRealtimeMetrics');
+  async getRealtimeMetrics(id: number): Promise<Partial<RealtimeMetrics> | null> {
+    // Compatibility entry point: no remote query or private counter state.
+    // Missing/incompatible fields stay absent; the formal envelope retains exact values and quality.
+    const { resourceMetricRead } = await import('./metrics/consumers/resource-api.js');
+    const actor = { userId: 0, username: 'database-metric-reader', roles: [], permissions: ['instance:view'],
+      instanceScopes: { [id]: 'read-only' as const }, sessionVersion: 0, requestId: `database-metric-reader:${id}` };
+    return resourceMetricRead(actor, { type: 'instance', id });
   }
 
   /**
@@ -1810,25 +1804,10 @@ class DatabaseService {
       message: connMessage,
     });
 
-    // 检查慢查询
-    const metrics = await this.getRealtimeMetrics(conn.id);
-    const slowQueries = metrics?.slow_queries || 0;
-    let slowStatus = 'ok';
-    let slowScore = 100;
-    let slowMessage = '无慢查询';
-    if (slowQueries > 10) {
-      slowStatus = 'warning';
-      slowScore = 70;
-      slowMessage = `存在 ${slowQueries} 条慢查询`;
-      totalScore -= 15;
-    }
-
-    checks.push({
-      name: '慢查询',
-      status: slowStatus,
-      score: slowScore,
-      message: slowMessage,
-    });
+    // Metric availability is independent of connectivity. A missing binding or
+    // formal store failure must not turn a successful SQL connection into an outage.
+    checks.push({ name: '慢查询', status: 'unknown', score: 0,
+      message: '慢查询数值须由正式指标定义与来源提供，连接检查不补读或补零' });
 
     totalScore = Math.max(0, totalScore);
 

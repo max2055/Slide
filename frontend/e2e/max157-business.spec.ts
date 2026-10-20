@@ -62,6 +62,8 @@ test.beforeAll(async () => {
   expect(config.status).toBe(200);
   const sync = await fetch(`${env.apiUrl}/api/platform/source/sync`, { method: 'POST', headers, body: JSON.stringify({ token: 'local-fixture-only' }) });
   expect(sync.status).toBe(200);
+  // Negative fixture: legacy history is not a published formal observation.
+  // Keep a recognizable value to detect accidental fallback to the retired source.
   await env.pool.query('INSERT INTO metrics_history (instance_id,cpu_usage,memory_usage,connections,qps,recorded_at) VALUES (101,92.4,57.1,410,200,NOW())');
   await env.pool.query("INSERT INTO resource_relations (source_type,source_id,target_type,target_id,relation_type,provenance,valid_from) VALUES ('instance',101,'server',101,'runs_on','fixture_configuration',NOW())");
   await mkdir(output, { recursive: true });
@@ -131,7 +133,15 @@ test('real resource overview/navigation, database help and diagnosis evidence/re
   await capture(page, 'database-1280-dark');
   await page.goto(`${env.url}/resource-diagnosis?resourceType=instance&resourceId=101`);
   const view = page.locator('resource-diagnosis-page');
-  await expect(view).toContainText('92.4'); await capture(page, 'diagnosis-1280-dark');
+  const evidence = await page.request.get(`${env.apiUrl}/api/resources/instance/101/evidence`, {
+    headers: { Authorization: `Bearer ${env.token(actor)}` },
+  });
+  expect(evidence.status()).toBe(200);
+  expect(await evidence.json()).toMatchObject({ facts: [], gaps: expect.arrayContaining(['NO_EVIDENCE_IN_WINDOW']) });
+  await expect(view.getByText('暂无证据', { exact: true })).toBeVisible();
+  await expect(view).toContainText('没有证据不能证明资源正常');
+  await expect(view).not.toContainText('92.4');
+  await capture(page, 'diagnosis-1280-dark');
   await view.getByRole('tab', { name: '当前证据' }).focus(); await page.keyboard.press('ArrowRight');
   await expect(view.getByRole('tab', { name: '规则评估' })).toHaveAttribute('aria-selected', 'true');
   await view.getByRole('button', { name: /获取关联证据/ }).click(); await expect(view.getByRole('link', { name: '切换诊断 →' })).toBeVisible();
@@ -154,7 +164,7 @@ test('live reader permissions filter resources, retain evidence browsing and rev
   await expect(view).toContainText('服务器受控夹具'); await expect(view.getByRole('button', { name: '开始只读诊断' })).toHaveCount(0);
   await expect(view.getByRole('tab', { name: '当前证据' })).toBeVisible(); await capture(page, 'diagnosis-readonly-1280-light');
   await page.goto(`${env.url}/settings/ai/profiles`); const profiles = page.locator('investigation-profiles-page');
-  await profiles.getByRole('button', { name: '查看资源调查预置详情 →' }).click();
+  await profiles.getByRole('button', { name: '查看资源调查 V1 预置详情 →', exact: true }).click();
   await expect(profiles.locator('app-dialog')).toContainText('执行限制'); await page.keyboard.press('Escape');
   await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=103 AND p.code='ai:view'");
   try {

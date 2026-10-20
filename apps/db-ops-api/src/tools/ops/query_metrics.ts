@@ -2,10 +2,10 @@
 import { z } from 'zod';
 import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
-import { metricConsumerService } from '../../metrics-v2/consumers/runtime.js';
-import type { MetricConsumerService } from '../../metrics-v2/consumers/service.js';
-import { migrateReference } from '../../metrics-v2/consumers/migration.js';
-import { PolicyError } from '../../metrics-v2/policy/model.js';
+import { metricConsumerService } from '../../metrics/consumers/runtime.js';
+import type { MetricConsumerService } from '../../metrics/consumers/service.js';
+import { migrateReference } from '../../metrics/consumers/migration.js';
+import { PolicyError } from '../../metrics/policy/model.js';
 const Args = z.strictObject({
   instance_id: z.number().int().positive().optional(), resourceType: z.enum(['instance', 'server', 'network_device']).optional(), resourceId: z.number().int().positive().optional(),
   mode: z.enum(['realtime', 'history', 'discover', 'inventory']).default('realtime'),

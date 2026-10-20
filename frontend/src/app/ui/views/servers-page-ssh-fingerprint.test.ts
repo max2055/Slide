@@ -27,7 +27,7 @@ describe("servers-page SSH enrollment", () => {
     await element.updateComplete;
     element._openAddDialog();
     await element.updateComplete;
-    const fields = [...element.shadowRoot.querySelectorAll('app-dialog[title="添加服务器"] app-form-field')] as any[];
+    const fields = [...element.shadowRoot.querySelectorAll('resource-editor-shell app-form-field')] as any[];
     expect(fields.length).toBeGreaterThan(0);
     expect(fields.every((field) => field.inline)).toBe(true);
     expect(element.shadowRoot.querySelector('app-ssh-auth-selector')).toBeTruthy();

@@ -5,7 +5,7 @@ const recordMetrics = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true
 vi.mock('./database-service.js', () => ({ databaseService: { getConnection: () => state.connection } }));
 vi.mock('./metrics-database-service.js', () => ({ metricsDatabaseService: { recordMetrics } }));
 
-import { unifiedCollector } from './collector.js';
+import { unifiedCollector } from './migrations/metric-history/collector.js';
 import { collectorRegistry } from './collectors/registry.js';
 import type { DatabaseInstance } from './instance-database-service.js';
 

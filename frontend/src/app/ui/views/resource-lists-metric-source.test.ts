@@ -4,7 +4,7 @@ import { resolve } from 'path';
 
 const source = (file: string) => readFileSync(resolve(import.meta.dirname, file), 'utf8');
 
-describe('resource pages use the formal Metrics V2 source', () => {
+describe('resource pages use the formal formal metrics source', () => {
   it('does not render database list values from compatibility columns', () => {
     const text = source('instances-db.ts');
     expect(text).toContain('<resource-metrics-table resourceType="instance"');

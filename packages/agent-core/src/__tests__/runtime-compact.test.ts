@@ -49,6 +49,76 @@ it('summary sources exclude rollback snapshots and historical reasoning while ca
   expect(wire).not.toMatch(/messageParts|private-history-reasoning|opaque-signature/);
   expect(wire).toContain('historical record'); expect(f.raw).toEqual(before);
 });
+it('compacts complete protected facts above the soft target while preserving the hard input cap', async () => {
+  const f = fixture();
+  f.raw[0].content = 'Read only. Evidence e-1; unknown write-2 must not replay. ' + 'x'.repeat(7000);
+  f.raw[2].content = 'historical record '.repeat(100);
+  const before = structuredClone(f.raw);
+  const split = f.manager.split(f.raw);
+  expect(f.manager.tokens([...split.pins, ...split.retained])).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.calls).toHaveLength(1);
+  const projected = f.manager.project(f.raw);
+  expect(f.manager.tokens(projected)).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  expect(() => f.manager.assertFits(projected)).not.toThrow();
+  expect(projected.filter(m => m.role === 'system')).toEqual([before[0]]);
+  expect(f.raw).toEqual(before);
+  expect(JSON.stringify(projected)).toContain('write-2');
+  expect(f.manager.inputBudget).toBe(13476);
+});
+it('accepts a complete summary above the soft target without publishing an over-cap summary', async () => {
+  const f = fixture();
+  f.provider.chatStream = async () => reply(JSON.stringify({ ...valid, evidence: ['e-1 ' + 'x'.repeat(7000)] }));
+  await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {});
+  expect(f.manager.tokens(f.manager.project(f.raw))).toBeGreaterThan(f.manager.inputBudget * f.manager.target);
+  expect(() => f.manager.assertFits(f.manager.project(f.raw))).not.toThrow();
+  const oversized = fixture();
+  oversized.provider.chatStream = async () => reply(JSON.stringify({ ...valid, evidence: ['x'.repeat(15000)] }));
+  await expect(autoCompact(oversized.manager, oversized.raw, oversized.provider, oversized.recovery, oversized.tracker, async () => {})).rejects.toMatchObject({ code: 'CONTEXT_UNRECOVERABLE' });
+  expect(oversized.manager.summary).toBeUndefined();
+});
+it('rejects protected facts above the hard input cap before summary dispatch', async () => {
+  const f = fixture();
+  f.raw[0].content = 'x'.repeat(15000);
+  await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toMatchObject({ code: 'CONTEXT_UNRECOVERABLE' });
+  expect(f.calls).toHaveLength(0);
+  expect(f.manager.summary).toBeUndefined();
+});
+it('does not turn optional future growth planning into a second hard input limit',async()=>{
+  const f=fixture({contextWindowTokens:16000,maxTokens:4096});
+  f.spec.tools.register({name:'read',description:'Read evidence',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:true,exclusive:false,execute:async()=>null});
+  f.raw[2].content='historical record '.repeat(100);f.raw[3].content='current user '+ 'x'.repeat(6200);
+  const split=f.manager.split(f.raw);expect(f.manager.tokens([...split.pins,...split.retained])).toBeLessThan(f.manager.inputBudget);
+  await autoCompact(f.manager,f.raw,f.provider,f.recovery,f.tracker,async()=>{});
+  expect(f.calls).toHaveLength(1);expect(()=>f.manager.assertFits(f.manager.project(f.raw))).not.toThrow();
+  expect(f.manager.inputBudget).toBe(10880);expect(f.spec.maxTokens).toBe(4096);
+});
+it('zero failure retries still permits budgeted lifecycle compaction without authorizing a retry', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.6 } });
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.calls).toHaveLength(1);
+  expect(result.runtimeState).toMatchObject({ total: 0, counts: { context: 0 }, providerAttempts: 2 });
+});
+it('zero context retries rejects reactive provider overflow without a summary or model retry', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.99 } });
+  let ordinary = 0;
+  f.provider.chat = async () => { ordinary++; return { ...reply(''), finishReason: 'error', error: 'context window exceeded' }; };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.runtimeError?.code).toBe('RECOVERY_LIMIT');
+  expect(ordinary).toBe(1);
+  expect(f.calls).toHaveLength(0);
+});
+it('zero retries never replays a failed lifecycle summary and keeps unknown usage reserved', async () => {
+  const f = fixture({ recoveryLimits: { total: 0, context: 0 }, contextPolicy: { watermark: 0.6 } });
+  let ordinary = 0;
+  f.provider.chat = async () => { ordinary++; return reply('must not dispatch'); };
+  f.provider.chatStream = async () => { f.calls.push({ messages: [], tools: [] }); return { ...reply('{}'), usage: {} }; };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.runtimeError?.code).toBe('SUMMARY_INVALID');
+  expect(ordinary).toBe(0); expect(f.calls).toHaveLength(1);
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 1, unknownRequests: 1, reservedTokens: 15000 });
+});
 it('persists a source-bound summary before projection, retains goal/authority/evidence/uncertainty and original history', async () => {
   const f = fixture(); const before = structuredClone(f.raw); let record: unknown;
   await autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async value => {

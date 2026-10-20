@@ -3,7 +3,11 @@
  * 基于 simple-statistics 线性回归，预测资源使用趋势
  */
 import * as ss from 'simple-statistics';
-import { metricsDatabaseService } from './metrics-database-service.js';
+import { dbConnection } from './db-connection.js';
+import { metricConsumerService } from './metrics/consumers/runtime.js';
+import { MysqlFormalMetricStore } from './metrics/rollout/formal-store.js';
+import { migrateReference } from './metrics/consumers/migration.js';
+import { rule } from './metrics/policy/model.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 
 export interface PredictionPoint {
@@ -15,7 +19,7 @@ export interface PredictionPoint {
 export interface PredictionResult {
   instance_id: number;
   metric: string;
-  current_value: number;
+  current_value: number | null;
   regression: { m: number; b: number; r_squared: number };
   predictions: PredictionPoint[];
   horizon: '7d' | '30d' | '90d';
@@ -52,20 +56,28 @@ class CapacityPredictor {
     // 计算时间范围
     const now = new Date();
     const horizonDays = horizon === '7d' ? 7 : horizon === '30d' ? 30 : 90;
-    const lookbackDays = horizonDays * 2;
+    const lookbackDays = Math.min(31, horizonDays * 2);
     const startTime = new Date(now.getTime() - lookbackDays * 86400000);
 
-    // 获取历史数据
-    const records = await metricsDatabaseService.getHistoricalMetrics(
-      instanceId,
-      startTime,
-      now
-    );
+    const ref={type:'instance' as const,id:instanceId},actor={userId:0,username:'capacity-predictor',roles:[],permissions:['instance:view'],instanceScopes:{[instanceId]:'read-only' as const},sessionVersion:0,requestId:`capacity:${instanceId}`};
+    const catalog=await metricConsumerService.discover(actor,ref),effective=catalog.effective;
+    const mapped=migrateReference(ref,effective?.resolved.plan.binding.package.id.split('-')[0]??'',metric).metric_id;
+    const definition=catalog.definitions.find(d=>d.id===mapped);
+    rule(effective&&definition&&definition.kind==='gauge'&&!definition.dimensions.keys.some(k=>k.required),'METRIC_REFERENCE_REVIEW_REQUIRED',422);
+    rule(effective.resolved.settings.enabled&&effective.resolved.metric_templates.some(t=>t.metric.id===mapped&&t.enabled),'METRIC_CONFIGURATION_UNAVAILABLE',422);
+    const pool=dbConnection.getPool();rule(pool,'METRIC_STORE_UNAVAILABLE',503);
+    const samples=await new MysqlFormalMetricStore(pool).baselineSamples(ref,definition,effective.published_revision,startTime.toISOString(),now.toISOString());
+    const records=samples.flatMap(o=>{
+      if(o.quality.status!=='good'||o.value===null||!('value'in o.value))return [];
+      const value=Number(o.value.value);
+      if(!Number.isFinite(value)||o.value.encoding!=='float64'&&!Number.isSafeInteger(value))return [];
+      return [{recorded_at:new Date(o.observed_at),[metric]:value}];
+    });
 
     // 最小数据点检查
     const minDataPoints: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
     const required = minDataPoints[horizon] || 7;
-    let warning: string | null = null;
+    let warning: string | null = horizonDays*2>31?'正式查询最多回溯31天；预测窗口未扩展实际样本':null;
 
     if (records.length < required) {
       warning = `数据点不足（${records.length}/${required}），${horizon} 预测结果可能不可靠`;
@@ -75,7 +87,7 @@ class CapacityPredictor {
       return {
         instance_id: instanceId,
         metric,
-        current_value: 0,
+        current_value: null,
         regression: { m: 0, b: 0, r_squared: 0 },
         predictions: [],
         horizon,
@@ -97,7 +109,7 @@ class CapacityPredictor {
       return {
         instance_id: instanceId,
         metric,
-        current_value: 0,
+        current_value: null,
         regression: { m: 0, b: 0, r_squared: 0 },
         predictions: [],
         horizon,
@@ -108,6 +120,7 @@ class CapacityPredictor {
       };
     }
 
+    if(dataPoints.length<2)throw new Error('METRIC_PREDICTION_INSUFFICIENT_SAMPLES');
     // 线性回归
     const regression = ss.linearRegression(dataPoints);
     const predictFn = ss.linearRegressionLine(regression);
@@ -194,7 +207,7 @@ class CapacityPredictor {
         results.push({
           instance_id: instanceId,
           metric,
-          current_value: 0,
+          current_value: null,
           regression: { m: 0, b: 0, r_squared: 0 },
           predictions: [],
           horizon,
@@ -255,21 +268,13 @@ class CapacityPredictor {
    */
   private async _getMaxConnections(instanceId: number): Promise<number | null> {
     try {
-      const { dbConnection } = await import('./db-connection.js');
-      const pool = dbConnection.getPool();
-      if (!pool) return null;
-
-      const [rows] = await pool.execute(
-        `SELECT max_connections FROM database_instances WHERE id = ?`,
-        [instanceId]
-      ) as any;
-
-      if (Array.isArray(rows) && rows.length > 0 && rows[0].max_connections) {
-        return rows[0].max_connections;
-      }
-    } catch {
-      // ignore
-    }
+      const ref={type:'instance' as const,id:instanceId},actor={userId:0,username:'capacity-predictor',roles:[],permissions:['instance:view'],instanceScopes:{[instanceId]:'read-only' as const},sessionVersion:0,requestId:`capacity-limit:${instanceId}`};
+      const catalog=await metricConsumerService.discover(actor,ref);
+      if(!catalog.effective?.resolved.plan.binding.package.id.startsWith('mysql-'))return null;
+      const response=await metricConsumerService.query(actor,{resource:ref,metric_ids:['mysql.connections.limit']});
+      const bucket=response.metrics[0]?.series[0]?.buckets.at(-1);
+      if(bucket?.quality.status==='good'&&bucket.freshness==='fresh'&&bucket.value&&'value'in bucket.value){const n=Number(bucket.value.value);if(Number.isSafeInteger(n))return n;}
+    } catch { /* Unknown limits do not create a capacity threshold. */ }
     return null;
   }
 }

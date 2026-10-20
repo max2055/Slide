@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
-import { MysqlMetricStorage } from '../metrics-v2/storage.js';
-import { RolloutControl } from '../metrics-v2/rollout/control.js';
-import { configuredRetention, type RetentionPolicy } from '../metrics-v2/retention.js';
+import { MysqlMetricStorage } from '../metrics/storage.js';
+import { RolloutControl } from '../metrics/rollout/control.js';
+import { configuredRetention, type RetentionPolicy } from '../metrics/retention.js';
 import type { JobRegistry } from './job-registry.js';
 import type { ClaimedJob, JobExecutionContext, WorkflowJobInput } from './worker-runtime.js';
 
@@ -10,14 +10,14 @@ export type MetricRetentionConfig = RetentionPolicy & {
   mode: 'dry-run' | 'apply'; limit: number; maxBatches: number; maxRunMs: number; intervalMs: number;
 };
 export function readMetricRetentionConfig(env: NodeJS.ProcessEnv = process.env): MetricRetentionConfig | null {
-  if (env.METRICS_V2_RETENTION_ENABLED == null || env.METRICS_V2_RETENTION_ENABLED === 'false') return null;
-  if (env.METRICS_V2_RETENTION_ENABLED !== 'true') throw new Error('RETENTION_CONFIG');
-  if (['RAW', 'HISTORY', 'ATTEMPT'].some(name => !env[`METRICS_V2_RETENTION_${name}_MS`])) throw new Error('RETENTION_CONFIG');
+  if (env.METRICS_RETENTION_ENABLED == null || env.METRICS_RETENTION_ENABLED === 'false') return null;
+  if (env.METRICS_RETENTION_ENABLED !== 'true') throw new Error('RETENTION_CONFIG');
+  if (['RAW', 'HISTORY', 'ATTEMPT'].some(name => !env[`METRICS_RETENTION_${name}_MS`])) throw new Error('RETENTION_CONFIG');
   const policy = configuredRetention(env);
-  const mode = env.METRICS_V2_RETENTION_MODE ?? 'dry-run';
+  const mode = env.METRICS_RETENTION_MODE ?? 'dry-run';
   if (mode !== 'dry-run' && mode !== 'apply') throw new Error('RETENTION_CONFIG');
   const integer = (name: string, fallback: number, maximum: number) => {
-    const value = Number(env[`METRICS_V2_RETENTION_${name}`] ?? fallback);
+    const value = Number(env[`METRICS_RETENTION_${name}`] ?? fallback);
     if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error('RETENTION_CONFIG');
     return value;
   };
@@ -72,7 +72,7 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       // Commit the periodic successor before any work. Failure/shutdown leaves durable recovery.
       const nextTick = Math.floor(clock().getTime() / config.intervalMs) + 1;
       await enqueue(createMetricRetentionJob(new Date(nextTick * config.intervalMs), `periodic:${config.intervalMs}:${nextTick}`));
-      const [states] = await owner.query<RowDataPacket[]>('SELECT preview_policy_hash, preview_at FROM metric_v2_retention_state WHERE id = 1');
+      const [states] = await owner.query<RowDataPacket[]>('SELECT preview_policy_hash, preview_at FROM metric_retention_state WHERE id = 1');
       if (states.length !== 1) throw new Error('RETENTION_STATE_REQUIRED');
       if (config.mode === 'apply' && states[0].preview_policy_hash !== policyHash) throw new Error('RETENTION_DRY_RUN_REQUIRED');
       const counts: Record<string, number> = {}; let batches = 0; let pending = false;
@@ -109,7 +109,7 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       await owner.beginTransaction();
       try {
         await guard(owner);
-        await owner.execute(`UPDATE metric_v2_retention_state SET last_report = ?,
+        await owner.execute(`UPDATE metric_retention_state SET last_report = ?,
           preview_policy_hash = IF(? = 'dry-run', ?, preview_policy_hash),
           preview_at = IF(? = 'dry-run', UTC_TIMESTAMP(3), preview_at) WHERE id = 1`,
         [JSON.stringify(data), config.mode, policyHash, config.mode]);
@@ -128,8 +128,8 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
     }
   });
   if (readMetricRetentionConfig(env)) {
-    await pool.query('SELECT tombstone FROM metric_v2_observations LIMIT 0');
-    await pool.query('SELECT preview_policy_hash, last_report FROM metric_v2_retention_state LIMIT 0');
+    await pool.query('SELECT tombstone FROM metric_observations LIMIT 0');
+    await pool.query('SELECT preview_policy_hash, last_report FROM metric_retention_state LIMIT 0');
     await enqueue(createMetricRetentionJob(clock()));
   }
 }

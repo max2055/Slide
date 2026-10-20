@@ -31,7 +31,6 @@ const MIGRATED_PAGES = [
   'users-management.ts',
   'event-management.ts',
   'reports.ts',
-  'metric-registry.ts',
   'schema-management.ts',
   'index-management.ts',
 ];

@@ -1,6 +1,6 @@
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
-import "../components/metric-configuration.js";
+import "../components/resource-collection-section.js";
 import { returnToDashboard, runState, freshness, type Overview, type OverviewItem } from './dashboard-model.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { LitElement, html, css, nothing } from "lit";
@@ -319,7 +319,7 @@ export class InstanceDetailPage extends LitElement {
 
   private _goBack() { if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
   private _setTab(tab: string) {
-    const configuration = this.renderRoot.querySelector('metric-configuration') as import('../components/metric-configuration.js').MetricConfiguration | null;
+    const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
     if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
     this._applyTab(tab);
   }
@@ -597,7 +597,7 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderTabContent() {
-    if (this.activeTab === "collection") return html`<metric-configuration resourceType="instance" .resourceId=${this.instanceId}></metric-configuration>`;
+    if (this.activeTab === "collection") return html`<resource-collection-section resourceType="instance" .resourceId=${this.instanceId}></resource-collection-section>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
       case "metrics":

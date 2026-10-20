@@ -3,12 +3,16 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { collectionLabels, collectionState, metricSummary, diskSummary, databaseSizeMetric, databaseSizeSummary, type MetricRow } from './resource-metric-summary.js';
+import { readCollectionStatus, statusLabel } from './metric-api.js';
 import type { SemanticResult } from './semantic-metrics.js';
 import type { Column } from './app-data-table.js';
 import './app-data-table.js';
 import './app-dialog.js';
 import './app-empty-state.js';
 import './app-badge.js';
+import './metric-bulk-dialog.js';
+import { bulkSelection, type BulkResource } from './metric-bulk-selection.js';
+import type { MetricBulkDialog } from './metric-bulk-dialog.js';
 export interface ResourceEntry { id: number; type?: string | null; version?: string | null; model?: string | null; searchValues?: unknown[]; [key: string]: unknown }
 const unknown = (value: unknown) => value == null || value === '' ? '未知' : String(value);
 @customElement('resource-metrics-table')
@@ -27,7 +31,23 @@ export class ResourceMetricsTable extends LitElement {
   private generation = 0;
   private identity = '';
   private pageSize = 20;
+  private readonly selectionChanged = () => this.requestUpdate();
+  private bulkResource(entry: ResourceEntry): BulkResource {
+    return { type: this.resourceType as BulkResource['type'], id: entry.id,
+      label: String(entry.searchValues?.find(value => typeof value === 'string' && value.length) ?? `${this.resourceType} #${entry.id}`) };
+  }
   private restoredType = '';
+  private readonly accessChanged = () => {
+    this.generation++;
+    this.rows = new Map(this.entries.map(entry => [entry.id, { state: 'forbidden' as const }]));
+    this.setPending(false);
+  };
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
+    window.addEventListener('slide-bulk-selection-changed', this.selectionChanged);
+  }
   private restorePreferences() {
     if (this.restoredType === this.resourceType) return;
     this.restoredType = this.resourceType;
@@ -48,7 +68,13 @@ export class ResourceMetricsTable extends LitElement {
     if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
     if (entriesChanged || searchChanged || changed.has('refreshVersion')) void this.load(changed.has('refreshVersion'));
   }
-  override disconnectedCallback() { this.generation++; this.setPending(false); super.disconnectedCallback(); }
+  override disconnectedCallback() {
+    this.generation++; this.setPending(false);
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    window.removeEventListener('slide-bulk-selection-changed', this.selectionChanged);
+    super.disconnectedCallback();
+  }
   private get terms() { return this.search.trim().toLowerCase().split(/\s+/).filter(Boolean); }
   private isCollectionTerm(term: string) {
     return Object.entries(collectionLabels).some(([key, label]) => key !== 'loading' && (label.toLowerCase().includes(term) || key.includes(term)));
@@ -82,19 +108,20 @@ export class ResourceMetricsTable extends LitElement {
         const entry = queue[cursor++];
         let row: MetricRow;
         try {
-          const response = await authFetch('/api/metrics-v2/query', { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' },
+          const response = await authFetch('/api/metrics/query', { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ resource: { type, id: entry.id }, view: 'core', ...(type === 'instance' ? { latest_capacity: true } : {}) }) });
           if (!response.ok) row = { state: response.status === 403 || response.status === 401 ? 'forbidden' : response.status === 404 ? 'unavailable' : 'query_failed' };
           else {
             const result: SemanticResult = await response.json();
             row = { result, state: collectionState(result) };
             if (generation !== this.generation) return;
-            const attempts = await authFetch(`/api/metrics-v2/config/resources/${type}/${entry.id}/attempts`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
-            if (attempts && (attempts.status === 401 || attempts.status === 403 || attempts.status === 404)) row = { state: attempts.status === 404 ? 'unavailable' : 'forbidden' };
-            else if (attempts?.ok) {
-              const history: Array<{ status: string; ended_at?: string }> = await attempts.json();
-              row.lastSuccess = history.filter(a => a.status === 'succeeded' && a.ended_at).map(a => a.ended_at!).sort().at(-1);
-            } else row.timeUnavailable = true;
+            try {
+              const collection = await readCollectionStatus(type, entry.id);
+              row.collection = collection; row.lastSuccess = collection.collection.last_success_at ?? undefined;
+            } catch (e) {
+              if (e instanceof Error && ['401', '403', '404'].includes(e.message)) row = { state: e.message === '404' ? 'unavailable' : 'forbidden' };
+              else { row.bindingError = '绑定状态暂不可用'; row.timeUnavailable = true; }
+            }
           }
         } catch { row = { state: 'query_failed' }; }
         if (generation !== this.generation) return;
@@ -115,26 +142,28 @@ export class ResourceMetricsTable extends LitElement {
       if (row?.result) { url.searchParams.set('metricFrom', row.result.window.from); url.searchParams.set('metricTo', row.result.window.to); }
       window.history.replaceState(window.history.state, '', url);
       this.dispatchEvent(new CustomEvent('resource-metric-open', { detail: { id: entry.id, metric: id }, bubbles: true, composed: true }));
-    }}>${row ? row.result ? id === 'host.filesystem.used_bytes' ? diskSummary(row.result) : metricSummary(row.result, id) : collectionLabels[row.state] : '正在读取'}</button>`;
+    }}>${row ? row.result ? id === 'host.filesystem.used_bytes' ? diskSummary(row.result) : metricSummary(row.result, id, row.collection) : collectionLabels[row.state] : '正在读取'}</button>`;
   }
   @state() private sizeHelpOpen = false;
   private databaseSize(entry: ResourceEntry) {
     const row = this.rows.get(entry.id), metric = databaseSizeMetric(row?.result);
-    return html`<span title=${metric?.definition.meaning ?? '容量支持范围见列标题说明'}>${!row ? '正在读取' : !row.result ? collectionLabels[row.state] : databaseSizeSummary(row.result)}</span>
+    return html`<span title=${metric?.definition.meaning ?? '容量支持范围见列标题说明'}>${!row ? '正在读取' : !row.result ? collectionLabels[row.state] : databaseSizeSummary(row.result, row.collection)}</span>
       ${metric?.observed_at ? html`<small>采集于 <time datetime=${metric.observed_at} title=${new Date(metric.observed_at).toString()}>${new Date(metric.observed_at).toLocaleString('zh-CN')}</time></small>` : nothing}`;
   }
   render() {
     const metricColumns = this.resourceType === 'instance' ? [{ key: 'database_size', label: '数据库大小', help: '支持范围与统计口径' }, { key: 'uptime', label: '运行时长' }] : this.resourceType === 'server'
       ? [{ key: 'disk', label: '磁盘（挂载点）' }, { key: 'network', label: '网络速率（逐接口）' }]
       : [{ key: 'interfaces', label: '接口摘要' }];
-    const columns = [{ key: 'row_number', label: '序号', width: '4rem' }, ...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
+    const columns = [{ key: 'bulk_select', label: '选择', width: '3rem' }, { key: 'row_number', label: '序号', width: '4rem' }, ...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'binding', label: '模板绑定' }, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
     const offset = (Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize))) - 1) * this.pageSize;
     const rows = this.visible.map((entry, index) => {
       const row = this.rows.get(entry.id);
-      return { ...entry, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
+      const ref = this.bulkResource(entry);
+      return { ...entry, bulk_select: html`<input type="checkbox" aria-label=${`选择${ref.label}用于批量绑定`} .checked=${bulkSelection.has(ref)} .disabled=${!bulkSelection.has(ref) && bulkSelection.values().length >= 100} @change=${() => bulkSelection.toggle(ref)}>`, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
         database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
-        collection: html`<span>${collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
+        binding: html`<span>${row?.collection ? statusLabel(row.collection.binding.state) : row?.bindingError || (row ? ['forbidden', 'unavailable'].includes(row.state) ? collectionLabels[row.state] : '绑定状态未知' : '正在读取')}</span>`,
+        collection: html`<span>${row?.bindingError ? '当前采集状态暂不可用' : row?.collection?.blockers.length ? row.collection.blockers.map(b => statusLabel(b)).join('；') : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection?.binding.state === 'bound' && row.state === 'not_configured' ? '当前模板未覆盖核心列' : row?.collection && !['stale', 'partial', 'query_failed', 'temporary_failure', 'permission_denied'].includes(row.state) ? statusLabel(row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
     });
     return html`<style>${sharedBtnStyles}
@@ -150,10 +179,16 @@ export class ResourceMetricsTable extends LitElement {
       <div slot="footer"><button class="btn" @click=${() => { this.sizeHelpOpen = false; }}>关闭</button></div>
     </app-dialog>` : nothing}
     <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
-      ${columns.filter(c => !['row_number', 'actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
+      ${columns.filter(c => !['bulk_select', 'row_number', 'actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
       <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
     </app-dialog>
     ${this.pending && this.searchesCollection ? html`<p role="status">正在检查全部搜索资源的采集状态，结果尚未完整。</p>` : nothing}
+    <div class="pages" aria-label="批量采集配置"><span role="status">已选 ${bulkSelection.values().length} 个对象（可跨类型，最多 100 个）</span>
+      <button class="btn" @click=${() => { const refs = this.visible.map(entry => this.bulkResource(entry)); const all = refs.every(ref => bulkSelection.has(ref)); refs.filter(ref => all || !bulkSelection.has(ref)).forEach(ref => bulkSelection.toggle(ref)); }}>选择 / 取消当前页</button>
+      <button class="btn" .disabled=${!bulkSelection.values().length} @click=${() => bulkSelection.clear()}>清空选择</button>
+      <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>
+      <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
+    <metric-bulk-dialog></metric-bulk-dialog>
     <div class="scroll" tabindex="0" aria-label="资源表格，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns.filter(c => !this.hiddenColumns.includes(c.key))} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }

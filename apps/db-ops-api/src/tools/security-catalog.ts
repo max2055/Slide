@@ -40,6 +40,7 @@ const TOOL_SECURITY_CATALOG: Readonly<Record<string, ToolSecurityDefinition>> = 
   list_resources: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   get_resource_observations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   get_resource_relations: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
+  search_case_references: definition('actor', 'read', 'none', ['operations:cases:view'], 'never', 'none', 'none'),
   diagnose_resource: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   get_evidence_bundle: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),
   get_evidence_item: definition('actor', 'read', 'none', [], 'never', 'none', 'none'),

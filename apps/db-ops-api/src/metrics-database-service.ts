@@ -3,7 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
-import { withLegacyMetricWrite } from './metrics-v2/rollout/legacy-write-fence.js';
+import { withLegacyMetricWrite } from './metrics/rollout/legacy-write-fence.js';
 
 const STORED_METRIC_COLUMNS = [
   'cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps', 'tps',

@@ -1,3 +1,4 @@
+import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
@@ -55,8 +56,11 @@ import { resolveProviderFromBaseUrl, getProvider } from './src/llm/provider-cata
 import { alertDatabaseService } from './src/alert-database-service.js';
 import { alertRuleTemplateService } from './src/alert-rule-template-service.js';
 import { metricsDatabaseService } from './src/metrics-database-service.js';
-import { metricConsumerService, operationalSource } from './src/metrics-v2/consumers/runtime.js';
-import { routeMetricRead } from './src/metrics-v2/consumers/source-router.js';
+import { metricConsumerService } from './src/metrics/consumers/runtime.js';
+import { resourceMetricRead } from './src/metrics/consumers/resource-api.js';
+import { PolicyError } from './src/metrics/policy/model.js';
+import { metricConfigurationService } from './src/metrics/config/routes.js';
+import { installHistoricalMetricRoutes } from './src/metrics/legacy-routes.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
@@ -71,7 +75,7 @@ import {
   ServerDiagnosticsSchema,
   CollectServerDiagnosticsResponseSchema,
 } from './src/contracts/public-api.js';
-import { monitorCollector } from './src/monitor-collector.js';
+import { monitorCollector, createSlowQueryCollectionJob } from './src/monitor-collector.js';
 import { chatDatabaseService } from './src/chat-database-service.js';
 import { handleChatSend } from './src/chat-handler.js';
 import { registerInvestigationFeedbackRoutes } from './src/investigations/feedback-routes.js';
@@ -139,8 +143,8 @@ import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
 import { MysqlWorkflowStore } from './src/workflows/worker-runtime.js';
 import { BoundedWorkflowRuntime, workflowConcurrency } from './src/workflows/bounded-worker.js';
-import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics-v2/scheduler/runtime.js';
-import type { MetricSchedulerLifecycle } from './src/metrics-v2/scheduler/lifecycle.js';
+import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics/scheduler/runtime.js';
+import type { MetricSchedulerLifecycle } from './src/metrics/scheduler/lifecycle.js';
 import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
@@ -174,10 +178,11 @@ import { registerNetworkDeviceRoutes } from './src/network-devices/network-devic
 import { networkDeviceCollector } from './src/network-devices/network-device-collector.js';
 import { configBackupScheduler } from './src/network-devices/config-backup-scheduler.js';
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
-import { registerMetricConsumerRoutes } from './src/metrics-v2/consumers/routes.js';
-import { registerMetricConfigurationRoutes } from './src/metrics-v2/config/routes.js';
-import { registerMetricPolicyRoutes } from './src/metrics-v2/policy/routes.js';
-import { registerMetricRolloutRoutes } from './src/metrics-v2/rollout/routes.js';
+import { registerMetricConsumerRoutes } from './src/metrics/consumers/routes.js';
+import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.js';
+import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
+import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
+import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -412,6 +417,7 @@ async function start() {
   await registerAuthSessionConfigRoutes(fastify, verifyToken);
   await registerFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationRoutes(fastify, verifyToken);
+  await createOperationsComposition(() => dbConnection.getPool(), { jwtSecret: JWT_SECRET }).register(fastify);
   await registerInvestigationFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
@@ -422,10 +428,14 @@ async function start() {
   await registerDeviceAuthRoutes(fastify, verifyToken);
   await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerResourceRoutes(fastify, verifyToken);
-  await registerMetricPolicyRoutes(fastify, verifyToken);
-  await registerMetricRolloutRoutes(fastify, verifyToken);
-  await registerMetricConfigurationRoutes(fastify, verifyToken);
-  await registerMetricConsumerRoutes(fastify, verifyToken);
+  await fastify.register(async app => {
+    installHistoricalMetricRoutes(app);
+    await registerMetricPolicyRoutes(app, verifyToken);
+    await registerMetricRolloutRoutes(app, verifyToken);
+    await registerMetricConfigurationRoutes(app, verifyToken);
+    await registerMetricBulkRoutes(app, verifyToken);
+    await registerMetricConsumerRoutes(app, verifyToken);
+  });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
   await registerSourceRoutes(fastify, verifyToken);
@@ -983,7 +993,7 @@ async function start() {
   fastify.get('/api/metrics/:instanceId', { preHandler: [verifyToken, requirePermission('metric:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
     const { instanceId } = request.params as any;
     try {
-      const metrics = await metricsDatabaseService.getRealtimeMetrics(instanceId);
+      const metrics = await resourceMetricRead((request as any).user,{type:'instance',id:Number(instanceId)});
       reply.send(metrics);
     } catch (error: any) {
       reply.code(500).send({ error: '获取监控指标失败：' + error.message });
@@ -1445,17 +1455,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
-        try {
-          const collection = await monitorCollector.collectInstanceNow(Number(id));
-          reply.send({ success: true, message: '连接已建立，首次采集已完成', collection });
-        } catch (collectionError) {
-          console.error(`实例 ${id} 重载后首次采集失败:`, collectionError);
-          reply.send({
-            success: true,
-            message: '连接已建立，首次采集失败，将由调度器重试',
-            collection: { instanceId: Number(id), error: 'INITIAL_COLLECTION_FAILED' },
-          });
-        }
+        return reply.send({ success: true, message: '连接已建立，统一采集按当前绑定调度',
+          configuration: await metricConfigurationService.status((request as any).user, { type: 'instance', id: Number(id) }) });
       } else {
         reply.code(500).send({ success: false, error: '连接建立失败' });
       }
@@ -1618,152 +1619,49 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
-  const latestServerMetricRecordedAt = (metrics: Array<{ recorded_at: any }>): any | null =>
-    metrics.reduce<any | null>((latest, metric) =>
-      latest === null || metric.recorded_at > latest ? metric.recorded_at : latest,
-    null);
+  const metricReadFailure = (reply: any, error: unknown) => error instanceof PolicyError
+    ? reply.code(error.status).send({ error: error.code })
+    : reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
 
   // 批量获取所有服务器最新指标摘要
   fastify.get('/api/servers/metrics/summary', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
-      const pool = dbConnection.getPool();
-      if (!pool) {
-        return reply.code(500).send({ error: '数据库未连接' });
+      const servers: Record<number, Awaited<ReturnType<typeof resourceMetricRead>>> = {};
+      for (const server of await serverDatabaseService.getAllServers({ strict: true })) {
+        servers[server.id] = await resourceMetricRead((request as any).user, { type: 'server', id: server.id });
       }
-
-      const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
-         FROM server_metrics sm
-         INNER JOIN (
-           SELECT server_id, metric_name, MAX(recorded_at) AS max_time
-           FROM server_metrics
-           GROUP BY server_id, metric_name
-         ) latest ON sm.server_id = latest.server_id
-           AND sm.metric_name = latest.metric_name
-           AND sm.recorded_at = latest.max_time
-         ORDER BY sm.server_id, sm.metric_name, sm.id`
-      ) as any;
-
-      // Group by server_id
-      const grouped: Record<number, { metrics: any[]; recorded_at: string | null }> = {};
-      for (const row of rows) {
-        const sid = row.server_id;
-        if (!grouped[sid]) grouped[sid] = { metrics: [], recorded_at: null };
-        grouped[sid].metrics.push(row);
-        if (!grouped[sid].recorded_at || row.recorded_at > grouped[sid].recorded_at) {
-          grouped[sid].recorded_at = row.recorded_at;
-        }
-      }
-
-      reply.send({ servers: grouped, recorded_at: latestServerMetricRecordedAt(rows) });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取指标摘要失败：' + error.message });
-    }
+      const recorded_at = Object.values(servers).reduce<string | null>((latest, entry) =>
+        entry.recorded_at && (!latest || entry.recorded_at > latest) ? entry.recorded_at : latest, null);
+      return reply.send({ source_contract: 'metrics', servers, recorded_at });
+    } catch (error) { return metricReadFailure(reply, error); }
   });
 
   // 获取服务器最新指标
   fastify.get('/api/servers/:id/metrics', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
-      const { id } = request.params as any;
-      const pool = dbConnection.getPool();
-      if (!pool) {
-        return reply.code(500).send({ error: '数据库未连接' });
-      }
-
-      // Verify server exists
-      const server = await serverDatabaseService.getServerById(Number(id));
-      if (!server) {
-        return reply.code(404).send({ error: '服务器不存在' });
-      }
-
-      // Get every dimension row from the latest collection snapshot for each metric.
-      const [rows] = await pool.execute(
-        `SELECT sm.server_id, sm.metric_name, sm.dimensions, sm.metric_value, sm.recorded_at
-         FROM server_metrics sm
-         INNER JOIN (
-           SELECT metric_name, MAX(recorded_at) AS max_time
-           FROM server_metrics
-           WHERE server_id = ?
-           GROUP BY metric_name
-         ) latest ON sm.metric_name = latest.metric_name
-           AND sm.recorded_at = latest.max_time
-         WHERE sm.server_id = ?
-         ORDER BY sm.metric_name, sm.id`,
-        [Number(id), Number(id)]
-      ) as any;
-
-      reply.send({ server_id: Number(id), metrics: rows, recorded_at: latestServerMetricRecordedAt(rows) });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器指标失败：' + error.message });
-    }
+      const id = Number((request.params as any).id);
+      if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'POLICY_RESOURCE' });
+      if (!await serverDatabaseService.getServerById(id)) return reply.code(404).send({ error: '服务器不存在' });
+      return reply.send({ server_id: id, ...await resourceMetricRead((request as any).user, { type: 'server', id }) });
+    } catch (error) { return metricReadFailure(reply, error); }
   });
 
   // 获取服务器指标历史
   fastify.get('/api/servers/:id/metrics/history', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
     try {
-      const { id } = request.params as any;
+      const id = Number((request.params as any).id);
+      if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'POLICY_RESOURCE' });
       const { range = '1h', metric } = request.query as { range?: string; metric?: string };
-
-      // Validate range parameter and bind only an allowlisted hour count.
-      const intervalMap: Record<string, number> = {
-        '1h': 1,
-        '6h': 6,
-        '24h': 24,
-        '7d': 168,
-        '30d': 720,
-      };
-      const validRanges = Object.keys(intervalMap);
-      if (!validRanges.includes(range)) {
-        return reply.code(400).send({ error: `range 必须为 ${validRanges.join('/')} 之一` });
-      }
-
-      const pool = dbConnection.getPool();
-      if (!pool) {
-        return reply.code(500).send({ error: '数据库未连接' });
-      }
-
-      // Verify server exists
-      const server = await serverDatabaseService.getServerById(Number(id));
-      if (!server) {
-        return reply.code(404).send({ error: '服务器不存在' });
-      }
-
-      let whereClause = 'WHERE server_id = ? AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)';
-      const params: any[] = [Number(id), intervalMap[range]];
-
-      // Optional metric filter (comma-separated)
-      if (metric) {
-        const metricNames = metric.split(',').map((m: string) => m.trim()).filter(Boolean);
-        if (metricNames.length > 0) {
-          // Validate metric names to prevent injection
-          for (const mn of metricNames) {
-            if (!/^[a-zA-Z0-9_-]+$/.test(mn)) {
-              return reply.code(400).send({ error: `无效的指标名称: ${mn}` });
-            }
-          }
-          whereClause += ` AND metric_name IN (${metricNames.map(() => '?').join(',')})`;
-          params.push(...metricNames);
-        }
-      }
-
-      const historyLimit = 30_000;
-      const [rows] = await pool.execute(
-        `SELECT recent.* FROM (
-           SELECT id, server_id, metric_name, dimensions, metric_value, recorded_at
-           FROM server_metrics
-           ${whereClause}
-           ORDER BY recorded_at DESC, id DESC
-           LIMIT ${historyLimit + 1}
-         ) AS recent
-         ORDER BY recorded_at ASC, id ASC`,
-        params
-      ) as any;
-
-      const truncated = rows.length > historyLimit;
-      reply.send({ server_id: Number(id), metrics: truncated ? rows.slice(1) : rows, range, truncated });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器指标历史失败：' + error.message });
-    }
+      const hours: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+      if (!Object.hasOwn(hours, range)) return reply.code(400).send({ error: 'QUERY_WINDOW' });
+      if (!await serverDatabaseService.getServerById(id)) return reply.code(404).send({ error: '服务器不存在' });
+      const to = new Date().toISOString(), from = new Date(Date.parse(to) - hours[range] * 3600000).toISOString();
+      const ids = metric?.split(',').map(m => m.trim()).filter(Boolean);
+      if (ids && (ids.length > 32 || ids.some(m => !/^[a-z][a-z0-9_.]{0,127}$/.test(m)))) return reply.code(400).send({ error: 'UNKNOWN_METRIC' });
+      return reply.send({ server_id: id, range, ...await resourceMetricRead((request as any).user, { type: 'server', id }, {
+        from, to, bucket_ms: Math.max(60000, Math.ceil(hours[range] * 3600000 / 1000)), ...(ids?.length ? { metric_ids: ids } : {}),
+      }) });
+    } catch (error) { return metricReadFailure(reply, error); }
   });
 
   // 手动触发单次采集
@@ -1777,12 +1675,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '服务器不存在' });
       }
 
-      const result = await serverCollector.collectServer(Number(id));
-      if (result.success) {
-        reply.send({ success: true, metrics_count: result.metricsCount || 0 });
-      } else {
-        reply.code(500).send({ success: false, error: result.error || '采集失败' });
-      }
+      const result = await metricConfigurationService.trialCurrent((request as any).user, { type: 'server', id: Number(id) });
+      return reply.send({ success: result.attempts.length > 0 && result.attempts.every(a => a.status === 'succeeded'), ...result });
     } catch (error: any) {
       reply.code(500).send({ error: '采集失败：' + error.message });
     }
@@ -2247,16 +2141,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const resource = { type: 'instance' as const, id: Number(id) };
-      const result = await routeMetricRead(resource, operationalSource,
-        () => databaseService.getRealtimeMetrics(resource.id),
-        () => metricConsumerService.query((request as any).user, { resource, view: 'all' }));
-      if (result.source === 'pending') return reply.code(409).send({ error: 'METRIC_SOURCE_PENDING' });
-      if (result.source === 'v2') return reply.send({ source_contract: 'metrics-v2', semantic_metrics: result.semantic });
-      const metrics = result.data;
-      if (!metrics) {
-        return reply.code(404).send({ error: '无法获取指标，实例可能未连接' });
-      }
-      reply.send({ ...metrics, source_contract: 'legacy' });
+      const semantic = await metricConsumerService.query((request as any).user, { resource, view: 'all' });
+      return reply.send({ source_contract: 'metrics', semantic_metrics: semantic });
     } catch (error: any) {
       reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
     }
@@ -2281,7 +2167,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const metricIds = metrics ? metrics.split(',').map(s => s.trim()).filter(Boolean) : undefined;
       // Validate metric IDs early — reject non-alphanumeric chars to prevent SQL injection
       if (metricIds) {
-        const INVALID = metricIds.find(id => !/^[a-zA-Z0-9_-]+$/.test(id));
+        const INVALID = metricIds.find(id => !/^[a-z][a-z0-9_.]{0,127}$/.test(id));
         if (INVALID) return reply.code(400).send({ error: `无效的指标 ID: ${INVALID}` });
       }
       const resource = { type: 'instance' as const, id: Number(id) };
@@ -2289,17 +2175,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const bucketMs = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 }[interval]!;
       const to = new Date().toISOString();
       const from = new Date(Date.parse(to) - periodMs).toISOString();
-      const result = await routeMetricRead(resource, operationalSource,
-        () => metricsDatabaseService.getHistoricalMetricsWithRange(
-          resource.id,
-          period as '1h' | '6h' | '24h' | '7d',
-          interval as '1m' | '5m' | '15m' | '1h',
-          metricIds,
-        ),
-        () => metricConsumerService.query((request as any).user, { resource, view: 'all', from, to, bucket_ms: bucketMs }));
-      if (result.source === 'pending') return reply.code(409).send({ error: 'METRIC_SOURCE_PENDING' });
-      if (result.source === 'v2') return reply.send({ source_contract: 'metrics-v2', time: [], metrics: {}, semantic_metrics: result.semantic });
-      reply.send({ ...result.data, source_contract: 'legacy' });
+      const semantic = await metricConsumerService.query((request as any).user, { resource, view: 'all', from, to, bucket_ms: bucketMs,
+        ...(metricIds?.length ? {metric_ids:metricIds} : {}) });
+      return reply.send({ source_contract: 'metrics', semantic_metrics: semantic });
     } catch (error: any) {
       reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
     }
@@ -2778,8 +2656,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
         if (type === 'all' || !type) {
-          monitorCollector.start();
-          reply.send({ success: true, message: '所有采集任务已启动' });
+          reply.code(409).send({error:'METRIC_GLOBAL_CONTROL_REQUIRES_RESTART', configuration:'METRICS_COLLECTION_ENABLED'});
         } else {
           // 单个任务启动（需要扩展 monitorCollector）
           reply.code(400).send({ error: '暂不支持单独启动特定任务类型' });
@@ -2797,8 +2674,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { type } = request.body as { type?: 'metrics' | 'slowQueries' | 'capacity' | 'all' };
       try {
         if (type === 'all' || !type) {
-          monitorCollector.stop();
-          reply.send({ success: true, message: '所有采集任务已停止' });
+          reply.code(409).send({error:'METRIC_GLOBAL_CONTROL_REQUIRES_RESTART', configuration:'METRICS_COLLECTION_ENABLED'});
         } else {
           reply.code(400).send({ error: '暂不支持单独停止特定任务类型' });
         }
@@ -2813,8 +2689,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('collector:view')],
     handler: async (request, reply) => {
       try {
-        const status = monitorCollector.getStatus();
-        reply.send(status);
+        reply.send({ source_contract: 'metrics', ...(metricLifecycle?.status() ?? {
+          enabled: false, running: false, tick_in_flight: false, configuration: 'METRICS_COLLECTION_ENABLED',
+        }) });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3252,7 +3129,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
         let metricDef: any = null;
         if (data.metric_name) {
-          metricDef = metricRegistry.getById(data.metric_name);
+          metricDef = metricRegistry.getById(data.metric_name, data.target_type || 'instance');
           if (!metricDef) {
             reply.code(400).send({ error: `指标 "${data.metric_name}" 不存在` });
             return;
@@ -3301,21 +3178,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
         const data = request.body as any;
-        if (!await requireAlertRuleAccess(request, reply, Number(id))) return;
+        const existingRule = await requireAlertRuleAccess(request, reply, Number(id));
+        if (!existingRule) return;
         let instanceIds: number[] | null | undefined;
         if (data.instance_ids !== undefined) {
           instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids);
           if (instanceIds === undefined) return;
         }
         // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
-        if (data.metric_name) {
-          const def = metricRegistry.getById(data.metric_name);
+        if (data.metric_name || data.target_type !== undefined) {
+          const metricName = data.metric_name ?? existingRule.metric_name;
+          const def = metricRegistry.getById(metricName, data.target_type ?? existingRule.target_type ?? 'instance');
           if (!def) {
-            reply.code(400).send({ error: `指标 "${data.metric_name}" 不存在` });
+            reply.code(400).send({ error: `指标 "${metricName}" 不存在` });
             return;
           }
           if (!def.is_collected) {
-            reply.code(400).send({ error: `指标 "${data.metric_name}" 未启用采集，无法更新告警规则` });
+            reply.code(400).send({ error: `指标 "${metricName}" 未启用采集，无法更新告警规则` });
             return;
           }
         }
@@ -5558,14 +5437,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await startup.step(() => workflowStore.enqueue(createCapacityConsistencyJob()));
   await startup.assertOwned();
   await startup.step(() => workflowStore.enqueue(createAnalysisRecoveryJob()));
+  await startup.step(() => workflowStore.enqueue(createSlowQueryCollectionJob()));
 
-  // 启动监控采集
-  await startup.assertOwned();
-  monitorCollector.start();
-  // 网络设备采集器只执行 SNMPv3 只读轮询；未纳管或未启用采集的设备不会
-  // 建立连接。采集器内部按设备互斥，停止时释放定时器。
-  await startup.assertOwned();
-  networkDeviceCollector.start();
+  // MetricScheduler exclusively owns periodic metrics; config backups remain a separate workflow.
   await startup.assertOwned();
   configBackupScheduler.start();
 

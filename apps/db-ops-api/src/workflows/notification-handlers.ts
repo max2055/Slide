@@ -6,7 +6,7 @@ import { validateNotificationChannelConfig } from '../notification-channel-confi
 import { isAlertEligibleForChannel } from './notification-dispatch.js';
 import { deliveryIdentity, deliveryStore, type DeliveryGate, type DeliveryRequest } from './delivery-store.js';
 import { parseRolloutAlertFence, rolloutAlertPublicationGate,
-  type RolloutAlertPublicationGate } from '../metrics-v2/rollout/alert-publication-fence.js';
+  type RolloutAlertPublicationGate } from '../metrics/rollout/alert-publication-fence.js';
 
 /** All durable external effects pass through the business gate, including replay. */
 export function registerNotificationHandlers(

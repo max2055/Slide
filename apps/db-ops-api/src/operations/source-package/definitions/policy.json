@@ -1,0 +1,16 @@
+{
+  "id": "v23-demo-restart-policy",
+  "version": "1",
+  "policyVersion": "v23-demo-restart-policy:1",
+  "target": { "type": "server", "id": 3, "host": "192.168.49.130", "port": 22 },
+  "account": "slide-action",
+  "tool": "restart_demo_service",
+  "toolVersion": "1",
+  "unit": "slide-action-demo.service",
+  "helper": "/usr/local/libexec/slide-action-demo-helper",
+  "risk": "medium",
+  "source": "latest authorized investigation result and same request/run evidence; all references fresh at commit",
+  "approval": "two distinct live user principals; author/requester cannot self-review; exact immutable version; once",
+  "dispatch": false,
+  "rollback": "none; stop new dispatch, retain unknown receipts and audit; never replay a restart"
+}

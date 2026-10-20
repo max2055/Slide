@@ -10,16 +10,16 @@ import { ActorContextService, signAccessToken } from '../../apps/db-ops-api/src/
 import { createVerifyToken } from '../../apps/db-ops-api/src/auth-middleware.js';
 import { requirePermission } from '../../apps/db-ops-api/src/auth/require-permission.js';
 import { requireInstanceAccess } from '../../apps/db-ops-api/src/auth/require-instance-access.js';
-import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics-v2/config/registry.js';
-import { builtinReleases, canonicalDefinitions } from '../../apps/db-ops-api/src/metrics-v2/packages/builtins.js';
-import { PolicyService } from '../../apps/db-ops-api/src/metrics-v2/policy/service.js';
-import { MysqlPolicyStore } from '../../apps/db-ops-api/src/metrics-v2/policy/store.js';
-import { MysqlMetricStorage } from '../../apps/db-ops-api/src/metrics-v2/storage.js';
-import { MysqlFormalMetricStore } from '../../apps/db-ops-api/src/metrics-v2/rollout/formal-store.js';
-import { RolloutControl } from '../../apps/db-ops-api/src/metrics-v2/rollout/control.js';
-import { MetricConsumerService } from '../../apps/db-ops-api/src/metrics-v2/consumers/service.js';
-import { registerMetricConsumerRoutes } from '../../apps/db-ops-api/src/metrics-v2/consumers/routes.js';
-import { identify, sample } from '../../apps/db-ops-api/src/contracts/metrics-v2/fixtures.js';
+import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics/config/registry.js';
+import { builtinReleases, canonicalDefinitions } from '../../apps/db-ops-api/src/metrics/packages/builtins.js';
+import { PolicyService } from '../../apps/db-ops-api/src/metrics/policy/service.js';
+import { MysqlPolicyStore } from '../../apps/db-ops-api/src/metrics/policy/store.js';
+import { MysqlMetricStorage } from '../../apps/db-ops-api/src/metrics/storage.js';
+import { MysqlFormalMetricStore } from '../../apps/db-ops-api/src/metrics/rollout/formal-store.js';
+import { RolloutControl } from '../../apps/db-ops-api/src/metrics/rollout/control.js';
+import { MetricConsumerService } from '../../apps/db-ops-api/src/metrics/consumers/service.js';
+import { registerMetricConsumerRoutes } from '../../apps/db-ops-api/src/metrics/consumers/routes.js';
+import { identify, sample } from '../../apps/db-ops-api/src/contracts/metrics/fixtures.js';
 
 // Only an explicitly isolated MySQL fixture: no shared bindings, scheduler, SSH or model calls.
 let app: ReturnType<typeof Fastify>, vite: Awaited<ReturnType<typeof createServer>>;
@@ -89,15 +89,15 @@ test.afterAll(async () => {
 });
 async function seed(kind: 'instance' | 'server', at: string, reset = false) {
   if (reset) {
-    await pool.query('DELETE FROM metric_v2_publications'); await pool.query('DELETE FROM metric_v2_observations'); await pool.query('DELETE FROM metric_v2_rollout');
+    await pool.query('DELETE FROM metric_publications'); await pool.query('DELETE FROM metric_observations'); await pool.query('DELETE FROM metric_rollout');
   }
   const definition = definitionFor(kind), { id, version, digest } = releaseFor(kind).package;
   const observation = identify({ ...sample(definition.id), resource_id: '992', observed_at: at, collected_at: at, stored_at: null,
     ...(kind === 'instance' ? { value: { encoding: 'float64' as const, value: uptime } } : {}),
     versions: { ...sample(definition.id).versions, package_id: id, package_version: version },
   });
-  const ticket = { source: 'v2', generation: 1, revision: 1 };
-  if (reset) { await control.initialize(observation, { source: 'v2', read: 'v2', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
+  const ticket = { source: 'semantic', generation: 1, revision: 1 };
+  if (reset) { await control.initialize(observation, { source: 'semantic', read: 'semantic', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
   await control.publish(observation, definition, ticket);
   await readMetrics(kind);
 }
@@ -147,13 +147,13 @@ for (const kind of ['instance', 'server'] as const) for (const [width, theme] of
   const freshAt = new Date(Date.parse(evaluatedAt) - 1000).toISOString(); await seed(kind, freshAt);
   await refresh.click(); await expect(refresh).toBeEnabled(); await expect(times.last()).toHaveAttribute('datetime', freshAt);
   await expect(metrics).toContainText('新鲜'); await capture(page, `${kind}-fresh-${width}-${theme}`);
-  await pool.query('DELETE FROM metric_v2_publications');
+  await pool.query('DELETE FROM metric_publications');
   await refresh.click(); await expect(refresh).toBeEnabled(); await expect(times).toHaveCount(0);
   await expect(metrics).toContainText('未知'); await capture(page, `${kind}-unknown-${width}-${theme}`);
-  await page.route('**/api/metrics-v2/query', route => route.fulfill({ status: 403, body: '{}' }));
+  await page.route('**/api/metrics/query', route => route.fulfill({ status: 403, body: '{}' }));
   await metrics.getByRole('button', { name: '刷新标准指标' }).click(); await expect(metrics.getByRole('alert')).toContainText('权限');
   await expect(times).toHaveCount(0); await capture(page, `${kind}-metrics-forbidden-${width}-${theme}`);
-  await page.unroute('**/api/metrics-v2/query');
+  await page.unroute('**/api/metrics/query');
   await page.route(path, route => route.fulfill({ status: 403, body: '{}' }));
   await refresh.click(); await expect(view).toContainText('无权读取'); await expect(view.locator('semantic-metrics')).toHaveCount(0);
   await capture(page, `${kind}-detail-forbidden-${width}-${theme}`);

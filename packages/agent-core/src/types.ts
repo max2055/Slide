@@ -234,7 +234,7 @@ export interface AgentRunSpec {
   loopGuardThreshold?: number;
   workspace?: string;
   sessionKey?: string;
-  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number };
+  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number; recentToolBatches?: 1 | 2 };
   /** Caller-owned facts. Never derive authorization from model summaries. */
   contextPins?: { goal?: string; constraints?: string[]; pending?: string[]; evidence?: string[]; uncertain?: string[] };
   contextWindowTokens?: number;

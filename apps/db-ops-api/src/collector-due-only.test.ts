@@ -20,7 +20,7 @@ vi.mock('./collectors/registry.js', () => ({
 vi.mock('./database-service.js', () => ({ databaseService: { getConnection: () => ({ pool: {} }) } }));
 vi.mock('./metrics-database-service.js', () => ({ metricsDatabaseService: { recordMetrics: mocks.recordMetrics } }));
 vi.mock('./db-connection.js', () => ({ dbConnection: { getPool: () => ({}) } }));
-vi.mock('./metrics-v2/rollout/legacy-write-fence.js', () => ({ legacyMetricSourceActive: mocks.sourceActive }));
+vi.mock('./metrics/rollout/legacy-write-fence.js', () => ({ legacyMetricSourceActive: mocks.sourceActive }));
 vi.mock('./metric-registry.js', () => ({
   metricRegistry: {
     getByDbType: () => [
@@ -32,7 +32,7 @@ vi.mock('./metric-registry.js', () => ({
 }));
 vi.mock('./collection-capabilities.js', () => ({ collectionCapabilityTracker: { recordMetricAttempt: vi.fn() } }));
 
-import { unifiedCollector } from './collector.js';
+import { unifiedCollector } from './migrations/metric-history/collector.js';
 
 describe('UnifiedCollector due-only boundary', () => {
   beforeEach(() => {

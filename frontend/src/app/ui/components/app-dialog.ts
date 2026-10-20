@@ -13,13 +13,14 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
-export type DialogSize = "sm" | "md" | "lg" | "xl";
+export type DialogSize = "sm" | "md" | "lg" | "xl" | "wide";
 
 const SIZE_MAP: Record<DialogSize, string> = {
   sm: "400px",
   md: "520px",
   lg: "640px",
   xl: "720px",
+  wide: "1120px",
 };
 
 @customElement("app-dialog")
@@ -99,10 +100,10 @@ export class AppDialog extends LitElement {
   }
 
   private _close(): void {
-    this.open = false;
-    this.dispatchEvent(
-      new CustomEvent("app-dialog-close", { bubbles: true, composed: true }),
-    );
+    // Owners may keep the dialog open while confirming unsaved changes.
+    if (this.dispatchEvent(new CustomEvent("app-dialog-close", { bubbles: true, composed: true, cancelable: true }))) {
+      this.open = false;
+    }
   }
 
   render() {
