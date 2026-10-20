@@ -108,6 +108,32 @@ it('repeated projection preserves the real SDK body for every reasoning override
   }finally{await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
 });
 
+it('the UTF8 floor counts actual SDK message and tool representations',async()=>{
+  const {conservativePromptEstimate}=await import('../token-estimation.js');
+  const http=await import('node:http');let body:any;
+  const server=http.createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);body=JSON.parse(Buffer.concat(chunks).toString());
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'ok'},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1}}));
+  });
+  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try{
+    const p=new OpenAIProvider({apiKey:'test-only',model:'deepseek-flash',baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
+    const tools=new ToolRegistry();tools.register({name:'read_only',description:'read metadata',parameters:{type:'object',properties:{id:{type:'integer'}},required:['id']},readOnly:true,concurrencySafe:true,exclusive:false,scope:['ops'],ownerOnly:true,group:'local-routing'.repeat(100),dangerLevel:0,execute:async()=>null});
+    const defs=structuredClone(tools.getDefinitions());const raw=structuredClone(messages);
+    (raw[2] as any)._extra={reasoning_content:'effective reasoning',custom_field:'opaque wire extra'};
+    raw.push({role:'user',source:'runtime',content:'Current Time: test clock'});
+    const before=JSON.stringify(raw);const projected=p.projectMessages(raw);
+    await p.chat(projected,defs,{maxTokens:8});
+    const manager=new ContextManager({...spec,tools},p);const estimate=manager.estimate(raw);
+    expect(estimate.method).toBe('conservative-heuristic');
+    expect(estimate.tokens).toBe(conservativePromptEstimate(body.messages,body.tools,'deepseek-flash').tokens);
+    expect(estimate.margin.floorTokens).toBe(estimate.tokens);
+    expect(body.tools[0]).toEqual({type:'function',function:{name:defs[0].name,description:defs[0].description,parameters:defs[0].parameters}});
+    expect(JSON.stringify(raw)).toBe(before);expect(tools.getDefinitions()).toEqual(defs);
+    expect(tools.get('read_only')!.ownerOnly).toBe(true);
+  }finally{await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve()));}
+});
+
 it('protected evidence references encode repeated field names once without losing calls or uncertainty',()=>{
   const calls=Array.from({length:5},(_,i)=>({id:'call_'+String(i).repeat(30),type:'function' as const,function:{name:'get_server_metrics',arguments:JSON.stringify({serverId:i+1,maxRows:1,from:'2026-10-20T00:00:00Z'})}}));
   const raw:Message[]=[messages[0],messages[1],{role:'assistant',content:null,tool_calls:calls},...calls.slice(0,4).map(call=>({role:'tool' as const,tool_call_id:call.id,content:'untrusted evidence'}))];
