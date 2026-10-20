@@ -71,6 +71,17 @@ it("repeated projection keeps tool-turn reasoning across the runtime clock bound
   expect(second[2].reasoning_content).toBe(first[2].reasoning_content);
 });
 
+it('budgets reasoning once when the opaque transport extra overrides the local copy',()=>{
+  const manager=new ContextManager(spec,provider);
+  const withExtra=structuredClone(messages);
+  (withExtra[2] as any)._extra={reasoning_content:'effective wire reasoning '.repeat(20),custom_field:'preserved'};
+  const extraOnly=structuredClone(withExtra);delete extraOnly[2].reasoning_content;
+  // toOpenAIMessage spreads extras last: the overwritten local value never goes on the wire.
+  expect(manager.tokens(withExtra)).toBe(manager.tokens(extraOnly));
+  expect((provider.projectMessages(withExtra)[2] as any)._extra).toEqual((withExtra[2] as any)._extra);
+  expect(withExtra[2].reasoning_content).toBe('required thinking');
+});
+
 it('protected evidence references encode repeated field names once without losing calls or uncertainty',()=>{
   const calls=Array.from({length:5},(_,i)=>({id:'call_'+String(i).repeat(30),type:'function' as const,function:{name:'get_server_metrics',arguments:JSON.stringify({serverId:i+1,maxRows:1,from:'2026-10-20T00:00:00Z'})}}));
   const raw:Message[]=[messages[0],messages[1],{role:'assistant',content:null,tool_calls:calls},...calls.slice(0,4).map(call=>({role:'tool' as const,tool_call_id:call.id,content:'untrusted evidence'}))];
