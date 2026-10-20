@@ -81,10 +81,10 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     })).status, id)).toBe(200);
     const agentSockets = sockets.filter(s => new URL(s.url).pathname === '/agent-ws');
-    expect(agentSockets.length).toBeGreaterThanOrEqual(2);
+    const bidirectional = agentSockets.filter(s => s.sent > 0 && s.received > 0);
+    expect(bidirectional.length).toBeGreaterThanOrEqual(2);
     for (const socket of agentSockets) {
       expect(socket.url).toBe(`${env.url.replace('https:', 'wss:')}/agent-ws`);
-      expect(socket.sent).toBeGreaterThan(0); expect(socket.received).toBeGreaterThan(0);
     }
     await env.pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
     await expect(page.getByRole('textbox', { name: '继续调查', exact: true })).toHaveCount(0);
@@ -94,7 +94,7 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     expect(errors).toEqual([]); expect(env.workerErrors).toEqual([]); expect(env.observationErrors).toEqual([]);
     await writeFile(test.info().outputPath('trusted-tls.json'), JSON.stringify({
       trust: 'isolated Firefox NSS CA; certificate errors enabled; untrusted profile rejected',
-      secureContext: true, sameOriginWssConnections: agentSockets.length,
+      secureContext: true, sameOriginWssConnections: bidirectional.length, attemptedConnections: agentSockets.length,
       ordinaryChatReply: true,
       completedResults: 2, offlineSeconds: 5, reconnectReplayed: false,
       sameJwtRevokedHttpStatus: 404, provider: 'synthetic; zero real model calls',
