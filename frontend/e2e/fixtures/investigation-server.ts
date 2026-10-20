@@ -48,7 +48,7 @@ import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/sou
 import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { attentionPilot?: boolean; databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; syntheticPromptTokens?: number; realProvider?: LLMProvider } = {}) {
+export async function startInvestigationServer(optionsInput: { attentionPilot?: boolean; databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; syntheticPromptTokens?: number; realProvider?: LLMProvider; tls?: { key: Buffer; cert: Buffer } } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -297,7 +297,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
       current = worker!.runOnce((job, context) => registry.execute(job, context)).catch(e => workerErrors.push(String(e))).finally(() => current = undefined);
     }, 50);
     vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'),
-      define: { 'import.meta.env.VITE_AGENT_WS_URL': '""' }, server: { host: '127.0.0.1', port: 0, strictPort: false,
+      define: { 'import.meta.env.VITE_AGENT_WS_URL': '""' }, server: { host: '127.0.0.1', port: 0, strictPort: false, https: optionsInput.tls,
         proxy: { '/api': { target: apiUrl, changeOrigin: true },
           '/__slide': { target: `http://127.0.0.1:${wsServer.address().port}`, changeOrigin: true },
           '/agent-ws': { target: `http://127.0.0.1:${wsServer.address().port}`, ws: true, changeOrigin: true } } } });
@@ -305,7 +305,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     const address = vite.httpServer!.address() as { port: number };
     const currentOwner = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(101) : owner;
     const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
-    return { url: `http://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
+    return { url: `${optionsInput.tls ? 'https' : 'http'}://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
       bridgeFlags, rca, alertBridge: pilotBridge,
       system,systemServiceId,apiUrl,promptObservations,systemConsumption,
       token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),

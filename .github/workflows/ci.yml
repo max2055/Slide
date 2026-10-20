@@ -212,6 +212,16 @@ jobs:
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
+      - name: Install isolated trusted TLS browser prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
+          pnpm --filter slide-frontend exec playwright install --with-deps firefox
+      - name: Trusted HTTPS same-origin WSS, messages, reconnect and revocation
+        env:
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
       - name: Instance query states with live MySQL and permissions
         env:
           MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
@@ -235,7 +245,9 @@ jobs:
         if: always()
         with:
           name: investigation-qualification-${{ github.sha }}
-          path: frontend/test-results-investigation/
+          path: |
+            frontend/test-results-investigation/
+            frontend/test-results-investigation-tls/
           include-hidden-files: true
           retention-days: 30
       - name: Streaming real MySQL, WebSocket, Gateway, UI and refresh
