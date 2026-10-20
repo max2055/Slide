@@ -322,10 +322,12 @@ test('Profiles settings consumes readonly facts, responds to live SQL rejection 
     const response = await page.request.get(`${env.url}/api/investigation-profiles`, { headers: { Authorization: `Bearer ${env.token(actor)}` } });
     expect(response.status()).toBe(200); expect(response.headers()['cache-control']).toContain('no-store');
     const facts = await response.json();
+    expect(facts.items.map((item: any) => `${item.profile.id}:${item.profile.version}`).sort()).toEqual(['ops:1', 'ops:2', 'system:1']);
     for (const item of facts.items) {
-      const row = profiles.getByRole('row').filter({ has: page.locator(`[data-profile="${item.profile.id}"]`) });
+      const row = profiles.getByRole('row').filter({ has: page.locator(`[data-profile="${item.profile.id}"][data-profile-version="${item.profile.version}"]`) });
       await expect(row).toContainText(item.profile.responsibility);
       const details = row.getByRole('button');
+      await expect(details).toHaveAccessibleName(`查看${item.profile.id === 'ops' ? '资源调查' : '平台调查'} V${item.profile.version} 预置详情 →`);
       await details.click();
       const dialog = profiles.locator('app-dialog').filter({ has: page.locator('dialog[open]') });
       await dialog.getByText('版本与技术标识', { exact: true }).click();
@@ -363,7 +365,7 @@ test('a late authorized Profiles HTTP response cannot restore facts after live S
   let first = true;
   await page.goto(`${env.url}/settings/ai/profiles`);
   const profiles = page.locator('investigation-profiles-page');
-  await expect(profiles.locator('[data-profile]')).toHaveCount(2);
+  await expect(profiles.locator('[data-profile]')).toHaveCount(3);
   await page.route('**/api/investigation-profiles', async route => {
     if (!first) { await route.continue(); return; }
     first = false;

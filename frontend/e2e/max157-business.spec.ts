@@ -164,7 +164,7 @@ test('live reader permissions filter resources, retain evidence browsing and rev
   await expect(view).toContainText('服务器受控夹具'); await expect(view.getByRole('button', { name: '开始只读诊断' })).toHaveCount(0);
   await expect(view.getByRole('tab', { name: '当前证据' })).toBeVisible(); await capture(page, 'diagnosis-readonly-1280-light');
   await page.goto(`${env.url}/settings/ai/profiles`); const profiles = page.locator('investigation-profiles-page');
-  await profiles.getByRole('button', { name: '查看资源调查预置详情 →' }).click();
+  await profiles.getByRole('button', { name: '查看资源调查 V1 预置详情 →', exact: true }).click();
   await expect(profiles.locator('app-dialog')).toContainText('执行限制'); await page.keyboard.press('Escape');
   await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=103 AND p.code='ai:view'");
   try {
