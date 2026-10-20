@@ -7,7 +7,7 @@
 
 import OpenAI from "openai";
 import { projectProviderMessages, hasMessageAttachments } from './message-parts.js';
-import { FamilyTokenCounter } from './token-estimation.js';
+import { conservativePromptEstimate, FamilyTokenCounter, hasMedia } from './token-estimation.js';
 import { isNativeOpenAIEndpoint, openAIModelCapabilities, type ModelCapabilities } from './model-context.js';
 import type {
   LLMProvider,
@@ -122,7 +122,13 @@ export class OpenAIProvider implements LLMProvider {
     return this.nativeOpenAI ? openAIModelCapabilities(model) : undefined;
   }
   countPromptTokens(messages: Message[], tools: ToolSchema[], model = this.model) {
-    return this.nativeOpenAI ? this.tokenCounter.count(messages, tools, model) : undefined;
+    if (hasMedia(messages)) return undefined;
+    const native = this.nativeOpenAI ? this.tokenCounter.count(messages, tools, model) : undefined;
+    if (native) return native;
+    // Count exactly the representation sent by chat/chatStream. Local routing,
+    // permission metadata and fields overwritten by extras are not wire input.
+    // This remains a byte upper bound, never a tokenizer or provider usage.
+    return conservativePromptEstimate(messages.map(toOpenAIMessage) as Message[], tools.map(toOpenAITool), model, 'TOKENIZER_UNSUPPORTED');
   }
   invalidateTokenCache(): void { this.tokenCounter.invalidate(); }
 

@@ -80,8 +80,8 @@ it('unknown models, alternate endpoints, media and very large payloads never get
   const alternate = new OpenAIProvider({ apiKey: 'fixture', model: 'gpt-4o', baseURL: 'https://api.openai.com.evil.test/v1' });
   expect(estimateWithProvider(messages, [], 'gpt-4o', native).method).toBe('family-tokenizer');
   expect(estimateWithProvider(messages, [], 'gpt-4o', alternate).method).toBe('conservative-heuristic');
-  expect(native.countPromptTokens(messages, [], 'unknown-model')).toBeUndefined();
-  expect(native.countPromptTokens([{ role: 'user', content: 'x'.repeat(1_000_001) }], [])).toBeUndefined();
+  expect(native.countPromptTokens(messages, [], 'unknown-model')).toMatchObject({method:'conservative-heuristic',model:'unknown-model'});
+  expect(native.countPromptTokens([{ role: 'user', content: 'x'.repeat(1_000_001) }], [])).toMatchObject({method:'conservative-heuristic'});
   const media: Message[] = [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://example.test/huge.png' } }] }];
   expect(estimateWithProvider(media, [], 'test', provider(() => 1))).toMatchObject({ method: 'conservative-heuristic', fallbackReason: 'MEDIA_UNCALIBRATED' });
   const manager = new ContextManager(spec(), provider(() => 1));
@@ -90,7 +90,20 @@ it('unknown models, alternate endpoints, media and very large payloads never get
 it('OpenAI SDK environment endpoints cannot accidentally inherit native tokenizer capabilities', () => {
   vi.stubEnv('OPENAI_BASE_URL', 'https://custom.invalid/v1');
   const p = new OpenAIProvider({ apiKey: 'fixture', model: 'gpt-4o' });
-  expect(p.countPromptTokens(messages, [])).toBeUndefined(); expect(p.getModelCapabilities()).toBeUndefined();
+  expect(p.countPromptTokens(messages, [])).toMatchObject({method:'conservative-heuristic'}); expect(p.getModelCapabilities()).toBeUndefined();
+});
+it('accepts a labeled wire byte bound as estimated and rejects malformed conservative provenance', () => {
+  const bound = conservativePromptEstimate(messages, [], 'test', 'TOKENIZER_UNSUPPORTED');
+  const manager = new ContextManager(spec(), provider(() => bound));
+  expect(manager.estimate(messages)).toEqual(bound);
+  expect(manager.estimation).toBe('estimated');
+  for (const invalid of [
+    {...bound, tokens: bound.tokens - 1}, {...bound, rawTokens: -1}, {...bound, model: 'other'},
+    {...bound, version: 'unrecognized'}, {...bound, margin: {...bound.margin, ratio: 0.1}},
+    {...bound, margin: {...bound.margin, fixedTokens: 1}}, {...bound, margin: {...bound.margin, floorTokens: 0}},
+  ]) {
+    expect(estimateWithProvider(messages, [], 'test', provider(() => invalid))).toMatchObject({fallbackReason: 'TOKENIZER_INVALID'});
+  }
 });
 it('known window/output limits, smaller explicit limits, unknown fallback, watermark and the exact boundary are applied', () => {
   const p = provider(() => 2048);

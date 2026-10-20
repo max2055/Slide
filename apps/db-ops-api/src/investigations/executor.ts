@@ -55,6 +55,18 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
       evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
 }
+/** Ephemeral model view only. Durable facts and checkpoints retain full results. */
+export function investigationContextMessages(messages: Message[], profile: string): Message[] {
+  if (profile !== 'ops') return messages;
+  return messages.map(message => {
+    if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
+    let result: unknown;
+    try { result = JSON.parse(message.content); } catch { return message; }
+    const content = investigationToolContextResult(result, message.tool_call_id, profile);
+    return typeof content === 'string' && content !== message.content
+      ? { ...message, content, messageParts: undefined } : message;
+  });
+}
 // Only these reviewed handlers require no browser, approval, credential read or
 // interactive session. Profile membership alone never grants background safety.
 const BACKGROUND_SAFE = new Set([
@@ -601,15 +613,16 @@ export class InvestigationExecutor {
         getDefaultModel: () => actual.getDefaultModel(),
         getModelCapabilities: actual.getModelCapabilities?.bind(actual),
         countPromptTokens: actual.countPromptTokens?.bind(actual),
-        projectMessages: actual.projectMessages?.bind(actual),
+        projectMessages: (messages, model) => investigationContextMessages(actual.projectMessages?.(messages, model) ?? messages, profile.id),
         chat: (messages, tools, options) => dispatch(() => actual.chat(messages, tools, options), [messages, tools], (options as any)?.requestIdentity),
         chatStream: (messages, tools, callbacks, options) =>
           dispatch(() => actual.chatStream(messages, tools, callbacks, options), [messages, tools], (options as any)?.requestIdentity),
       };
-      // Keep full SQL evidence; oversized live Ops receipts become explicit
-      // references so the model can request a narrower authorized read.
-      const contextToolResult = (result: unknown, toolId: string) =>
-        investigationToolContextResult(result, toolId, profile.id);
+      // Keep lossless JSON in Runtime facts/checkpoints and SQL evidence.
+      // Only provider.projectMessages above may replace it with a reference.
+      const contextToolResult = (result: unknown, _toolId: string) => result !== null && typeof result === 'object'
+        && (result as { success?: boolean }).success === true && (result as { status?: string }).status !== 'error'
+        ? JSON.stringify(result) : result;
       let currentToolId: string | undefined;
       const effective = await this.transaction(async (c) =>
         this.authorization.authorize(

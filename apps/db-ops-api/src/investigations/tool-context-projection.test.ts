@@ -41,3 +41,17 @@ const failure={success:false,status:'error',error:'DENIED'};
 assert.equal(project(failure,'failed','ops'),failure,'ToolExecutor must retain object failure semantics');
 assert.deepEqual(JSON.parse(project(large,'system','system')),large,'unchanged System lossless projection');
 });
+
+it('model references remain ephemeral and repeated projection preserves full canonical input', async () => {
+ const {investigationContextMessages}=await import('./executor.js');
+ const {OpenAIProvider}=await import('@slide/agent-core');
+ const raw:any[]=[{role:'tool',tool_call_id:'receipt',content:JSON.stringify({success:true,data:{rows:Array(200).fill('bounded-row')}})}];
+ const before=JSON.stringify(raw);
+ const view=investigationContextMessages(raw,'ops');
+ assert.equal(JSON.stringify(raw),before);
+ assert.equal(JSON.parse(String(view[0].content)).data.evidenceOmitted,true);
+ assert.deepEqual(investigationContextMessages(view,'ops'),view);
+ assert.equal(investigationContextMessages(raw,'system'),raw);
+ const provider=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
+ assert.deepEqual(investigationContextMessages(provider.projectMessages(view),'ops').map(m=>m.content),view.map(m=>m.content));
+});
