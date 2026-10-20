@@ -623,7 +623,7 @@ export class ApprovalDashboard extends LitElement {
       }
     }
     return html`
-      <div class="page-head"><div><h1>${this.filter === 'processed' ? '审批历史' : '待审批'}</h1><p class="caption">${this.filter === 'processed' ? '先看目标、风险与结果，完整 SQL、分析和错误按需查看。' : '核对 SQL、目标资源与风险后，再决定是否批准及执行。'}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${this.loadRequests}>刷新</button></div>
+      <a class="btn" href="/operations-actions">行动计划与独立审批</a><div class="page-head"><div><h1>${this.filter === 'processed' ? '审批历史' : '待审批'}</h1><p class="caption">${this.filter === 'processed' ? '先看目标、风险与结果，完整 SQL、分析和错误按需查看。' : '核对 SQL、目标资源与风险后，再决定是否批准及执行。'}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${this.loadRequests}>刷新</button></div>
       <div class="tabs" aria-label="审批分类">
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" aria-pressed=${this.filter === 'pending'} @click=${() => this.switchFilter('pending')}>待审批</button>
         <button class="tab ${this.filter === 'processed' ? 'active' : ''}" aria-pressed=${this.filter === 'processed'} @click=${() => this.switchFilter('processed')}>审批历史</button>

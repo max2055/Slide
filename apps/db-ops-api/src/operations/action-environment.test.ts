@@ -23,6 +23,24 @@ describe('P10 trusted action environment', () => {
     } } as unknown as PlanConnection;
   });
   afterEach(async () => f?.close());
+  it('builds draft material only from a verified protected registration without sending SSH', async () => {
+    const draft=await environment.proposal(501);
+    expect(draft.tool.hash).toBe(f.manifest.target.helperHash);
+    expect(draft.policyVersion).toBe(f.manifest.policyVersion);
+    expect(draft.verifier).toEqual(f.manifest.verifier);
+    expect(inspect).not.toHaveBeenCalled();
+    const {validUntil:_expiry,...input}=draft;
+    const proposal=proposedContent({...input,schemaVersion:1,investigationId:'synthetic',resultVersion:1,target:{type:'server',id:501},evidence:f.proposal().evidence,relations:[],baselines:[],impact:'controlled'},actor,new Date(),1000);
+    await expect(environment.validate(connection,proposal,new Date())).resolves.toBeUndefined();
+  });
+  it('rejects wrong target and altered unsigned registration during draft construction', async () => {
+    await expect(environment.proposal(502)).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    const envelope=JSON.parse(await readFile(f.env.OPERATIONS_PILOT_MANIFEST_FILE,'utf8'));
+    envelope.manifest.target.helperHash='f'.repeat(64);
+    await writeFile(f.env.OPERATIONS_PILOT_MANIFEST_FILE,JSON.stringify(envelope));
+    await expect(environment.proposal(501)).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    expect(inspect).not.toHaveBeenCalled();
+  });
   it('checks exact registration, locked identity, live helper and complete verifier', async () => {
     await expect(environment.validate(connection, content(), new Date())).resolves.toBeUndefined();
     expect(inspect).toHaveBeenCalledOnce();

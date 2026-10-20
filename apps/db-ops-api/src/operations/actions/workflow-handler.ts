@@ -1,4 +1,8 @@
 import { z } from 'zod';
+
+export const actionExecuteSchema = z.strictObject({
+  approvalId: z.string().regex(/^[1-9]\d{0,19}$/), requestKey: z.string().min(1).max(128),
+});
 import type { ClaimedJob } from '../../workflows/worker-runtime.js';
 import { OperationsError } from '../contracts.js';
 import type { ActionExecutor } from './executor.js';
@@ -50,11 +54,7 @@ export async function registerActionExecutionRoutes(
     };
     scope.post('/api/operations/action-plans/:id/versions/:version/execute', async (req, reply) => {
       const r = req as any;
-      const parsed = z
-        .strictObject({
-          approvalId: z.string().regex(/^[1-9]\d{0,19}$/),
-          requestKey: z.string().min(1).max(128),
-        })
+      const parsed = actionExecuteSchema
         .safeParse(req.body);
       const version = z
         .string()

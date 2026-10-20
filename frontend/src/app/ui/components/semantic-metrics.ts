@@ -8,6 +8,7 @@ import './app-data-table.js';
 import './app-empty-state.js';
 import './app-badge.js';
 import './metric-chart.js';
+import './investigation-operation-context.ts';
 import { metricName } from './resource-metric-summary.js';
 export interface MetricResult {
   definition: { id: string; category: string; meaning: string; unit: string }; state: string; capability: unknown;
@@ -38,6 +39,7 @@ export class SemanticMetrics extends LitElement {
   @property() from = '';
   @property() to = '';
   @state() private selectedMetric = '';
+  @state() private baselineKey = '';
   @state() private hours = 1;
   @state() private chartKeys = new Set<string>();
   @state() result: SemanticResult | null = null;
@@ -46,7 +48,7 @@ export class SemanticMetrics extends LitElement {
   private generation = 0;
   @state() private accessInvalidated = false;
   private onAccessChanged = () => {
-    ++this.generation; this.result = null; this.chartKeys = new Set(); this.busy = false;
+    ++this.generation; this.result = null; this.chartKeys = new Set(); this.baselineKey = ''; this.busy = false;
     this.accessInvalidated = true; this.error = '权限或登录状态已变更，请重新打开资源后读取指标';
   };
   override connectedCallback() {
@@ -56,7 +58,7 @@ export class SemanticMetrics extends LitElement {
   }
   override willUpdate(changes: Map<string, unknown>) {
     if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) {
-      this.result = null; this.chartKeys = new Set();
+      this.result = null; this.chartKeys = new Set(); this.baselineKey = '';
       if (changes.has('resourceId') || changes.has('resourceType')) {
         this.accessInvalidated = false;
         if ((changes.get('resourceId') !== undefined || changes.get('resourceType') !== undefined) && !changes.has('from') && !changes.has('to')) { this.from = ''; this.to = ''; }
@@ -80,7 +82,7 @@ export class SemanticMetrics extends LitElement {
     if (this.accessInvalidated || !this.resourceId) return;
     const generation = ++this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
     const current = () => generation === this.generation && resourceId === this.resourceId && resourceType === this.resourceType;
-    this.busy = true; this.error = '';
+    this.busy = true; this.error = ''; this.baselineKey = '';
     try {
       const now = Date.now();
       const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -101,6 +103,8 @@ export class SemanticMetrics extends LitElement {
   }
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
+    const baselineSeries = metrics.flatMap(metric => metric.series.map(series => ({metric,series})));
+    const baseline = baselineSeries[Number(this.baselineKey)];
     const trends = metrics.flatMap(metric => metric.series.map(series => ({ metric, series }))).filter(({series}) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1);
     return html`<style>${sharedFieldStyles}${sharedBtnStyles}
       :host { display:block; min-width:0; color:var(--text); font-size:14px; }
@@ -126,10 +130,10 @@ export class SemanticMetrics extends LitElement {
     </style>
     <div class="actions">
       <label>时间范围 <select aria-label="时间范围" ?disabled=${this.accessInvalidated} .value=${String(this.hours)} @change=${(e: Event) => {
-        this.hours = Number((e.target as HTMLSelectElement).value); this.result = null; this.chartKeys = new Set();
+        this.hours = Number((e.target as HTMLSelectElement).value); this.result = null; this.chartKeys = new Set(); this.baselineKey = '';
         const absolute = this.from || this.to; this.from = ''; this.to = ''; if (!absolute) void this.load();
       }}><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24">最近 24 小时</option></select></label>
-      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
+      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
       <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.result ? html`<p class="window">查询窗口：${this.result.window.from} — ${this.result.window.to} · 窗口不代表实际观测时间</p>` : nothing}
     </div>
@@ -145,6 +149,10 @@ export class SemanticMetrics extends LitElement {
       })}</div>`)}</div>` : nothing}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
       <p class="window">缺失、过期、质量不明及超出安全数值精度的区间保留断点。全部维度与精确值可在观测明细中核对。</p>` : nothing}
+    <details><summary>行为基线与资格</summary>
+      <label>基线指标与维度<select aria-label="基线指标与维度" .value=${this.baselineKey} ?disabled=${this.accessInvalidated || this.busy} @change=${(e:Event)=>this.baselineKey=(e.target as HTMLSelectElement).value}><option value="">选择指标与维度</option>${baselineSeries.map(({metric,series},index)=>html`<option value=${index}>${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</option>`)}</select></label>
+      ${this.baselineKey !== '' && baseline ? html`<operations-behavior-baseline .resourceType=${this.resourceType} .resourceId=${this.resourceId} .metric=${baseline.metric.definition.id} .dimensions=${baseline.series.dimensions}></operations-behavior-baseline>` : html`<p>选择实际可见指标的一个维度后，可评估其行为基线。样本不足时偏离保持未知。</p>`}
+    </details>
     <h2>观测明细</h2>
     ${['canonical', 'extension'].map(category => html`<app-card><span slot="header">${category === 'canonical' ? '标准指标与能力' : '模板扩展指标'}</span>
       ${metrics.filter(m => m.definition.category === category).length ? html`<details><summary>查看原始时间桶、定义与来源（${metrics.filter(m => m.definition.category === category).length} 项）</summary>

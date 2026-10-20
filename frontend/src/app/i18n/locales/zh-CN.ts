@@ -245,6 +245,8 @@ export const zh_CN: TranslationMap = {
     builtIn: "内置",
   },
   tabs: {
+    "operations-knowledge": "可信运维知识",
+    "operations-actions": "行动中心",
     attention: "关注事项",
     investigations: "AI 工作空间",
     // Slide 菜单组
@@ -298,6 +300,8 @@ export const zh_CN: TranslationMap = {
     instances: "实例",
   },
   subtitles: {
+    "operations-knowledge": "有依据的历史经验与适用条件",
+    "operations-actions": "不可变计划、独立审批与效果验证",
     attention: "待处理事项与事件",
     investigations: "只读调查、执行过程与证据成果",
     // Slide 菜单组

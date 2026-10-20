@@ -19,14 +19,14 @@ OP = '11111111-1111-4111-8111-111111111111'
 OTHER = '22222222-2222-4222-8222-222222222222'
 
 
-def child(directory, mode, op, plan, config, helper):
+def child(directory, mode, op, plan, config, helper, server_id="1"):
     source = SOURCE.read_text().split("<<'PY'\n")[1].split('\nPY')[0]
     ns = {}
     exec(source.split('\ntry:\n    main()')[0], ns)
     ns['STATE'] = directory
     ns['check_path'] = lambda *args: None  # Production check remains unchanged.
     ns['configuration'] = lambda: ({'helperHash': helper, 'unitHash': 'e'*64,
-                                   'serverId': 1}, config)
+                                   'serverId': int(server_id)}, config)
     ns['os'].geteuid = lambda: 0
     real_fstat = ns['os'].fstat
 

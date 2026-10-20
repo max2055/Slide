@@ -10,7 +10,7 @@ const text = (maxLength: number) => Type.String({ minLength: 1, maxLength, patte
 const version = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const uuid = Type.String({ pattern: '^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$' });
 const refs = (minItems = 1) => Type.Array(uuid, { minItems, maxItems: 100, uniqueItems: true });
-const verification = Type.Object({ method: text(2000), from: text(32), to: text(32), evidenceIds: refs() }, strict);
+const verification = Type.Object({ method: text(2000), from: text(32), to: text(32), evidenceIds: refs(0), actionReport: Type.Optional(Type.Object({ id: uuid, version, hash: Type.String({ pattern: '^[a-f0-9]{64}$' }) }, strict)) }, strict);
 const common = { resultId: uuid, resultVersion: version, expectedVersion: version, note: text(4000) };
 
 /** Human feedback never modifies an immutable machine result or publishes knowledge.
@@ -26,7 +26,7 @@ export const InvestigationFeedbackRequestSchema = Type.Union([
 ], { $id: 'InvestigationFeedbackRequest' });
 export const InvestigationFeedbackRecordSchema = Type.Object({
   id: uuid, investigationId: uuid, actorId: version, createdAt: text(32), version,
-  command: InvestigationFeedbackRequestSchema, staleResult: Type.Boolean(),
+  command: InvestigationFeedbackRequestSchema, staleResult: Type.Boolean(), staleVerification: Type.Optional(Type.Boolean()),
   references: Type.Array(Type.Object({ id: uuid, status: Type.Union([Type.Literal('available'), Type.Literal('expired')]),
     contentHash: Type.String({ pattern: '^[a-f0-9]{64}$' }) }, strict), { maxItems: 100 }),
   verification: Type.Optional(Type.Object({ ...verification.properties,
@@ -45,7 +45,8 @@ export function validateFeedback(value: unknown, now = Date.now()): Investigatio
   if (!Value.Check(InvestigationFeedbackRequestSchema, value)) throw invalidObservation();
   if (value.kind === 'handling' && (!instant(value.performedAt) || Date.parse(value.performedAt) > now)) throw invalidObservation();
   if ('verification' in value && value.verification) {
-    const { from, to } = value.verification;
+    const { from, to, evidenceIds, actionReport } = value.verification;
+    if (!evidenceIds.length && !actionReport || actionReport && !['close', 'recovery'].includes(value.kind)) throw invalidObservation();
     if (!instant(from) || !instant(to) || Date.parse(from) >= Date.parse(to) || Date.parse(to) > now) throw invalidObservation();
   }
   if (value.kind === 'close' && (value.problemStatus === 'resolved') !== !!value.verification) throw invalidObservation();

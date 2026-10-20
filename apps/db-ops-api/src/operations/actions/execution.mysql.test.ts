@@ -851,9 +851,15 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     const fixture = new URL('../../../../../scripts/qualification/action-demo-helper-fixture.py', import.meta.url).pathname;
     const helper = new URL('../../../../../scripts/qualification/action-demo-helper.sh', import.meta.url);
     toolHash = createHash('sha256').update(readFileSync(helper)).digest('hex');
-    const host = utils.generateKeyPairSync('ed25519'), login = utils.generateKeyPairSync('ed25519');
+    // ssh2 1.17's Ed25519 generator strips leading zero public-key bytes,
+    // producing a malformed OpenSSH key for ~1/256 random keys. RSA avoids
+    // that generator bug; retain real host pinning and public-key auth below.
+    const host = utils.generateKeyPairSync('rsa', { bits: 2048 }), login = utils.generateKeyPairSync('rsa', { bits: 2048 });
     const hostKey = utils.parseKey(host.private), loginKey = utils.parseKey(login.private);
-    if (hostKey instanceof Error || loginKey instanceof Error) throw new Error('fixture key');
+    if (hostKey instanceof Error || loginKey instanceof Error) throw new Error(
+      `SSH fixture key parse failed (${process.platform}/${process.version}, ssh2 1.17): ` +
+      (hostKey instanceof Error ? hostKey.message : loginKey instanceof Error ? loginKey.message : ''),
+    );
     const registration = {
       protocol: 1, serverId: 1, host: '192.168.49.130', port: 22, username: 'slide-action',
       unit: 'slide-action-demo.service', helper: '/usr/local/libexec/slide-action-demo-helper',

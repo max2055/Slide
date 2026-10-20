@@ -36,7 +36,7 @@ const unavailable = () => new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE
 const invalid = () => new OperationsError('OPERATIONS_PRECONDITION_FAILED');
 type Env = Readonly<Record<string, string | undefined>>;
 
-async function file(path: string | undefined, limit: number, privateFile = false): Promise<string> {
+export async function readProtectedActionFile(path: string | undefined, limit: number, privateFile = false): Promise<string> {
   if (!path) throw unavailable();
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -56,10 +56,10 @@ export class RegisteredActionEnvironment implements ActionEnvironment {
   constructor(private readonly env: Env = process.env,
     private readonly inspect: (target: Readonly<PilotTarget>, privateKey: string) => Promise<unknown> = inspectPilot) {}
 
-  private async registration(): Promise<PilotManifest> {
+  async registration(): Promise<PilotManifest> {
     try {
-      const envelope = envelopeSchema.parse(JSON.parse(await file(this.env.OPERATIONS_PILOT_MANIFEST_FILE, 16_384)));
-      const key = createPublicKey(await file(this.env.OPERATIONS_PILOT_PUBLIC_KEY_FILE, 4096));
+      const envelope = envelopeSchema.parse(JSON.parse(await readProtectedActionFile(this.env.OPERATIONS_PILOT_MANIFEST_FILE, 16_384)));
+      const key = createPublicKey(await readProtectedActionFile(this.env.OPERATIONS_PILOT_PUBLIC_KEY_FILE, 4096));
       if (key.asymmetricKeyType !== 'ed25519' || !verify(null,
         Buffer.from(operationsContentHash(envelope.manifest)), key, Buffer.from(envelope.signature, 'base64'))) throw invalid();
       if (normalizeSshHostKeyFingerprint(envelope.manifest.target.hostFingerprint) !== envelope.manifest.target.hostFingerprint) throw invalid();
@@ -68,6 +68,18 @@ export class RegisteredActionEnvironment implements ActionEnvironment {
       if (error instanceof OperationsError) throw error;
       throw unavailable();
     }
+  }
+
+  /** Trusted draft material only; create() still performs every live check. */
+  async proposal(targetId: number) {
+    const manifest = await this.registration(), target = manifest.target;
+    if (target.serverId !== targetId || Date.parse(manifest.validFrom) > Date.now()
+      || Date.parse(manifest.validUntil) <= Date.now()) throw invalid();
+    return { tool: { name: 'restart_demo_service' as const, version: target.toolVersion, hash: target.helperHash },
+      parameters: { unit: target.unit }, policyVersion: manifest.policyVersion, verifier: manifest.verifier,
+      preconditions: [{ kind: 'target_config_hash', expected: operationsContentHash(target) }],
+      risk: 'medium' as const, rollback: { capability: 'none' as const, description: '重启不能恢复原进程内存；再次重启需要新计划与独立批准。' },
+      validUntil: manifest.validUntil };
   }
 
   async validate(c: PlanConnection, content: Readonly<ActionPlanContent>, now: Date): Promise<void> {
@@ -91,7 +103,7 @@ export class RegisteredActionEnvironment implements ActionEnvironment {
     let observation: z.infer<typeof inspectionSchema>;
     try {
       observation = inspectionSchema.parse(await this.inspect(target,
-        await file(this.env.OPERATIONS_PILOT_SSH_KEY_FILE, 16_384, true)));
+        await readProtectedActionFile(this.env.OPERATIONS_PILOT_SSH_KEY_FILE, 16_384, true)));
     } catch { throw unavailable(); }
     if (observation.configHash !== operationsContentHash(target) || observation.helperHash !== target.helperHash
       || observation.unitHash !== target.unitHash || observation.serverId !== target.serverId) throw invalid();

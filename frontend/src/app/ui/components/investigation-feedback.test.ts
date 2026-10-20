@@ -76,3 +76,15 @@ it('a late historical page cannot overwrite newly accepted feedback', async () =
   release({ items: [], nextBefore: null }); await loading; await view.updateComplete;
   expect(view.querySelectorAll('.feedback-history li')).toHaveLength(1);
 });
+
+it('uses the actual report binding with visible local observation times and clears confirmation when report changes',async()=>{
+  const view=await form();view.actionReport={id:'report',version:2,contentHash:'a'.repeat(64),state:'passed',validUntil:new Date(Date.now()+60000).toISOString(),observedFrom:'2026-01-01T00:00:00.000Z',observedUntil:'2026-01-01T00:05:00.000Z',evidence:[]};
+  (view as any).kind='close';(view as any).problemStatus='resolved';await view.updateComplete;
+  const check=view.querySelector<HTMLInputElement>('input[type=checkbox]')!;check.click();await view.updateComplete;
+  expect(view.querySelector<HTMLInputElement>('input[aria-label="观察开始时间"]')!.value).toBeTruthy();
+  expect(view.querySelector<HTMLInputElement>('input[aria-label="观察结束时间"]')!.value).toBeTruthy();
+  vi.mocked(investigationApi).mockResolvedValueOnce(record);await (view as any).submit();
+  const command=JSON.parse(vi.mocked(investigationApi).mock.calls.at(-1)![1]!.body as string);
+  expect(command.verification).toMatchObject({actionReport:{id:'report',version:2,hash:'a'.repeat(64)},evidenceIds:[],from:'2026-01-01T00:00:00.000Z',to:'2026-01-01T00:05:00.000Z'});
+  view.actionReport={...view.actionReport,version:3,contentHash:'b'.repeat(64)};await view.updateComplete;expect((view as any).useActionReport).toBe(false);
+});
