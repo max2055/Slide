@@ -1,3 +1,9 @@
+import { spawn } from 'node:child_process';
+import { startHelperSshFixture } from './helper-ssh.fixture.js';
+import { createOperationsComposition } from '../composition.js';
+import { createActionWorker, excludeActionJobs } from './worker.js';
+import { MysqlWorkflowStore } from '../../workflows/worker-runtime.js';
+import { signAccessToken } from '../../auth/actor-context.js';
 /** Synthetic identities/health, real isolated MySQL migrations, JWT, HTTP, approval/once and feedback. No model/VM/production calls. */
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -5,12 +11,9 @@ import { once } from 'node:events';
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { startFeedbackFixture } from '../../investigations/feedback-test-fixture.js';
 import { AgentRunService } from '../../adapter/agent-run-service.js';
-import { createVerifyToken } from '../../auth-middleware.js';
 import { MysqlInvestigationStore } from '../../investigations/store.js';
-import { OperationsAuthorization } from '../authorization.js';
 import { operationsContentHash, type ActionPlanVersion } from '../contracts.js';
-import { PlanStore, PlanSources } from './plan-store.js';
-import { ActionPlanService } from './plan-service.js';
+import { PlanStore } from './plan-store.js';
 import { ActionExecutionStore } from './execution-store.js';
 import { ActionExecutor, consumeActionInvocation } from './executor.js';
 import {
@@ -21,7 +24,6 @@ import {
 import { ActionVerificationStore } from './verification-store.js';
 import { ActionVerificationService } from './verification-service.js';
 import {
-  registerActionVerificationRoutes,
   verificationWorkflowHandler,
   verifiedActionWorkflowHandler,
 } from './verification-handler.js';
@@ -31,13 +33,13 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
   let f: Awaited<ReturnType<typeof startFeedbackFixture>>, http: Server, healthUrl: string;
   let now: number, mode: string, sends: number, probeCount: number;
   let plans: PlanStore,
-    sources: PlanSources,
-    approvals: ActionPlanService,
     executions: ActionExecutionStore;
   let executor: ActionExecutor,
     reports: ActionVerificationStore,
-    service: ActionVerificationService;
+    service: Pick<ActionVerificationService, 'prepare' | 'run' | 'store'>;
+  let composition: ReturnType<typeof createOperationsComposition>, apiUrl: string;
   let owner: typeof f.owner, reviewer: typeof f.owner;
+  let ssh: Awaited<ReturnType<typeof startHelperSshFixture>>, useSsh = false;
   let onSample: (() => Promise<void>) | undefined;
   const definition: VerificationDefinition = {
     id: 'demo-health',
@@ -61,20 +63,12 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     helperHash: definition.helperHash,
     unitHash: definition.unitHash,
     hostFingerprint: definition.hostFingerprint,
-    invocationId: (before ? '1' : '2').repeat(32),
+    invocationId: useSsh ? (before ? '1' : '2').padStart(32, '0') : (before ? '1' : '2').repeat(32),
     active: true,
     running: true,
     mainPid: 123,
     httpStatus: before ? 503 : 200,
     restarts: 0,
-  });
-  const flags = () => ({
-    context: false,
-    cases: false,
-    baselines: false,
-    attention: false,
-    plans: true,
-    dispatch: true,
   });
   const seed = async () => {
     now = new Date().getTime();
@@ -170,19 +164,23 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
       },
       rollback: { capability: 'none', description: 'No in-memory rollback' },
     };
-    const plan = await approvals.create(owner, proposal),
-      ref = { planId: plan.id, expectedVersion: plan.version };
-    const approval = await approvals.submit(owner, ref);
-    await approvals.review(reviewer, {
-      ...ref,
-      approvalId: approval.approvalId,
-      action: 'approve',
+    const request = async (actor: typeof owner, path: string, body: unknown, expected = 200) => {
+      const response = await fetch(apiUrl + path, { method: 'POST', headers: {
+        authorization: `Bearer ${signAccessToken(actor, f.secret)}`, 'content-type': 'application/json',
+      }, body: JSON.stringify(body) });
+      const value = await response.json() as any;
+      expect(response.status, JSON.stringify(value)).toBe(expected);
+      return value;
+    };
+    const { plan } = await request(owner, '/api/operations/actions/plans', { content: proposal }, 201);
+    const approval = await request(owner, `/api/operations/actions/plans/${plan.id}/submit`, { expectedVersion: plan.version }, 201);
+    await request(reviewer, `/api/operations/actions/plans/${plan.id}/review`, {
+      expectedVersion: plan.version, approvalId: approval.approvalId, action: 'approve',
     });
-    const execution = await executions.enqueue(reviewer, {
-      ...ref,
-      approvalId: approval.approvalId,
-      requestKey: randomUUID(),
-    });
+    const { execution } = await request(reviewer, `/api/operations/action-plans/${plan.id}/versions/${plan.version}/execute`, {
+      approvalId: approval.approvalId, requestKey: randomUUID(),
+    }, 202);
+    await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");
     return { inv, result, proof, binding, value, plan, execution };
   };
   const observe = async (s: Awaited<ReturnType<typeof seed>>) => {
@@ -226,6 +224,9 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     });
   beforeAll(async () => {
     f = await startFeedbackFixture(port);
+    ssh = await startHelperSshFixture(101);
+    definition.configHash = ssh.configHash;
+    definition.hostFingerprint = ssh.target.hostFingerprint;
     await f.rows(
       "INSERT INTO servers(id,host,label,os_type,credential_type,credential_encrypted,collection_enabled) VALUES(101,'synthetic.invalid','P08 isolated','Other','key','unused',0)",
     );
@@ -248,23 +249,28 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     http.listen(0, '127.0.0.1');
     await once(http, 'listening');
     healthUrl = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
-    plans = new PlanStore(f.pool as never);
-    sources = new PlanSources({
-      validate: async (_c, p) => {
-        if (p.target.id !== definition.serverId || p.tool.hash !== definition.helperHash)
-          throw Error('synthetic environment mismatch');
+    const adapter = new ActionEvidenceAdapter(definition, {
+      history: async (from, _until) =>
+        Array.from({ length: 13 }, (_, i) => health(Date.parse(from) + i * 10_000, true)).filter(
+          (_s, i) => mode !== 'before-missing' || i !== 3,
+        ),
+      sample: async () => {
+        await onSample?.();
+        const response = await fetch(healthUrl);
+        return response.json();
       },
     });
-    approvals = new ActionPlanService(plans, sources, new OperationsAuthorization(), flags);
-    executions = new ActionExecutionStore(plans, sources, approvals);
-    executor = new ActionExecutor(
-      executions,
-      sources,
-      {
-        preflight: async () => {},
+    composition = createOperationsComposition(() => f.pool, { jwtSecret: f.secret,
+      env: { OPERATIONS_ACTION_PLANS_ENABLED: 'true', OPERATIONS_ACTION_DISPATCH_ENABLED: 'true' },
+      actionEnvironment: { validate: async (_c, p) => {
+        if (p.target.id !== definition.serverId || p.tool.hash !== definition.helperHash) throw Error('synthetic environment mismatch');
+      } },
+      actionPorts: { adapter: {
+        preflight: async plan => { if (useSsh) await ssh.adapter.preflight(plan); },
         execute: async (i) => {
-          consumeActionInvocation(i);
           sends++;
+          if (useSsh) return ssh.adapter.execute(i);
+          consumeActionInvocation(i);
           return {
             protocol: 1,
             operationId: i.operationId,
@@ -277,41 +283,30 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
             after: '2'.repeat(32),
           };
         },
-        receipt: async () => {
+        receipt: async (plan, id) => {
+          if (useSsh) return ssh.adapter.receipt(plan, id);
           throw Error('No receipt replay');
         },
-      },
-      new OperationsAuthorization(),
-      flags,
-    );
-    reports = new ActionVerificationStore(plans, sources);
-    const adapter = new ActionEvidenceAdapter(definition, {
-      history: async (from, _until) =>
-        Array.from({ length: 13 }, (_, i) => health(Date.parse(from) + i * 10_000, true)).filter(
-          (_s, i) => mode !== 'before-missing' || i !== 3,
-        ),
-      sample: async () => {
-        await onSample?.();
-        const response = await fetch(healthUrl);
-        return response.json();
-      },
+      }, evidence: adapter, clock: {
+        now: () => now, until: async at => { now = Math.max(now, at); },
+      } },
     });
-    service = new ActionVerificationService(reports, adapter, {
-      now: () => now,
-      until: async (at) => {
-        now = Math.max(now, at);
-      },
-    });
-    await registerActionVerificationRoutes(f.app, createVerifyToken(f.secret, f.contexts), service);
+    ({ executions, executor, reports, verification: service } = composition);
+    plans = executions.plans;
+    await composition.register(f.app);
+    apiUrl = await f.app.listen({ host: '127.0.0.1', port: 0 });
   }, 120_000);
   afterAll(async () => {
     http?.closeAllConnections();
     await new Promise<void>((done) => (http ? http.close(() => done()) : done()));
+    await ssh?.close();
     await f?.close();
   });
   beforeEach(async () => {
     now = Date.now();
     mode = 'healthy';
+    useSsh = false;
+    ssh.loseReceipt(false);
     sends = 0;
     probeCount = 0;
     onSample = undefined;
@@ -325,6 +320,75 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     await f.rows(
       "INSERT IGNORE INTO role_permissions(role_id,permission_id) SELECT 101,id FROM permissions WHERE code LIKE 'operations:%' OR code IN ('servers:view','servers:manage')",
     );
+  });
+  it('standalone worker process starts against the isolated schema and exits gracefully without loading a model', async () => {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/operations/actions/worker-main.ts'], {
+      env: { ...process.env, NODE_ENV: 'test', JWT_SECRET_KEY: f.secret,
+        DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root', DB_PASSWORD: process.env.T11_TEST_MYSQL_PASSWORD ?? '', DB_NAME: f.database,
+        OPERATIONS_ACTION_PLANS_ENABLED: 'false', OPERATIONS_ACTION_DISPATCH_ENABLED: 'false' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+    let output = '';
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('WORKER_START_TIMEOUT')), 15_000);
+        child.once('error', error => { clearTimeout(timeout); reject(error); });
+        child.once('exit', () => { clearTimeout(timeout); reject(new Error(output)); });
+        child.stderr.on('data', chunk => { output += chunk; });
+        child.stdout.on('data', chunk => { output += chunk; if (output.includes('OPERATIONS_ACTION_WORKER_READY')) { clearTimeout(timeout); resolve(); } });
+      });
+      child.kill('SIGTERM');
+      expect(await exited).toEqual({ code: 0, signal: null });
+      expect(output).not.toMatch(/Agent Engine|Provider|model request/);
+    } finally { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await exited; } }
+  }, 20_000);
+  it('formal HTTP intake and two independent durable workers consume persisted authority, once only', async () => {
+    useSsh = true; await ssh.reset();
+    const s = await seed();
+    const queue = new MysqlWorkflowStore(() => f.pool as never);
+    // Restrict the fixture to action rows; other seed jobs are outside this test.
+    await f.rows("DELETE FROM workflow_jobs WHERE job_type NOT LIKE 'operations.action.%'");
+    expect(await excludeActionJobs(queue).claim('readonly', 30)).toBeNull();
+    const first = createActionWorker(composition, queue, 'p11-worker-a');
+    const second = createActionWorker(composition, queue, 'p11-worker-b');
+    const originalRun = service.run.bind(service);
+    vi.spyOn(service, 'run').mockImplementation(async (actor, id) => {
+      now = Date.parse((await executions.get(actor, id)).sentAt!);
+      return originalRun(actor, id);
+    });
+    try {
+      await Promise.all([first.runOnce(), second.runOnce()]);
+      expect(sends).toBe(1);
+      expect(await ssh.restartCount()).toBe(1);
+      const response = await fetch(`${apiUrl}/api/operations/action-executions/${s.execution.id}/verification`, {
+        headers: { authorization: `Bearer ${signAccessToken(owner, f.secret)}` },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect((await response.json() as any).verification.state).toBe('passed');
+      await first.runOnce();
+      expect(sends).toBe(1);
+      expect((await f.rows("SELECT state FROM workflow_jobs WHERE idempotency_key=?", [`action.execute:${s.execution.id}`]))[0].state).toBe('completed');
+    } finally { await first.shutdown(); await second.shutdown(); }
+  });
+  it('lost SSH receipt is unknown; formal reconciliation reads the original helper receipt without another restart', async () => {
+    useSsh = true; await ssh.reset(); ssh.loseReceipt(true);
+    const s = await seed();
+    await f.rows("DELETE FROM workflow_jobs WHERE job_type NOT LIKE 'operations.action.%'");
+    const worker = createActionWorker(composition, new MysqlWorkflowStore(() => f.pool as never), 'p11-lost-ack');
+    try {
+      await worker.runOnce();
+      expect((await executions.get(reviewer, s.execution.id)).state).toBe('outcome_unknown');
+      expect(await ssh.restartCount()).toBe(1);
+      const response = await fetch(`${apiUrl}/api/operations/action-executions/${s.execution.id}/reconcile`, {
+        method: 'POST', headers: { authorization: `Bearer ${signAccessToken(reviewer, f.secret)}`, 'content-type': 'application/json' }, body: '{}',
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json() as any).execution.state).toBe('succeeded');
+      await worker.runOnce();
+      expect(await ssh.restartCount()).toBe(1); expect(sends).toBe(1);
+    } finally { await worker.shutdown(); }
   });
   it('complete immutable report chain, exact 120/60/300/10 windows, independent evidence and human closure/reopen', async () => {
     const s = await seed();

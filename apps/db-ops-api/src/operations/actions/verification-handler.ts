@@ -10,7 +10,7 @@ import type { ActionExecutor } from './executor.js';
 import type { ActionVerificationService } from './verification-service.js';
 
 export function verificationWorkflowHandler(
-  service: ActionVerificationService,
+  service: Pick<ActionVerificationService, 'prepare' | 'run' | 'store'>,
   persistedCaller: (executionId: string) => Promise<ActorContext>,
 ) {
   return async (job: ClaimedJob): Promise<void> => {
@@ -24,7 +24,7 @@ export function verificationWorkflowHandler(
 /** P10 can register this wrapper on the independent action worker to guarantee
  * pre-registration precedes the P07 dispatcher, without changing its once/fence logic. */
 export function verifiedActionWorkflowHandler(
-  service: ActionVerificationService,
+  service: Pick<ActionVerificationService, 'prepare' | 'run' | 'store'>,
   executor: ActionExecutor,
   workerId: string,
   persistedCaller: (executionId: string) => Promise<ActorContext>,
@@ -43,7 +43,7 @@ export function verifiedActionWorkflowHandler(
 export async function registerActionVerificationRoutes(
   app: FastifyInstance,
   verifyToken: (request: any, reply: any) => Promise<unknown>,
-  service: ActionVerificationService,
+  service: Pick<ActionVerificationService, 'prepare' | 'run' | 'store'>,
 ) {
   await app.register(async (scope) => {
     scope.addHook('onRequest', async (_req, reply) => {

@@ -1,3 +1,7 @@
+import { createOperationsComposition } from '../../../apps/db-ops-api/src/operations/composition.ts';
+import { createActionWorker } from '../../../apps/db-ops-api/src/operations/actions/worker.ts';
+import { MysqlWorkflowStore } from '../../../apps/db-ops-api/src/workflows/worker-runtime.ts';
+import { startHelperSshFixture } from '../../../apps/db-ops-api/src/operations/actions/helper-ssh.fixture.ts';
 import { registerContextFixture } from './operations-context.ts';
 import { createRequire } from 'node:module';
 import { registerInvestigationRoutes } from '../../../apps/db-ops-api/src/investigations/routes.ts';
@@ -22,25 +26,16 @@ import { MysqlRelationStore } from '../../../apps/db-ops-api/src/operations/rela
 import { OperationsAuthorization } from '../../../apps/db-ops-api/src/operations/authorization.ts';
 import { MysqlInvestigationBudgetLedger } from '../../../apps/db-ops-api/src/investigations/budget-ledger.ts';
 import { investigationBudgetConfiguration } from '../../../apps/db-ops-api/src/investigations/session-bridge.ts';
-import { ActionPlanService } from '../../../apps/db-ops-api/src/operations/actions/plan-service.ts';
-import { PlanStore, PlanSources } from '../../../apps/db-ops-api/src/operations/actions/plan-store.ts';
-import { registerActionPlanRoutes } from '../../../apps/db-ops-api/src/operations/actions/routes.ts';
-import { OperationsUiIntegration, registerOperationsUiRoutes } from '../../../apps/db-ops-api/src/operations/ui-integration.ts';
-import { ActionExecutionStore } from '../../../apps/db-ops-api/src/operations/actions/execution-store.ts';
-import { ActionExecutor, consumeActionInvocation } from '../../../apps/db-ops-api/src/operations/actions/executor.ts';
-import { registerActionExecutionRoutes } from '../../../apps/db-ops-api/src/operations/actions/workflow-handler.ts';
-import { ActionVerificationStore } from '../../../apps/db-ops-api/src/operations/actions/verification-store.ts';
-import { ActionVerificationService } from '../../../apps/db-ops-api/src/operations/actions/verification-service.ts';
 import { ActionEvidenceAdapter } from '../../../apps/db-ops-api/src/operations/actions/evidence-adapter.ts';
-import { registerActionVerificationRoutes } from '../../../apps/db-ops-api/src/operations/actions/verification-handler.ts';
-import { operationsContentHash, OperationsError } from '../../../apps/db-ops-api/src/operations/contracts.ts';
+import { OperationsError } from '../../../apps/db-ops-api/src/operations/contracts.ts';
 import { AgentToolApprovalService } from '../../../apps/db-ops-api/src/security/agent-tool-approval-service.ts';
 
 export async function startOperationsServer() {
   const port=Number(process.env.MAX202_MYSQL_PORT);
-  if(!port)throw new Error('MAX202_MYSQL_PORT must point to this task’s isolated MySQL 8.4 container');
+  if(!port)throw new Error('MAX202_MYSQL_PORT must point to this task’s isolated MySQL container');
   const f=await startFeedbackFixture(port);
   const realNow=Date.now;
+  const ssh=await startHelperSshFixture(501);
   let vite: Awaited<ReturnType<typeof createServer>> | undefined;
   try {
     const codes=['operations:cases:view','operations:cases:manage','operations:cases:review','instance:manage','network_devices:view','network_devices:manage','servers:view','servers:manage','operations:context:view','operations:context:manage','operations:actions:view','operations:actions:propose','operations:actions:approve','operations:actions:execute','approval:view'];
@@ -79,33 +74,31 @@ export async function startOperationsServer() {
     const [actionAllocation]=await f.rows('SELECT id FROM investigation_budget_ledger WHERE request_id=?',[actionRequest]);
     if(actionAllocation)await new MysqlInvestigationBudgetLedger(()=>f.pool,config.policy).cancelUnsent(actionAllocation.id);
     // Explicit synthetic environment validator. This proves UI/domain approval,
-    // never SSH/environment qualification or dispatch authorization.
-    const definition={id:'synthetic-verifier',version:'1',serverId:501,configHash:'c'.repeat(64),helperHash:'a'.repeat(64),unitHash:'e'.repeat(64),hostFingerprint:'synthetic-pinned-host',beforeSeconds:120 as const,readinessSeconds:60 as const,observationSeconds:300 as const,intervalSeconds:10 as const,maxExtraRestarts:0 as const,requireAllHealthy:true as const};
+    // isolated SSH/helper proves protocol, never production qualification.
+    const definition={id:'synthetic-verifier',version:'1',serverId:501,configHash:ssh.configHash,helperHash:'a'.repeat(64),unitHash:'e'.repeat(64),hostFingerprint:ssh.target.hostFingerprint,beforeSeconds:120 as const,readinessSeconds:60 as const,observationSeconds:300 as const,intervalSeconds:10 as const,maxExtraRestarts:0 as const,requireAllHealthy:true as const};
     let clock=Date.now(),sends=0,loseReceipt=false;
-    const sample=(at:number,before=false)=>({at:new Date(at).toISOString(),serverId:501,configHash:definition.configHash,helperHash:definition.helperHash,unitHash:definition.unitHash,hostFingerprint:definition.hostFingerprint,invocationId:(before?'1':'2').repeat(32),active:true,running:true,mainPid:123,httpStatus:before?503:200,restarts:0});
+    const sample=(at:number,before=false)=>({at:new Date(at).toISOString(),serverId:501,configHash:definition.configHash,helperHash:definition.helperHash,unitHash:definition.unitHash,hostFingerprint:definition.hostFingerprint,invocationId:(before?'1':'2').padStart(32,'0'),active:true,running:true,mainPid:123,httpStatus:before?503:200,restarts:0});
     const adapter=new ActionEvidenceAdapter(definition,{history:async(from)=>Array.from({length:13},(_,i)=>sample(Date.parse(from)+i*10000,true)),sample:async()=>sample(clock)});
-    const planStore=new PlanStore({getConnection:async()=>f.pool.getConnection() as never});
-    const sources=new PlanSources({validate:async(_c,content)=>{
-      if(content.target.id!==501 || content.tool.hash!=='a'.repeat(64) || content.parameters.unit!=='slide-action-demo.service')throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
-    }});
-    const flags=()=>({...operationsFlags({}),plans:true,dispatch:true});
-    const plans=new ActionPlanService(planStore,sources,new OperationsAuthorization(),flags);
-    await registerActionPlanRoutes(f.app,verify as any,plans);
+    let trusted: any;
+    const composition=createOperationsComposition(()=>f.pool,{jwtSecret:f.secret,
+      env:{OPERATIONS_ACTION_PLANS_ENABLED:'true',OPERATIONS_ACTION_DISPATCH_ENABLED:'true',OPERATIONS_CASES_ENABLED:'true'},
+      actionEnvironment:{validate:async(_c,content)=>{
+        if(content.target.id!==501 || content.tool.hash!=='a'.repeat(64) || content.parameters.unit!=='slide-action-demo.service')throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+      },proposal:async targetId=>{if(targetId!==501)throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');return {...trusted,validUntil:new Date(Date.now()+1800000).toISOString()};}},
+      actionPorts:{adapter:{preflight:p=>ssh.adapter.preflight(p),execute:async i=>{sends++;ssh.loseReceipt(loseReceipt);return ssh.adapter.execute(i);},receipt:(p,id)=>ssh.adapter.receipt(p,id)},evidence:adapter,
+        clock:{now:()=>clock,until:async at=>{clock=Math.max(clock,at);}}},
+    });
+    const {plans,ui,executions,reports,verification}=composition;
+    await composition.registerActions(f.app);
+    const worker=createActionWorker(composition,new MysqlWorkflowStore(()=>f.pool as never),'max204-browser');
     const plan=await plans.create(author,{schemaVersion:1,investigationId:actionSource.inv.id,resultVersion:1,target:{type:'server',id:501},
-      tool:{name:'restart_demo_service',version:'synthetic-1',hash:'a'.repeat(64)},parameters:{unit:'slide-action-demo.service'},
+      tool:{name:'restart_demo_service',version:'1',hash:'a'.repeat(64)},parameters:{unit:'slide-action-demo.service'},
       evidence:[{id:actionSource.proof.id,version:1,hash:actionSource.proof.contentHash,validUntil:new Date(Date.now()+600000).toISOString()}],relations:[],baselines:[],
       preconditions:[{kind:'target_config_hash',expected:definition.configHash}],risk:'medium',impact:'SYNTHETIC 独立审批测试；不会发送资源动作',policyVersion:'synthetic-1',
       verifier:{id:'synthetic-verifier',version:'1',definitionHash:adapter.definitionHash,beforeSeconds:120,readinessSeconds:60,observationSeconds:300,intervalSeconds:10,maxExtraRestarts:0,requireAllHealthy:true},
       rollback:{capability:'none',description:'不可恢复进程内存；合成测试没有执行动作'}});
-    const {author:_a,requester:_r,validFrom:_from,validUntil:_until,investigationId:_i,resultVersion:_v,target:_t,impact:_impact,evidence:_e,relations:_rel,baselines:_b,schemaVersion:_s,...trusted}=plan.content;
-    const ui=new OperationsUiIntegration(planStore,plans,knowledge,new CaseCursorCodec(randomBytes(32)),{proposal:async targetId=>{if(targetId!==501)throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');return {...trusted,validUntil:new Date(Date.now()+1800000).toISOString()};}});
-    await registerOperationsUiRoutes(f.app,verify,ui);
-    const executions=new ActionExecutionStore(planStore,sources,plans);
-    const executor=new ActionExecutor(executions,sources,{preflight:async()=>{},execute:async i=>{consumeActionInvocation(i);sends++;if(loseReceipt)throw new Error('SYNTHETIC acknowledgement lost after send');return {protocol:1,operationId:i.operationId,planHash:i.planHash,configHash:i.configHash,helperHash:i.toolHash,unit:'slide-action-demo.service',outcome:'succeeded',before:'1'.repeat(32),after:'2'.repeat(32)};},receipt:async()=>null},new OperationsAuthorization(),flags);
-    const reports=new ActionVerificationStore(planStore,sources);
-    const verification=new ActionVerificationService(reports,adapter,{now:()=>clock,until:async at=>{clock=Math.max(clock,at);}});
-    await registerActionExecutionRoutes(f.app,verify,executions,executor);
-    await registerActionVerificationRoutes(f.app,verify,verification);
+    const {author:_a,requester:_r,validFrom:_from,validUntil:_until,investigationId:_i,resultVersion:_v,target:_t,impact:_impact,evidence:_e,relations:_rel,baselines:_b,schemaVersion:_s,...trustedFields}=plan.content;
+    trusted=trustedFields;
     await registerInvestigationRoutes(f.app,verify,f.bridge,f.bridge.observationServices(),new LegacyAnalysisBridge(()=>f.pool,undefined,f.bridge));
     await registerContextFixture(f,verify,author);
     const approvalFeed=new AgentToolApprovalService(()=>f.pool as never,randomUUID());
@@ -133,6 +126,6 @@ export async function startOperationsServer() {
     vite=await createServer({root:resolve('.'),configFile:resolve('vite.config.js'),define:{'import.meta.env.VITE_AGENT_WS_URL':'""'},server:{host:'127.0.0.1',port:0,strictPort:false,proxy:{'/api':{target:apiUrl,changeOrigin:true},'/__slide':{target:apiUrl,changeOrigin:true},'/agent-ws':{target:apiUrl,ws:true,changeOrigin:true}}}});
     await vite.listen();
     const url=`http://127.0.0.1:${(vite.httpServer!.address() as {port:number}).port}`;
-    return {...f,author,reviewer,source,actionSource,knowledge,plan,plans,ui,executions,reports,verification,sends:()=>sends,dispatchUnknown:async(id:string)=>{loseReceipt=true;try{await verification.prepare(author,id);await executor.run(id,'max202-synthetic-lost-ack');}finally{loseReceipt=false;}},resetClock:()=>{Date.now=realNow;},runAction:async(id:string)=>{await verification.prepare(author,id);await executor.run(id,'max202-synthetic');const e=await executions.get(author,id);clock=Date.parse(e.sentAt!);const report=await verification.run(author,id);Date.now=()=>Math.max(realNow(),clock);return report;},url,apiUrl,token:(actor=author)=>signAccessToken(actor,f.secret),close:async()=>{Date.now=realNow;await vite?.close();await f.close();}};
-  } catch(error) {Date.now=realNow;await vite?.close();await f.close();throw error;}
+    return {...f,author,reviewer,source,actionSource,knowledge,plan,plans,ui,executions,reports,verification,sends:()=>sends,helperRestarts:()=>ssh.restartCount(),dispatchUnknown:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");loseReceipt=true;try{await verification.prepare(author,id);for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='outcome_unknown')break;}}finally{loseReceipt=false;}},resetClock:()=>{Date.now=realNow;},runAction:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='succeeded')break;}const report=await reports.get(author,id);Date.now=()=>Math.max(realNow(),clock);return report;},url,apiUrl,token:(actor=author)=>signAccessToken(actor,f.secret),close:async()=>{Date.now=realNow;await vite?.close();await worker.shutdown();await ssh.close();await f.close();}};
+  } catch(error) {Date.now=realNow;await vite?.close();await ssh.close();await f.close();throw error;}
 }

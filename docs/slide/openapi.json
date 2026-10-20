@@ -19122,6 +19122,25 @@
         ],
         "type": "object"
       },
+      "OperationsActionExecute": {
+        "additionalProperties": false,
+        "properties": {
+          "approvalId": {
+            "pattern": "^[1-9]\\d{0,19}$",
+            "type": "string"
+          },
+          "requestKey": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "approvalId",
+          "requestKey"
+        ],
+        "type": "object"
+      },
       "OperationsAttentionInput": {
         "additionalProperties": false,
         "properties": {
@@ -19642,6 +19661,11 @@
           "expectedRevision",
           "reason"
         ],
+        "type": "object"
+      },
+      "OperationsEmptyCommand": {
+        "additionalProperties": false,
+        "properties": {},
         "type": "object"
       },
       "OperationsManualCaseBinding": {
@@ -27620,9 +27644,413 @@
         ]
       }
     },
+    "/api/operations/action-executions/{id}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "readOperationsExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/action-executions/{id}/cancel": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "cancelOperationsExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsEmptyCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/action-executions/{id}/reconcile": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "reconcileOperationsExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsEmptyCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/action-executions/{id}/verification": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "readOperationsVerification",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "prepareOperationsVerification",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsEmptyCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/action-executions/{id}/verification/versions/{version}": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "readOperationsVerificationVersion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/operations/action-plans/{id}/versions/{version}/execute": {
+      "post": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "executeOperationsPlan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationsActionExecute"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/operations/actions/drafts": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "createTrustedOperationsDraft",
         "parameters": [],
         "requestBody": {
@@ -27641,6 +28069,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27670,7 +28101,7 @@
     },
     "/api/operations/actions/plans": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "discoverOperationsPlans",
         "parameters": [],
         "responses": {
@@ -27679,6 +28110,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27706,7 +28140,7 @@
         ]
       },
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "createOperationsPlan",
         "parameters": [],
         "requestBody": {
@@ -27725,6 +28159,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27754,7 +28191,7 @@
     },
     "/api/operations/actions/plans/{id}": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsPlan",
         "parameters": [
           {
@@ -27772,6 +28209,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27801,7 +28241,7 @@
     },
     "/api/operations/actions/plans/{id}/review": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviewOperationsPlan",
         "parameters": [
           {
@@ -27829,6 +28269,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27858,7 +28301,7 @@
     },
     "/api/operations/actions/plans/{id}/submit": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "submitOperationsPlan",
         "parameters": [
           {
@@ -27886,6 +28329,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27915,7 +28361,7 @@
     },
     "/api/operations/actions/plans/{id}/versions": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviseOperationsPlan",
         "parameters": [
           {
@@ -27943,6 +28389,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -27972,7 +28421,7 @@
     },
     "/api/operations/attention": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "computeOperationsAttention",
         "parameters": [],
         "requestBody": {
@@ -27991,6 +28440,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28020,7 +28472,7 @@
     },
     "/api/operations/attention/{id}": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsAttention",
         "parameters": [
           {
@@ -28038,6 +28490,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28067,7 +28522,7 @@
     },
     "/api/operations/attention/{id}/overrides": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "overrideOperationsAttention",
         "parameters": [
           {
@@ -28095,6 +28550,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28124,7 +28582,7 @@
     },
     "/api/operations/baselines": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "computeOperationsBaseline",
         "parameters": [],
         "requestBody": {
@@ -28143,6 +28601,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28172,7 +28633,7 @@
     },
     "/api/operations/baselines/{id}": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsBaseline",
         "parameters": [
           {
@@ -28190,6 +28651,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28219,7 +28683,7 @@
     },
     "/api/operations/knowledge": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "searchOperationsCases",
         "parameters": [],
         "responses": {
@@ -28228,6 +28692,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28255,7 +28722,7 @@
         ]
       },
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "createOperationsCase",
         "parameters": [],
         "requestBody": {
@@ -28274,6 +28741,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28303,7 +28773,7 @@
     },
     "/api/operations/knowledge/{id}": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsCase",
         "parameters": [
           {
@@ -28321,6 +28791,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28348,7 +28821,7 @@
         ]
       },
       "put": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviseOperationsCase",
         "parameters": [
           {
@@ -28376,6 +28849,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28405,7 +28881,7 @@
     },
     "/api/operations/knowledge/{id}/bind": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "bindOperationsCase",
         "parameters": [
           {
@@ -28433,6 +28909,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28462,7 +28941,7 @@
     },
     "/api/operations/knowledge/{id}/review": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviewOperationsCase",
         "parameters": [
           {
@@ -28490,6 +28969,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28519,7 +29001,7 @@
     },
     "/api/operations/knowledge/{id}/submit": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "submitOperationsCase",
         "parameters": [
           {
@@ -28547,6 +29029,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28576,7 +29061,7 @@
     },
     "/api/operations/knowledge/{id}/watch": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "watchOperationsCase",
         "parameters": [
           {
@@ -28594,6 +29079,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28623,7 +29111,7 @@
     },
     "/api/operations/knowledge/{id}/withdraw": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "withdrawOperationsCase",
         "parameters": [
           {
@@ -28651,6 +29139,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28680,7 +29171,7 @@
     },
     "/api/operations/relations": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "suggestOperationsRelation",
         "parameters": [],
         "requestBody": {
@@ -28699,6 +29190,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28728,7 +29222,7 @@
     },
     "/api/operations/relations/{id}/review": {
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviewOperationsRelation",
         "parameters": [
           {
@@ -28756,6 +29250,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28785,7 +29282,7 @@
     },
     "/api/operations/relations/{id}/revisions": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsRelationHistory",
         "parameters": [
           {
@@ -28803,6 +29300,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28830,7 +29330,7 @@
         ]
       },
       "post": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "reviseOperationsRelation",
         "parameters": [
           {
@@ -28858,6 +29358,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"
@@ -28887,7 +29390,7 @@
     },
     "/api/operations/resources/{type}/{id}/relations": {
       "get": {
-        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.",
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
         "operationId": "readOperationsGraph",
         "parameters": [
           {
@@ -28913,6 +29416,9 @@
           },
           "201": {
             "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
           },
           "401": {
             "description": "Missing or revoked JWT"

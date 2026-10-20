@@ -1,6 +1,7 @@
+import { actionExecuteSchema } from './actions/workflow-handler.js';
 import { planDiscoverySchema, trustedDraftSchema, manualCaseBindingSchema } from './ui-integration.js';
 /** Public request contracts consume the same strict validators as domain writes.
- * Responses retain domain lifecycle/unknown semantics; no dispatch endpoint. */
+ * Responses retain domain lifecycle/unknown semantics. */
 import { z } from 'zod';
 import { candidateSchema, revisionSchema, reviewSchema, transitionSchema, withdrawalSchema } from './knowledge/service.js';
 import { searchInputSchema } from './knowledge/search.js';
@@ -17,6 +18,7 @@ const transition = z.strictObject({ expectedVersion: z.number().int().nonnegativ
 const version = z.strictObject({ expectedVersion: z.number().int().positive().safe() });
 const plan = z.strictObject({ content: z.record(z.string(), z.unknown()), lifetimeMs: z.number().int().positive().max(1800000).optional() });
 const schemas = {
+  OperationsActionExecute: actionExecuteSchema, OperationsEmptyCommand: z.strictObject({}),
   OperationsPlanDiscovery: planDiscoverySchema, OperationsTrustedDraft: trustedDraftSchema, OperationsManualCaseBinding: manualCaseBindingSchema,
   OperationsCaseCandidate: candidateSchema, OperationsCaseRevision: revisionSchema, OperationsCaseReview: reviewSchema,
   OperationsCaseTransition: transitionSchema, OperationsCaseWithdrawal: withdrawalSchema, OperationsCaseSearch: searchInputSchema,
@@ -35,15 +37,21 @@ export const operationsJsonSchemas = Object.fromEntries(Object.entries(schemas).
 }));
 const route = (method: string, operationId: string, input?: keyof typeof schemas) => ({ [method]: {
   operationId, security: [{ bearerAuth: [] }],
-  description: 'Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Preparation has no action dispatcher; plans require a reviewed real environment validator.',
+  description: 'Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.',
   ...(input ? { requestBody: { required: true, content: { 'application/json': { schema: { $ref: `#/components/schemas/${input}` } } } } } : {}),
   responses: { '200': { description: 'Authorized domain result, preserving unknown and immutable version/hash' },
-    '201': { description: 'Created immutable candidate/version' }, '401': { description: 'Missing or revoked JWT' },
+    '201': { description: 'Created immutable candidate/version' }, '202': { description: 'Durably queued; not proof of execution or resolution' }, '401': { description: 'Missing or revoked JWT' },
     '403': { description: 'Mutation denied or self review' }, '404': { description: 'Content/source not visible' },
     '409': { description: 'Version/cursor conflict' }, '422': { description: 'Input, feature or source precondition failed' },
     '503': { description: 'Dependency unavailable; no inferred success or replay' } },
 } });
 export const operationsPublicPaths = {
+  '/api/operations/action-plans/{id}/versions/{version}/execute': route('post','executeOperationsPlan','OperationsActionExecute'),
+  '/api/operations/action-executions/{id}': route('get','readOperationsExecution'),
+  '/api/operations/action-executions/{id}/cancel': route('post','cancelOperationsExecution','OperationsEmptyCommand'),
+  '/api/operations/action-executions/{id}/reconcile': route('post','reconcileOperationsExecution','OperationsEmptyCommand'),
+  '/api/operations/action-executions/{id}/verification': { ...route('get','readOperationsVerification'), ...route('post','prepareOperationsVerification','OperationsEmptyCommand') },
+  '/api/operations/action-executions/{id}/verification/versions/{version}': route('get','readOperationsVerificationVersion'),
   '/api/operations/knowledge': { ...route('get','searchOperationsCases'), ...route('post','createOperationsCase','OperationsCaseCandidate') },
   '/api/operations/knowledge/{id}': { ...route('get','readOperationsCase'), ...route('put','reviseOperationsCase','OperationsCaseRevision') },
   '/api/operations/knowledge/{id}/submit': route('post','submitOperationsCase','OperationsCaseTransition'),

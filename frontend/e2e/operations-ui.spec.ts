@@ -117,7 +117,7 @@ test('synthetic plan uses real version-bound submission and independent approval
   await own.getByRole('button',{name:'保存新计划版本',exact:true}).click();await expect(own).toContainText('v2');
   const [old]=await env.rows('SELECT state FROM action_plan_versions WHERE plan_id=? AND version=1',[env.plan.id]);expect(old.state).toBe('superseded');
   const [count]=await env.rows('SELECT COUNT(*) n FROM action_executions');expect(Number(count.n)).toBe(0);
-  if(output)await writeFile(resolve(output,'plan-evidence.json'),JSON.stringify({source:'synthetic environment; real source ACL/MySQL/JWT/HTTP/PlanService',planId:env.plan.id,oldState:old.state,newVersion:2,externalActions:0,productModelCalls:0,keyboard:'native modal Esc and focus restoration passed',limitations:['No real environment qualification','Dispatch and verification HTTP composition pending P11']},null,2));
+  if(output)await writeFile(resolve(output,'plan-evidence.json'),JSON.stringify({source:'synthetic environment; real source ACL/MySQL/JWT/HTTP/PlanService',planId:env.plan.id,oldState:old.state,newVersion:2,externalActions:0,productModelCalls:0,keyboard:'native modal Esc and focus restoration passed',limitations:['Synthetic identities/observations and isolated helper; no production qualification']},null,2));
   await authorContext.close();await reviewContext.close();
 });
 
@@ -196,7 +196,7 @@ test('trusted draft discovery and human case binding use live source/result/vers
 
 test('browser executes one approved synthetic action, reads immutable effect report and closes/reopens investigation',async({page,request})=>{
   const headers={authorization:`Bearer ${env.token()}`};
-  const plan=await env.ui.draft(env.author,{investigationId:env.actionSource.inv.id,resultVersion:1,targetId:501,impact:'SYNTHETIC 隔离执行器；未连接 SSH/生产目标'});
+  const plan=await env.ui.draft(env.author,{investigationId:env.actionSource.inv.id,resultVersion:1,targetId:501,impact:'SYNTHETIC 环回 SSH/helper；不连接生产目标'});
   const a=await env.plans.submit(env.author,{planId:plan.id,expectedVersion:plan.version});
   await env.plans.review(env.reviewer,{planId:plan.id,expectedVersion:plan.version,approvalId:a.approvalId,action:'approve',note:'Synthetic independent reviewer'});
   await page.addInitScript(({token,actor})=>{localStorage.setItem('token',token);localStorage.setItem('user',JSON.stringify({id:actor.userId}));localStorage.setItem('permissions',JSON.stringify(actor.permissions));},{token:env.token(),actor:env.author});
@@ -218,7 +218,15 @@ test('browser executes one approved synthetic action, reads immutable effect rep
   await feedback.getByRole('checkbox',{name:'使用当前效果报告'}).check();await feedback.getByLabel('反馈与处理依据',{exact:true}).fill('SYNTHETIC 测试身份核对固定窗口报告，不代签真实业务批准');
   await feedback.getByRole('button',{name:'保存人工记录',exact:true}).click();
   await expect(outcome.getByRole('button',{name:'重新打开调查并使旧确认失效'})).toBeVisible();
+  const candidate=await request.post(`${env.apiUrl}/api/operations/knowledge`,{headers,data:{investigationId:env.actionSource.inv.id,resultVersion:1,humanConfirmed:true,
+    content:{title:'SYNTHETIC action lineage',symptoms:'Synthetic failure',faultType:'synthetic',confirmedCause:'Controlled helper observation',actions:'Loopback SSH/helper only',actualEffect:'Synthetic fixed-window health',counterexamples:'No production qualification'},
+    applicability:{conditions:'Isolated test only',productVersion:'synthetic-v1',resourceVersion:'synthetic-v1'},validUntil:new Date(Date.now()+600000).toISOString()}});
+  expect(candidate.status()).toBe(201);const item=await candidate.json();
+  const submitted=await request.post(`${env.apiUrl}/api/operations/knowledge/${item.id}/submit`,{headers,data:{expectedRevision:item.revision}});expect(submitted.status()).toBe(200);
+  const reviewed=await request.post(`${env.apiUrl}/api/operations/knowledge/${item.id}/review`,{headers:{authorization:`Bearer ${env.token(env.reviewer)}`},data:{expectedRevision:(await submitted.json()).revision,version:item.version,contentHash:item.contentHash,decision:'approved',note:'Synthetic independent case review'}});expect(reviewed.status()).toBe(200);
+  expect((await (await request.get(`${env.apiUrl}/api/operations/knowledge/${item.id}`,{headers})).json()).content).toBeTruthy();
   await outcome.getByRole('button',{name:'重新打开调查并使旧确认失效'}).click();await expect(outcome).toContainText('调查已重开，原报告不能再用于确认恢复或结案');
+  const stale=await request.get(`${env.apiUrl}/api/operations/knowledge/${item.id}`,{headers});expect((await stale.json()).tombstone).toBe(true);expect(await stale.json()).not.toHaveProperty('content');
   const current=await request.get(`${env.apiUrl}/api/investigations/${env.actionSource.inv.id}`,{headers});expect((await current.json()).problemStatus).toBe('unconfirmed');expect(env.sends()).toBe(1);
   if(output){for(const width of [1600,1024,390])for(const theme of ['light','dark']){await page.setViewportSize({width,height:1000});await page.evaluate(t=>document.documentElement.dataset.themeMode=t,theme);await page.screenshot({path:resolve(output,`outcome-${width}-${theme}.png`),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}}
   env.resetClock();
@@ -274,9 +282,9 @@ test('queued cancellation and unknown receipt reconciliation use original execut
     if(mode==='cancel'){await outcome.getByRole('button',{name:'申请取消原执行'}).click();await expect(outcome).toContainText('已取消');expect(env.sends()).toBe(before);}
     else {
       await env.dispatchUnknown(execution.id);await outcome.getByRole('button',{name:'只读刷新原执行'}).click();await expect(outcome).toContainText('发送结果未知不等于未执行或已取消');
-      await outcome.getByRole('button',{name:'核对原回执（不重发）'}).click();await expect(outcome).toContainText('尚无可核验的原回执');
-      await outcome.getByRole('button',{name:'申请取消原执行'}).click();await expect(outcome).toContainText('已提出，需核对实际终态');
-      await outcome.getByRole('button',{name:'只读刷新原执行'}).click();await expect(outcome).toContainText('执行结果未知');
+      await outcome.getByRole('button',{name:'核对原回执（不重发）'}).click();await expect(outcome).toContainText('执行成功');
+      await outcome.getByRole('button',{name:'只读刷新原执行'}).click();await expect(outcome).toContainText('执行成功');
+      expect(await env.helperRestarts()).toBe(1);
       expect(env.sends()).toBe(before+1);expect((await env.rows('SELECT id FROM action_executions WHERE plan_id=?',[plan.id]))).toHaveLength(1);
       if(output)await page.screenshot({path:resolve(output,'outcome-unknown-reconcile.png')});
     }

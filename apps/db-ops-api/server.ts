@@ -1,3 +1,4 @@
+import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
@@ -5427,7 +5428,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   await startup.assertOwned();
   await startup.step(() => startMetricRetention(pool, workflowRegistry, job => workflowStore.enqueue(job)));
-  const workflowRuntime = new BoundedWorkflowRuntime(workflowStore, workflowWorkerId, workflowConcurrency(), job => workflowStore.resourcesFor(job));
+  const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), job => workflowStore.resourcesFor(job));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
   await startup.step(() => enqueueNotificationDispatch());
