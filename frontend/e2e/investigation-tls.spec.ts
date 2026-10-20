@@ -31,12 +31,14 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     command('certutil', ['-N', '--empty-password', '-d', `sql:${profile}`]);
     command('certutil', ['-A', '-d', `sql:${profile}`, '-n', 'Slide isolated test CA', '-t', 'C,,', '-i', 'ca.crt']);
     context = await firefox.launchPersistentContext(profile, { headless: true, timeout: 20_000, ignoreHTTPSErrors: false });
+    // Keep the original JWT even when WS authority revocation clears browser auth.
+    const originalToken = env.token();
     await context.addInitScript(({ token, actor }) => {
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify({ id: actor.userId, username: actor.username }));
       localStorage.setItem('permissions', JSON.stringify(actor.permissions));
       localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
-    }, { token: env.token(), actor: env.owner });
+    }, { token: originalToken, actor: env.owner });
     const page = await context.newPage(), errors: string[] = [];
     const sockets: Array<{ url: string; sent: number; received: number }> = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -77,9 +79,9 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     await page.getByRole('textbox', { name: '继续调查', exact: true }).fill('再次读取合成指标');
     await page.getByRole('button', { name: '提交新 Run', exact: true }).click();
     await expect.poll(resultCount).toBe(2);
-    expect(await page.evaluate(async id => (await fetch(`/api/investigations/${id}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    })).status, id)).toBe(200);
+    expect(await page.evaluate(async ({ id, token }) => (await fetch(`/api/investigations/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).status, { id, token: originalToken })).toBe(200);
     const agentSockets = sockets.filter(s => new URL(s.url).pathname === '/agent-ws');
     const bidirectional = agentSockets.filter(s => s.sent > 0 && s.received > 0);
     expect(bidirectional.length).toBeGreaterThanOrEqual(2);
@@ -88,9 +90,9 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     }
     await env.pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
     await expect(page.getByRole('textbox', { name: '继续调查', exact: true })).toHaveCount(0);
-    expect(await page.evaluate(async id => (await fetch(`/api/investigations/${id}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    })).status, id)).toBe(404);
+    expect(await page.evaluate(async ({ id, token }) => (await fetch(`/api/investigations/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).status, { id, token: originalToken })).toBe(404);
     expect(errors).toEqual([]); expect(env.workerErrors).toEqual([]); expect(env.observationErrors).toEqual([]);
     await writeFile(test.info().outputPath('trusted-tls.json'), JSON.stringify({
       trust: 'isolated Firefox NSS CA; certificate errors enabled; untrusted profile rejected',
