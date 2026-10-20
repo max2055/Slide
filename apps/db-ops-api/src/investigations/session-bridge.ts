@@ -26,9 +26,17 @@ export function investigationBudgetConfiguration() {
   const maxExecutionTokens = configured === undefined ? undefined : Number(configured);
   if (configured !== undefined && (!configured.trim() || !Number.isSafeInteger(maxExecutionTokens)
     || maxExecutionTokens! < 1 || maxExecutionTokens! > 1_000_000)) throw new Error('INVESTIGATION_MAX_TOKENS');
-  return { ...(maxExecutionTokens === undefined ? {} : { maxExecutionTokens }), domain: 'investigation-v1', reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
+  const automaticDaily = process.env.INVESTIGATION_AUTOMATIC_DAILY_TOKENS;
+  const maxAutomaticTokensPerDay = automaticDaily === undefined ? 256_000 : Number(automaticDaily);
+  if (automaticDaily !== undefined && (!automaticDaily.trim() || !Number.isSafeInteger(maxAutomaticTokensPerDay)
+    || maxAutomaticTokensPerDay < 1 || maxAutomaticTokensPerDay > 1_000_000)) throw new Error('INVESTIGATION_AUTOMATIC_DAILY_TOKENS');
+  // A separately named, server-owned domain permits isolated policy changes;
+  // existing domain snapshots/charges are never rewritten or silently migrated.
+  const domain = process.env.INVESTIGATION_BUDGET_DOMAIN ?? 'investigation-v1';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(domain)) throw new Error('INVESTIGATION_BUDGET_DOMAIN');
+  return { ...(maxExecutionTokens === undefined ? {} : { maxExecutionTokens }), domain, reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
     policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2,
-      maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay: 256_000, maxTotalTokensPerDay: 1_000_000,
+      maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay, maxTotalTokensPerDay: 1_000_000,
       maxCostMicrosPerDay: Number(process.env.INVESTIGATION_DAILY_COST_MICROS ?? 10_000_000) } };
 }
 
