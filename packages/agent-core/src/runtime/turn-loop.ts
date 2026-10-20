@@ -152,9 +152,18 @@ export class TurnLoop {
           if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
         messagesForModel = manager.project(state.messages);
-        if (forceCompact || manager.tokens(messagesForModel) > manager.inputBudget * manager.watermark) {
+        const inputTokens = manager.tokens(messagesForModel);
+        const aboveWatermark = inputTokens > manager.inputBudget * manager.watermark;
+        // A valid current request can grow into two irreducible recent batches.
+        // Use the same next-batch planning reserve as autoCompact while older
+        // history can still be summarized. This is not a future-output bound.
+        const growthPressure = !!saveCheckpoint && spec.tools.getDefinitions().length > 0
+          && inputTokens + manager.contextConfig.maxTokens > manager.inputBudget;
+        if (forceCompact || aboveWatermark || growthPressure) {
           const split = manager.split(state.messages);
-          if (forceCompact || split.end > (manager.summary?.sourceEnd ?? 0)) {
+          const previousEnd = manager.summary?.sourceEnd ?? 0;
+          const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
+          if (forceCompact || (split.end > previousEnd && (aboveWatermark || hasOlderHistory))) {
             await autoCompact(manager, state.messages, this.getProvider(), recovery, compact, async (record, compactState, receipt) => {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact);
