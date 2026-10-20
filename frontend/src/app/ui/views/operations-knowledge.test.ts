@@ -5,6 +5,7 @@ import './operations-knowledge.ts';
 import type { CaseRecord } from '../controllers/operations-api.ts';
 vi.mock('../../../api/index.ts',()=>({authFetch:vi.fn()}));
 const api=vi.mocked(authFetch);
+vi.mock('../controllers/operations-api.ts',async importOriginal=>({...await importOriginal<any>(),watchCase:()=>()=>{}}));
 const record=():CaseRecord=>({id:'case',revision:4,version:2,contentHash:'a'.repeat(64),state:'pending_review',author:{kind:'user',id:11},resources:[],validUntil:new Date(Date.now()+600000).toISOString(),tombstone:false,referenceOnly:true,
   content:{title:'合成案例：服务无响应',symptoms:'当前症状',faultType:'服务异常',confirmedCause:'已确认事实',actions:'隔离测试',actualEffect:'恢复',counterexamples:'依赖故障不适用'},applicability:{conditions:'有证据',productVersion:'1',resourceVersion:'1'},source:{investigationId:'inv',resultId:'result',resultVersion:3,evidence:[]}});
 const json=(v:unknown,status=200)=>({ok:status<400,status,json:async()=>v}) as Response;

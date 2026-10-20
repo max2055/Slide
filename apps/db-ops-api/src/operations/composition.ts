@@ -1,3 +1,4 @@
+import { OperationsUiIntegration, registerOperationsUiRoutes, type TrustedActionProposal } from './ui-integration.js';
 import { createHmac } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'mysql2/promise';
@@ -56,7 +57,7 @@ export function investigationRelationEvidence(investigations: InvestigationAutho
 export function createOperationsComposition(pool: () => Pool | null, options: {
   jwtSecret: string;
   env?: Readonly<Record<string, string | undefined>>;
-  actionEnvironment?: ActionEnvironment;
+  actionEnvironment?: ActionEnvironment & Partial<TrustedActionProposal>;
 }) {
   if (options.jwtSecret.length < 32) throw new Error('OPERATIONS_CURSOR_SECRET_INVALID');
   const contexts = new ActorContextService(pool as never);
@@ -76,6 +77,7 @@ export function createOperationsComposition(pool: () => Pool | null, options: {
     return await current.getConnection() as never;
   } }), new PlanSources(environment, investigations,
     new InvestigationRelationEvidence(investigations)), authorization, flags);
+  const ui = new OperationsUiIntegration(new PlanStore({getConnection:async()=>{const p=pool();if(!p)throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');return await p.getConnection() as never;}}), plans,knowledge,new CaseCursorCodec(key), 'proposal' in environment ? environment as TrustedActionProposal : undefined, contexts,investigations);
   return {
     flags, knowledge, relations, baselines, attention, plans,
     actionEnvironmentAvailable: Boolean(options.actionEnvironment || ((options.env ?? process.env).OPERATIONS_PILOT_MANIFEST_FILE
@@ -89,6 +91,7 @@ export function createOperationsComposition(pool: () => Pool | null, options: {
       await registerBaselineRoutes(app, verify, baselines);
       await registerAttentionRoutes(app, verify, attention);
       await registerActionPlanRoutes(app, verify, plans);
+      await registerOperationsUiRoutes(app, verify, ui);
       });
     },
   };

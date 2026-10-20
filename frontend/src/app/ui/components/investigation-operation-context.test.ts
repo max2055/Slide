@@ -14,6 +14,9 @@ it('strips investigation roles from strict correlation resource refs, renders pa
   [...view.shadowRoot.querySelectorAll('button')].find((b:any)=>b.textContent.includes('评估当前关联事项')).click();await flush();
   expect(JSON.parse(api.mock.calls[0][1]!.body as string).resources).toEqual([{type:'server',id:3}]);
   expect(view.shadowRoot.textContent).toContain('45–60');expect(view.shadowRoot.textContent).toContain('部分数据不可用');expect(view.shadowRoot.textContent).toContain('有效性未知');
+  // Live investigation snapshots allocate new arrays without changing scope.
+  view.resources=[{type:'server',id:3,role:'primary'}];await flush();expect(view.shadowRoot.textContent).toContain('45–60');
+  view.resultVersion=2;await flush();expect(view.shadowRoot.textContent).not.toContain('45–60');
   window.dispatchEvent(new Event('slide-session-expired'));await flush();expect(view.shadowRoot.textContent).not.toContain('45–60');
 });
 it('an unqualified baseline never becomes a normal comparison and static evidence remains separate',async()=>{

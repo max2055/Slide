@@ -1,45 +1,44 @@
-# MAX-202 P09 工程候选与接口接续
+# MAX-202 P09 功能交付与 P11 接续
 
-当前规则为 functional-delivery-1。准确输入 base 为 P08 PR213 `af2637a0084a9458bdc3c36acffdc1976877838d`，分支 `codex/max202-operations-ui` 堆叠到 `codex/max201-verification`；没有合并或部署。当前候选是部分功能交付，完整 P09 仍被下述接口与验证缺口阻塞，不宣称整批完成。最终 head、PR、CI 与附件校验和随交付评论/证据清单记录。
+当前规则：functional-delivery-1。准确输入 base 为 P08 PR213 `af2637a0084a9458bdc3c36acffdc1976877838d`；沿原 PR214、分支 `codex/max202-operations-ui`，base 分支 `codex/max201-verification`。此前 `2145c10c` 是部分候选，其 CI39437387824 的14项已全部成功；该历史 CI 不替代恢复提交的检查。本文件更新为恢复后的有效功能矩阵，旧结论保留在 Git 历史及原交付附件。
 
 ## 功能与证据矩阵
 
-| 范围 | 已实现与已验证 | 尚未完成/证据限制 |
+| 范围 | 本候选实现与受控实际服务验收 | 证据边界 |
 |---|---|---|
-| 导航与旧功能 | 新增可信知识/行动中心，权限守卫、懒加载；原导航/路由与审批保留；完整前端回归 | 不是整批跨包回归结论 |
-| 可信知识 | 真实 JWT/ACL/HTTP/MySQL/KnowledgeService：调查整理候选、保存、提交、第二身份独立审核、中文搜索、详情、撤源 ACL 后刷新清正文；revision/version/hash 审核绑定单测 | synthetic 来源事实与身份，无产品模型调用；人工将案例绑定当前调查的正式入口缺失 |
-| 行动计划 | 真实 PlanService/HTTP/MySQL：按 ID 读取、从统一审批记录发现已提交计划、提交、双主体审批、绑定版本、编辑新版本使旧版本 superseded；SQL 执行数为 0 | seed 使用明确 synthetic 环境验证器；完整草稿/执行队列、可信来源生成草案、执行与报告尚未接入 |
-| 关系 | 三类资源详情最小挂载，按需读取实际关系接口，来源/版本/效期/partial，建议不冒充确认；组件单测 | 未完成三类真实详情的浏览器/服务业务链，不把组件 mock 当 E2E |
-| 基线 | 指标与趋势内按实际 metric/dimensions 显式评估，资格/覆盖/缺口与静态阈值独立；组件单测 | 未完成真实历史数据/服务/浏览器链；不存在资格时不画正常偏离图 |
-| 调查关联 | 实际 attention snapshot/page 请求、去掉资源 role，partial/未知上下界/理由与调查跳转；组件单测 | 未完成真实调查实时 WS 与关联浏览器链；未实现 attention 人工 override UI |
-| 安全状态 | 控制器测试：撤权/会话失效/卸载/切对象围栏、迟到响应、互斥写、网络/5xx 接受未知后不重发且允许只读核对；计划审批绑定晚到 feed 单测 | 写未知锁在页面生命周期内；不声称执行器 once/现场安全经过本页面验收 |
-| 浏览器补充状态 | 明确 HTTP 拦截补充 loading/empty/503/403/expired tombstone/write unknown 双击仅发一次；长文、三密度×三宽无横溢；可见按钮名称 | 此项不是正式后端异常链；未作完整 axe/WCAG 合规审计，未完成上下文全部状态矩阵 |
-| 视觉与键盘 | 案例列表/详情、行动列表/计划 1600/1024/390 × light/dark 共24图；comfortable 长文3图；原生共享 dialog Esc 关闭与焦点恢复 | 未完成执行报告/人工结案视图和资源嵌入全矩阵；无人听读门槛 |
+| 导航 | 可信知识、行动中心、调查与三类资源详情最小挂载；保留旧路由与权限守卫 | 复用已批准 R1/现有产品外壳 |
+| 可信知识 | 调查整理、独立审核、中文搜索、来源质量/观测/采集时间/分页窗口；从目标调查人工核对适用条件，准确版本/hash/结果绑定；SQL持久引用及outbox审计 | 明确 synthetic 来源与身份；referenceOnly，不提供事实或行动权限 |
+| 实时失效 | 已打开案例通过认证 NDJSON 读流消费 KnowledgeWatchService；撤源ACL、撤回、过期无需按刷新即清正文；断流失效，不自动重连或重发动作 | 仓库原先只有Watch领域端口，没有正式案例WS装配；本次实现实际HTTP读流，不能称已有WS广播 |
+| 计划发现与可信草案 | 按调查/状态/游标分页，仅返回完整源ACL可见计划及实际执行ID；按准确planId取得审批绑定，避免依赖审批feed第一页；草案工具/策略/verifier来自服务端受保护签名注册 | 浏览器环境使用显式synthetic注册，独立签名注册拒绝伪造测试；不发送SSH |
+| 版本审批 | 提交当前版本、作者/提交者不能自批、第二身份准确版本/hash审批；编辑新版本使旧批准失效 | 沿用原域权限、once和审计，不创建另一套批准机制 |
+| 执行与未知 | 显式确认一次、取消排队执行、发送后unknown核对原operation、无回执保持unknown；只读刷新不enqueue | 隔离真实执行/验证域HTTP与SQL；目标adapter是synthetic，无外部目标变更 |
+| 不可变报告 | 分开执行/恢复结论、报告历史、逐窗采样/缺口/固定120/60/300/10；历史仅核对，当前passed报告绑定人工关闭；重开后旧确认失效 | 合成采样与虚拟等待，未缩短生产规则；exit0不等于resolved；正式worker装配归P11 |
+| 关系与基线 | 数据库/服务器/网络设备真实Lit详情→关系服务/SQL；指标与趋势→真实BaselineStore/SQL；来源和未验证关系不冒充确认，资格/静态阈值/未知分开 | 资源读取与观测adapter提供明确synthetic最小DTO/历史窗口；不宣称真实业务基线资格 |
+| 调查关联 | 实际JWT认证WS运输夹具→原调查stream.snapshot领域；真实AttentionStore快照/版本；人工拆分和合并保留原因/原事实 | 运输层为受控夹具，正式DirectAdapter/server-worker组合归P11；不称已完成生产WS装配 |
+| 视觉与a11y | 三宽1600/1024/390、明暗、三密度长文；共享弹窗Esc及焦点恢复；Playwright计算可见控件可访问名称、非正tabindex；报告/结案/三类资源/失效截图 | 特殊loading/empty/503/403/tombstone/写unknown使用明确HTTP拦截补充；不声称完整WCAG合规，不恢复人工听读 |
 
-## 已批准 R1 对照
+## R1设计对照
 
-沿用 R1 的主信息列＋286px 侧栏、960px 以下单列、案例适用→事实→处理→反例→原记录、计划四步与风险紧邻审批，技术 hash/参数按需展开；消费现有主题与密度 token、app-card/dialog/badge/empty-state 与共享按钮。深浅/窄屏截图来自真实 Lit 页面，不复用原型图片。
+沿用已批准的信息主列＋286px侧栏，960px以下单列；案例按适用→事实→处理→反例→原记录，计划风险邻近批准/执行。技术摘要、完整回执、逐窗采样和来源标识按需展开。复用app-card/dialog/badge/empty-state、共享按钮、主题与密度token。保留产品导航rail，390px为本次两页预留其占位。
 
-保留现有产品导航 rail；390px 对本次两页增加 rail 占位，避免内容遮挡。此处沿既有产品导航而非重新实现原型的全站移动导航。行动中心只展示实际审批 feed 的已提交计划，明确不含草稿/执行队列；未实现 R1 的待执行/需核对/已验证页签及效果图。病例详情明确人工绑定入口尚缺，不设置假引用成功。
+原型中的宽泛执行分类不由未知数据拼装成假统计。本候选使用实际授权分页计划、调查/状态筛选、计划版本下的实际执行ID和报告；当前窗口统计标明page/partial，深链接不依赖统一审批feed的第一页。
 
-## 一次列全：Chief/P11 最小接口协调
+## 最小领域增补与安全语义
 
-P09 不修改后端公共写者文件。以下列出现有域端口与消费需求；建议名称不是已存在的 HTTP 契约，最终路径/DTO/装配由 P11 明确发布并运行 contracts:check。
+`operations/ui-integration.ts`提供三个页面直接依赖端口：GET plans、POST drafts、POST knowledge/:id/bind；composition仅最小注册它们，public-api与生成契约同步。`ActionPlanService.readIn`复用原完整源权限；签名注册proposal只读，create再次复核实时来源/版本/效期。分页游标绑定筛选与身份权限上限，隐藏计划不贡献标识或数量。
 
-1. **调查 → 可信计划草案/发现**。`operations/actions/routes.ts` 当前只有 POST plans、GET plans/:id、versions/submit/review，无 GET 列表/按调查检索。需授权分页列表（调查、状态、cursor、authorizedCounts/partial），或调查上下文返回当前可访问 planId/版本/状态。POST create 已存在，但需要服务端提供可信工具版本/hash、环境/策略版本、证据/关系/基线引用和预注册 verifier 来源；不能要求用户输入 hash 冒充可信构建。UI 当前 sourceInvestigation 链接不代表已筛选出该调查计划。
-2. **人工选择案例绑定调查**。现有知识搜索/详情/审核与模型参考服务不等同人工绑定。需明确调查/结果版本、案例 id/version/hash、适用确认及当前 ACL/效期的写入契约和撤销/失效语义。P09 当前仅提供搜索与来源往返。
-3. **执行 enqueue / read / cancel / 原回执核对**。`ActionExecutionStore.enqueue` 已有严格输入 `{planId,expectedVersion,approvalId,requestKey}`；`get(actor,id)`、`cancel(actor,id)` 与 `ActionExecutor.reconcile(actor,id)` 已存在域端口，但无正式 HTTP/公开契约/生产装配。需要返回 executionId、计划版本、operationId、状态/回执/错误与版本，按调查/计划发现既有执行；显式新动作 requestKey 与同请求核对必须区分，outcome_unknown 不得 enqueue 重放。取消只能按域状态处理，不能把 unknown 声称已撤回。P09 没有执行按钮或自动重试。
-4. **验证与报告发现/读取/worker 装配**。`registerActionVerificationRoutes` 已实现内部 POST/GET `/api/operations/action-executions/:id/verification` 和 GET `.../versions/:version`；`operations/public-api.ts` 与 `composition.ts` 尚未发布/装配。需与 `verifiedActionWorkflowHandler`/`verificationWorkflowHandler`、持久化调用者权限上限以及执行发现统一接通。UI 需要报告 immutable id/version/hash、执行与恢复分别结论、120/60/300/10 观测、缺数 inconclusive/未改善 failed、证据与负面影响、历史版本/失效标志。
-5. **人工结案**。`investigations/feedback-types.ts`/contracts 已支持 `verification.actionReport:{id,version,hash}` 与 `staleVerification`，P08 语义保留。正式报告发现接通后 P09 才能从实际报告选择构造 close/recovery，展示旧报告失效/重开，不允许手填报告 hash 或提前结案。旧 investigation feedback UI 保留，本次未实现行动报告选择器。
+人工案例绑定复用investigation_case_dependencies；同事务按session→investigation锁顺序串行化20条上限，并记录exact版本与outbox。无迁移，不改变模型参考隔离。KnowledgeWatch读流每秒仅刷新授权读取，首帧/每帧均经原领域实时授权，失效结束流、断开清timer/unwatch；前端对象/权限epoch拒绝迟到回填。
 
-## P09 可恢复接续
+## P11 的正式集成边界
 
-1. Chief 独立审查本工程候选与准确 CI；处理本范围发现，P11 协调/释放上述契约后，原单一写者接回页面消费。无需重新批准 R1、等待生产部署或长期资格。
-2. 完成草案/列表/执行/原回执核对/报告/人工关闭重开，补 attention override（若 B15 要求）；补资源关系/基线/关联三类详情真实服务浏览器链和完整特殊状态矩阵。
-3. 重跑受影响 focused、最终候选 gate、真实浏览器状态及截图；准确新 head CI 通过并经独立审查后才可将完整 P09 交 in_review。
+1. 执行HTTP注册器`registerActionExecutionRoutes`已经存在，含execute/read/cancel/reconcile；验证注册器`registerActionVerificationRoutes`已有POST/GET verification及历史GET。P09直接消费原DTO并在隔离服务注册验收，纠正旧交接“无执行HTTP”的过宽描述。
+2. 正式执行/verification公开契约、`server.ts`、`workflows/register-workflow-handlers.ts`及独立action worker完整组合仍归P11。本次未修改它们、未把read-only调查dispatcher接上写动作。
+3. P11从P09经Chief审查的准确head接续全批跨包回归；不得仅因UI完成就宣称生产执行链可用。正式案例可沿本次认证HTTP读流；若统一到WS，须保留撤权/撤回/过期/断连及无迟到回填语义。
 
-## 复现与环境边界
+## 复现与证据
 
-`pnpm --filter slide-frontend test`、`typecheck`、`build`，根 `pnpm lint`、`pnpm contracts:check`。专用浏览器命令：`MAX202_MYSQL_PORT=<本任务隔离MySQL端口> MAX202_OUTPUT_DIR=<产物目录> pnpm --filter slide-frontend exec playwright test --config playwright.operations.config.ts`。未设置隔离端口时该专用 suite skip，避免普通 smoke 意外访问数据服务。
+前端：`pnpm --filter slide-frontend test`、`typecheck`、`build`；根`pnpm lint`、`pnpm contracts:check`；API按受影响operations/knowledge/plan/composition与契约focused，最终候选API/CI gate。浏览器：`MAX202_MYSQL_PORT=<本轮隔离MySQL实际端口> MAX202_OUTPUT_DIR=<outputs产物目录> pnpm --filter slide-frontend exec playwright test --config playwright.operations.config.ts`。未设置端口时专用suite明确skip，不能把skip当验收通过。
 
-fixture 创建独立 schema、跑真实迁移，结束 drop schema/关闭 Vite/Fastify/池；没有共享3308/旧卷、Provider、SSH、目标执行或产品模型发送。仅取消 fixture 自己已知未发送的测试预算 reservation；未操作 canonical 产品账本。编码 token/费用遥测不可用，不冒充产品模型计量。本 run 的专用 MySQL 容器在最终交付前按准确 ID/label 优雅停止。
+最终准确head、CI run/jobs、计数、截图清单与SHA256记录在同轮交付评论及附件证据；每次真实push复用MAX202自身checks条件接续。所有产物归`/Users/max/Coding/40-Slide/outputs`。不merge/deploy/done，in_review交Chief。
+
+夹具使用独立schema和真实迁移/JWT/ACL/HTTP/MySQL；关闭Vite/Fastify/WS/连接池并drop本轮schema。仅取消本schema已知未发送的测试预算reservation；无Provider/产品模型/SSH/共享3308或旧卷操作。synthetic adapter发送计数与真实目标动作区分。编码token/费用遥测不可用，产品模型调用0，canonical账本及历史unknown不重置、不重放。

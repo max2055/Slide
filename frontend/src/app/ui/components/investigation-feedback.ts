@@ -7,12 +7,19 @@ import './app-card.ts';
 import './app-form-field.ts';
 import './app-empty-state.ts';
 
+function localDate(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(+date) ? new Date(+date - date.getTimezoneOffset()*60000).toISOString().slice(0,23) : '';
+}
+
 const kindLabels = { rating: '结果反馈', handling: '外部处理记录', root_cause: '人工根因确认', recovery: '业务恢复验证', close: '关闭调查' };
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 
 /** Human feedback bound to the latest result and live investigation revision. */
 @customElement('investigation-feedback')
 export class InvestigationFeedback extends LitElement {
+  @property({attribute:false}) actionReport: {id:string;version:number;contentHash:string;state:string;validUntil:string;observedFrom:string|null;observedUntil:string|null;evidence:Array<{id:string}>} | null = null;
+  @state() private useActionReport = false;
   @property() investigationId = '';
   @property() resultId = '';
   @property({ type: Number }) resultVersion = 0;
@@ -39,7 +46,7 @@ export class InvestigationFeedback extends LitElement {
   private pending: { body: InvestigationFeedbackRequest; key: string } | null = null;
   createRenderRoot() { return this; }
   private erase() {
-    this.epoch++; this.historyEpoch++; this.pending = null; this.items = []; this.nextBefore = null;
+    this.useActionReport=false; this.epoch++; this.historyEpoch++; this.pending = null; this.items = []; this.nextBefore = null;
     this.note = ''; this.method = ''; this.from = ''; this.to = ''; this.performedAt = ''; this.ids = '';
     this.error = ''; this.busy = false; this.loading = false; this.kind = 'rating'; this.rating = 'helpful'; this.problemStatus = 'not_applicable';
   }
@@ -55,6 +62,7 @@ export class InvestigationFeedback extends LitElement {
     this.erase(); super.disconnectedCallback();
   }
   protected willUpdate(changed: Map<string, unknown>) {
+    if(changed.has('actionReport') && changed.get('actionReport') && (changed.get('actionReport') as typeof this.actionReport)?.contentHash!==this.actionReport?.contentHash){this.useActionReport=false;}
     if (changed.has('investigationId')) { this.erase(); this.accessWithdrawn = false; if (this.investigationId) void this.load(); }
     else if (changed.has('resultId') || changed.has('resultVersion')) {
       if (changed.get('resultId') !== undefined || changed.get('resultVersion') !== undefined) {
@@ -89,8 +97,10 @@ export class InvestigationFeedback extends LitElement {
       let body: InvestigationFeedbackRequest;
       try {
         const requiresVerification = this.kind === 'root_cause' || this.kind === 'recovery' || this.kind === 'close' && this.problemStatus === 'resolved';
-        if (requiresVerification && (!this.method.trim() || !evidenceIds.length || !this.from || !this.to || Date.parse(this.from) >= Date.parse(this.to))) throw new Error();
-        const verification = requiresVerification ? { method: this.method.trim(), evidenceIds, from: new Date(this.from).toISOString(), to: new Date(this.to).toISOString() } : undefined;
+        if (requiresVerification && (!this.method.trim() || (!this.useActionReport && !evidenceIds.length) || !this.from || !this.to || Date.parse(this.from) >= Date.parse(this.to))) throw new Error();
+        const report=this.useActionReport?this.actionReport:null;
+        if(report && (report.state!=='passed'||Date.parse(report.validUntil)<=Date.now()))throw new Error();
+        const verification = requiresVerification ? { ...(report?{actionReport:{id:report.id,version:report.version,hash:report.contentHash}}:{}), method: this.method.trim(), evidenceIds, from: new Date(this.from).toISOString(), to: new Date(this.to).toISOString() } : undefined;
         if (this.kind === 'rating') body = { ...base, kind: 'rating', rating: this.rating as 'helpful' | 'unhelpful' | 'incorrect' };
         else if (this.kind === 'handling') body = { ...base, kind: 'handling', performedAt: new Date(this.performedAt).toISOString(), evidenceIds };
         else if (this.kind === 'close') body = { ...base, kind: 'close', lifecycle: 'closed', problemStatus: this.problemStatus as 'not_applicable' | 'resolved' | 'unconfirmed' | 'in_progress', ...(verification ? { verification } : {}) };
@@ -121,11 +131,12 @@ export class InvestigationFeedback extends LitElement {
     if (this.accessWithdrawn) return html`<p role="status">反馈内容已清空，请重新核验访问权限。</p>`;
     const verified = this.kind === 'root_cause' || this.kind === 'recovery' || this.kind === 'close' && this.problemStatus === 'resolved';
     const disabled = this.busy || !!this.pending;
-    const field = (label: string, value: string, setter: (value: string) => void, type = 'text') => html`<app-form-field label=${label}><input aria-label=${label} type=${type} step="0.001" .value=${value}
+    const field = (label: string, value: string, setter: (value: string) => void, type = 'text') => html`<app-form-field label=${label}><input aria-label=${label} type=${type} step="0.001" .value=${type === 'datetime-local' && value ? localDate(value) : value}
       ?disabled=${disabled} @input=${(e: Event) => setter((e.target as HTMLInputElement).value)}></app-form-field>`;
     return html`<style>${sharedBtnStyles.cssText}
       investigation-feedback { display:block; min-width:0; }
       investigation-feedback input, investigation-feedback textarea, investigation-feedback select { box-sizing:border-box; width:100%; min-width:0; background:var(--input); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:var(--space-sm); }
+      investigation-feedback input[type=checkbox] { width:auto; }
       investigation-feedback form, investigation-feedback .feedback-history { display:grid; gap:var(--space-sm); }
       investigation-feedback .feedback-history { padding:0; list-style:none; }
       investigation-feedback li { border-bottom:1px solid var(--border); padding:var(--space-sm) 0; overflow-wrap:anywhere; }
@@ -143,7 +154,8 @@ export class InvestigationFeedback extends LitElement {
         <app-form-field label="反馈与处理依据"><textarea aria-label="反馈与处理依据" rows="3" maxlength="4000" .value=${this.note} ?disabled=${disabled}
           @input=${(e: Event) => this.note = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field>
         ${this.kind === 'handling' ? field('外部处理时间', this.performedAt, value => this.performedAt = value, 'datetime-local') : nothing}
-        ${verified ? html`${field('验证方法', this.method, value => this.method = value)}${field('观察开始时间', this.from, value => this.from = value, 'datetime-local')}
+        ${verified && this.actionReport ? html`<label><input aria-label="使用当前效果报告" type="checkbox" .checked=${this.useActionReport} ?disabled=${disabled} @change=${(e:Event)=>{this.useActionReport=(e.target as HTMLInputElement).checked;const r=this.actionReport;if(this.useActionReport&&r){this.method='人工核对行动效果报告';this.from=r.observedFrom??'';this.to=r.observedUntil??'';this.ids='';}}}>使用当前效果报告 v${this.actionReport.version}（仍需人工确认）</label>` : nothing}
+      ${verified ? html`${field('验证方法', this.method, value => this.method = value)}${field('观察开始时间', this.from, value => this.from = value, 'datetime-local')}
           ${field('观察结束时间', this.to, value => this.to = value, 'datetime-local')}` : nothing}
         ${verified || this.kind === 'handling' ? field('证据 ID（逗号分隔）', this.ids, value => this.ids = value) : nothing}
         ${this.activeRequest && this.kind === 'close' ? html`<p>执行进行中，结束后才能关闭调查。</p>` : nothing}

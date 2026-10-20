@@ -84,15 +84,24 @@ export class InvestigationOperationContext extends LitElement {
   @property() investigationId = '';
   @property({ type:Number }) resultVersion = 0;
   @property({ attribute:false }) resources: ResourceRef[] = [];
-  private attention = new OperationsResource<AttentionPage>(this);
+  @state() private overrideReason='';
+  private attention = new OperationsResource<AttentionPage>(this,()=>{this.overrideReason='';});
   protected willUpdate(changed: Map<string,unknown>) {
-    if (changed.has('investigationId') || changed.has('resources')) this.attention.reset();
+    const resourceKey=(value:ResourceRef[]|undefined)=>JSON.stringify((value??[]).map(({type,id})=>`${type}:${id}`).sort());
+    if (changed.has('investigationId') || changed.has('resultVersion') ||
+      changed.has('resources') && resourceKey(changed.get('resources') as ResourceRef[]|undefined)!==resourceKey(this.resources)) this.attention.reset();
   }
   private async computeAttention() {
     if (!this.resources.length || this.resources.length > 20) return;
     // A persisted server snapshot, calculated only on explicit user request.
     const snapshot = await this.attention.write<{id:string}>('/attention',{observedAt:new Date().toISOString(),resources:this.resources.map(({type,id})=>({type,id}))});
     if (snapshot) await this.attention.load(`/attention/${encodeURIComponent(snapshot.id)}`);
+  }
+  private async override(split:boolean) {
+    const a=this.attention.data;if(!a||a.nextCursor||!this.overrideReason.trim())return;
+    const ids=[...new Set(a.items.flatMap(g=>g.eventIds))];if(!ids.length)return;
+    const result=await this.attention.write<AttentionPage>(`/attention/${encodeURIComponent(a.id)}/overrides`,{expectedVersion:a.version,reason:this.overrideReason.trim(),partitions:split?ids.map(id=>[id]):[ids]});
+    if(result){this.attention.data=result;this.overrideReason='';this.requestUpdate();}
   }
   render() {
     const a = this.attention;
@@ -111,6 +120,7 @@ export class InvestigationOperationContext extends LitElement {
           <details><summary>关联理由与评分缺口</summary><p>关联不等于根因；未知分项不重分配权重。</p><pre>${JSON.stringify({reasons:group.reasons,components:group.score.components,missing:group.missing,ruleVersion:a.data!.ruleVersion},null,2)}</pre></details>
           ${group.investigationIds.map(id => html`<a href=${`/investigations?investigation=${encodeURIComponent(id)}`}>打开关联调查</a> `)}</div>`)
           : html`<app-empty-state title="当前窗口暂无关联事件" description="没有匹配记录不代表无异常。"></app-empty-state>`}
+        ${a.data.items.length&&!a.data.nextCursor?html`<label>人工关联或拆分依据<textarea aria-label="人工关联或拆分依据" maxlength="1000" .value=${this.overrideReason} ?disabled=${a.locked} @input=${(e:Event)=>this.overrideReason=(e.target as HTMLTextAreaElement).value}></textarea></label><p class="muted">人工覆盖不改变原事件事实，保留原规则分组与理由。</p><div class="toolbar"><button class="btn" ?disabled=${a.locked||!this.overrideReason.trim()} @click=${()=>this.override(false)}>人工关联当前全部事件</button><button class="btn" ?disabled=${a.locked||!this.overrideReason.trim()} @click=${()=>this.override(true)}>人工拆分为独立事件</button></div>`:nothing}
         ${a.data.nextCursor ? html`<button class="btn" ?disabled=${a.loading} @click=${() => void a.load(`/attention/${encodeURIComponent(a.data!.id)}?version=${a.data!.version}&cursor=${encodeURIComponent(a.data!.nextCursor!)}`)}>下一页关联事项</button>` : nothing}` : nothing}
     </app-card>`;
   }

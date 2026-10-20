@@ -14,12 +14,14 @@ export interface CaseRecord {
   state: 'draft' | 'pending_review' | 'published' | 'expired' | 'withdrawn';
   author: { kind: string; id: number }; resources: ResourceRef[]; validUntil: string;
   content?: CaseCandidate['content']; applicability?: CaseCandidate['applicability'];
-  source?: { investigationId: string; resultVersion: number; resultId: string; evidence: Array<{ id: string; hash: string; validUntil: string }> };
+  source?: { investigationId: string; resultVersion: number; resultId: string; evidence: Array<{ id: string; hash: string; validUntil: string; observedFrom?: string|null; observedTo?: string|null; collectedAt?: string; quality?: {partial:boolean|null;truncated:boolean|null;hasMore:boolean|null}; page?: {limit:number|null;offset:number|null;nextOffset:number|null} }> };
   tombstone: boolean; reason?: string; referenceOnly: true;
 }
 export interface CasePage { items: CaseRecord[]; authorizedCounts: { total: number }; nextCursor: string | null }
 export interface PlanRecord {
   id: string; version: number; contentHash: string;
+  approvalId?: string|null;
+  executions?: Array<{id:string;planVersion:number;state:string}>;
   state: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'expired' | 'superseded';
   content: {
     investigationId: string; resultVersion: number; target: ResourceRef;
@@ -112,6 +114,7 @@ export class OperationsResource<T> implements ReactiveController {
   reset() {
     ++this.epoch; this.data = null; this.loading = false; this.writing = false; this.error = ''; this.clearDrafts();
   }
+  invalidate(message = '来源已失效，正文已清除。') { this.reset(); this.error=message; this.host.requestUpdate(); }
   get locked() { return this.loading || this.writing || this.accessInvalidated || this.mutationUnknown; }
   async load(path: string): Promise<T | null> {
     if (!this.connected || this.accessInvalidated || this.writing) return null;
@@ -151,6 +154,7 @@ export class OperationsResource<T> implements ReactiveController {
   }
 }
 export const operationLabels: Record<string, string> = {
+  queued:'已排队',prechecking:'执行前核验',dispatching:'已开始发送',succeeded:'执行成功',failed:'失败',outcome_unknown:'执行结果未知',cancelled:'已取消',pending:'待观测',observing:'观察中',passed:'验证通过',inconclusive:'无法确认恢复',
   draft: '草稿', pending_review: '待审核', published: '已发布', expired: '已过期', withdrawn: '已撤回',
   pending_approval: '待独立审批', approved: '已批准', rejected: '已驳回', superseded: '已被新版本替代',
   confirmed: '已确认', suggested: '待确认', conflicted: '存在冲突', unverified: '未经验证',
@@ -160,3 +164,31 @@ export const operationLabels: Record<string, string> = {
 export const resourceLabel = (ref: ResourceRef) => `${({ instance: '数据库实例', server: '服务器', network_device: '网络设备' })[ref.type]} #${ref.id}`;
 export const validRecord = (record: { validUntil: string }) => Number.isFinite(Date.parse(record.validUntil)) && Date.parse(record.validUntil) > Date.now();
 export const currentUserId = () => { try { return Number(JSON.parse(localStorage.getItem('user') ?? '{}').id) || null; } catch { return null; } };
+
+/** One authenticated read stream per opened case. Disconnects fail closed;
+ * there is no action retry, content cache or transport reconnect loop. */
+export function watchCase(id:string, receive:(value:CaseRecord|null)=>void):()=>void {
+  const abort=new AbortController();let live=true,expiry:ReturnType<typeof setTimeout>|undefined;
+  const invalidate=()=>{if(live)receive(null);};
+  void (async()=>{
+    try {
+      const response=await authFetch(`/api/operations/knowledge/${encodeURIComponent(id)}/watch`,{cache:'no-store',signal:abort.signal});
+      if(!response.ok||!response.body)throw new Error('CASE_WATCH_UNAVAILABLE');
+      const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
+      while(live){
+        const {done,value}=await reader.read();if(done)break;
+        pending+=decoder.decode(value,{stream:true});if(pending.length>1048576)throw new Error('CASE_WATCH_TOO_LARGE');
+        let newline:number;
+        while((newline=pending.indexOf('\n'))>=0){
+          const frame=JSON.parse(pending.slice(0,newline));pending=pending.slice(newline+1);
+          if(!live)break;if(expiry)clearTimeout(expiry);
+          if(frame.type==='operations.case.snapshot'&&frame.case?.id===id&&!frame.case.tombstone&&validRecord(frame.case)){
+            receive(frame.case);expiry=setTimeout(invalidate,Math.min(2147483647,Date.parse(frame.case.validUntil)-Date.now()));
+          }else invalidate();
+        }
+      }
+      invalidate();
+    }catch{if(!abort.signal.aborted)invalidate();}
+  })();
+  return ()=>{live=false;abort.abort();if(expiry)clearTimeout(expiry);};
+}

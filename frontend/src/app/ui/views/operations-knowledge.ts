@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { OperationsResource, operationLabels, validRecord, currentUserId, type CasePage, type CaseRecord, type CaseCandidate } from '../controllers/operations-api.ts';
+import { OperationsResource, watchCase, authorizedJson, operationLabels, validRecord, currentUserId, type CasePage, type CaseRecord, type CaseCandidate } from '../controllers/operations-api.ts';
 import { hasSlidePermission } from '../app-settings.ts';
 import { operationsStyles } from './operations-styles.ts';
 import '../components/app-card.ts';
@@ -17,6 +17,10 @@ const freshCandidate = (): CaseCandidate => ({ investigationId: '', resultVersio
 export class OperationsKnowledge extends LitElement {
   static styles = operationsStyles;
   @property({ attribute: false }) permissions: Set<string> | null = null;
+  @state() private bindingConfirmed=false;
+  @state() private bindingNote='';
+  private stopWatch:(()=>void)|null=null;
+  private destination=new OperationsResource<{id:string;version:number;latestResult:{id:string;version:number}|null}>(this,()=>{this.bindingConfirmed=false;this.bindingNote='';},authorizedJson);
   @state() private query = '';
   @state() private filter = 'published';
   @state() private resourceType = '';
@@ -31,9 +35,9 @@ export class OperationsKnowledge extends LitElement {
   private record = new OperationsResource<CaseRecord>(this, () => this.clearDrafts());
   private clearDrafts() { this.note = ''; this.formOpen = false; this.candidate = freshCandidate(); this.humanConfirmed = false; this.formError = ''; }
   private can(code: string) { return hasSlidePermission(this.permissions, `operations:cases:${code}`); }
-  private pop = () => { const id = new URL(location.href).searchParams.get('case') ?? ''; this.selected = id; this.record.reset(); this.clearDrafts(); if (id) void this.open(id, false); else void this.search(); };
+  private pop = () => { this.stopWatch?.();this.stopWatch=null; const id = new URL(location.href).searchParams.get('case') ?? ''; this.selected = id; this.record.reset(); this.clearDrafts(); if (id) void this.open(id, false); else void this.search(); };
   connectedCallback() { super.connectedCallback(); window.addEventListener('popstate', this.pop); }
-  disconnectedCallback() { window.removeEventListener('popstate', this.pop); super.disconnectedCallback(); }
+  disconnectedCallback() { this.stopWatch?.();this.stopWatch=null; window.removeEventListener('popstate', this.pop); super.disconnectedCallback(); }
   protected firstUpdated() {
     const p = new URL(location.href).searchParams;
     this.query = p.get('query')?.slice(0,200) ?? '';
@@ -46,12 +50,18 @@ export class OperationsKnowledge extends LitElement {
     await this.pages.load(`/knowledge?${query}`);
   }
   private async open(id: string, push = true) {
+    this.stopWatch?.();this.stopWatch=null;this.destination.reset();this.bindingConfirmed=false;this.bindingNote='';
     this.clearDrafts(); this.selected = id;
     if (push) { const u = new URL(location.href); u.searchParams.set('case', id); history.pushState({}, '', u); }
-    await this.record.load(`/knowledge/${encodeURIComponent(id)}`);
+    const value=await this.record.load(`/knowledge/${encodeURIComponent(id)}`);
+    if(value&&!value.tombstone&&this.selected===id) this.stopWatch=watchCase(id,record=>{
+      if(this.selected!==id||this.record.accessInvalidated)return;
+      if(!record){this.stopWatch?.();this.stopWatch=null;this.record.invalidate('案例订阅失效、来源撤回或授权变化，正文已清除；请只读核验。');this.pages.reset();this.destination.reset();}
+      else {this.record.data=record;this.requestUpdate();}
+    });
   }
   private back() {
-    this.selected = ''; this.record.reset(); this.clearDrafts();
+    this.stopWatch?.();this.stopWatch=null;this.selected = ''; this.record.reset(); this.clearDrafts();
     const u = new URL(location.href); u.searchParams.delete('case'); history.pushState({}, '', u); void this.search();
   }
   private startCandidate(edit = false) {
@@ -72,6 +82,18 @@ export class OperationsKnowledge extends LitElement {
     const binding = await this.record.write<{ id: string }>(this.editing && r ? `/knowledge/${encodeURIComponent(r.id)}` : '/knowledge',
       this.editing && r ? { expectedRevision: r.revision, candidate: body } : body, this.editing ? 'PUT' : 'POST');
     if (binding) { this.formOpen = false; await this.open(binding.id); }
+  }
+  private async bindCase() {
+    const r=this.record.data,inv=this.destination.data;
+    if(!r||!inv?.latestResult||!this.bindingConfirmed)return;
+    const value=await this.record.write(`/knowledge/${encodeURIComponent(r.id)}/bind`,{investigationId:inv.id,resultVersion:inv.latestResult.version,expectedVersion:inv.version,version:r.version,contentHash:r.contentHash,applicabilityConfirmed:true});
+    if(value){this.bindingConfirmed=false;this.bindingNote='已绑定为历史参考；当前事实与执行权限保持独立。';this.requestUpdate();}
+  }
+  private bindView(r:CaseRecord) {
+    const id=new URL(location.href).searchParams.get('sourceInvestigation');
+    return html`<p>选择当前调查并核对适用条件，绑定只保留历史参考。</p>${id?html`<button class="btn" ?disabled=${this.destination.locked||this.record.locked} @click=${()=>this.destination.load(`/api/investigations/${encodeURIComponent(id)}`)}>核对目标调查与当前结果</button>`:html`<p class="muted">请从目标调查的“查找可信案例”入口进入。</p>`}
+      ${this.destination.error?html`<p role="alert">${this.destination.error}</p>`:nothing}${this.destination.data?.latestResult?html`<p>目标调查 ${this.destination.data.id} · 当前结果 v${this.destination.data.latestResult.version}</p><label class="check"><input aria-label="确认案例适用条件" type="checkbox" .checked=${this.bindingConfirmed} @change=${(e:Event)=>this.bindingConfirmed=(e.target as HTMLInputElement).checked}>我已核对适用条件与反面证据</label><button class="btn-primary" ?disabled=${!this.bindingConfirmed||this.record.locked} @click=${this.bindCase}>绑定当前案例版本为参考</button>`:nothing}
+      ${this.bindingNote?html`<p role="status">${this.bindingNote}</p>`:nothing}`;
   }
   private async transition(action: 'submit' | 'approved' | 'rejected' | 'withdraw') {
     const r = this.record.data; if (!r || this.record.locked) return;
@@ -117,10 +139,13 @@ export class OperationsKnowledge extends LitElement {
         <section><h2>问题与已确认事实</h2><p>${r.content?.symptoms}</p><p>${r.content?.confirmedCause}</p><p class="notice">案例记录历史结论；当前问题仍需独立核验证据。</p></section>
         <section><h2>处理与验证</h2><p>${r.content?.actions}</p><p>${r.content?.actualEffect}</p></section>
         <section><h2>不适用与反面证据</h2><p>${r.content?.counterexamples}</p></section>
-        <section><h2>引用的原始记录</h2>${r.source ? html`<a href=${`/investigations?investigation=${encodeURIComponent(r.source.investigationId)}`}>查看来源调查 · 结果版本 ${r.source.resultVersion}</a><p class="muted">${r.source.evidence.length} 条来源证据，打开原记录时重新检查权限。</p>` : nothing}</section>`}
+        <section><h2>引用的原始记录</h2>${r.source ? html`<a href=${`/investigations?investigation=${encodeURIComponent(r.source.investigationId)}`}>查看来源调查 · 结果版本 ${r.source.resultVersion}</a><p class="muted">${r.source.evidence.length} 条来源证据，打开原记录时重新检查权限。</p>
+          ${r.source.evidence.map(e=>html`<div class="row"><p>原观测 ${e.observedFrom??'未知'} — ${e.observedTo??'未知'} · 采集 ${e.collectedAt??'未知'}</p>
+          <p class="notice warn">来源完整性：${e.quality?.partial===false?'非部分结果':e.quality?.partial===true?'部分结果':'部分标记未知'} · ${e.quality?.truncated===false?'未截断':e.quality?.truncated===true?'已截断':'截断标记未知'} · ${e.quality?.hasMore===true?'仍有后续数据':e.quality?.hasMore===false?'无后续页':'后续页未知'}</p>
+          <p>分页窗口：offset ${e.page?.offset??'未知'} · limit ${e.page?.limit??'未知'} · 下一窗口 ${e.page?.nextOffset??'未知'}</p></div>`) }` : nothing}</section>`}
       </app-card><aside class="stack"><app-card><span slot="header">版本与审核</span><dl><dt>当前状态</dt><dd><app-badge variant=${usable ? 'ok' : 'warn'}>${operationLabels[r.state]}</app-badge></dd><dt>内容版本</dt><dd>v${r.version} · 修订 ${r.revision}</dd><dt>作者</dt><dd>#${r.author.id}</dd><dt>有效期</dt><dd>${new Date(r.validUntil).toLocaleString('zh-CN')}</dd></dl>
         <details><summary>不可变引用与技术详情</summary><pre>${JSON.stringify({id:r.id,version:r.version,contentHash:r.contentHash,reason:r.reason},null,2)}</pre></details>
-        ${usable ? html`<p>复用前请在调查中核对适用条件；当前服务尚未提供人工选择案例的绑定入口。</p>` : html`<p class="notice warn">当前版本不能作为可信案例引用。</p>`}
+        ${usable ? this.bindView(r) : html`<p class="notice warn">当前版本不能作为可信案例引用。</p>`}
         ${!r.tombstone && this.can('manage') && author ? html`<button class="btn" ?disabled=${this.record.locked} @click=${() => this.startCandidate(true)}>编辑为新版本</button>${r.state === 'draft' ? html`<button class="btn-primary" ?disabled=${this.record.locked || !validRecord(r)} @click=${() => void this.transition('submit')}>提交独立审核</button>` : nothing}` : nothing}
       </app-card>
       ${!r.tombstone && (this.can('review') && r.state === 'pending_review' || this.can('manage')) ? html`<app-card><span slot="header">人工审核与治理</span><label>审核或撤回依据<textarea aria-label="审核或撤回依据" maxlength="2000" rows="3" ?disabled=${this.record.locked} .value=${this.note} @input=${(e: Event) => this.note = (e.target as HTMLTextAreaElement).value}></textarea></label>

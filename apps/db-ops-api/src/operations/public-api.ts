@@ -1,3 +1,4 @@
+import { planDiscoverySchema, trustedDraftSchema, manualCaseBindingSchema } from './ui-integration.js';
 /** Public request contracts consume the same strict validators as domain writes.
  * Responses retain domain lifecycle/unknown semantics; no dispatch endpoint. */
 import { z } from 'zod';
@@ -16,6 +17,7 @@ const transition = z.strictObject({ expectedVersion: z.number().int().nonnegativ
 const version = z.strictObject({ expectedVersion: z.number().int().positive().safe() });
 const plan = z.strictObject({ content: z.record(z.string(), z.unknown()), lifetimeMs: z.number().int().positive().max(1800000).optional() });
 const schemas = {
+  OperationsPlanDiscovery: planDiscoverySchema, OperationsTrustedDraft: trustedDraftSchema, OperationsManualCaseBinding: manualCaseBindingSchema,
   OperationsCaseCandidate: candidateSchema, OperationsCaseRevision: revisionSchema, OperationsCaseReview: reviewSchema,
   OperationsCaseTransition: transitionSchema, OperationsCaseWithdrawal: withdrawalSchema, OperationsCaseSearch: searchInputSchema,
   OperationsBaselineInput: baselineInputSchema, OperationsResourceRef: resourceRefSchema,
@@ -56,7 +58,10 @@ export const operationsPublicPaths = {
   '/api/operations/attention': route('post','computeOperationsAttention','OperationsAttentionInput'),
   '/api/operations/attention/{id}': route('get','readOperationsAttention'),
   '/api/operations/attention/{id}/overrides': route('post','overrideOperationsAttention','OperationsAttentionOverride'),
-  '/api/operations/actions/plans': route('post','createOperationsPlan','OperationsPlanProposal'),
+  '/api/operations/actions/plans': { ...route('get','discoverOperationsPlans'), ...route('post','createOperationsPlan','OperationsPlanProposal') },
+  '/api/operations/actions/drafts': route('post','createTrustedOperationsDraft','OperationsTrustedDraft'),
+  '/api/operations/knowledge/{id}/watch': route('get','watchOperationsCase'),
+  '/api/operations/knowledge/{id}/bind': route('post','bindOperationsCase','OperationsManualCaseBinding'),
   '/api/operations/actions/plans/{id}': route('get','readOperationsPlan'),
   '/api/operations/actions/plans/{id}/versions': route('post','reviseOperationsPlan','OperationsPlanRevision'),
   '/api/operations/actions/plans/{id}/submit': route('post','submitOperationsPlan','OperationsPlanVersion'),

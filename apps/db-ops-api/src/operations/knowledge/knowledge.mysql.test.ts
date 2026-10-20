@@ -487,4 +487,22 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
     await expect(service.detail(reader, published.id, send)).rejects.toMatchObject({ statusCode: 404 });
     expect(send).not.toHaveBeenCalled();
   });
+  it('binds only exact human-confirmed references and serializes the 20-case limit across competing cases', async () => {
+    const target=await seed(false), cases=[];
+    for(let i=0;i<21;i++)cases.push(await publish({...candidate,content:{...candidate.content,title:`Synthetic manual reference ${i}`}}));
+    const [head]=await f.rows('SELECT version FROM investigations WHERE id=?',[target.inv.id]);
+    const input=(item:typeof cases[number])=>({investigationId:target.inv.id,expectedVersion:Number(head.version),resultVersion:1,version:item.version,contentHash:item.contentHash,applicabilityConfirmed:true});
+    await expect(service.bind(author,cases[0].id,{...input(cases[0]),applicabilityConfirmed:false})).rejects.toMatchObject({code:'OPERATIONS_INPUT_INVALID'});
+    await expect(service.bind(author,cases[0].id,{...input(cases[0]),resultVersion:999})).rejects.toThrow();
+    await expect(service.bind(author,cases[0].id,{...input(cases[0]),contentHash:'0'.repeat(64)})).rejects.toThrow();
+    for(const item of cases.slice(0,19))await service.bind(author,item.id,input(item));
+    const outcomes=await Promise.allSettled(cases.slice(19).map(item=>service.bind(author,item.id,input(item))));
+    expect(outcomes.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect((await f.rows('SELECT COUNT(*) n FROM investigation_case_dependencies WHERE investigation_id=?',[target.inv.id]))[0].n).toBe(20);
+    expect((await f.rows("SELECT COUNT(*) n FROM outbox_events WHERE aggregate_id=? AND event_type='operations.case.manually_bound'",[target.inv.id]))[0].n).toBe(20);
+    await service.bind(author,cases[0].id,input(cases[0])); // Idempotent reference, no second audit event.
+    await service.withdraw(author,cases[0].id,{expectedRevision:cases[0].revision,reason:'Synthetic source invalidation'});
+    await expect(service.bind(author,cases[0].id,input(cases[0]))).rejects.toThrow();
+  },30000);
+
 });

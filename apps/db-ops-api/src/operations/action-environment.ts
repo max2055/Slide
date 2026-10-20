@@ -70,6 +70,18 @@ export class RegisteredActionEnvironment implements ActionEnvironment {
     }
   }
 
+  /** Trusted draft material only; create() still performs every live check. */
+  async proposal(targetId: number) {
+    const manifest = await this.registration(), target = manifest.target;
+    if (target.serverId !== targetId || Date.parse(manifest.validFrom) > Date.now()
+      || Date.parse(manifest.validUntil) <= Date.now()) throw invalid();
+    return { tool: { name: 'restart_demo_service' as const, version: target.toolVersion, hash: target.helperHash },
+      parameters: { unit: target.unit }, policyVersion: manifest.policyVersion, verifier: manifest.verifier,
+      preconditions: [{ kind: 'target_config_hash', expected: operationsContentHash(target) }],
+      risk: 'medium' as const, rollback: { capability: 'none' as const, description: '重启不能恢复原进程内存；再次重启需要新计划与独立批准。' },
+      validUntil: manifest.validUntil };
+  }
+
   async validate(c: PlanConnection, content: Readonly<ActionPlanContent>, now: Date): Promise<void> {
     const manifest = await this.registration(), target = manifest.target;
     const valid = (clock: number) => {
