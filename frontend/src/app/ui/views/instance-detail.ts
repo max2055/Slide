@@ -1,3 +1,4 @@
+import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/resource-collection-section.js";
@@ -490,7 +491,7 @@ export class InstanceDetailPage extends LitElement {
       OBSERVATIONS_EMPTY:'尚未取得观测', OBSERVATIONS_EXPIRED:'观测已失效', OBSERVATIONS_STALE:'观测已过期',
       OBSERVATIONS_FUTURE:'观测时间异常', ALERTS_TRUNCATED:'告警记录不完整', OBSERVATIONS_TRUNCATED:'观测记录不完整',
     };
-    return html`<div class="overview-grid">
+    return html`<operations-resource-relations resourceType="instance" .resourceId=${this.instanceId}></operations-resource-relations><div class="overview-grid">
       <app-card><h2 slot="header">当前需要关注</h2>
         ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
         ${this.overviewError ? html`<p role="alert">${this.overviewError}</p><button class="btn" @click=${this.loadOverview}>重新读取概览</button>` : nothing}

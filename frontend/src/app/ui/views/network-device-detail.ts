@@ -1,3 +1,4 @@
+import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/resource-collection-section.js";
@@ -264,7 +265,7 @@ export class NetworkDeviceDetail extends LitElement {
       provenance: networkDeviceLabel(relation.provenance),
       valid: relation.validUntil ? new Date(relation.validUntil).toLocaleString() : "当前有效",
     }));
-    return html`<app-card><span slot="header">关联资源（${this.relations.length}）</span>${rows.length ? html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>` : html`<app-empty-state title="暂无关联资源" description="将此设备关联到服务器，可通过服务器关系查看受影响的数据库。" icon="link"></app-empty-state>`}</app-card>`;
+    return html`<operations-resource-relations resourceType="network_device" .resourceId=${this.validId()}></operations-resource-relations><app-card><span slot="header">关联资源（${this.relations.length}）</span>${rows.length ? html`<app-data-table .columns=${columns} .rows=${rows}></app-data-table>` : html`<app-empty-state title="暂无关联资源" description="将此设备关联到服务器，可通过服务器关系查看受影响的数据库。" icon="link"></app-empty-state>`}</app-card>`;
   }
 
   private renderBackups() {

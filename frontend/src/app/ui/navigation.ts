@@ -14,17 +14,19 @@ export const TAB_GROUPS = [
   },
   {
     label: "operations",
-    tabs: ["events", "resource-diagnosis", "sql-console", "cron-jobs", "reports"],
+    tabs: ["events", "resource-diagnosis", "sql-console", "cron-jobs", "reports", "operations-knowledge"],
   },
   {
     label: "securityGovernance",
-    tabs: ["approval", "audit-center"],
+    tabs: ["approval", "operations-actions", "audit-center"],
   },
 ] as const;
 
 export const UTILITY_TABS = ["health-center", "feedback", "settings"] as const;
 
 export type Tab =
+  | "operations-knowledge"
+  | "operations-actions"
   | "resource-diagnosis"
   | "agents"
   | "ai-settings"
@@ -66,6 +68,8 @@ export type Tab =
   | "settings";
 
 const TAB_PATHS: Record<Tab, string> = {
+  "operations-knowledge": "/operations-knowledge",
+  "operations-actions": "/operations-actions",
   "resource-diagnosis": "/resource-diagnosis",
   agents: "/agents",
   "ai-settings": "/ai-settings",
@@ -122,6 +126,8 @@ export const DEFAULT_TAB_OPTIONS: Tab[] = [
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
   'investigations': 'chat:view',
+  'operations-knowledge': 'operations:cases:view',
+  'operations-actions': 'operations:actions:view',
   // Slide tabs — require specific permission codes
   'users': 'admin:*',
   'rbac': 'admin:*',
@@ -232,6 +238,8 @@ export function inferBasePathFromPathname(pathname: string): string {
 
 export function iconForTab(tab: Tab): IconName {
   switch (tab) {
+    case "operations-knowledge": return "file-code";
+    case "operations-actions": return "check-circle";
     case "resource-diagnosis":
       return "search";
     case "agents":

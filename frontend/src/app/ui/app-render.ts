@@ -110,6 +110,8 @@ const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknow
   "cron-jobs": () => import("./views/cron-jobs-settings.ts"),
   "sql-console": () => import("./views/sql-console.ts"),
   approval: () => import("./views/approval-dashboard.ts"),
+  "operations-knowledge": () => import("./views/operations-knowledge.ts"),
+  "operations-actions": () => import("./views/operations-actions.ts"),
 };
 const heavyViewPromises = new Map<AppViewState["tab"], Promise<unknown>>();
 
@@ -307,6 +309,13 @@ export function renderApp(state: AppViewState) {
   };
 
   return html`
+    ${['operations-knowledge','operations-actions'].includes(state.tab) ? html`<style>
+      @media(max-width:1100px) {
+        .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) { grid-template-columns:var(--shell-nav-rail-width) minmax(0,1fr); grid-template-areas:"nav topbar" "nav content"; }
+        :root[data-sidebar-position="right"] .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) { grid-template-columns:minmax(0,1fr) var(--shell-nav-rail-width); grid-template-areas:"topbar nav" "content nav"; }
+        :root[data-sidebar-position="right"] .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) .shell-nav { left:auto; right:0; }
+      }
+    </style>` : nothing}
     ${renderCommandPalette({
       open: state.paletteOpen,
       query: state.paletteQuery,
@@ -744,6 +753,8 @@ export function renderApp(state: AppViewState) {
           ? html`<dashboard-page></dashboard-page>`
           : nothing}
         ${state.tab === 'attention' ? html`<attention-page .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></attention-page>` : nothing}
+        ${state.tab === 'operations-knowledge' ? html`<operations-knowledge .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></operations-knowledge>` : nothing}
+        ${state.tab === 'operations-actions' ? html`<operations-actions .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></operations-actions>` : nothing}
         ${state.tab === 'investigations' ? html`<investigations-page .client=${state.client} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></investigations-page>` : nothing}
         ${state.tab === "instances-db"
           ? html`<instances-page></instances-page>`

@@ -242,6 +242,8 @@ export const en: TranslationMap = {
     resize: "Resize sidebar",
   },
   tabs: {
+    "operations-knowledge": "Operations knowledge",
+    "operations-actions": "Action center",
     attention: "Attention",
     investigations: "AI Workspace",
     agents: "Agents",
@@ -290,6 +292,8 @@ export const en: TranslationMap = {
     feedback: "Feedback",
   },
   subtitles: {
+    "operations-knowledge": "Reviewed experience and applicability",
+    "operations-actions": "Immutable plans, independent approval and verification",
     attention: "Events and resource overview",
     investigations: "Read-only investigations, execution and evidence",
     agents: "Workspaces, tools, identities.",
