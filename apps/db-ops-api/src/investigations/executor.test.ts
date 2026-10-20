@@ -66,3 +66,21 @@ describe('restricted investigation arguments', () => {
     ).rejects.toThrow('INVESTIGATION_JOB_INVALID');
   });
 });
+
+describe('trusted investigation context configuration', () => {
+  it.each([
+    [undefined, undefined, 16000, undefined],
+    [1048576, undefined, 16000, undefined],
+    [1048576, 100000, 105120, 100000],
+    [64000, 100000, 64000, 100000],
+    [undefined, 100000, 16000, 100000],
+  ])('bounds provider %s and scoped input %s', async (window, input, expectedWindow, expectedInput) => {
+    const { investigationContextLimits } = await import('./executor.js');
+    expect(investigationContextLimits(window, input)).toEqual({ contextWindowTokens: expectedWindow,
+      ...(expectedInput === undefined ? {} : { contextBlockLimit: expectedInput }) });
+  });
+  it.each([0, -1, 100001, 1.5, Infinity])('rejects invalid scoped input %s', async input => {
+    const { investigationContextLimits } = await import('./executor.js');
+    expect(() => investigationContextLimits(1048576, input)).toThrow('INVESTIGATION_CONTEXT_INPUT_LIMIT');
+  });
+});

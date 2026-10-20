@@ -91,6 +91,23 @@ describe('standalone investigation bootstrap precedes any claim or provider send
     expect(order).toEqual(['policy', 'tools', 'budget']);
     expect(openBudget).toHaveBeenCalledExactlyOnceWith();
   });
+  it('sets the authorized input limit only on the isolated source executor', async () => {
+    const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
+    const engine = await import('../../adapter/get-agent-engine.js');
+    const budget = await import('../product-budget.js');
+    const execution = await import('../../investigations/executor.js');
+    vi.spyOn(policy, 'initialize').mockResolvedValue();
+    vi.spyOn(policy, 'get').mockReturnValue({ version: 7 } as never);
+    vi.spyOn(engine, 'loadPlatformTools').mockResolvedValue({} as never);
+    vi.spyOn(budget, 'operationsProductBudget').mockReturnValue({ read: () => ({}) } as never);
+    let captured: any;
+    vi.spyOn(execution, 'InvestigationExecutor').mockImplementation(function (options: any) {
+      captured = options;
+      throw Error('STOP_BEFORE_CLAIM');
+    } as any);
+    await expect(investigateSource({} as SourceControl)).rejects.toThrow('STOP_BEFORE_CLAIM');
+    expect(captured.contextInputLimit).toBe(100000);
+  });
   it('refuses initialization failure before budget/claim even if an old cache exists', async () => {
     const { agentSecurityPolicyService: policy } = await import('../../security/agent-security-policy-service.js');
     const budget = await import('../product-budget.js');
