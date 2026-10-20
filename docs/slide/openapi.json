@@ -5448,6 +5448,11 @@
               }
             ]
           },
+          "profileVersion": {
+            "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
           "resourceRefs": {
             "items": {
               "additionalProperties": false,
@@ -8278,8 +8283,8 @@
               ],
               "type": "object"
             },
-            "maxItems": 2,
-            "minItems": 2,
+            "maxItems": 3,
+            "minItems": 3,
             "type": "array"
           },
           "schemaVersion": {

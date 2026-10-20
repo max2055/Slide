@@ -8,6 +8,8 @@ export function investigationToolContract(tool: ToolSchema,
   const parameters = structuredClone(tool.parameters), p = parameters.properties;
   const required = new Set(parameters.required ?? []);
   const security = getToolSecurityDefinition(tool.name);
+  if (tool.name === 'search_case_references') return resources.length ? { ...tool,
+    description: `${tool.description} 仅搜索完整范围均包含在本调查 ${JSON.stringify(resources)} 内的案例；参考不授予任何执行权限。` } : null;
   const cross = ['query_metrics', 'get_resource_observations', 'get_resource_relations'].includes(tool.name);
   const candidates = cross && security?.resource === 'none' ? resources : resources.filter(r => r.type === security?.resource);
   if (!candidates.length) return null;

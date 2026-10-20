@@ -22,7 +22,8 @@ import { AgentRunService, type AgentRun, type AgentRunState } from '../adapter/a
 import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtime.js';
 import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
-import { INVESTIGATION_PROMPTS, resolveInvestigationProfile } from './profiles.js';
+import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
+import { InvestigationCaseReferences } from './case-references.js';
 import {
   MysqlInvestigationBudgetLedger,
   budgetUsage,
@@ -59,6 +60,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
 export function investigationContextMessages(messages: Message[], profile: string): Message[] {
   if (profile !== 'ops') return messages;
   return messages.map(message => {
+    if (message.name === 'search_case_references') return message;
     if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
     let result: unknown;
     try { result = JSON.parse(message.content); } catch { return message; }
@@ -78,6 +80,7 @@ const BACKGROUND_SAFE = new Set([
   'get_resource_observations',
   'get_resource_relations',
   'get_platform_observations',
+  'search_case_references',
 ]);
 export interface InvestigationExecuteCommand {
   investigationId: string;
@@ -91,6 +94,7 @@ export interface InvestigationRuntimeDependencies {
 }
 export interface InvestigationExecutorOptions extends InvestigationRuntimeDependencies {
   pool: () => Pool | null;
+  caseReferences?: InvestigationCaseReferences;
   /** Trusted server-side test configuration; never taken from workflow payloads. */
   contextInputLimit?: number;
   authorization?: InvestigationAuthorization;
@@ -253,12 +257,14 @@ export class InvestigationExecutor {
   private readonly authorization: InvestigationAuthorization;
   private readonly bridge: InvestigationSessionBridge;
   private readonly ledger: MysqlInvestigationBudgetLedger;
+  private readonly cases: InvestigationCaseReferences;
   constructor(private readonly options: InvestigationExecutorOptions) {
     this.authorization = options.authorization ?? new InvestigationAuthorization();
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
     this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
     this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens);
+    this.cases = options.caseReferences ?? InvestigationCaseReferences.create(options.pool);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
     // Ingress owns domain before newly created Session rows. Executor owns
@@ -602,9 +608,41 @@ export class InvestigationExecutor {
           if (!sent.dispatchAllowed) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           receipt.state = 'sent';
         } else if (receipt.state !== 'sent') throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
-        await this.transaction((c) => this.canonical.lockInvestigationExecution(c, actor, binding));
-        control.signal.throwIfAborted();
-        const response = await send();
+        let started = false;
+        const beginSend = () => { control.signal.throwIfAborted(); started = true; return send(); };
+        let response: LLMResponse;
+        try {
+          const egress = await this.transaction(async c => {
+            await this.canonical.lockInvestigationExecution(c, actor, binding);
+            if (profile.id !== 'ops' || profile.version !== 2) return { actor, refs: [] };
+            const live = await this.authorization.authorize(c, actor, await this.authorization.load(c, investigationId), 'continue', [], frozen);
+            return { actor: live.actor, refs: await this.cases.load(c, investigationId) };
+          });
+          response = await this.cases.send(egress.actor, egress.refs, beginSend, async c => {
+            await this.canonical.lockInvestigationExecution(c as unknown as InvestigationConnection, actor, binding);
+          });
+        } catch (error) {
+          // A failed final reference check did not send a provider request.
+          // Preserve earlier usage, without inventing unknown usage/noReplay.
+          if (!started) await this.transaction(async c => {
+            // Cleanup has no content side effect and must remain possible
+            // after ACL withdrawal. Follow the terminal owner's lock order,
+            // proving the exact original request, actor, Run and live fence.
+            await c.query('SELECT session_id FROM chat_sessions WHERE session_id=? FOR UPDATE', [run.sessionId]);
+            await c.query('SELECT id FROM investigations WHERE id=? FOR UPDATE', [investigationId]);
+            const [request] = await c.query<any[]>('SELECT message_id,job_id FROM investigation_requests WHERE id=? AND investigation_id=? FOR UPDATE', [requestId, investigationId]);
+            await this.canonical.assertInvestigationLease(c, binding);
+            const [rows] = await c.query<any[]>('SELECT result_json FROM agent_runs WHERE id=? AND actor_id=? AND session_id=? AND message_id=? AND idempotency_key=? AND state=\'running\' FOR UPDATE',
+              [run.id, actor.userId, run.sessionId, request[0]?.message_id, `investigation:${requestId}`]);
+            if (request[0]?.job_id !== job.id || !rows.length) throw new Error('INVESTIGATION_RUN_INVALID');
+            const result = decode(rows[0].result_json), next: ExecutionState = result.investigationExecution;
+            if (next.provider?.id !== id || next.fencingToken !== context.fencingToken) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
+            next.provider = null;
+            await c.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(result), run.id]);
+            state = next;
+          });
+          throw error;
+        }
         control.signal.throwIfAborted();
         const usage = usageOf(response);
         await update((s) => {
@@ -645,9 +683,13 @@ export class InvestigationExecutor {
           frozen,
         ),
       );
-      const scopedRegistry = (actor: ActorContext) => profile.id === 'system'
-        ? this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry()
-        : runtime.toolsForActor(actor);
+      const scopedRegistry = (actor: ActorContext) => {
+        if (profile.id === 'system') return this.options.systemToolsForInvestigation?.(actor, snapshot) ?? new ToolRegistry();
+        const base = runtime.toolsForActor(actor), registry = new ToolRegistry();
+        for (const name of base.toolNames) registry.register(base.get(name)!);
+        if (profile.version === 2) this.cases.register(registry, actor);
+        return registry;
+      };
       const source = scopedRegistry(effective.actor),
         tools = new ToolRegistry();
       for (const name of effective.tools) {
@@ -717,7 +759,8 @@ export class InvestigationExecutor {
               await this.authorization.authorizeTool(c, actor, await this.authorization.load(c, investigationId), frozen, name,
                 targets.length ? targets : security.resource === 'instance' ? snapshot.resources.filter((r: any) => r.type === 'instance') : []);
             });
-            await update((s) => {
+            await update(async (s, c) => {
+              if (name === 'search_case_references') await this.cases.retain(c, investigationId, result);
               s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
             });
             return contextToolResult(result, toolId);
@@ -739,7 +782,7 @@ export class InvestigationExecutor {
           role: 'system',
           source: 'runtime',
           contextAuthority: 'policy',
-          content: INVESTIGATION_PROMPTS[profile.id as 'ops' | 'system'],
+          content: investigationPrompt(profile),
         },
         ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];

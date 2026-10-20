@@ -34,6 +34,7 @@ describe.skipIf(!port)('P10 additive upgrade and retained rollback', () => {
       // runner accepts a newer ledger and leaves new evidence tables untouched.
       await new MigrationRunner(pool, directory).run();
       const [tables] = await pool.query<any[]>("SHOW TABLES LIKE 'action_executions'"); expect(tables).toHaveLength(1);
+      const [dependencies] = await pool.query<any[]>("SHOW TABLES LIKE 'investigation_case_dependencies'"); expect(dependencies).toHaveLength(1);
       const [unknown] = await pool.query<any[]>("SELECT state FROM operations WHERE id='p10-old'"); expect(unknown[0].state).toBe('outcome_unknown');
       const container = process.env.OPERATIONS_TEST_MYSQL_CONTAINER;
       if (container) {

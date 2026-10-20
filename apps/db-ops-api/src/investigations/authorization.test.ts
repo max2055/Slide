@@ -31,7 +31,7 @@ describe('repository Profile and service identity authority', () => {
         expect(profile.toolAllowlist).not.toContain(unsafe);
       }
     }
-    expect(() => resolveInvestigationProfile('ops', 2)).toThrow('PROFILE_SUBJECT_UNSUPPORTED');
+    expect(() => resolveInvestigationProfile('ops', 3)).toThrow('PROFILE_SUBJECT_UNSUPPORTED');
     expect(() => resolveInvestigationProfile('model-selected', 1)).toThrow('PROFILE_SUBJECT_UNSUPPORTED');
   });
 
