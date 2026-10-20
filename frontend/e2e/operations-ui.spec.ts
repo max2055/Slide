@@ -57,6 +57,7 @@ test('synthetic case authoring → independent review → search → revocation 
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
         const host=page.locator(route==='actions'?'operations-actions':'operations-knowledge');
         const box=await host.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);
+        const topbar=await page.locator('.topbar').boundingBox();expect(box!.y).toBeGreaterThanOrEqual(topbar!.y+topbar!.height);
         if(width===390)expect(box!.x).toBeGreaterThanOrEqual(70);
         expect(await page.evaluate(()=>document.documentElement.dataset.themeMode)).toBe(theme);
         const path=resolve(output,`${route}-${width}-${theme}.png`);await page.screenshot({path,fullPage:true});screenshots.push(path.split('/').at(-1)!);
@@ -138,7 +139,9 @@ test('controlled HTTP fault matrix: loading, empty, failed, expired, revoked, un
       await page.setViewportSize({width,height:1000});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       for(const button of await view.getByRole('button').all())if(await button.isVisible())expect((await button.innerText()).trim()||await button.getAttribute('aria-label')).toBeTruthy();
-      densityEvidence.push({density,width,noOverflow:true});
+      const heading=await view.getByRole('heading',{level:1}).boundingBox(),topbar=await page.locator('.topbar').boundingBox();
+      expect(heading!.y).toBeGreaterThanOrEqual(topbar!.y+topbar!.height);
+      densityEvidence.push({density,width,noOverflow:true,noToolbarOverlap:true});
       if(output && density==='comfortable')await page.screenshot({path:resolve(output,`controlled-long-${width}-${density}.png`),fullPage:true});
     }
   }

@@ -311,7 +311,7 @@ export function renderApp(state: AppViewState) {
   return html`
     ${['operations-knowledge','operations-actions'].includes(state.tab) ? html`<style>
       @media(max-width:1100px) {
-        .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) { grid-template-columns:var(--shell-nav-rail-width) minmax(0,1fr); grid-template-areas:"nav topbar" "nav content"; }
+        .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) { grid-template-columns:var(--shell-nav-rail-width) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); grid-template-areas:"nav topbar" "nav content"; }
         :root[data-sidebar-position="right"] .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) { grid-template-columns:minmax(0,1fr) var(--shell-nav-rail-width); grid-template-areas:"topbar nav" "content nav"; }
         :root[data-sidebar-position="right"] .shell--nav-collapsed:not(.shell--nav-drawer-open):has(operations-knowledge,operations-actions) .shell-nav { left:auto; right:0; }
       }
