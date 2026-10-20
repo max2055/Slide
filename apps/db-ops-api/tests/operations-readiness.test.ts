@@ -220,7 +220,7 @@ test('unknown baselines retain null comparison metrics and no improvement claim'
 test('CLI exits 2 for gaps; error output is redacted; reports never overwrite inputs', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'operations-readiness-'));
   const script = resolve(import.meta.dirname, '../../../tests/qualification/operations-readiness.ts');
-  const cli = (args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8' });
+  const cli = (args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8', timeout: 10_000 });
   try {
     const missing = cli([]); assert.equal(missing.status, 2); assert.equal(JSON.parse(missing.stdout).B04.trustedRealInvestigations, null);
     const input = join(directory, 'input.json'), canary = 'hidden-case-secret-canary';
@@ -233,7 +233,7 @@ test('CLI exits 2 for gaps; error output is redacted; reports never overwrite in
     const out = join(directory, 'output.json'); assert.equal(cli(['--output', out]).status, 2);
     assert.equal(cli(['--output', out]).status, 1);
   } finally { await rm(directory, { recursive: true, force: true }); }
-});
+}, 30_000);
 
 // No real/human claims in current-policy fixtures, including the freeze review.
 function functionalDataset() {
@@ -316,7 +316,7 @@ test('current policy byte binding, source reset unknown and missing inventory re
 test('CLI defaults to functional policy; historical qualification remains explicit', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'operations-functional-'));
   const script = resolve(import.meta.dirname, '../../../tests/qualification/operations-readiness.ts');
-  const cli = (args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8' });
+  const cli = (args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8', timeout: 10_000 });
   try {
     const d = functionalDataset();
     // Frozen algorithm windows stay synthetic; only evidence export expiry is future.
@@ -336,4 +336,4 @@ test('CLI defaults to functional policy; historical qualification remains explic
     assert.equal(JSON.parse(legacy.stdout).functionalEvidence, undefined);
     assert.equal(cli(['--mode', 'invented']).status, 1);
   } finally { await rm(directory, { recursive: true, force: true }); }
-});
+}, 30_000);
