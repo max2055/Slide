@@ -120,7 +120,7 @@ it('a compliant UTF8 summary may need more than one output token per four bytes'
  const {RapidRefill}=await import('../runtime/rapid-refill.js');
  const {ToolRegistry}=await import('../tool-registry.js');
  const {NoopHook}=await import('../runner.js');
- const tools=new ToolRegistry();tools.register({name:'read_only',description:'bounded read',parameters:{type:'object',properties:{}},execute:async()=>null});
+ const tools=new ToolRegistry();tools.register({name:'read_only',description:'bounded read',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:true,exclusive:false,execute:async()=>null});
  const raw:any[]=[{role:'system',content:'Read only.'},{role:'user',content:'original goal'},{role:'assistant',content:'historical '.repeat(600)},{role:'user',content:'protected '.repeat(440)}];
  const summary={goal:['inspect'],constraints:['read only'],done:[],pending:['verify'],evidence:[],uncertain:['unknown']};
  let generated:any;let sends=0;
