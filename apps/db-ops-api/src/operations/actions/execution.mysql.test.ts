@@ -1,7 +1,10 @@
 /** Production schema + actual MySQL transactions. No VM/model calls. */
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { Client, Server, utils } from 'ssh2';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
@@ -21,6 +24,7 @@ import {
 } from './executor.js';
 import { AgentToolApprovalExecution } from '../../security/agent-tool-approval-execution.js';
 import { actionWorkflowHandler, registerActionExecutionRoutes } from './workflow-handler.js';
+import { RestartDemoServiceAdapter } from './adapters/restart-demo-service.js';
 
 const port = Number(
   process.env.OPERATIONS_TEST_MYSQL_PORT ?? process.env.AGENT_RUN_TEST_MYSQL_PORT,
@@ -37,6 +41,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
   let preflight: (() => Promise<void>) | undefined,
     send: ((invocation: ActionInvocation) => Promise<unknown>) | undefined;
   let validateEnvironment: ((c: PlanConnection) => Promise<void>) | undefined;
+  let targetConfigHash: string, toolHash: string;
   const database = `operations_p07_${randomUUID().replaceAll('-', '')}`;
   const options = {
     host: '127.0.0.1',
@@ -65,7 +70,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     investigationId: ids.investigation,
     resultVersion: 1,
     target: { type: 'server', id: 1 },
-    tool: { name: 'restart_demo_service', version: '1', hash: 'a'.repeat(64) },
+    tool: { name: 'restart_demo_service', version: '1', hash: toolHash },
     parameters: { unit: 'slide-action-demo.service' },
     evidence: [
       {
@@ -77,7 +82,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     ],
     relations: [],
     baselines: [],
-    preconditions: [{ kind: 'target_config_hash', expected: 'c'.repeat(64) }],
+    preconditions: [{ kind: 'target_config_hash', expected: targetConfigHash }],
     risk: 'medium',
     impact: 'isolated demo',
     policyVersion: '1',
@@ -201,7 +206,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     plans = new PlanStore(pool as any);
     sources = new PlanSources({
       validate: async (_c: PlanConnection, p) => {
-        if (p.tool.hash !== 'a'.repeat(64)) throw new Error('hash');
+        if (p.tool.hash !== toolHash) throw new Error('hash');
         await validateEnvironment?.(_c);
       },
     });
@@ -236,6 +241,8 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     preflight = undefined;
     send = undefined;
     validateEnvironment = undefined;
+    targetConfigHash = 'c'.repeat(64);
+    toolHash = 'a'.repeat(64);
     await sql("UPDATE users SET session_version=1,status='active'");
     await sql('DELETE FROM role_permissions');
     for (const role of [1, 2])
@@ -311,6 +318,30 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       await rows('SELECT * FROM action_dispatch_locks WHERE execution_id IS NOT NULL'),
     ).toHaveLength(0);
     expect((await store.enqueue(reviewer, next)).state).toBe('queued');
+  });
+  it('unknown global lock blocks an independently approved different server without consuming it', async () => {
+    await sql('INSERT INTO servers VALUES(2)');
+    await sql("INSERT INTO investigation_resources VALUES(?,'server',2,'related')", [ids.investigation]);
+    try {
+      const e = await queued();
+      const p = await approvals.create(author, { ...proposal(), target: { type: 'server', id: 2 } });
+      const ref = { planId: p.id, expectedVersion: p.version };
+      const a = await approvals.submit(author, ref);
+      await approvals.review(reviewer, { ...ref, approvalId: a.approvalId, action: 'approve' });
+      send = async () => { throw new Error('lost reply'); };
+      await worker.run(e.id, 'first-target');
+      await expect(store.enqueue(reviewer, { ...ref, approvalId: a.approvalId, requestKey: randomUUID() }))
+        .rejects.toMatchObject({ code: 'OPERATIONS_VERSION_CONFLICT' });
+      expect((await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?', [a.approvalId]))[0])
+        .toMatchObject({ status: 'approved', used_count: 0 });
+      expect((await rows('SELECT lock_key FROM action_dispatch_locks WHERE execution_id=? ORDER BY lock_key', [e.id]))
+        .map((row) => row.lock_key.toString())).toEqual(['global', 'server:1']);
+      expect((await state(e)).state).toBe('outcome_unknown');
+      expect(sends).toBe(1);
+    } finally {
+      await sql("DELETE FROM investigation_resources WHERE investigation_id=? AND resource_id=2", [ids.investigation]);
+      await sql('DELETE FROM servers WHERE id=2');
+    }
   });
   it('expired prechecking fence cannot send after a replacement worker claims', async () => {
     const e = await queued(),
@@ -477,6 +508,11 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     await worker.run(e.id, 'redelivery');
     expect(sends).toBe(1);
     const good = remoteReceipt;
+    remoteReceipt = null;
+    await expect(worker.reconcile(reviewer, e.id)).rejects.toMatchObject({
+      code: 'OPERATIONS_PRECONDITION_FAILED',
+    });
+    expect((await state(e)).state).toBe('outcome_unknown');
     remoteReceipt = { ...(good as any), operationId: randomUUID() };
     await expect(worker.reconcile(reviewer, e.id)).rejects.toMatchObject({
       code: 'OPERATIONS_PRECONDITION_FAILED',
@@ -803,4 +839,149 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     expect(receiptReads).toBe(0);
     expect((await state(e)).state).toBe('outcome_unknown');
   });
+
+  // Synthetic principals/data, isolated MySQL, real HTTP + pinned loopback SSH,
+  // production adapter and helper disk protocol. Only root/path/config/systemctl
+  // are replaced by the existing unprivileged fixture; no VM or systemd action.
+  it.each([
+    'success', 'lost SSH reply', 'lost SQL completion', 'after_intent', 'before_receipt',
+    'cancel before', 'cancel after', 'revoke before', 'revoke after',
+  ])('controlled HTTP/SQL/SSH/helper chain: %s', async (fault) => {
+    const directory = mkdtempSync(join(tmpdir(), 'max200-chain-'));
+    const fixture = new URL('../../../../../scripts/qualification/action-demo-helper-fixture.py', import.meta.url).pathname;
+    const helper = new URL('../../../../../scripts/qualification/action-demo-helper.sh', import.meta.url);
+    toolHash = createHash('sha256').update(readFileSync(helper)).digest('hex');
+    const host = utils.generateKeyPairSync('ed25519'), login = utils.generateKeyPairSync('ed25519');
+    const hostKey = utils.parseKey(host.private), loginKey = utils.parseKey(login.private);
+    if (hostKey instanceof Error || loginKey instanceof Error) throw new Error('fixture key');
+    const registration = {
+      protocol: 1, serverId: 1, host: '192.168.49.130', port: 22, username: 'slide-action',
+      unit: 'slide-action-demo.service', helper: '/usr/local/libexec/slide-action-demo-helper',
+      helperHash: toolHash, unitHash: 'e'.repeat(64), toolVersion: '1', eligible: true,
+      hostFingerprint: 'SHA256:' + createHash('sha256').update(hostKey.getPublicSSH()).digest('base64').replace(/=+$/, ''),
+    };
+    targetConfigHash = operationsContentHash(registration);
+    const signing = generateKeyPairSync('ed25519'), commands: string[] = [];
+    let atInspect: (() => Promise<void>) | undefined, atExecute: (() => Promise<void>) | undefined;
+    const server = new Server({ hostKeys: [host.private] }, (client) => {
+      client.on('error', () => {});
+      client.on('authentication', (ctx) => {
+        if (ctx.method === 'publickey' && ctx.username === 'slide-action' &&
+            ctx.key.data.equals(loginKey.getPublicSSH()) &&
+            (!ctx.signature || loginKey.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) === true)) ctx.accept();
+        else ctx.reject();
+      });
+      client.on('ready', () => client.on('session', (accept) => {
+        accept().on('exec', (accept, reject, info) => {
+          const prefix = 'sudo -n -- /usr/local/libexec/slide-action-demo-helper ';
+          if (!info.command.startsWith(prefix)) { reject(); return; }
+          const channel = accept(), args = info.command.slice(prefix.length).split(' ');
+          commands.push(args[0]);
+          void (async () => {
+            if (args[0] === 'inspect') await atInspect?.();
+            if (args[0] === 'execute') await atExecute?.();
+            const crash = args[0] === 'execute' && ['after_intent', 'before_receipt'].includes(fault);
+            const result = spawnSync('/usr/bin/python3', ['-I', fixture, ...(crash
+              ? ['retained-scenario', fault, directory, ...args.slice(1)]
+              : ['child', directory, args[0], ... (args.length === 1
+                ? [randomUUID(), 'b'.repeat(64), targetConfigHash, toolHash] : args.slice(1))])],
+              { encoding: 'utf8', timeout: 20_000 });
+            if (result.status !== 0) throw new Error(result.stderr);
+            // The helper has already persisted its result when this transport fails.
+            if (args[0] === 'execute' && (fault === 'lost SSH reply' || crash)) channel.exit(1);
+            else { channel.write(result.stdout); channel.exit(0); }
+            channel.end();
+          })().catch(() => { channel.exit(1); channel.end(); });
+        });
+      }));
+    });
+    const app = Fastify(), jwtKey = 'synthetic-p07-' + randomUUID();
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('fixture address');
+      const adapter = new RestartDemoServiceAdapter(registration,
+        sign(null, Buffer.from(targetConfigHash), signing.privateKey), signing.publicKey,
+        async () => ({ privateKey: login.private }), () => {
+          const client = new Client(), connect = client.connect.bind(client);
+          // Socket routing only: retain the production host verifier/account/command.
+          client.connect = (config) => connect({ ...config, host: '127.0.0.1', port: address.port });
+          return client;
+        });
+      const isolated = new ActionExecutor(store, sources, adapter, new OperationsAuthorization(), () => flags);
+      await registerActionExecutionRoutes(app, async (req, reply) => {
+        try {
+          const claims = jwt.verify(String(req.headers.authorization ?? '').replace(/^Bearer /, ''), jwtKey) as any;
+          req.user = await new ActorContextService().loadInvestigationActorFrom(
+            { execute: sql }, claims.userId, 'user', claims.sessionVersion, 'synthetic-p07-chain');
+        } catch { return reply.code(401).send({ reasonCode: 'UNAUTHENTICATED' }); }
+      }, store, isolated);
+      const base = await app.listen({ host: '127.0.0.1', port: 0 }), command = await approved();
+      const headers = { 'content-type': 'application/json', authorization: 'Bearer ' +
+        jwt.sign({ userId: 2, sessionVersion: 1 }, jwtKey, { expiresIn: '5m' }) };
+      const url = base + `/api/operations/action-plans/${command.planId}/versions/1/execute`;
+      const post = () => fetch(url, { method: 'POST', headers,
+        body: JSON.stringify({ approvalId: command.approvalId, requestKey: command.requestKey }) });
+      const response = await post();
+      expect(response.status).toBe(202);
+      const e = ((await response.json()) as any).execution as ExecutionRecord;
+      const executionUrl = base + '/api/operations/action-executions/' + e.id;
+      const cancel = async () => {
+        expect((await fetch(executionUrl + '/cancel', { method: 'POST', headers, body: '{}' })).status).toBe(200);
+      };
+      const revoke = async () => { await sql('UPDATE users SET session_version=2 WHERE id=2'); };
+      if (fault === 'cancel before') atInspect = cancel;
+      if (fault === 'cancel after') atExecute = cancel;
+      if (fault === 'revoke before') atInspect = revoke;
+      if (fault === 'revoke after') atExecute = revoke;
+      if (fault === 'lost SQL completion') {
+        const transition = store.transition.bind(store);
+        vi.spyOn(store, 'transition').mockImplementation(async (...args) => {
+          if (args[2] === 'succeeded') throw new Error('isolated completion persistence failure');
+          return transition(...args);
+        });
+      }
+      const handle = actionWorkflowHandler(isolated, 'synthetic-chain-worker');
+      const job = { id: randomUUID(), type: 'operations.action.execute', payload: { executionId: e.id },
+        attempts: 1, maxAttempts: 1, fencingToken: 1 };
+      await Promise.all([handle(job), handle(job)]);
+      vi.restoreAllMocks();
+      const expectedCount = ['cancel before', 'revoke before', 'after_intent'].includes(fault) ? 0 : 1;
+      const count = () => existsSync(join(directory, 'actual-restarts')) ? Number(readFileSync(join(directory, 'actual-restarts'), 'utf8')) : 0;
+      expect(count()).toBe(expectedCount);
+      const unknown = ['lost SSH reply', 'lost SQL completion', 'after_intent', 'before_receipt'].includes(fault);
+      const expectedState = unknown ? 'outcome_unknown' : fault === 'cancel before' ? 'cancelled' : fault === 'revoke before' ? 'failed' : 'succeeded';
+      const persisted = (await rows('SELECT * FROM action_executions WHERE id=?', [e.id]))[0];
+      expect(persisted.state).toBe(expectedState);
+      if (fault.startsWith('cancel')) expect(persisted.cancel_requested_at).not.toBeNull();
+      expect((await rows('SELECT status,used_count FROM agent_tool_approvals WHERE id=?', [e.approvalId]))[0])
+        .toMatchObject({ status: 'consumed', used_count: 1 });
+      expect(await rows('SELECT * FROM agent_tool_execution_intents WHERE id=?', [e.id])).toHaveLength(1);
+      expect(await rows('SELECT * FROM workflow_jobs')).toHaveLength(1);
+      if (unknown) {
+        expect(await rows('SELECT * FROM action_dispatch_locks WHERE execution_id=?', [e.id])).toHaveLength(2);
+        flags.dispatch = false;
+        // A fresh executor restores only by reading the original helper receipt.
+        const fresh = new ActionExecutor(new ActionExecutionStore(plans, sources, approvals), sources,
+          adapter, new OperationsAuthorization(), () => flags);
+        expect((await fresh.reconcile(reviewer, e.id)).state).toBe(
+          ['after_intent', 'before_receipt'].includes(fault) ? 'outcome_unknown' : 'succeeded');
+      }
+      if (fault === 'revoke after') expect((await fetch(executionUrl, { headers })).status).toBe(401);
+      if (!fault.startsWith('revoke')) {
+        expect((await post()).status).toBe(202);
+        expect((await fetch(executionUrl, { headers })).status).toBe(200);
+      }
+      const sent = commands.filter((c) => c === 'execute').length;
+      await handle(job);
+      expect(commands.filter((c) => c === 'execute')).toHaveLength(sent);
+      expect(sent).toBe(fault.endsWith('before') ? 0 : 1);
+      expect(count()).toBe(expectedCount);
+    } finally {
+      vi.restoreAllMocks();
+      await app.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

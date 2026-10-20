@@ -25,7 +25,8 @@ def child(directory, mode, op, plan, config, helper):
     exec(source.split('\ntry:\n    main()')[0], ns)
     ns['STATE'] = directory
     ns['check_path'] = lambda *args: None  # Production check remains unchanged.
-    ns['configuration'] = lambda: ({'helperHash': helper}, config)
+    ns['configuration'] = lambda: ({'helperHash': helper, 'unitHash': 'e'*64,
+                                   'serverId': 1}, config)
     ns['os'].geteuid = lambda: 0
     real_fstat = ns['os'].fstat
 
@@ -52,7 +53,7 @@ def child(directory, mode, op, plan, config, helper):
         return ''
 
     ns['ctl'] = ctl
-    ns['sys'].argv = ['helper', mode, op, plan, config, helper]
+    ns['sys'].argv = ['helper', 'inspect'] if mode == 'inspect' else ['helper', mode, op, plan, config, helper]
     try:
         ns['main']()
     except Exception:
@@ -60,9 +61,10 @@ def child(directory, mode, op, plan, config, helper):
         sys.exit(1)
 
 
-def scenario(point, binding=None, timeout=False, invalid=None):
+def scenario(point, binding=None, timeout=False, invalid=None, state_directory=None):
     op, plan, config, helper = binding or (OP, 'b'*64, 'c'*64, 'a'*64)
-    with tempfile.TemporaryDirectory(prefix='p07-barrier-') as directory:
+    with (contextlib.nullcontext(state_directory) if state_directory else
+          tempfile.TemporaryDirectory(prefix='p07-barrier-')) as directory:
         root = Path(directory)
         control = dict(protocol=1, point=point, operationId=op, planHash=plan,
                        configHash=config, helperHash=helper, nonce='d'*32)
@@ -159,6 +161,8 @@ if __name__ == '__main__':
         child(*sys.argv[2:])
     elif sys.argv[1] == 'scenario':
         print(json.dumps(scenario(sys.argv[2], sys.argv[3:] or None)))
+    elif sys.argv[1] == 'retained-scenario':
+        print(json.dumps(scenario(sys.argv[2], sys.argv[4:], state_directory=sys.argv[3])))
     elif sys.argv[1] == 'timeout':
         print(json.dumps(scenario(sys.argv[2], timeout=True)))
     elif sys.argv[1] == 'invalid':
