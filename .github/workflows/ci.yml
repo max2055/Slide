@@ -76,6 +76,8 @@ jobs:
       - name: Verify generated API contracts
         run: pnpm contracts:check
       - run: pnpm --filter slide-api typecheck
+      - name: Test native recovery audit policies
+        run: node --test tests/qualification/*.test.mjs
       - name: Verify qualification coverage
         run: pnpm qualification:matrix
       - name: Run tests when not covered by the full MySQL candidate
