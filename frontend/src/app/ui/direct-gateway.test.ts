@@ -124,6 +124,34 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
+  it('uses a fresh single-use device challenge for every reconnect', async () => {
+    vi.useFakeTimers(); vi.spyOn(Math, 'random').mockReturnValue(1);
+    const socket = installMockWebSocket();
+    const proof = (nonce: string) => ({ deviceId: 'device', publicKey: 'key', signature: 'signature', timestamp: Date.now(), nonce });
+    const provider = vi.fn().mockResolvedValueOnce(proof('first')).mockResolvedValueOnce(proof('second'));
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    (window as any).__apiClient = { getToken: () => 'jwt' };
+    client.setDeviceAuthProvider(provider); client.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.frames[0]).toMatchObject({ type: 'auth', deviceAuth: { nonce: 'first' } });
+    socket.receive({ type: 'auth_ok' }); socket.closeWith(1012, 'restart');
+    await vi.advanceTimersByTimeAsync(1_000); socket.onopen?.(new Event('open'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.frames[0]).toMatchObject({ type: 'auth', deviceAuth: { nonce: 'second' } });
+    expect(provider).toHaveBeenCalledTimes(2); client.disconnect();
+    delete (window as any).__apiClient;
+  });
+
+  it('never omits device proof when fetching a fresh challenge fails', async () => {
+    vi.useFakeTimers(); const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.setDeviceAuthProvider(async () => { throw Object.assign(new Error('offline'), { status: 503 }); });
+    const close = vi.spyOn(MockWebSocket.prototype, 'close'); client.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.frames).toEqual([]); expect(close).toHaveBeenCalledWith(1013, 'Service unavailable');
+    client.disconnect();
+  });
+
   it('does not report connected until auth_ok is received', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });

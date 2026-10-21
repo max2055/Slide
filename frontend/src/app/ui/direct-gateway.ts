@@ -161,6 +161,7 @@ export class DirectGatewayClient {
   private unconfirmedChats = new Map<string, { frame: Record<string, unknown>; accepted: boolean }>();
   private lastCloseDetails: WebSocketCloseDetails | null = null;
   private deviceIdentity: DeviceIdentity | null = null;
+  private deviceAuthProvider?: () => Promise<NonNullable<DirectGatewayClient['deviceAuth']>>;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
   constructor(opts: DirectGatewayClientOptions) {
@@ -182,6 +183,10 @@ export class DirectGatewayClient {
     this.deviceAuth = auth;
   }
 
+  setDeviceAuthProvider(provider: NonNullable<DirectGatewayClient['deviceAuthProvider']>): void {
+    this.deviceAuthProvider = provider;
+  }
+
   connect(): void {
     if (this.closed || this.authFailed || this.ws) {
       return;
@@ -201,13 +206,19 @@ export class DirectGatewayClient {
     this.ws = socket;
 
     socket.onopen = () => {
-      if (this.ws !== socket) return;
-      const token = typeof window !== 'undefined'
-        ? (window as any).__apiClient?.getToken?.()
-        : null;
-      if (token) {
-        socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
-      }
+      const authenticate = async () => {
+        // A challenge is single-use. Every new transport signs a fresh nonce;
+        // dependency failure must never fall back to omitting device proof.
+        const deviceAuth = this.deviceAuthProvider ? await this.deviceAuthProvider() : this.deviceAuth;
+        if (this.ws !== socket || this.closed) return;
+        const token = typeof window !== 'undefined' ? (window as any).__apiClient?.getToken?.() : null;
+        if (token) socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth }));
+      };
+      void authenticate().catch(error => {
+        if (this.ws !== socket || this.closed) return;
+        if (error?.status === 401 || error?.status === 403) socket.close(4001, 'Unauthorized');
+        else { reportServiceUnavailable(); socket.close(1013, 'Service unavailable'); }
+      });
     };
 
 
@@ -1283,23 +1294,24 @@ export function initChatClient(host: Record<string, unknown>): void {
       directClient.setDeviceIdentity(identity);
       const token = apiClient.getToken();
       if (token) {
-        await apiClient.fetchResponseWithAuth('/api/device/register', {
+        const registered = await apiClient.fetchResponseWithAuth('/api/device/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ deviceId: identity.deviceId, publicKey: identity.publicKey }),
         });
-        const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ deviceId: identity.deviceId }),
-        });
-        if (challengeResponse.ok) {
+        if (!registered.ok) return;
+        directClient.setDeviceAuthProvider(async () => {
+          const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deviceId: identity.deviceId }),
+          });
+          if (!challengeResponse.ok) throw Object.assign(new Error('DEVICE_CHALLENGE_UNAVAILABLE'), { status: challengeResponse.status });
           const challenge = await challengeResponse.json() as { nonce: string };
           const { signDevicePayload } = await import('./device-identity.ts');
           const timestamp = Date.now();
           const payload = [identity.deviceId, timestamp, challenge.nonce, 'GET', '/ws/auth', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'].join('.');
-          directClient.setDeviceAuth({ deviceId: identity.deviceId, publicKey: identity.publicKey, signature: await signDevicePayload(identity.privateKey, payload), timestamp, nonce: challenge.nonce });
-        }
+          return { deviceId: identity.deviceId, publicKey: identity.publicKey, signature: await signDevicePayload(identity.privateKey, payload), timestamp, nonce: challenge.nonce };
+        });
       }
     } catch {
       // Device registration is additive; JWT login remains available if it fails.

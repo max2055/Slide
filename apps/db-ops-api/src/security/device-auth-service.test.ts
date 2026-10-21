@@ -3,6 +3,12 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { deviceSigningPayload, DeviceAuthService } from './device-auth-service.js';
 
 describe('DeviceAuthService', () => {
+  it('reports a device proof database failure as retryable without granting access', async () => {
+    const service = new DeviceAuthService(() => ({ execute: async () => { throw new Error('database offline'); } }));
+    await expect(service.verify({ userId: 1 } as any, { deviceId: 'a'.repeat(64), publicKey: 'key', signature: 'signature', timestamp: Date.now(), nonce: 'nonce', method: 'GET', path: '/ws/auth', body: '' }))
+      .rejects.toMatchObject({ name: 'PlatformUnavailableError' });
+  });
+
   it('verifies a one-time Ed25519 challenge for the owning actor', async () => {
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     const der = publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
