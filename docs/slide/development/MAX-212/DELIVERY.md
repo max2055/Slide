@@ -52,3 +52,18 @@ pnpm contracts:check
 ## 交付与回退
 
 PR、当前 head、CI 和最终测试数字记录在 MAX-212 交付评论。未合并或部署，不宣称 Max 已验收。新增公开字段为可选 execution 回执，无数据库迁移。需要回退时撤销本任务提交；已产生的可选结果字段可由旧读者忽略，不删除历史证据、Run 或用量记录。
+
+
+## P2 审查整改（2026-10-21）
+
+Chief 在原交付截图和代码中指出：重复调用 guard 是单次安全返回（`error:null`），但旧摘要对所有 `Error:` 文本调用了 Run 停止解释。检查记录因而误称“执行已停止”，与整个 Run 最终达到运行限制混淆。
+
+本轮回归先验证 RED：单次返回错误污染检查摘要；guard/返回错误检查点在退出后写入非真实 terminal 标记；带非终态错误文本的成功结果被错误分类。前两类使用真实隔离 MySQL、原执行器和 Runtime，未修改 Core。不能把已复现的错误终态标记进一步表述为所有 guard 都会导致恢复提前终止：旧 guard 标记的 source 为 legacy，已有恢复提前终止分支只接纳 tool_receipt。本轮修复移除该不可信标记，避免依赖文本推断终态。
+
+- 单次回执只描述“检查失败或被阻止”；Run 停止文案来自实际终态。
+- `investigationStop` 不再扫描 `completedToolResults` 推断原因；具体 fatal 机器码仅取 Runtime 的 `tool_error/error`。
+- 执行器仅在已观察到实际抛出异常、且相同 tool-call 已进入完成检查点时保存 fatal receipt；普通返回错误和 Core guard 不产生此回执。Runtime 的 terminal_resolution 保持优先，原 fencing、实时授权、预算及未知发送保护继续适用。
+- 新回归覆盖正常 guard 后继续、guard 检查点后退出恢复、普通返回错误后退出恢复，均执行后续成功检查并最终为 `MAX_MODEL_STEPS`；保留 fatal window-limit 正常/检查点后退出两条不再发模型的回归。结果证据列表按原存储顺序呈现，不能以数组末项推断工具实际时序。
+- 旧 head `d7f5b2dd` 的 CI `browser-qualification` 失败定位为资源权限测试仍等待折叠中的消息区可见（78 通过、1 失败）。配套测试先通过页面控件展开过程，再继续原实时撤权、HTTP/WS/证据拒绝断言；未放宽权限验收。
+
+本轮最终后端回归（8 个 focused 文件及 2 个 SQL 文件）222 通过、1 条条件跳过；工作区/反馈/资源权限浏览器回归 31/31 通过；两端 typecheck 和 contracts:check 通过。准确交付 head、更新四张截图和 CI 状态记录在 P2 附件及原交付线程。前端生产代码、公开契约及构建输入未变化，复用前次前端 focused/build/CSP 证据。真实主运行环境验收继续等待 MAX-209 稳定候选；新增产品模型调用 0，未写父账本，未合并或部署。

@@ -664,9 +664,14 @@ test('MAX-212 partial outcome is readable before collapsed process in both theme
   } finally { env.exhaustProviderSteps(false); }
   const [versions] = await env.pool.query('SELECT result_json FROM investigation_results WHERE investigation_id=?', [id]);
   expect(versions[0].result_json.execution.reasonCode).toMatch(/MAX_|LIMIT/);
+  const statements = versions[0].result_json.facts.map((f: any) => f.statement);
+  expect(statements.some((text: string) => text.includes('失败或被阻止'))).toBe(true);
+  expect(statements.join()).not.toContain('执行已停止');
   await login(page); await page.goto(`${env.url}/investigations?investigation=${id}`);
   const resultSection = page.locator('section[aria-label="本次调查结果"]');
   await expect(resultSection).toContainText('已保留');
+  await expect(resultSection).toContainText('运行限制');
+  await expect(resultSection).not.toContainText('执行已停止');
   await expect(page.locator('.investigation-states')).toContainText('部分完成');
   await expect(page.locator('.investigation-states')).toContainText('未确认');
   const process = page.locator('details[aria-label="执行过程与技术详情"]');
