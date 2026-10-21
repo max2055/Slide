@@ -10,8 +10,12 @@ description: Upgrades existing websites and apps to premium quality. Audits curr
 When applied to an existing project, follow this sequence:
 
 1. **Scan** — Read the codebase. Identify the framework, styling method (Tailwind, vanilla CSS, styled-components, etc.), and current design patterns.
-2. **Diagnose** — Run through the audit below. List every generic pattern, weak point, and missing state you find.
+2. **Diagnose** — Audit the requested area. Use the heuristics below only where they improve the actual product; do not treat each aesthetic preference as a mandatory fix.
 3. **Fix** — Apply targeted upgrades working with the existing stack. Do not rewrite from scratch. Improve what's there.
+
+## Existing system takes precedence
+
+Reuse the project framework, design tokens, icon set, typography and shared components. In Slide, follow AGENTS.md for Lit, Shadow/Light DOM styling, token values and component reuse. Existing brand colors, compact database tables and navigation are intentional; do not replace them just to satisfy marketing-page heuristics below. Preserve accurate product data. Mock/demo content must be clearly identified; never fabricate metrics, customers, testimonials or dates to appear real.
 
 ## Design Audit
 
@@ -76,14 +80,14 @@ Check for these problems and fix them:
 
 ### Content
 
-- **Generic names like "John Doe" or "Jane Smith".** Use diverse, realistic-sounding names.
-- **Fake round numbers like `99.99%`, `50%`, `$100.00`.** Use organic, messy data: `47.2%`, `$99.00`, `+1 (312) 847-1928`.
-- **Placeholder company names like "Acme Corp", "Nexus", "SmartFlow".** Invent contextual, believable brand names.
+- **Demo identity data.** Use clearly labeled sample identities; preserve actual customer names.
+- **Metrics.** Display verified values or labeled sample data; do not alter numbers for visual realism.
+- **Brand names.** Use supplied names or clearly labeled placeholders.
 - **AI copywriting cliches.** Never use "Elevate", "Seamless", "Unleash", "Next-Gen", "Game-changer", "Delve", "Tapestry", or "In the world of...". Write plain, specific language.
 - **Exclamation marks in success messages.** Remove them. Be confident, not loud.
 - **"Oops!" error messages.** Be direct: "Connection failed. Please try again."
 - **Passive voice.** Use active voice: "We couldn't save your changes" instead of "Mistakes were made."
-- **All blog post dates identical.** Randomize dates to appear real.
+- **Dates.** Preserve source dates; label unknown or example dates honestly.
 - **Same avatar image for multiple users.** Use unique assets for every distinct person.
 - **Lorem Ipsum.** Never use placeholder latin text. Write real draft copy.
 - **Title Case On Every Header.** Use sentence case instead.
@@ -160,7 +164,7 @@ When upgrading a project, pull from these high-impact techniques to replace gene
 
 Apply changes in this order for maximum visual impact with minimum risk:
 
-1. **Font swap** — biggest instant improvement, lowest risk
+1. **Reuse existing tokens and components** — correct inconsistent usage before changing the design system
 2. **Color palette cleanup** — remove clashing or oversaturated colors
 3. **Hover and active states** — makes the interface feel alive
 4. **Layout and spacing** — proper grid, max-width, consistent padding
@@ -171,7 +175,7 @@ Apply changes in this order for maximum visual impact with minimum risk:
 ## Rules
 
 - Work with the existing tech stack. Do not migrate frameworks or styling libraries.
-- Do not break existing functionality. Test after every change.
+- Preserve functionality. Run focused checks for related edits and the required acceptance checks for the final result; reuse valid evidence when code and environment are unchanged.
 - Before importing any new library, check the project's dependency file first.
 - If the project uses Tailwind, check the version (v3 vs v4) before modifying config.
 - If the project has no framework, use vanilla CSS.
