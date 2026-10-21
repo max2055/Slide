@@ -57,6 +57,8 @@ export class ResourceMetricsTable extends LitElement {
     window.addEventListener('slide-permissions-loaded', this.accessChanged);
     window.addEventListener('slide-session-expired', this.accessChanged);
     window.addEventListener('slide-bulk-selection-changed', this.selectionChanged);
+    window.addEventListener('resize', this.positionFullValue);
+    window.addEventListener('scroll', this.positionFullValue, true);
   }
   private restorePreferences() {
     if (this.restoredType === this.resourceType) return;
@@ -86,6 +88,9 @@ export class ResourceMetricsTable extends LitElement {
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
     window.removeEventListener('slide-bulk-selection-changed', this.selectionChanged);
+    window.removeEventListener('resize', this.positionFullValue);
+    window.removeEventListener('scroll', this.positionFullValue, true);
+    this.closeFullValue();
     super.disconnectedCallback();
   }
   private async loadObservations() {
@@ -105,6 +110,54 @@ export class ResourceMetricsTable extends LitElement {
   private value(text: unknown, description = unknown(text)) {
     const full = description;
     return html`<span class="cell-value" tabindex="0" title=${full} aria-label=${full}><span class="truncated">${unknown(text)}</span><span class="full-value" aria-hidden="true">${full}</span></span>`;
+  }
+  private fullValue: HTMLElement | null = null;
+  private fullValueSource: HTMLElement | null = null;
+  private closeFullValue = () => {
+    this.fullValue?.hidePopover();
+    this.fullValue = this.fullValueSource = null;
+  };
+  private showFullValue(event: Event) {
+    const source = (event.target as Element).closest<HTMLElement>('.cell-value, .resource-name');
+    const value = source?.querySelector<HTMLElement>('.full-value');
+    if (!source || !value || this.fullValue === value) return;
+    this.closeFullValue();
+    // Native top-layer rendering escapes the table's overflow without moving
+    // the DOM or focus. The original accessible name remains on the cell.
+    value.popover = 'manual';
+    value.showPopover();
+    this.fullValue = value;
+    this.fullValueSource = source;
+    this.positionFullValue();
+  }
+  private positionFullValue = () => {
+    const value = this.fullValue, source = this.fullValueSource;
+    if (!value || !source) return;
+    if (!source.isConnected) { this.closeFullValue(); return; }
+    const anchor = source.getBoundingClientRect();
+    const region = source.closest('.scroll')!.getBoundingClientRect();
+    if (anchor.right <= region.left || anchor.left >= region.right || anchor.bottom <= 0 || anchor.top >= innerHeight) {
+      this.closeFullValue(); return;
+    }
+    const gap = parseFloat(getComputedStyle(value).paddingTop);
+    const bounds = value.getBoundingClientRect();
+    const left = Math.max(gap, Math.min(anchor.left, innerWidth - bounds.width - gap));
+    const top = anchor.bottom + gap + bounds.height <= innerHeight - gap ? anchor.bottom + gap :
+      Math.max(gap, anchor.top - bounds.height - gap);
+    value.style.left = `${left}px`;
+    value.style.top = `${top}px`;
+  };
+  private leaveFullValue(event: FocusEvent | MouseEvent) {
+    const source = this.fullValueSource;
+    if (!source || source.contains(event.relatedTarget as Node | null)) return;
+    // Pointer movement must not dismiss a keyboard user's current value.
+    if (event.type === 'mouseout' && source.contains(this.shadowRoot?.activeElement ?? null)) return;
+    this.closeFullValue();
+  }
+  private fullValueKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && this.fullValue) {
+      event.preventDefault(); event.stopPropagation(); this.closeFullValue();
+    }
   }
   private health(entry: ResourceEntry) {
     const item = this.observations.get(entry.id);
@@ -223,11 +276,12 @@ export class ResourceMetricsTable extends LitElement {
       .cell-value, .resource-name { display:block; position:relative; min-width:0; max-width:100%; }
       .truncated, .resource-name > button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
       .resource-name > button { font-weight:600; }
-      .full-value { display:none; position:absolute; z-index:5; bottom:100%; left:0; width:max-content; max-width:min(26rem,70vw); white-space:normal; overflow-wrap:anywhere; padding:var(--space-sm); background:var(--bg-elevated); color:var(--text-strong); border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); font-size:var(--text-sm); }
-      .cell-value:hover > .full-value, .cell-value:focus-visible > .full-value, .resource-name:hover > .full-value, .resource-name:focus-within > .full-value { display:block; }
+      .full-value { display:none; position:fixed; inset:auto; margin:0; width:max-content; box-sizing:border-box; max-width:min(26rem,calc(100vw - 2 * var(--space-md))); max-height:calc(100dvh - 2 * var(--space-md)); overflow:auto; white-space:normal; overflow-wrap:anywhere; padding:var(--space-sm); background:var(--bg-elevated); color:var(--text-strong); border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); font-size:var(--text-sm); }
+      .full-value:popover-open { display:block; }
       .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); }
       small { display:block; color:var(--muted); }
       :focus-visible { outline:2px solid var(--text-strong); outline-offset:2px; }
+      .scroll app-data-table .column-help:focus-visible { outline:2px solid var(--text-strong); outline-offset:2px; }
       .bulk-tools { margin:0 0 var(--space-md); }
       .scroll-hint { color:var(--muted); font-size:var(--text-sm); margin:0 0 var(--space-sm); }
       @media(max-width:640px) { :host { padding:var(--space-sm) var(--space-md); } .actions > button, .bulk-tools button { min-height:44px; box-sizing:border-box; } }
@@ -254,7 +308,7 @@ export class ResourceMetricsTable extends LitElement {
       <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>` : nothing}
       <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
     <metric-bulk-dialog></metric-bulk-dialog>
-    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
+    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} @keydown=${this.fullValueKeydown} role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }
 }
