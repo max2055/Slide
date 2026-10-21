@@ -21,4 +21,5 @@ for _ in $(seq 1 60); do
 done
 if [[ "$stable" -lt 3 ]]; then echo 'isolated metric retention MySQL unavailable' >&2; exit 1; fi
 METRICS_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run \
-  src/workflows/metric-retention-handler.test.ts src/metrics/storage.mysql.test.ts src/metrics/rollout/control.mysql.test.ts
+  src/workflows/metric-retention-handler.test.ts src/metrics/storage.mysql.test.ts src/metrics/rollout/control.mysql.test.ts \
+  src/consistency-checker.mysql.test.ts

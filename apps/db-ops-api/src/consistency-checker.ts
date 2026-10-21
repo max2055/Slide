@@ -49,17 +49,20 @@ export class ConsistencyChecker {
   async resourceHealthTruth(): Promise<HealthTruth> {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
+    // Legacy rollout columns may use a different collation from this connection.
+    // Compare canonical resource IDs byte-for-byte; numeric coercion or padded
+    // text comparisons would incorrectly accept aliases such as "01" or "1 ".
     const [instances] = await pool.execute(`
       SELECT di.id, di.health_status, MAX(mh.recorded_at) AS latest_metric
       FROM database_instances di
-      LEFT JOIN (SELECT r.resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='instance' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY r.resource_id) mh ON mh.resource_id = CAST(di.id AS CHAR)
+      LEFT JOIN (SELECT CAST(r.resource_id AS BINARY) AS resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='instance' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY CAST(r.resource_id AS BINARY)) mh ON CAST(mh.resource_id AS BINARY) = CAST(di.id AS BINARY)
       WHERE di.status = 'active'
       GROUP BY di.id, di.health_status
     `) as any;
     const [servers] = await pool.execute(`
       SELECT s.id, s.status, MAX(sm.recorded_at) AS latest_metric
       FROM servers s
-      LEFT JOIN (SELECT r.resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='server' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY r.resource_id) sm ON sm.resource_id = CAST(s.id AS CHAR)
+      LEFT JOIN (SELECT CAST(r.resource_id AS BINARY) AS resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='server' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY CAST(r.resource_id AS BINARY)) sm ON CAST(sm.resource_id AS BINARY) = CAST(s.id AS BINARY)
       WHERE s.collection_enabled = 1
       GROUP BY s.id, s.status
     `) as any;
