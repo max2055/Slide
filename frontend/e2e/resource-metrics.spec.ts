@@ -71,7 +71,7 @@ async function visibleFullValue(target: import('@playwright/test').Locator) {
   })).toBe(true);
   return tip;
 }
-for (const width of [375, 1440]) for (const theme of ['light', 'dark']) {
+for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
   test(`capacity help keyboard contrast ${width} ${theme}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     await listResponses(page);
@@ -131,6 +131,17 @@ for (const width of [375, 1440]) for (const theme of ['light', 'dark']) {
       const value = row.locator('td').nth(3).locator('.cell-value');
       await keyboardFocus(page, value);
       const addressTip = await visibleFullValue(value);
+      if (width < 1440) {
+        // A pending keyboard scroll can finish after focus enters the cell.
+        await region.evaluate(el => { el.scrollTo({ left: el.scrollWidth, behavior: 'instant' }); });
+        await expect.poll(() => region.evaluate(el => el.scrollLeft)).toBeGreaterThan(100);
+        await visibleFullValue(value);
+        await expect.poll(() => addressTip.evaluate(el => {
+          const gap = parseFloat(getComputedStyle(el).paddingTop);
+          const anchor = el.parentElement!.getBoundingClientRect(), r = el.getBoundingClientRect();
+          return Math.abs(r.left - Math.max(gap, Math.min(anchor.left, innerWidth - r.width - gap)));
+        })).toBeLessThanOrEqual(1);
+      }
       await page.screenshot({ path: info.outputPath(`full-address-row-${index}.png`), fullPage: true });
       await page.keyboard.press('Escape');
       await expect(addressTip).toBeHidden(); await expect(value).toBeFocused();
