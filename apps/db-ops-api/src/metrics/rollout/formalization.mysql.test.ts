@@ -15,6 +15,7 @@ import {MetricConsumerService} from '../consumers/service.js';
 import {MysqlFormalMetricStore} from './formal-store.js';
 import {admin} from '../policy/test-support.js';
 import {MYSQL_STATUS_SQL} from '../packages/adapters.js';
+import {sealRelease} from '../packages/model.js';
 
 const port=Number(process.env.METRICS_TEST_MYSQL_PORT);
 describe.skipIf(!port)('real MySQL measurement → source acceptance → formal API',()=>{
@@ -58,6 +59,33 @@ describe.skipIf(!port)('real MySQL measurement → source acceptance → formal 
     const response=await consumer.query(admin,{resource:ref});
     expect(response.metrics[0].series[0].buckets.some(b=>b.value!==null&&b.quality.status==='good')).toBe(true);
     expect(await formal.sourceState(ref)).toBe('semantic');
+  });
+  it('hides the old package immediately, requires a fresh source gate and rolls back only as a newer generation',async()=>{
+    await scheduler.tick();expect(await cycle()).toBe('completed');expect(await cycle()).toBe('completed');
+    const formal=new MysqlFormalMetricStore(pool);
+    const series={resource_type:ref.type,resource_id:'1',metric:{id:'db.uptime_seconds',semantic_version:'1.0.0'},dimensions:{}};
+    const read=()=>formal.queryWindow(series,new Date(now-60000).toISOString(),new Date(now+1).toISOString());
+    expect((await read()).length).toBeGreaterThan(0);
+    const before=await policy.binding(admin,ref),old=before.binding.package;
+    const replacement=registry.install(sealRelease({...registry.get(old),package:{...registry.get(old).package,id:'mysql-switch-source-fixture'}})).package;
+    const next={id:replacement.id,version:replacement.version,digest:replacement.digest};
+    await policy.changeBinding(admin,ref,{expected_revision:1,package:next},true);
+    expect(await read()).toEqual([]);expect(await formal.sourceState(ref)).toBe('pending');
+    await scheduler.tick();
+    expect(await cycle()).toBe('completed');
+    // The real first sample provides evidence; it cannot publish under an old ticket.
+    expect(await read()).toEqual([]);
+    for(let i=0;i<3;i++)expect(await cycle()).toBe('completed');
+    const current=await read();expect(current.length).toBeGreaterThanOrEqual(3);
+    expect(current.every(o=>o.versions.config_revision===2&&o.versions.package_id===next.id)).toBe(true);
+    await policy.changeBinding(admin,ref,{expected_revision:2,package:old},true);
+    expect(await read()).toEqual([]);
+    await scheduler.tick();expect(await cycle()).toBe('completed');expect(await cycle()).toBe('completed');
+    expect((await read()).every(o=>o.versions.config_revision===3&&o.versions.package_id===old.id)).toBe(true);
+    const accepted=await rows('SELECT revision,generation FROM metric_source_acceptance ORDER BY revision');
+    expect(accepted.map(r=>Number(r.revision))).toEqual([1,2,3]);
+    expect(accepted.map(r=>Number(r.generation))).toEqual([1,2,3]);
+    expect(await rows('SELECT * FROM metric_publications')).not.toHaveLength(0);
   });
   it('retains raw failure evidence but never publishes a failed source comparison under an already accepted revision',async()=>{
     await scheduler.tick();expect(await cycle()).toBe('completed');expect(await cycle()).toBe('completed');

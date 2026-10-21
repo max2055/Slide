@@ -28,7 +28,11 @@ export interface ActivationGuard {
 }
 export class MetricConfigurationService {
   constructor(private policy: PolicyService, private registry: PackageRegistry, private store: TrialStore,
-    private access: CollectorAccess, private reader?: ConfigurationReader) {}
+    private access: CollectorAccess, private reader?: ConfigurationReader,
+    private reloadActor?: (seed: ActorContext) => Promise<ActorContext>) {}
+  private currentActor(actor: ActorContext, guard: ActivationGuard): Promise<ActorContext> {
+    return guard.check ? guard.check() : this.reloadActor ? this.reloadActor(actor) : Promise.resolve(actor);
+  }
   private statusReader() {
     rule(this.reader, 'CONFIGURATION_STATUS_UNAVAILABLE', 503);
     return new MetricConfigurationReader(this.policy, this.registry, this.reader, ref => this.store.attempts(ref));
@@ -42,7 +46,7 @@ export class MetricConfigurationService {
   recommendations(actor: ActorContext, ref: Ref) { return this.statusReader().recommendations(actor, ref); }
   async activate(actor: ActorContext, ref: Ref, input: unknown, guard: ActivationGuard = {}) {
     guard.signal?.throwIfAborted();
-    actor = await guard.check?.() ?? actor;
+    actor = await this.currentActor(actor, guard);
     const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
     rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
     const candidate = candidateFingerprint(preview.resources[0]);
@@ -52,7 +56,7 @@ export class MetricConfigurationService {
       && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status)), 'CONFIGURATION_TRIAL_FAILED', 422);
     // Revalidates live permission, inventory and policy/group CAS after remote IO.
     guard.signal?.throwIfAborted();
-    actor = await guard.check?.() ?? actor;
+    actor = await this.currentActor(actor, guard);
     const result = await this.policy.changeBinding(actor, ref, input, true, candidate);
     guard.published?.(result.resources[0].binding.revision);
     return { ...result, status: await this.status(actor, ref) };
@@ -77,6 +81,7 @@ export class MetricConfigurationService {
     return this.trial(actor, ref, { expected_revision: current.published_revision });
   }
   async trial(actor: ActorContext, ref: Ref, input: unknown, expectedCandidate?: string, guard: ActivationGuard = {}) {
+    actor = await this.currentActor(actor, guard);
     const preview = await this.policy.changeBinding(actor, ref, input, false, expectedCandidate);
     const next = preview.resources[0], plan = compilePlan(this.registry, next.resolved);
     const reservation = await this.store.reserve(ref);
@@ -88,7 +93,7 @@ export class MetricConfigurationService {
     try {
       const check = async () => {
         signal.throwIfAborted();
-        actor = await guard.check?.() ?? actor;
+        actor = await this.currentActor(actor, guard);
         await reservation.connection.ping();
         const current = await this.policy.changeBinding(actor, ref, input, false, candidateFingerprint(next));
         rule(stable(current.resources[0].resolved.settings) === stable(next.resolved.settings)

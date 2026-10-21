@@ -100,7 +100,6 @@ export class PolicyService {
       const previous = await tx.binding(ref);
       rule((previous?.binding.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
       const pin = change.package ?? previous?.binding.package; rule(pin, 'POLICY_PACKAGE_REQUIRED');
-      if (previous) rule(pin.id === previous.binding.package.id, 'POLICY_PACKAGE_SWITCH_ID');
       const groupId = change.group_id === undefined ? previous?.binding.group_id ?? null : change.group_id;
       const group = groupId ? await tx.group(groupId) : null;
       rule(!groupId || group, 'POLICY_GROUP_NOT_FOUND', 404);
@@ -111,6 +110,12 @@ export class PolicyService {
       const binding: Binding = { resource: ref, package: pin, group_id: groupId,
         overrides: change.overrides ?? previous?.binding.overrides ?? {}, revision: change.expected_revision + 1 };
       const at = this.clock(), next = await this.resolve(tx, binding, group, previous, at);
+      // A package is an immutable execution input, not the resource identity. Resolve
+      // inherited overrides against the target (unknown metrics fail explicitly),
+      // and reject known incompatible replacements on preview AND direct publish.
+      if (previous && stable(previous.binding.package) !== stable(pin)) {
+        rule(!next.resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
+      }
       if (expectedCandidate !== undefined) rule(candidateFingerprint(next) === expectedCandidate, 'POLICY_REVISION_CONFLICT', 409);
       const result = { published: publish, resources: [next], affected_resources: 1,
         requests_per_hour_before: previous?.resolved.impact.requests_per_hour_estimate ?? 0,
