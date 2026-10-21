@@ -46,6 +46,7 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
   const custom=process.env.UNIFIED_METRICS_CUSTOM==='true';
   const existing=process.env.UNIFIED_METRICS_EXISTING==='true';
   const ui=process.env.UNIFIED_METRICS_UI==='true';
+  const switching=process.env.UNIFIED_METRICS_SWITCH==='true';
   const customSource={id:'visible_schema_count',target_type:'instance',unit:'count',value_type:'gauge',default_interval:60,collection_sqls:{mysql:'SELECT COUNT(*) FROM information_schema.SCHEMATA'},compute_expr:null};
   const customId=existing?'mysql-custom-existing-scalars':'mysql-custom-visible-schemas';
   const refs=([{type:'instance' as const,id:existing?1:18901},{type:'server' as const,id:existing?3:18902}]).slice(0,process.env.UNIFIED_METRICS_VM==='false'?1:2);
@@ -122,7 +123,7 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
     if(refs.length>1){
     const [servers]=existing?await target.query<any[]>('SELECT * FROM servers WHERE id=3 AND host=?',['192.168.49.130']):[[]];
     const source=servers[0];
-    if(existing)expect(source).toMatchObject({id:3,host:'192.168.49.130',collection_enabled:0});
+    if(existing)expect(source).toMatchObject({id:3,host:'192.168.49.130',...(!switching?{collection_enabled:0}:{})});
     const credentials=source?JSON.parse(decryptData(source.credential_encrypted,configured.ENCRYPTION_KEY)):null;
     const password=credentials?.password??process.env.SLIDE_DEBUG_VM_PASSWORD??execFileSync('security',['find-generic-password','-s','com.slide.debug.vmware-fusion.192.168.49.130','-a','root','-w'],{encoding:'utf8'}).trim();
     const fingerprint=await new Promise<string>((resolve,reject)=>{
@@ -134,6 +135,24 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
     evidence.vm={host:'192.168.49.130',port:22,fingerprint,source_server_id:source?.id,source_collection_enabled:source?.collection_enabled};
     }
     const policy=new PolicyService(new MysqlPolicyStore(()=>pool),packages,{exists:async()=>true,inventory:configurationInventory});
+    if(switching){
+      expect(existing).toBe(true);
+      // Clone the current binding through the policy service; never write the shared
+      // platform's binding/rollout tables. Only accelerate cadence in our disposable copy.
+      const [bindings]=await target.query<any[]>("SELECT resource_key,payload FROM metric_policy_bindings WHERE resource_key IN ('instance:1','server:3') ORDER BY resource_key");
+      evidence.before_switch=[];
+      for(const row of bindings){
+        const old=typeof row.payload==='string'?JSON.parse(row.payload):row.payload;
+        if(!refs.some(r=>r.type===old.binding.resource.type&&r.id===old.binding.resource.id))continue;
+        expect(old.binding.group_id).toBeNull();
+        for(let revision=0;revision<old.binding.revision;revision++)await policy.changeBinding(admin,old.binding.resource,{
+          expected_revision:revision,package:old.binding.package,overrides:{...old.binding.overrides,
+            interval_ms:{mode:'set',value:5000},timeout_ms:{mode:'set',value:5000},max_rows:{mode:'set',value:100}},
+        },true);
+        (evidence.before_switch as unknown[]).push(await policy.binding(admin,old.binding.resource));
+      }
+      expect(evidence.before_switch).toHaveLength(refs.length);
+    }
     const attempts=createTrialStore(()=>pool,packages);
     service=new MetricConfigurationService(policy,packages,attempts,createAssetCollectorAccess(),configurationReader(()=>pool));
     const formal=new MysqlFormalMetricStore(pool);
@@ -174,18 +193,23 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
   it('normal activation, at least three real formal cycles, asset pause, restart and resume',async()=>{
     const pins=[packages.list().find(r=>r.package.id===(custom?customId:'mysql-diagnostics')&&r.package.version===(custom?'1.0.0':'1.1.0'))!.package,packages.list().find(r=>r.package.id==='linux-host'&&r.package.version==='1.1.0')!.package];
     for(let i=0;i<refs.length;i++){
-      expect((await status(i)).binding.state).toBe('unbound');
+      const before=await status(i);
+      expect(before.binding.state).toBe(switching?'bound':'unbound');
       const p=pins[i],ref=refs[i];
       if(existing&&i===0){
         const migration=await request(`config/resources/instance/${ref.id}/migration`);
-        expect(migration.items.find((m:any)=>m.source_id==='connections')).toMatchObject({state:'reviewed',package:{id:customId}});
+        expect(migration.items.find((m:any)=>m.source_id==='connections')).toMatchObject({state:'reviewed',package:{id:'mysql-custom-existing-scalars'}});
         expect(migration.items.find((m:any)=>m.source_id==='disk_usage')).toMatchObject({state:'blocked',code:'CUSTOM_EXPRESSION_REVIEW_REQUIRED'});
         expect(migration.items.some((m:any)=>m.kind==='deprecated_template')).toBe(true);
         evidence.existing_migration=migration;
       }
-      if(ui&&i===0){
+      if(ui&&(i===0||switching)){
         const page=await browser!.newPage({viewport:{width:1440,height:1000}});
         await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
+        if(i>0)await page.evaluate(({type,id})=>{
+          const el=(globalThis as any).document.querySelector('metric-configuration');
+          el.resourceType=type;el.resourceId=id;
+        },ref);
         await page.getByLabel('采集包 / 模板版本',{exact:true}).selectOption(p.digest);
         // Use the normal editor controls; no synthetic trial results or publication rows.
         await page.getByLabel('采集间隔（秒）覆盖方式',{exact:true}).selectOption('set');
@@ -195,16 +219,17 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
         await dialog.getByRole('button',{name:'预检与影响预览'}).click();
         const trialResponse=page.waitForResponse(r=>r.url().endsWith('/trial')&&r.request().method()==='POST');
         await dialog.getByRole('button',{name:'试采',exact:true}).click();
-        const trial=await trialResponse;evidence.ui_trial={status:trial.status(),body:await trial.json()};
-        if(artifacts)await page.screenshot({path:`${artifacts}/real-mysql-ui-trial.png`,fullPage:true});
-        await browserExpect(dialog.getByText('试采成功，可以发布',{exact:true})).toBeVisible();
+        const trial=await trialResponse;const body=await trial.json();evidence[`ui_trial_${ref.type}`]={status:trial.status(),body};
+        expect(trial.status()).toBe(200);
+        if(artifacts)await page.screenshot({path:`${artifacts}/real-${ref.type}-ui-trial.png`,fullPage:true});
+        await browserExpect(dialog.getByRole('button',{name:'发布',exact:true})).toBeEnabled();
         const activation=page.waitForResponse(r=>r.url().endsWith('/activate')&&r.request().method()==='POST');
         await dialog.getByRole('button',{name:'发布',exact:true}).click();
         const response=await activation;expect(response.status()).toBe(200);evidence[`activate_${ref.type}`]=await response.json();
-        if(artifacts)await page.screenshot({path:`${artifacts}/real-mysql-ui-published.png`,fullPage:true});
+        if(artifacts)await page.screenshot({path:`${artifacts}/real-${ref.type}-ui-published.png`,fullPage:true});
         await page.close();
       }else {
-        const candidate={expected_revision:0,package:{id:p.id,version:p.version,digest:p.digest},overrides:{interval_ms:{mode:'set',value:5000},timeout_ms:{mode:'set',value:5000},max_rows:{mode:'set',value:100}}};
+        const candidate={expected_revision:before.binding.published_revision??0,package:{id:p.id,version:p.version,digest:p.digest},overrides:{interval_ms:{mode:'set',value:5000},timeout_ms:{mode:'set',value:5000},max_rows:{mode:'set',value:100}}};
         evidence[`trial_${ref.type}`]=await request(`config/resources/${ref.type}/${ref.id}/trial`,candidate);
         evidence[`activate_${ref.type}`]=await request(`config/resources/${ref.type}/${ref.id}/activate`,candidate);
       }
@@ -239,6 +264,42 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
     for(const response of evidence.formal_api as any[])expect(response.metrics.some((m:any)=>m.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null)))).toBe(true);
     const mysqlMetrics=(evidence.formal_api as any[])[0].metrics;
     for(const id of ['db.uptime_seconds','mysql.processlist.count','mysql.connections.limit','mysql.threads.connected','mysql.files.open','mysql.innodb.row_lock_average_ms','mysql.thread_cache.hit_percent','mysql.transactions.active',...(custom?(existing?['custom.mysql.processlist_connections','custom.mysql.slow_queries_snapshot']:['custom.visible_schema_count']):[])])expect(mysqlMetrics.find((m:any)=>m.definition.id===id)?.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null))).toBe(true);
+    if(switching&&refs.length>1){
+      const hostMetrics=(evidence.formal_api as any[])[1].metrics;
+      for(const id of ['linux.cpu.user_system_percent','linux.memory.used_bytes','host.filesystem.used_bytes'])
+        expect(hostMetrics.find((m:any)=>m.definition.id===id)?.series.some((s:any)=>s.buckets.some((b:any)=>b.value!==null)),id).toBe(true);
+    }
+    if(ui&&switching){
+      for(const [index,ref] of refs.entries()){
+        const page=await browser!.newPage({viewport:{width:1440,height:1000}});
+        await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
+        await page.evaluate(({type,id})=>{
+          const el=(globalThis as any).document.querySelector('metric-configuration');el.resourceType=type;el.resourceId=id;
+        },ref);
+        await browserExpect(page.getByText('正式可用',{exact:true}).first()).toBeVisible();
+        if(artifacts)await page.screenshot({path:`${artifacts}/real-${ref.type}-ui-formal.png`,fullPage:true});
+        await page.evaluate('import("/src/app/ui/components/semantic-metrics.ts")');
+        // An explicit real observation window avoids claiming a later empty bucket
+        // is a current sample. The component uses the normal formal query endpoint.
+        const reference=(evidence.formal_api as any[])[index].metrics.find((m:any)=>m.definition.id===(ref.type==='server'?'linux.cpu.user_system_percent':'mysql.processlist.count'));
+        const observed=reference.series.flatMap((s:any)=>s.buckets).filter((b:any)=>b.value!==null).at(-1).observed_at;
+        const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/metrics/query')&&r.request().method()==='POST'),page.evaluate(({type,id,observed})=>{
+          const doc=(globalThis as any).document,el=doc.createElement('semantic-metrics');
+          el.resourceType=type;el.resourceId=id;
+          el.from=new Date(Date.parse(observed)-1).toISOString();el.to=new Date(Date.parse(observed)+1).toISOString();
+          doc.body.replaceChildren(el);
+        },{...ref,observed})]);
+        expect(response.status()).toBe(200);
+        for(const id of ref.type==='server'?['linux.cpu.user_system_percent','linux.memory.used_bytes','host.filesystem.used_bytes']
+          :['mysql.processlist.count','mysql.buffer_pool.pages_used_percent','mysql.tables.estimated_allocated_bytes']){
+          await page.getByLabel('指标',{exact:true}).selectOption(id);
+          await browserExpect(page.locator('semantic-metrics .current strong').filter({hasText:/^\d/}).first()).toBeVisible();
+          if(artifacts)await page.locator('semantic-metrics').screenshot({path:`${artifacts}/formal-value-${id}.png`});
+        }
+        await page.close();
+      }
+    }
+    evidence.package_switch=switching;
     evidence.code_head=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
     evidence.reviewed_custom_fixture=custom&&!existing;
     evidence.existing_user_configuration=existing;

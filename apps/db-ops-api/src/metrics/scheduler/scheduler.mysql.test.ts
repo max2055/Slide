@@ -246,11 +246,12 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     gate.resolve(batch()); expect(await running).toBe('cancelled'); expect(await w.shutdown()).toBe(true);
     expect(await outputs()).toHaveLength(0); const slot = await store.reserve(ref); expect(slot).not.toBeNull(); await slot!.release();
   });
-  it('version/source switch keeps published/applied distinct and discards old results', async () => {
+  it.each([false, true])('package/source switch keeps published/applied distinct and discards old results (new ID=%s)', async newId => {
     await create(); const gate = deferred<DecodedRow[]>(), entered = deferred<void>();
     const s = setup(vi.fn(async () => { entered.resolve(); return gate.promise; })); await enqueue(s.scheduler);
     const running = s.run(s.worker('v1')); await entered.promise;
     const release = builtinReleases()[0]; release.package.version = '1.1.0';
+    if (newId) release.package.id = 'mysql-replacement-fixture';
     release.package.collectors[0].id = 'mysql-v2'; release.documentation[0].collector_id = 'mysql-v2';
     const next = packages.install(sealRelease(release));
     await policies.changeBinding(admin, ref, { expected_revision: 1, package: { id: next.package.id, version: next.package.version, digest: next.package.digest } }, true);
@@ -258,7 +259,8 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     gate.resolve(batch()); expect(await running).toBe('completed'); expect(await outputs()).toHaveLength(0);
     expect(await enqueue(s.scheduler)).toBe(1); await ready(); expect(await s.run(s.worker('semantic'))).toBe('completed');
     expect((await policies.binding(admin, ref)).application.applied_revision).toBe(2);
-    expect((await outputs()).every(r => r.payload.versions.package_version === '1.1.0' && r.payload.versions.config_revision === 2)).toBe(true);
+    expect((await outputs()).every(r => r.payload.versions.package_id === next.package.id
+      && r.payload.versions.package_version === '1.1.0' && r.payload.versions.config_revision === 2)).toBe(true);
   });
   it('enforces shared global concurrency slots across store instances without resource-wide source exclusivity', async () => {
     const held = [];
