@@ -2,7 +2,7 @@ import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
 import "../components/resource-collection-section.js";
-import { returnToDashboard, runState, freshness, type Overview, type OverviewItem } from './dashboard-model.js';
+import { returnToDashboard, freshness, type Overview, type OverviewItem } from './dashboard-model.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
@@ -21,12 +21,14 @@ import "./query-analysis-tab.js";
 import "./health-score-tab.js";
 import { authFetch } from "../../../api/index.js";
 
-interface InstanceDetail { id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
+import { currentHealthStatus, evidenceTime, evidenceTimeState } from './health-score-state.js';
+
+interface InstanceDetail { hasCredential?: boolean; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
 interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
 type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
 interface QueryRead { status: ReadStatus; instanceId: number | null; readAt?: number; source?: string; }
-interface CapacityInfo { total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
+interface CapacityInfo { observed_at?: string; source?: string; scope?: string; total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
 
 @customElement("instance-detail-page")
 export class InstanceDetailPage extends LitElement {
@@ -293,6 +295,7 @@ export class InstanceDetailPage extends LitElement {
           break;
         }
         case "capacity": {
+          this.capacity = null; this.capHistory = { time: [], size: [] };
           const version = this.contextVersion, instanceId = this.instanceId;
           const current = () => version === this.contextVersion && instanceId === this.instanceId;
           const [cr, chr] = await Promise.all([
@@ -478,13 +481,14 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _healthBadge() {
-    const status = this.overview ? runState(this.overview) : 'unknown';
-    const labels = { normal:'正常', abnormal:'异常', unavailable:'不可用', unknown:'待确认' };
-    return html`<app-badge variant=${status === 'normal' ? 'ok' : status === 'unknown' ? 'muted' : 'warn'}>${labels[status]}</app-badge>`;
+    const status = currentHealthStatus(this.instance, this.overview);
+    const labels: Record<string, string> = { healthy:'当前观测健康', warning:'当前观测异常', critical:'当前不可用', error:'连接错误', unknown:'当前健康待确认' };
+    return html`<app-badge variant=${status === 'healthy' ? 'ok' : status === 'unknown' ? 'muted' : 'warn'}>${labels[status]}</app-badge>`;
   }
   private _renderOverview() {
     const item = this.overview;
-    const state = item ? runState(item) : 'unknown';
+    const status = currentHealthStatus(this.instance, item);
+    const state = ({ healthy: 'normal', warning: 'abnormal', critical: 'abnormal', error: 'unavailable', unknown: 'unknown' } as const)[status];
     const fresh = item ? freshness(item) : 'missing';
     const gaps: Record<string, string> = {
       OBSERVATIONS_UNAVAILABLE:'观测读取失败', ALERTS_UNAVAILABLE:'告警读取失败', RELATIONS_UNAVAILABLE:'关系读取失败',
@@ -508,7 +512,7 @@ export class InstanceDetailPage extends LitElement {
       </app-card>
       <app-card><h2 slot="header">资源与能力</h2><dl>
         <dt>类型</dt><dd>${this.instance!.db_type}</dd><dt>环境</dt><dd>${this.instance!.environment || '未设置'}</dd>
-        <dt>连接地址</dt><dd>${this.instance!.host}:${this.instance!.port}</dd>
+        <dt>连接配置</dt><dd>${this.instance!.status === 'active' ? '已启用（可用性需连接测试）' : this.instance!.status || '未知'}</dd><dt>连接地址</dt><dd>${this.instance!.host}:${this.instance!.port}</dd>
         <dt>数据库</dt><dd>${this.instance!.database_name || '未指定'}</dd>
         <dt>观测时间</dt><dd>${item?.observedAt ? new Date(item.observedAt).toLocaleString('zh-CN') : '未知'}</dd>
         <dt>观测时效</dt><dd>${({ fresh:'新鲜', stale:'过期', missing:'未取得', failed:'读取失败' })[fresh]}</dd>
@@ -663,10 +667,11 @@ export class InstanceDetailPage extends LitElement {
     if (!this.capacity) return html`<app-card><div class="empty-state"><div class="empty-title">暂无容量数据</div><div class="empty-desc">实例可能未连接或暂无数据</div></div></app-card>`;
     const cap = this.capacity;
     return html`
-      ${this.capHistory.time.length > 0 ? html`<metric-chart title="存储增长趋势 (过去7天)" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>` : nothing}
+      ${this.capHistory.time.length > 0 ? html`<metric-chart title="历史容量采样（过去7天，非当前读取）" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>` : nothing}
       <app-card>
-        <span slot="header">存储总览：${cap.total_size_gb.toFixed(2)} GB</span>
-        ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GB${db.table_count ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}
+        <span slot="header">容量读取结果：${cap.total_size_gb.toFixed(2)} GB</span>
+        <p class="overview-note">来源：${cap.source || '数据库容量接口（来源未提供）'} · 观测：${evidenceTime(cap.observed_at)} · ${evidenceTimeState(cap.observed_at)}<br>范围：${cap.scope || '接口未提供范围，不与结构/索引数量直接比较'}。历史趋势为独立采样；结构/索引为独立快照，时间与范围可能不同。</p>
+        ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GB${db.table_count !== undefined ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}
         ${cap.tablespaces && cap.tablespaces.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">表空间</h4><div class="capacity-list">${cap.tablespaces.map(ts => html`<div class="capacity-item"><div class="capacity-icon">${icons['package']}</div><div class="capacity-info"><div class="capacity-name">${ts.name}</div><div class="capacity-meta">${ts.size_gb.toFixed(2)} GB / ${ts.max_size_gb?.toFixed(2) || "∞"} GB</div></div>${ts.usage_percent !== undefined ? html`<div class="capacity-bar-wrap"><div class="capacity-percent" style="color:${ts.usage_percent > 90 ? 'var(--danger)' : ts.usage_percent > 70 ? 'var(--warn)' : 'var(--ok)'}">${ts.usage_percent.toFixed(1)}%</div><div class="progress-bar"><div class="progress-fill ${ts.usage_percent > 90 ? 'danger' : ts.usage_percent > 70 ? 'warn' : 'ok'}" style="width:${ts.usage_percent}%"></div></div></div>` : ""}</div>`)}</div>` : ""}
         <h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">最大表（Top ${cap.top_tables.length}）</h4><div class="capacity-list">${cap.top_tables.map(t => html`<div class="capacity-item"><div class="capacity-icon">${icons['file-text']}</div><div class="capacity-info"><div class="capacity-name">${t.name}</div><div class="capacity-meta">${t.size_gb.toFixed(2)} GB${t.row_count ? ` · ${t.row_count.toLocaleString()} 行` : ""}</div></div></div>`)}</div>
       </app-card>`;

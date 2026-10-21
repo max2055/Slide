@@ -9,6 +9,8 @@ import { icons } from "../../../icons.js";
 import "../../../components/stat-card.js";
 import { authFetch } from '../../../api/index.js';
 
+import { evidenceTime, evidenceTimeState } from './health-score-state.js';
+
 interface DatabaseInstance {
   id: number;
   name: string;
@@ -41,6 +43,7 @@ interface TableSchemaRow {
 }
 
 interface TableListEntry {
+  snapshot_time?: string;
   table_name: string;
   table_comment: string | null;
   table_rows: number;
@@ -282,6 +285,7 @@ export class SchemaManagementPage extends LitElement {
   @state() private tableDetail: TableSchemaRow[] = [];
   @state() private snapshotDetail: TableSchemaRow[] = [];
   @state() private activeTab: "tables" | "changes" = "tables";
+  @state() private readAt: string | null = null;
   @state() private collectResult: { collected: number; tables: number; columns: number } | null = null;
   @state() private hint: string | null = null;
 
@@ -292,6 +296,16 @@ export class SchemaManagementPage extends LitElement {
   private _authHeaders(): Record<string, string> {
     const token = localStorage.getItem("token");
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  private ageTimer?: ReturnType<typeof setInterval>;
+  override connectedCallback() {
+    super.connectedCallback();
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
+  }
+  override disconnectedCallback() {
+    clearInterval(this.ageTimer);
+    super.disconnectedCallback();
   }
 
   override firstUpdated() {
@@ -355,6 +369,7 @@ export class SchemaManagementPage extends LitElement {
     this.tablesLoading = true;
     this.tablesError = null;
     this.tableList = [];
+    this.readAt = null;
     this.expandedTable = null;
     this.tableDetail = [];
     try {
@@ -362,7 +377,7 @@ export class SchemaManagementPage extends LitElement {
       if (!res.ok) throw new Error(res.status === 403 ? '无权限查看表结构' : `表结构加载失败 (HTTP ${res.status})`);
       const data = await res.json();
       if (!Array.isArray(data.tables)) throw new Error('表结构响应无效');
-      if (request === this.tableRequest) this.tableList = data.tables;
+      if (request === this.tableRequest) { this.tableList = data.tables; this.readAt = new Date().toISOString(); }
     } catch (err: any) {
       if (request === this.tableRequest) this.tablesError = err.message;
     } finally {
@@ -555,12 +570,16 @@ export class SchemaManagementPage extends LitElement {
         ` : ""}
         <!-- 统计概览 -->
         <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(4,1fr);margin-bottom:var(--space-xl)">
-          <stat-card label="表数量" value="${this.stats.totalTables}" hint="当前快照"></stat-card>
+          <stat-card label="表数量" value="${this.tablesLoading || this.tablesError ? '未知' : this.stats.totalTables}" hint="已存快照"></stat-card>
           <stat-card label="快照数" value="${this.stats.totalSnapshots}" hint="历史记录" variant="info"></stat-card>
           <stat-card label="新增" value="${this.stats.added}" hint="新增表/列" variant="ok"></stat-card>
           <stat-card label="删除" value="${this.stats.deleted}" hint="删除表/列" variant="danger"></stat-card>
         </div>
 
+        <p style="color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere;">
+          来源：已存表结构快照 · 观测：${evidenceTime(this.tableList[0]?.snapshot_time)} · ${evidenceTimeState(this.tableList[0]?.snapshot_time)} · 读取：${evidenceTime(this.readAt)}<br>
+          范围：采集时的配置范围（MySQL 为配置库的表/视图列元数据；历史未保存库名）。当前配置：${this.instances.find(i => i.id === this._activeInstanceId)?.database_name || '未指定'}，不能据此确认历史库名。表数按快照表名去重，容量覆盖全部可见非系统库，索引页仅含有索引记录的表。
+        </p>
         <!-- 操作栏 -->
         <app-card variant="default">
           <div class="toolbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px">

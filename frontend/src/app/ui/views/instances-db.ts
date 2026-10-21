@@ -14,7 +14,7 @@ import "../components/instance-host-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
-import { resolveHealthScoreState } from "./health-score-state.js";
+import { currentHealthStatus, evidenceTime, evidenceTimeState } from "./health-score-state.js";
 import type {
   DatabaseInstance,
   InstanceHostMapping,
@@ -22,6 +22,8 @@ import type {
   ReplaceInstanceHostsRequest,
   ReplaceInstanceHostsResponse,
 } from "../../../api/generated/public-api.js";
+
+import type { OverviewItem } from './dashboard-model.js';
 
 interface InstanceFormData {
   name: string;
@@ -529,12 +531,15 @@ export class InstancesPage extends LitElement {
       && hasStoredPermission("servers:manage");
   }
 
+  private ageTimer?: ReturnType<typeof setInterval>;
   override connectedCallback(): void {
     super.connectedCallback();
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
     window.addEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
   }
 
   override disconnectedCallback(): void {
+    clearInterval(this.ageTimer);
     window.removeEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
     super.disconnectedCallback();
   }
@@ -552,11 +557,32 @@ export class InstancesPage extends LitElement {
     this.loadInstances();
   }
 
+  @state() private healthEvidence: OverviewItem[] = [];
+  private currentEvidence(instance: DatabaseInstance) {
+    return this.healthEvidence.find(item => item?.resource?.type === 'instance' && item.resource.id === instance.id);
+  }
+  private currentStatus(instance: DatabaseInstance) {
+    return currentHealthStatus(instance, this.currentEvidence(instance));
+  }
+  private renderHealthEvidence(instance: DatabaseInstance) {
+    const observedAt = this.currentEvidence(instance)?.observedAt;
+    const connection = ({ active: '已启用（可用性需测试）', inactive: '已暂停', paused: '已暂停', disabled: '已停用', pending_credentials: '待补凭据', error: '连接错误' } as Record<string, string>)[instance.status] ?? '未知';
+    return html`${this._renderStatusBadge(this.currentStatus(instance))}
+      <div style="color:var(--muted);font-size:var(--text-xs);overflow-wrap:anywhere;">观测 ${evidenceTime(observedAt)} · ${evidenceTimeState(observedAt)}</div>
+      <div style="color:var(--muted);font-size:var(--text-xs);">连接配置：${connection}</div>`;
+  }
+
+
   private async loadInstances() {
+    this.healthEvidence = [];
     try {
       const res = await authFetch("/api/database/instances");
       if (!res.ok) throw new Error("Failed to load instances");
       this.instances = await res.json();
+      try {
+        const overview = await authFetch('/api/resources/overview');
+        if (overview.ok) { const body = await overview.json(); this.healthEvidence = Array.isArray(body.items) ? body.items : []; }
+      } catch { this.healthEvidence = []; }
       this.metricRefreshVersion++;
       this.loading = false;
       const url = new URL(window.location.href), editId = Number(url.searchParams.get('edit'));
@@ -582,11 +608,11 @@ export class InstancesPage extends LitElement {
 
   private get filteredInstances(): DatabaseInstance[] {
     const filtered = this.instances.filter((inst) => {
-      const status = inst.health_status || "unknown";
+      const status = this.currentStatus(inst);
       const matchesFilter = this.filter === "all" ||
         (this.filter === "healthy" && status === "healthy") ||
         (this.filter === "warning" && status === "warning") ||
-        (this.filter === "critical" && status === "critical") ||
+        (this.filter === "critical" && ["critical", "error"].includes(status)) ||
         (this.filter === "unknown" && status === "unknown");
       return matchesFilter;
     });
@@ -620,10 +646,10 @@ export class InstancesPage extends LitElement {
   private get stats() {
     return {
       total: this.instances.length,
-      healthy: this.instances.filter(i => i.health_status === "healthy").length,
-      warning: this.instances.filter(i => i.health_status === "warning").length,
-      critical: this.instances.filter(i => i.health_status === "critical").length,
-      unknown: this.instances.filter(i => !i.health_status || i.health_status === "unknown").length,
+      healthy: this.instances.filter(i => this.currentStatus(i) === "healthy").length,
+      warning: this.instances.filter(i => this.currentStatus(i) === "warning").length,
+      critical: this.instances.filter(i => ["critical", "error"].includes(this.currentStatus(i))).length,
+      unknown: this.instances.filter(i => this.currentStatus(i) === "unknown").length,
     };
   }
 
@@ -705,11 +731,11 @@ export class InstancesPage extends LitElement {
           </div>
 
           <resource-metrics-table resourceType="instance" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '健康' }, { key: 'actions', label: '操作' }]}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '当前观测健康' }, { key: 'actions', label: '操作' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
-              searchValues: [inst.name, inst.host, inst.health_status, ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[inst.health_status] ?? "未知"],
+              searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
-              address: `${inst.host}:${inst.port}`, health: this._renderStatusBadge(inst.health_status),
+              address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
               actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
@@ -734,7 +760,7 @@ export class InstancesPage extends LitElement {
     };
     const s = statusMap[status] || { class: "muted", label: "未知" };
     return html`
-      <app-badge variant="${status === 'healthy' ? 'ok' : status === 'warning' ? 'warn' : status === 'critical' ? 'danger' : 'muted'}">${s.label}</app-badge>
+      <app-badge variant="${s.class}">${s.label}</app-badge>
     `;
   }
 

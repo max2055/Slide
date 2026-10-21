@@ -18,6 +18,7 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
   let finish: ((value: unknown) => void) | undefined;
   let holdMetrics = false;
   authFetch.mockImplementation(async (url: string) => {
+    if (url === '/api/resources/overview') return response({ items: [] });
     if (url === endpoint) return response([entry]);
     if (url === '/api/metrics/query') return holdMetrics ? new Promise(resolve => { finish = resolve; }) : response({}, 503);
     throw new Error(`Unexpected request ${url}`);
@@ -42,7 +43,7 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
   expect(refresh.disabled).toBe(true);
   finish!(response({}, 503));
   await vi.waitFor(() => expect(refresh.disabled).toBe(false));
-  expect(authFetch.mock.calls.map(call => call[0])).toEqual([endpoint, '/api/metrics/query']);
+  expect(authFetch.mock.calls.map(call => call[0])).toEqual(tag === 'instances-page' ? [endpoint, '/api/resources/overview', '/api/metrics/query'] : [endpoint, '/api/metrics/query']);
   expect(table.shadowRoot.querySelector('app-data-table').columns.slice(0, 2).map((c: any) => c.label)).toEqual(['选择', '序号']);
   if (tag === 'servers-page') {
     const cell = table.shadowRoot.querySelector('app-data-table tbody td:nth-child(3)');

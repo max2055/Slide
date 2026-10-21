@@ -23,11 +23,13 @@ const healthyInstance = {
   health_score: 100,
   hasCredential: true,
   status: 'active',
+  last_health_check_at: new Date().toISOString(),
 };
 
 const healthyChecks = {
   checks: [{ name: '连接状态', status: 'ok', score: 100 }],
   status: 'healthy',
+  created_at: healthyInstance.last_health_check_at,
 };
 
 function successfulLoadResponses() {
@@ -35,6 +37,8 @@ function successfulLoadResponses() {
     '/health-history?days=7': response([{ health_score: 100, created_at: '2026-08-30T00:00:00.000Z' }]),
     '/health-checks': response(healthyChecks),
     '/collection-capabilities': response([]),
+    '/status': response({ effective_enabled: { enabled: true } }),
+    '/api/resources/overview': response({ items: [{ resource: {type: 'instance', id: 7}, status: 'healthy', quality: 'good', freshness: 'fresh', observedAt: healthyInstance.last_health_check_at, gaps: [], unresolvedAlerts: 0 }] }),
     '/api/database/instances/7': response(healthyInstance),
   };
 }
@@ -42,7 +46,7 @@ function successfulLoadResponses() {
 function mockResponses(responses: Record<string, ReturnType<typeof response> | (() => unknown)>) {
   authFetch.mockImplementation(async (url: string | undefined) => {
     const requestUrl = String(url ?? '');
-    const key = requestUrl.includes('/health-history')
+    const key = requestUrl.endsWith('/status') ? '/status' : requestUrl === '/api/resources/overview' ? requestUrl : requestUrl.includes('/health-history')
       ? '/health-history?days=7'
       : requestUrl.includes('/health-checks')
         ? '/health-checks'
@@ -82,7 +86,7 @@ describe('health-score-tab stale score handling', () => {
   });
 
   it('shows fresh incomplete checks without presenting them as zero or healthy', async () => {
-    const at = '2026-09-11T08:00:00.000Z';
+    const at = new Date().toISOString();
     mockResponses({
       '/health-history?days=7': response([]),
       '/health-checks': response({ status: 'unknown', created_at: at, checks: [{ name: '表空间使用率', status: 'unknown', score: 0, message: '权限不足' }] }),
@@ -98,6 +102,20 @@ describe('health-score-tab stale score handling', () => {
     expect(element.shadowRoot?.textContent).toContain('权限不足');
     expect(element.shadowRoot?.querySelector('.check-score')?.textContent).toBe('未知');
     expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
+  });
+
+  it.each(['stale', 'partial', 'paused', 'empty', 'mismatched', 'checks-error'])('keeps history while withholding a current score for %s evidence', async scenario => {
+    const responses = successfulLoadResponses();
+    if (scenario === 'paused') responses['/status'] = response({ effective_enabled: { enabled: false } });
+    else if (scenario === 'empty') responses['/health-checks'] = response({ ...healthyChecks, checks: [] });
+    else if (scenario === 'mismatched') responses['/health-checks'] = response({ ...healthyChecks, created_at: '2020-01-01T00:00:00Z' });
+    else if (scenario === 'checks-error') responses['/health-checks'] = response({}, false);
+    else responses['/api/resources/overview'] = response({ items: [{ resource: {type: 'instance', id: 7}, status: 'healthy', quality: scenario === 'partial' ? 'partial' : 'good', freshness: scenario === 'stale' ? 'stale' : 'fresh', observedAt: healthyInstance.last_health_check_at, gaps: [], unresolvedAlerts: 0 }] });
+    mockResponses(responses);
+    const element = document.createElement('health-score-tab') as any;
+    element.instanceId = 7; document.body.append(element); await settle(element);
+    expect(element.shadowRoot.querySelector('.score-number').textContent).toBe('未知');
+    expect(element.shadowRoot.querySelector('metric-chart').getAttribute('title')).toContain('历史');
   });
 
   it('clears a previously healthy score when refresh responses are not OK', async () => {
@@ -163,6 +181,7 @@ describe('health-score-tab stale score handling', () => {
     (element as any).expandedChecks = true;
     await settle(element);
     expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
-    expect(element.shadowRoot?.textContent).not.toContain('100');
+    expect(element.shadowRoot?.querySelector('metric-chart')?.getAttribute('title')).toContain('历史');
+    expect(element.shadowRoot?.querySelector('.check-score')).toBeNull();
   });
 });

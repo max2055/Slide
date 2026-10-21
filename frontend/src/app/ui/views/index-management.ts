@@ -5,6 +5,8 @@ import { customElement, state, property } from "lit/decorators.js";
 import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from '../../../api/index.js';
 
+import { evidenceTime, evidenceTimeState } from './health-score-state.js';
+
 interface DatabaseInstance {
   id: number;
   name: string;
@@ -350,6 +352,7 @@ export class IndexManagementPage extends LitElement {
   private unusedBrowser = new ListBrowser();
   private redundancyBrowser = new ListBrowser();
   private indexRequest = 0;
+  @state() private readAt: string | null = null;
   @state() private indexError: string | null = null;
   @state() private loading = false;
   @state() private collecting = false;
@@ -362,6 +365,16 @@ export class IndexManagementPage extends LitElement {
     const token = localStorage.getItem("token");
     if (token) return { Authorization: `Bearer ${token}` };
     return {};
+  }
+
+  private ageTimer?: ReturnType<typeof setInterval>;
+  override connectedCallback() {
+    super.connectedCallback();
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
+  }
+  override disconnectedCallback() {
+    clearInterval(this.ageTimer);
+    super.disconnectedCallback();
   }
 
   override firstUpdated() {
@@ -395,7 +408,7 @@ export class IndexManagementPage extends LitElement {
     const id = this.selectedInstanceId;
     const request = ++this.indexRequest;
     this.indexes = []; this.unusedIndexes = []; this.redundancyReport = []; this.tables = [];
-    this.expandedIndex = null; this.indexError = null;
+    this.expandedIndex = null; this.indexError = null; this.readAt = null;
     if (!id) return;
     this.loading = true;
     try {
@@ -408,6 +421,7 @@ export class IndexManagementPage extends LitElement {
       }));
       if (request !== this.indexRequest) return;
       [this.indexes, this.redundancyReport, this.unusedIndexes] = results;
+      this.readAt = new Date().toISOString();
       this.tables = [...new Set(this.indexes.map(i => i.table_name))].sort();
       if (this.selectedTable && !this.tables.includes(this.selectedTable)) this.selectedTable = '';
     } catch (error: any) {
@@ -578,12 +592,16 @@ export class IndexManagementPage extends LitElement {
             ? html`<div class="msg ${this.msgType}">${this.message}</div>`
             : ""}
 
+          <p style="padding:var(--space-md);color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere;">
+            来源：已存索引采集记录 · 观测：${evidenceTime(this.indexes.length ? this.indexes.reduce((oldest, row) => Date.parse(row.collected_at) < Date.parse(oldest) ? row.collected_at : oldest, this.indexes[0].collected_at) : null)} · ${evidenceTimeState(this.indexes.length ? this.indexes.reduce((oldest, row) => Date.parse(row.collected_at) < Date.parse(oldest) ? row.collected_at : oldest, this.indexes[0].collected_at) : null)} · 读取：${evidenceTime(this.readAt)}<br>
+            范围：采集时配置范围中有索引记录的表（历史未保存库名）；不含无索引的表/视图。当前配置：${selectedInstance ? selectedInstance.database_name || '未指定' : '未读取'}，不能据此确认历史库名。索引按表名＋索引名去重，列记录不重复计数；与容量全部可见非系统库、结构快照范围不同。
+          </p>
           <div class="stats-row">
             <div class="stat-item">
-              <span>${indexCount}</span> 索引
+              <span>${this.loading || this.indexError ? '未知' : indexCount}</span> 索引
             </div>
             <div class="stat-item">
-              <span>${this.tables.length}</span> 表
+              <span>${this.loading || this.indexError ? '未知' : this.tables.length}</span> 有索引的表
             </div>
             <div class="stat-item">
               <span style="color: var(--warn);">${this.redundancyReport.length}</span> 冗余
