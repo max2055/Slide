@@ -788,7 +788,7 @@ export class InvestigationExecutor {
             } catch (error) {
               // failOnToolError is enabled: an actual thrown tool exception is
               // fatal. Returned Error text and Core's repeat guard are not.
-              fatalToolFailure = { toolCallId: toolId, stop: { ...investigationStop({ stopReason: 'tool_error',
+              fatalToolFailure ??= { toolCallId: toolId, stop: { ...investigationStop({ stopReason: 'tool_error',
                 error: `Error: ${error instanceof Error ? error.message : String(error)}` }), source: 'tool_receipt' } };
               throw error;
             }
