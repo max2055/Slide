@@ -319,12 +319,13 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
   const completionCommand=()=>({investigationId:inv.id,requestId:binding.requestId,
     job:{id:binding.jobId,type:'investigation.execute',payload:{investigationId:inv.id,requestId:binding.requestId},attempts:1,maxAttempts:5,fencingToken:binding.fencingToken},
     context:{workerId:binding.workerId,fencingToken:binding.fencingToken,signal:new AbortController().signal}});
-  it.each(['normal', 'crash-after-tool-receipt'])('preserves the fatal-tool window error and evidence without another send: %s', async mode => {
+  it.each(['normal', 'crash-after-tool-receipt', 'crash-after-first-fatal-in-batch'])('preserves the fatal-tool window error and evidence without another send: %s', async mode => {
     let calls = 0;
     const provider: LLMProvider = { getDefaultModel: () => 'controlled-regression', chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
       chat: async () => { calls++; const first = calls === 1; return { content: null, finishReason: 'tool_calls',
         toolCalls: [{ id: first ? 'summary' : 'alerts', name: first ? 'get_instance_summary' : 'list_active_alerts',
-          arguments: first ? { instance_id: 101 } : { since: new Date(Date.now() - 3_606_000).toISOString(), limit: 20 } }],
+          arguments: first ? { instance_id: 101 } : { since: new Date(Date.now() - 3_606_000).toISOString(), limit: 20 } },
+          ...(!first && mode === 'crash-after-first-fatal-in-batch' ? [{ id: 'row-limit', name: 'get_instance_summary', arguments: { instance_id: 101, limit: 100000 } }] : [])],
         hasToolCalls: true, shouldExecuteTools: true, usage: { prompt_tokens: 20, completion_tokens: 10 } }; } };
     const tools = new ToolRegistry();
     for (const name of ['get_instance_summary', 'list_active_alerts']) tools.register({ name, description: 'Controlled read',
@@ -332,7 +333,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       execute: async () => ({ success: true, data: { observations: [] } }) });
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
       toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
-    if (mode === 'crash-after-tool-receipt') {
+    if (mode !== 'normal') {
       const control = new AbortController(), persist = (executor as any).persistCheckpoint.bind(executor);
       (executor as any).persistCheckpoint = async (...args: any[]) => {
         await persist(...args);
@@ -351,7 +352,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     expect(terminal.state).toBe('partial'); expect(terminal.error).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT' });
     const saved = (await results.list(owner, inv.id)).items[0].result;
     expect(saved.execution).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' });
-    expect(saved.facts).toHaveLength(2); expect(saved.summary).toContain('时间范围');
+    expect(saved.facts).toHaveLength(mode === 'crash-after-first-fatal-in-batch' ? 3 : 2); expect(saved.summary).toContain('时间范围');
     expect(saved.facts.map(f => f.statement).join()).toContain('0 条观测');
     expect(saved.provenance.modelVersion).toBe('controlled-regression');
     expect(saved.provenance.promptVersion).toMatch(/^ops@1\/prompt:1\/sha256:[a-f0-9]{64}$/);
