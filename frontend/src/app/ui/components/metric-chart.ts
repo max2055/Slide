@@ -180,6 +180,30 @@ export class MetricChart extends LitElement {
     this._resizeObserver.observe(this._chartContainer);
   }
 
+  private _resolveColor(value: string): number[] | undefined {
+    // Let the browser resolve variables (including nested fallbacks) in this
+    // component's theme scope before handing colors to the canvas renderer.
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    if (!probe.style.color) return undefined;
+    probe.hidden = true;
+    this.shadowRoot!.append(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    const rgba = echarts.color.parse(resolved);
+    if (rgba) return rgba;
+    // Modern CSS colors such as oklch are supported by canvas but not by
+    // ECharts' color parser. Normalize those through a single sRGB pixel.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    context.fillStyle = resolved;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+    return [r, g, b, a / 255];
+  }
+
   private _updateChart() {
     if (!this._chart) return;
 
@@ -204,6 +228,10 @@ export class MetricChart extends LitElement {
       const border = style.getPropertyValue("--border").trim();
 
       const seriesOptions = this.series.map((s, index) => {
+        const rgba = s.color ? this._resolveColor(s.color) : undefined;
+        const color = (opacity: number) => rgba
+          ? `rgba(${rgba[0]},${rgba[1]},${rgba[2]},${rgba[3] * opacity})`
+          : undefined;
         const base: Record<string, unknown> = {
           name: s.name,
           type: "line" as const,
@@ -211,12 +239,12 @@ export class MetricChart extends LitElement {
           smooth: true,
           showSymbol: false,
           lineStyle: { width: 2 },
-          itemStyle: s.color ? { color: s.color } : undefined,
-          areaStyle: s.color
+          itemStyle: rgba ? { color: color(1) } : undefined,
+          areaStyle: rgba
             ? {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: s.color + "40" },
-                  { offset: 1, color: s.color + "05" },
+                  { offset: 0, color: color(64 / 255)! },
+                  { offset: 1, color: color(5 / 255)! },
                 ]),
               }
             : undefined,
@@ -226,20 +254,24 @@ export class MetricChart extends LitElement {
         if (hasThresholds && index === 0) {
           base.markLine = {
             silent: true,
-            data: this.thresholds.map((t) => ({
-              yAxis: t.value,
-              name: t.name,
-              lineStyle: {
-                color: t.color,
-                type: "dashed" as const,
-                width: 1,
-              },
-              label: {
-                formatter: `{name}: ${t.value}`,
-                position: "end" as const,
-                color: t.color,
-              },
-            })),
+            data: this.thresholds.map((t) => {
+              const rgba = this._resolveColor(t.color);
+              const color = rgba ? `rgba(${rgba.join(',')})` : undefined;
+              return {
+                yAxis: t.value,
+                name: t.name,
+                lineStyle: {
+                  color,
+                  type: "dashed" as const,
+                  width: 1,
+                },
+                label: {
+                  formatter: `{name}: ${t.value}`,
+                  position: "end" as const,
+                  color,
+                },
+              };
+            }),
           };
         }
 
