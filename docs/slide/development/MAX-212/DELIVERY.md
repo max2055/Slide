@@ -63,7 +63,7 @@ Chief 在原交付截图和代码中指出：重复调用 guard 是单次安全�
 - 单次回执只描述“检查失败或被阻止”；Run 停止文案来自实际终态。
 - `investigationStop` 不再扫描 `completedToolResults` 推断原因；具体 fatal 机器码仅取 Runtime 的 `tool_error/error`。
 - 执行器仅在已观察到实际抛出异常、且相同 tool-call 已进入完成检查点时保存 fatal receipt；普通返回错误和 Core guard 不产生此回执。Runtime 的 terminal_resolution 保持优先，原 fencing、实时授权、预算及未知发送保护继续适用。
-- 新回归覆盖正常 guard 后继续、guard 检查点后退出恢复、普通返回错误后退出恢复，均执行后续成功检查并最终为 `MAX_MODEL_STEPS`；保留 fatal window-limit 正常/检查点后退出两条不再发模型的回归。结果证据列表按原存储顺序呈现，不能以数组末项推断工具实际时序。
-- 旧 head `d7f5b2dd` 的 CI `browser-qualification` 失败定位为资源权限测试仍等待折叠中的消息区可见（78 通过、1 失败）。配套测试先通过页面控件展开过程，再继续原实时撤权、HTTP/WS/证据拒绝断言；未放宽权限验收。
+- 新回归覆盖正常 guard 后继续、guard 检查点后退出恢复、普通返回错误后退出恢复，均执行后续成功检查并最终为 `MAX_MODEL_STEPS`；保留 fatal window-limit 正常/检查点后退出两条不再发模型的回归；新增同批 window-limit 后 row-limit 的退出恢复回归，验证仍保留 Runtime 选定的首个 fatal 原因。结果证据列表按原存储顺序呈现，不能以数组末项推断工具实际时序。
+- 旧 head `d7f5b2dd` 的 CI 完整结果为 11 项通过、3 项失败；`release-artifact` 和 `ci-gate` 均因 browser-qualification 失败在依赖校验中连锁失败，没有独立构建缺陷。`browser-qualification` 失败定位为资源权限测试仍等待折叠中的消息区可见（78 通过、1 失败）。配套测试先通过页面控件展开过程，再继续原实时撤权、HTTP/WS/证据拒绝断言；未放宽权限验收。
 
-本轮最终后端回归（8 个 focused 文件及 2 个 SQL 文件）222 通过、1 条条件跳过；工作区/反馈/资源权限浏览器回归 31/31 通过；两端 typecheck 和 contracts:check 通过。准确交付 head、更新四张截图和 CI 状态记录在 P2 附件及原交付线程。前端生产代码、公开契约及构建输入未变化，复用前次前端 focused/build/CSP 证据。真实主运行环境验收继续等待 MAX-209 稳定候选；新增产品模型调用 0，未写父账本，未合并或部署。
+本轮最终后端回归（8 个 focused 文件及 2 个 SQL 文件）223 通过、1 条条件跳过；工作区/反馈/资源权限浏览器回归 31/31 通过；两端 typecheck 和 contracts:check 通过。准确交付 head、更新四张截图和 CI 状态记录在 P2 附件及原交付线程。前端生产代码、公开契约及构建输入未变化，复用前次前端 focused/build/CSP 证据。真实主运行环境验收继续等待 MAX-209 稳定候选；新增产品模型调用 0，未写父账本，未合并或部署。
