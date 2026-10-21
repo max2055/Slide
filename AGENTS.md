@@ -19,6 +19,7 @@ Slide：智能基础设施运维平台。本文只记录当前架构和全仓执
 | 源码同步、版本快照、源码访问及相关 UI/故障排查 | [源码同步规则](docs/slide/development/source-sync.md) |
 | 有硬预算、明确用量统计要求或多代理工作 | [资源计量与预算规则](docs/slide/development/resource-governance.md) |
 | Multica 建单、更新、搜索、核验和交接 | [Multica Issue Management](.agents/skills/multica-issue-management/SKILL.md) |
+| 创建涉及调试服务器或产品LLM调用的任务 | [调试环境与批次预算默认要求](docs/slide/development/debug-task-defaults.md)、[资源计量与预算规则](docs/slide/development/resource-governance.md) |
 
 ## 2. 标准命令与环境
 
@@ -41,7 +42,7 @@ pnpm contracts:check
 
 - 默认前端地址 `http://localhost:5173`、后端地址 `http://localhost:3000`；实际端口以运行配置为准。
 - 后端环境从 `apps/db-ops-api/.env` 加载。平台数据库使用 `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`，以 [db-connection.ts](apps/db-ops-api/src/db-connection.ts) 为准。
-- JWT、加密密钥及生产初始化管理员要求以 [security-config.ts](apps/db-ops-api/src/config/security-config.ts) 为准。凭据使用环境提供的值，不在规则、任务、日志或版本库中保存真实密码或密钥。
+- JWT、加密密钥及生产初始化管理员要求以 [security-config.ts](apps/db-ops-api/src/config/security-config.ts) 为准。凭据使用环境提供的值，不在规则、日志或版本库中保存真实密码或密钥。任务默认使用凭据引用；用户明确指定向调试主任务提供某凭据时，仅按该授权范围传递，遵循调试环境专项规则。
 - Agent 模型配置以 [llm-provider-factory.ts](apps/db-ops-api/src/adapter/llm-provider-factory.ts) 和场景路由为准；不能依赖旧 Anthropic 环境变量绕过已停用的 Provider。
 - 配置示例仅供参考，与实际配置加载和校验代码不符时以代码为准，不复制过时的模型、凭据或数据库连接示例。
 - 排查运行行为或停止服务前，核对 **PID → 端口 → cwd → 启动命令 → 分支/Commit → 日志文件**。确认进程属于当前任务后优先优雅停止，不按端口直接强杀其他工作树的服务。
@@ -77,8 +78,8 @@ pnpm contracts:check
 
 ## 6. 外部任务建单与交接
 
-- 任务正文只记录长期有效的问题、范围、验收、依赖和已有兼容决定；“本次仅建单、不启动”等当次操作说明留在交付回复中。
-- 建单不等于授权启动执行。按用户授权设置状态和分配对象，避免意外触发；建单或更新后回读正文、状态及执行情况。
+- 任务正文维护当前有效的问题、范围、验收、依赖和兼容决定；阶段性运行/排队状态、CI快照与执行日志放评论或版本化交付记录，不不断追加到正文。规则改变时更新正文中的有效要求，并检查相关metadata和实际接续规则；历史证据保持可追溯，既有历史正文获准保留时明确其时点及当前规则入口。
+- 建单与调度须结合完整会话及已有授权判断。用户已确认实施方案、负责人和接续安排后，后续“创建任务”沿用该授权，按依赖、文件所有权和并发空位正常启动、接续，不默认附加“仅建单、不启动”或另等启动指令。仅当用户明确要求草稿、仅建单或暂停，或存在具体未解决的授权边界时才限制执行；建单或更新后回读正文、状态及执行情况。
 - Multica 操作遵循专项 skill，避免重复维护 CLI 用法；任务应引用可供执行环境访问的方案和验收材料，不能只依赖当前聊天历史。
 
 ## 7. 发布与产物
