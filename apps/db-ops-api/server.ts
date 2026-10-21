@@ -336,7 +336,7 @@ async function start() {
   fastify.addHook('onRequest', async (request, reply) => {
     if (request.url.split('?')[0] === '/api/health' || request.url.split('?')[0] === '/api/health/ready') return;
     if (!recovery.ready && recovery.state !== 'standby') return reply.code(503).send(platformUnavailableResponse);
-    if (recovery.ready || !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    if (recovery.ready) {
       try { await recovery.assertOwned(); }
       catch { return reply.code(503).send(platformUnavailableResponse); }
     }
@@ -347,6 +347,7 @@ async function start() {
   });
 
   // Required on every API process; timers and connection recovery are leader-only.
+  let apiInitialized = false;
   const initializeApi = async () => {
   await agentSecurityPolicyService.initialize();
   systemComposition = await createSystemComposition(() => dbConnection.getPool());
@@ -372,6 +373,7 @@ async function start() {
   await llmService.initialize();
 
   await metricRegistry.initialize();
+  apiInitialized = true;
   };
 
   const initializeLeaderConnections = async (startup: WorkerStartup) => {
@@ -5402,6 +5404,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   const startWorkers = async (startup: WorkerStartup) => {
+  // A failed one-time API initialization must never publish a ready successor.
+  if (!apiInitialized) throw new Error('API_INITIALIZATION_FAILED');
   stopWorkersPromise = undefined;
   stopWorkflow = undefined; metricLifecycle = undefined; cronManager = undefined; engine = undefined;
   dispatchAvailable = false;
@@ -5541,8 +5545,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // 启动 HTTP API 服务器
   const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
-  await initializeApi();
-  await recovery.start(async () => {}, startWorkers);
+  try {
+    // Acquire and renew the lease while one-time API dependencies initialize.
+    await recovery.start(initializeApi, startWorkers);
+  } catch (error) {
+    await shutdown();
+    throw error;
+  }
   if (recovery.state === 'standby') console.warn('[WorkerStartup] WORKER_LEASE_UNAVAILABLE: API-only standby; D1 does not auto-promote');
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }

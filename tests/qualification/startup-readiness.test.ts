@@ -38,7 +38,8 @@ async function freePort(): Promise<number> {
   await new Promise<void>(resolve => server.close(() => resolve())); return port;
 }
 async function probe(port: number, path = '/api/health/ready') {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(4_000) });
+  // Allow the server's 5s readiness deadline to return its explicit 503.
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(7_000) });
   return { code: response.status, body: await response.json() };
 }
 async function stop(process: typeof children[number]) {
@@ -55,7 +56,8 @@ function start(env: NodeJS.ProcessEnv) {
 }
 
 try {
-  await exec('docker', ['run', '-d', '--rm', '--name', container, '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4']);
+  await exec('docker', ['run', '-d', '--name', container, '--memory', '512m', '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4',
+    '--innodb-buffer-pool-size=32M', '--performance-schema=OFF', '--max-connections=60']);
   const mapped = (await exec('docker', ['port', container, '3306/tcp'])).stdout.trim();
   const port = Number(mapped.split(':').at(-1));
   pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
@@ -167,10 +169,19 @@ try {
   events.push('workflow UPDATE denied with healthy control DB: readiness 503; restored dispatch: readiness 200');
   await exec('docker', ['pause', container]);
   assert.deepEqual(await probe(dbLossPort), { code: 503, body: { ready: false } });
-  await Promise.race([dbLoss.exit, delay(18_000).then(() => { throw new Error('blocked lease did not fail closed'); })]);
-  assert.ok(dbLoss.output().includes('WORKER_LEASE_TIMEOUT'));
+  await waitFor(async () => dbLoss.output().includes('"state":"degraded"'), 'paused database revokes worker ownership', 20_000);
+  // Whether drain has pending driver I/O depends on the pause timing. Both a
+  // blocked drain and a drained generation must prevent a successor offline.
+  await delay(11_000);
+  assert.equal(dbLoss.child.exitCode, null);
+  assert.equal((dbLoss.output().match(/Agent Engine 已启动/g) ?? []).length, 1);
+  assert.equal((await probe(dbLossPort, '/api/health')).code, 200);
+  assert.deepEqual(await probe(dbLossPort), { code: 503, body: { ready: false } });
   await exec('docker', ['unpause', container]);
-  events.push('database paused: bounded readiness 503, renewal timeout cancels workers and enforces process close deadline');
+  await waitFor(async () => (await probe(dbLossPort)).code === 200, 'same process recovers after database resumes', 45_000);
+  assert.equal(dbLoss.child.exitCode, null);
+  assert.equal((dbLoss.output().match(/Agent Engine 已启动/g) ?? []).length, 2);
+  events.push('database paused: bounded readiness 503, liveness 200, workers drained; database resumes: same process ready with a new engine generation');
 
   // Render only fake configuration, then use Compose itself to launch a probe container.
   const configFile = join(directory, 'compose.env');
@@ -194,13 +205,16 @@ try {
   events.push('fake Compose render + actual Compose test container received all five enabled Memory/metrics settings');
   console.log(JSON.stringify({ result: 'passed', events, processes: children.map(p => p.child.pid), cwd: api,
     head: (await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim(), productionDataTouched: false }, null, 2));
+} catch (error) {
+  console.error(JSON.stringify({ completed: events, processes: children.map(p => ({ pid: p.child.pid, exitCode: p.child.exitCode, output: p.output().slice(-6000) })) }, null, 2));
+  throw error;
 } finally {
   await exec('docker', ['unpause', container]).catch(() => {});
   await lock?.query('UNLOCK TABLES').catch(() => {}); await lock?.end().catch(() => {});
   await Promise.all(children.map(stop)); await pool?.end().catch(() => {});
   await exec('docker', ['compose', '-p', composeProject, '--env-file', join(directory, 'compose.env'), '--project-directory', directory,
     '-f', join(root, 'compose.production.yaml'), 'down']).catch(() => {});
-  await exec('docker', ['rm', '-f', container]).catch(() => {});
+  await exec('docker', ['rm', '-f', '-v', container]).catch(() => {});
   await new Promise<void>(resolve => fakeProvider.close(() => resolve()));
   await rm(directory, { recursive: true, force: true });
 }
