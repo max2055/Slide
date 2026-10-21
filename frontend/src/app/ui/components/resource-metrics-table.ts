@@ -144,8 +144,10 @@ export class ResourceMetricsTable extends LitElement {
     const gap = parseFloat(getComputedStyle(value).paddingTop);
     const bounds = value.getBoundingClientRect();
     const left = Math.max(gap, Math.min(anchor.left, innerWidth - bounds.width - gap));
-    const top = anchor.bottom + gap + bounds.height <= innerHeight - gap ? anchor.bottom + gap :
-      Math.max(gap, anchor.top - bounds.height - gap);
+    // Keep the surfaces adjacent so the pointer can enter the full value
+    // without crossing a dismissal gap. The gap only bounds the viewport.
+    const top = anchor.bottom + bounds.height <= innerHeight - gap ? anchor.bottom :
+      Math.max(gap, anchor.top - bounds.height);
     value.style.left = `${left}px`;
     value.style.top = `${top}px`;
   };
