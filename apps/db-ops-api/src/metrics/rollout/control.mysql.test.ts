@@ -133,7 +133,7 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
       expect(await formal.dimensions({ type: 'instance', id: 1 }, definition,
         '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z')).toEqual([{}]);
       const [sql, params] = execute.mock.calls[0];
-      const [plan] = await pool.query<RowDataPacket[]>(`EXPLAIN FORMAT=TRADITIONAL ${sql}`, params);
+      const [plan] = await pool.execute<RowDataPacket[]>(`EXPLAIN FORMAT=TRADITIONAL ${sql}`, params);
       expect(plan.find(row => row.table === 'o')).toMatchObject({ key: 'PRIMARY', type: 'eq_ref', rows: 1 });
     } finally { execute.mockRestore(); }
   });
