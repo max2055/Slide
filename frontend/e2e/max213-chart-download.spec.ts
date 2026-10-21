@@ -33,6 +33,7 @@ test('Canvas resolves theme variables and alpha through theme changes and resize
     expect(colors[3].stops[1].color).toBe(`rgba(12,34,56,${0.5 * 5 / 255})`);
     await page.setViewportSize({ width: theme === 'light' ? 1280 : 700, height: 800 });
     await expect(page.locator('metric-chart canvas')).toBeVisible();
+    await page.waitForFunction(() => (document.querySelector('metric-chart') as any)._chart.getZr().animation.isFinished());
     await page.screenshot({ path: info.outputPath(`chart-${theme}.png`) });
   }
   expect(errors).toEqual([]);
