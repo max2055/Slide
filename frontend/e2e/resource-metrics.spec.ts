@@ -135,6 +135,24 @@ for (const width of [375, 1440]) for (const theme of ['light', 'dark']) {
       await page.keyboard.press('Escape');
       await expect(addressTip).toBeHidden(); await expect(value).toBeFocused();
     }
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const lastName = table.locator('tbody tr').last().locator('.resource-name');
+    const toolbarButton = table.locator('.bulk-tools button').first();
+    await keyboardFocus(page, toolbarButton);
+    await lastName.locator('button').hover();
+    const hovered = await visibleFullValue(lastName);
+    await hovered.hover(); await expect(hovered).toBeVisible();
+    await page.keyboard.press('Escape'); await expect(hovered).toBeHidden();
+    await expect(toolbarButton).toBeFocused();
+    await page.mouse.move(1, 1); await lastName.locator('button').hover();
+    await visibleFullValue(lastName);
+    await page.mouse.move(1, 1); await expect(hovered).toBeHidden();
+    await keyboardFocus(page, lastName.locator('button'));
+    await visibleFullValue(lastName);
+    // Disconnecting an open native popover must not leave an orphan or throw.
+    await table.evaluate(el => el.remove());
+    expect(errors).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
