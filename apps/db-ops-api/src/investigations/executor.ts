@@ -36,7 +36,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
-import { investigationToolContract } from './tool-contract.js';
+import { investigationToolContract, investigationToolPolicy } from './tool-contract.js';
 import { systemInvestigationHistory } from './system-tools.js';
 import { investigationStop, type InvestigationStop } from './execution-summary.js';
 import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
@@ -74,6 +74,14 @@ export function investigationContextMessages(messages: Message[], profile: strin
     if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
     let result: unknown;
     try { result = JSON.parse(message.content); } catch { return message; }
+    // A handler can fail after policy allowed execution. Keep the complete
+    // business failure in the model view, without repeating an ALLOW audit
+    // envelope. This runs after ToolExecutor; failure object semantics and
+    // durable receipts stay untouched. A policy denial is never stripped.
+    if ((result as any)?.success === false && (result as any)?.policyDecision?.allow === true) {
+      const { policyDecision: _audit, ...failure } = result as Record<string, unknown>;
+      return { ...message, content: JSON.stringify(failure), messageParts: undefined };
+    }
     const content = investigationToolContextResult(result, message.tool_call_id, profile);
     return typeof content === 'string' && content !== message.content
       ? { ...message, content, messageParts: undefined } : message;
@@ -603,9 +611,11 @@ export class InvestigationExecutor {
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
       const model = actual.getDefaultModel();
+      const modelPrompt = investigationPrompt(profile) + (profile.id === 'ops'
+        ? investigationToolPolicy(snapshot.resources, profile.budget) : '');
       await update(s => {
         const identity = analysisProviderIdentity(actual);
-        s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(investigationPrompt(profile)).digest('hex')}`,
+        s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(modelPrompt).digest('hex')}`,
           ...(identity.providerId === undefined ? {} : { providerId: identity.providerId }),
           ...(identity.routeVersion === 'unavailable' ? {} : { routeVersion: identity.routeVersion }) };
       });
@@ -818,7 +828,7 @@ export class InvestigationExecutor {
           role: 'system',
           source: 'runtime',
           contextAuthority: 'policy',
-          content: investigationPrompt(profile),
+          content: modelPrompt,
         },
         ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];

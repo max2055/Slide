@@ -87,6 +87,9 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     expect(received[0].tools).toBeUndefined();
     expect(received[1].tools).toHaveLength(7);
     const wire = received[1].messages;
+    expect(wire[0].content).toContain('All tools (runtime enforced)');
+    expect(wire[0].content).toContain('"maxWindowMs":3600000');
+    expect(wire[0].content).toContain('Missing/unknown is not healthy');
     const retainedAssistant = split.retained[0];
     expect(wire.find((m: any) => m.tool_calls?.[0]?.id === retainedAssistant.tool_calls![0].id).tool_calls).toEqual(retainedAssistant.tool_calls);
     for (const call of retainedAssistant.tool_calls!) expect(wire.filter((m: any) => m.tool_call_id === call.id)).toHaveLength(1);
@@ -95,6 +98,9 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     expect(view.data).toMatchObject({ evidenceOmitted: true, requiresNarrowerRead: true });
     expect(view.summary).toContain('不可据此推断健康或根因');
     expect(JSON.stringify(wire)).toContain('METRIC_REFERENCE_REVIEW_REQUIRED');
+    const failure = fixture.entries.at(-1), failureValue = JSON.parse(failure.content);
+    const { policyDecision: _audit, ...businessFailure } = failureValue;
+    expect(JSON.parse(wire.find((m: any) => m.tool_call_id === failure.tool_call_id).content)).toEqual(businessFailure);
     expect(JSON.stringify(wire)).toContain('unknown');
     const projected = provider.projectMessages(request);
     expect(provider.projectMessages(projected)).toEqual(projected);

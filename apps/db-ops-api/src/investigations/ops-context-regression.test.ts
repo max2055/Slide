@@ -4,7 +4,7 @@ import { OpenAIProvider, ToolRegistry, type Message } from '@slide/agent-core';
 import { NoopHook } from '@slide/agent-core';
 import { investigationContextMessages } from './executor.js';
 import { investigationPrompt, INVESTIGATION_PROFILES } from './profiles.js';
-import { investigationToolContract } from './tool-contract.js';
+import { investigationToolContract, investigationToolPolicy } from './tool-contract.js';
 import { toolCatalog } from '../tools/catalog.js';
 import '../tools/ops/index.js';
 import '../tools/generated/slide-self-mgmt/resource_tools.js';
@@ -34,7 +34,7 @@ function setup() {
     countPromptTokens: actual.countPromptTokens.bind(actual),
     projectMessages: (m:Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'),
   };
-  const raw:Message[] = [{role:'system',source:'runtime',contextAuthority:'policy',content:investigationPrompt(profile)},
+  const raw:Message[] = [{role:'system',source:'runtime',contextAuthority:'policy',content:investigationPrompt(profile)+investigationToolPolicy([{type:'instance',id:1},{type:'server',id:3}],profile.budget)},
     ...fixture.users, ...fixture.entries];
   const spec:any = {initialMessages:raw, tools, model:'deepseek-flash', maxIterations:8,
     maxToolResultChars:128000, contextWindowTokens:16000, maxTokens:4096, hook:new NoopHook(),

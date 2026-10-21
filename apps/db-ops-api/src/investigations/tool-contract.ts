@@ -1,6 +1,18 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
+/** Shared model policy belongs once in the request, not in every schema.
+ * Correlated resource enums stay in each schema; execution rechecks live ACLs.
+ */
+export function investigationToolPolicy(
+  resources: readonly { type: string; id: number }[],
+  budget: { maxWindowMs: number; maxRows: number },
+): string {
+  return '\nAll tools (runtime enforced): ' + JSON.stringify({
+    resources, maxWindowMs: budget.maxWindowMs, maxRows: Math.min(100, budget.maxRows),
+  }) + '. Missing/unknown is not healthy.';
+}
+
 /** A provider-only projection. Execution still resolves and authorizes every
  * argument against the live actor and the immutable request ceiling. */
 export function investigationToolContract(tool: ToolSchema,
@@ -34,5 +46,5 @@ export function investigationToolContract(tool: ToolSchema,
   for (const key of ['limit', 'maxRows']) if (p[key])
     p[key] = { ...p[key], type: 'integer', minimum: 1, maximum: Math.min(100, budget.maxRows) };
   parameters.required = [...required];
-  return { name: tool.name, parameters, description: `${tool.description} 本调查只允许 ${JSON.stringify(candidates)}；历史窗口最多 ${budget.maxWindowMs}ms，缺失或 unknown 不代表健康。` };
+  return { name: tool.name, parameters, description: tool.description };
 }
