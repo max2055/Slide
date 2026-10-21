@@ -101,3 +101,29 @@ test('compatibility loading/error/unknown, retry, clearing and revoked permissio
   await expect(page.getByRole('button', { name: '查看模板', exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('permission-revoked.png'), fullPage: true });
 });
+
+test('shared focus ring stays readable with the existing custom blue in light and shadow DOM', async ({ page }) => {
+  await setup(page, 'light');
+  await page.evaluate(async () => {
+    const { applyAccentColor } = await import('/src/app/ui/app-settings.ts');
+    applyAccentColor('#265f99');
+    const button = document.createElement('button'); button.className = 'btn'; button.id = 'plain-focus'; button.textContent = '普通按钮'; document.body.append(button);
+  });
+  for (const mode of ['light', 'dark']) {
+    await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    for (const button of [page.locator('#plain-focus'), mysqlRow(page).getByRole('button', { name: '查看模板', exact: true })]) {
+      await button.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+      const sample = await button.evaluate(el => {
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d')!;
+        const rgba = (color: string) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); const c = [...ctx.getImageData(0, 0, 1, 1).data]; return [c[0], c[1], c[2], c[3] / 255]; };
+        const chain: Element[] = []; let node: Element | null = el;
+        while (node) { chain.push(node); node = (node as HTMLElement).assignedSlot ?? node.parentElement ?? (node.getRootNode() as ShadowRoot).host; }
+        let bg = [255, 255, 255]; for (const n of chain.reverse()) { const c = rgba(getComputedStyle(n).backgroundColor); bg = bg.map((v, i) => c[i] * c[3] + v * (1 - c[3])); }
+        const lum = (c: number[]) => c.slice(0, 3).map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+        const color = rgba(getComputedStyle(el).outlineColor), a = lum(color), b = lum(bg);
+        return { focused: el.matches(':focus-visible'), contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+      });
+      expect(sample.focused).toBe(true); expect(sample.contrast).toBeGreaterThanOrEqual(3);
+    }
+  }
+});

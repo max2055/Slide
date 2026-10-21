@@ -56,7 +56,8 @@ async function matrix(page,name,selector) {
 }
 async function measure(locator) {
  return locator.evaluate(el=>{
-  const rgb=s=>s.match(/[\d.]+/g)?.map(Number)??[0,0,0,0];
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');
+  const rgb=s=>{ctx.clearRect(0,0,1,1);ctx.fillStyle=s;ctx.fillRect(0,0,1,1);const v=[...ctx.getImageData(0,0,1,1).data];return [v[0],v[1],v[2],v[3]/255];};
   const blend=(a,b)=>[0,1,2].map(i=>a[i]*(a[3]??1)+b[i]*(1-(a[3]??1)));
   const ancestors=[]; let e=el; while(e) { ancestors.push(e);e=e.assignedSlot??e.parentElement??e.getRootNode()?.host; }
   let bg=[255,255,255]; for(const n of ancestors.reverse()) bg=blend(rgb(getComputedStyle(n).backgroundColor),bg);
@@ -116,6 +117,7 @@ try {
  await run('packages',async()=>{
   await page.goto(base+'/settings/monitoring/metrics?view=packages');await expect(page.locator('metric-settings')).toBeVisible();
   await page.getByLabel('兼容性参考资源',{exact:true}).selectOption('instance:1');
+  await page.evaluate(async()=>{const {applyAccentColor}=await import('/src/app/ui/app-settings.ts');applyAccentColor('#265f99');});
   const row=page.locator('metric-settings tbody tr').filter({has:page.getByText('MySQL 基础采集',{exact:true})});
   await expect(row).toContainText('已验证兼容');await expect(row).toContainText('可见资源绑定');await expect(row).not.toContainText('正在读取可见资源绑定数');
   await text(page,'packages','metric-settings');await matrix(page,'package-overview','metric-settings tbody tr:has-text("MySQL 基础采集")');
@@ -144,7 +146,7 @@ try {
   await expect(page.locator('semantic-metrics .summary-grid')).toBeVisible({timeout:30000});
   await text(page,'semantic-all','semantic-metrics');
   const component=page.locator('semantic-metrics');
-  receipt.semantic=await component.evaluate(el=>({window:el.result.window,resource:`${el.resourceType}:${el.resourceId}`,metrics:el.result.metrics.map(m=>({id:m.definition.id,state:m.state,series:m.series.length,zeroBuckets:m.series.flatMap(s=>s.buckets).filter(b=>b.value?.value===0).length,states:[...new Set(m.series.flatMap(s=>s.buckets).map(b=>`${b.quality.status}/${b.freshness}`))]}))}));save();
+  receipt.semantic=await component.evaluate(el=>({window:el.result.window,resource:`${el.resourceType}:${el.resourceId}`,metrics:el.result.metrics.map(m=>({id:m.definition.id,state:m.state,series:m.series.length,zeroBuckets:m.series.flatMap(s=>s.buckets).filter(b=>b.value?.value!=null&&Number(b.value.value)===0).length,states:[...new Set(m.series.flatMap(s=>s.buckets).map(b=>`${b.quality.status}/${b.freshness}`))]}))}));save();
   for(const [name,id] of [['normal','db.uptime_seconds'],['zero','mysql.key_cache.used_blocks'],['failure','mysql.innodb.row_lock_average_ms'],['capability','mysql.queries.per_second'],['no-series','mysql.replication.sql_running']]) {
    await page.getByLabel('指标',{exact:true}).selectOption(id);
    await text(page,'semantic-'+name,'semantic-metrics');await matrix(page,'semantic-'+name,'semantic-metrics');
@@ -155,6 +157,7 @@ try {
   await page.getByLabel('时间范围',{exact:true}).selectOption('6');await expect(component.locator('.summary-grid')).toBeVisible();await shot(page,'semantic-window-6h');
   await page.getByLabel('时间范围',{exact:true}).selectOption('1');await expect(component.locator('.summary-grid')).toBeVisible();await page.getByRole('button',{name:'刷新标准指标',exact:true}).click();await expect(page.getByRole('button',{name:'刷新标准指标',exact:true})).toBeEnabled();await shot(page,'semantic-refresh');
  });
+ assert(receipt.interactions.every(i=>i.passed), 'One or more business interactions failed');
  receipt.completed=true;
 } catch(e) {receipt.failure=e.message;process.exitCode=1;}
 finally {
