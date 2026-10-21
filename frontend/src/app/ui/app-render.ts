@@ -1,6 +1,6 @@
 import { dismissChatRecoveryNotice } from './chat/recovery-notice.ts';
-import { nothing } from "lit";
-import { html, literal } from "lit/static-html.js";
+import { html, nothing } from "lit";
+import { html as navigationHtml, literal } from "lit/static-html.js";
 import { readCachedPermissions, renderPermissionsError } from "./permissions.ts";
 import {
   buildAgentMainSessionKey,
@@ -234,6 +234,8 @@ export function renderApp(state: AppViewState) {
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const navDrawerOpen = state.navDrawerOpen && !chatFocus && !state.onboarding;
   const navCollapsed = state.settings.navCollapsed && !navDrawerOpen;
+  // Interpolate this static tag only inside the navigation subtree: putting it
+  // in the app template remounts business views and discards drafts on resize.
   const navTag = window.matchMedia?.('(max-width: 1100px)').matches ? literal`dialog` : literal`div`;
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
   const showToolCalls = state.onboarding ? true : state.settings.chatShowToolCalls;
@@ -408,7 +410,7 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
       </header>
-      <${navTag}
+      ${navigationHtml`<${navTag}
         id="shell-navigation"
         class="shell-nav"
         aria-label=${t("nav.control")}
@@ -513,7 +515,7 @@ export function renderApp(state: AppViewState) {
             </div>
           </div>
         </aside>
-      </${navTag}>
+      </${navTag}>`}
       <main class="content ${isChat ? "content--chat" : ""}">
         ${renderPermissionsError(state)}
         ${state.updateAvailable &&

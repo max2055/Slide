@@ -52,14 +52,16 @@ for(const type of ['instance','server','network_device'] as const)test(`${type}:
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await expect.poll(async()=>{
       const content=await links.boundingBox(),nav=await page.locator('.shell-nav').boundingBox();
-      return content!.x>=nav!.x+nav!.width && content!.x+content!.width<=width;
+      // The breakpoint replaces only the nav (div ↔ dialog). A box read may
+      // resolve the outgoing node; poll the real layout again after it mounts.
+      return !!content && !!nav && content.x>=nav.x+nav.width && content.x+content.width<=width;
     }).toBe(true);
     await page.screenshot({path:test.info().outputPath(`${type}-resource-${width}.png`),fullPage:true});
   }
   await page.evaluate(()=>document.documentElement.dataset.sidebarPosition='right');
   await expect.poll(async()=>{
     const content=await links.boundingBox(),nav=await page.locator('.shell-nav').boundingBox();
-    return content!.x+content!.width<=nav!.x;
+    return !!content && !!nav && content.x+content.width<=nav.x;
   }).toBe(true);
   await page.evaluate(()=>delete document.documentElement.dataset.sidebarPosition);
   const before=env.counts();
