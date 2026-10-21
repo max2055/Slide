@@ -19,6 +19,7 @@ import { capacityInstanceIds } from './src/capacity-scope.js';
  * Slide - Database Operations API Server
  */
 import 'dotenv/config';
+import { reportAttachmentDisposition } from './src/report-download.js';
 import { randomUUID } from 'node:crypto';
 import { createFatalProcessHandler } from './src/security/fatal-process.js';
 import { installConsoleRedaction } from './src/security/log-redaction.js';
@@ -3055,11 +3056,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const exportFormat = format || report.format;
         const content = await reportExporter.export(report, exportFormat);
         const mimeType = reportExporter.getFormatMimeType(exportFormat);
-        const fileName = `${report.name.replace(/[^a-zA-Z0-9]/g, '_')}.${reportExporter.getExtension(exportFormat)}`;
 
         reply
           .header('Content-Type', mimeType)
-          .header('Content-Disposition', `attachment; filename="${fileName}"`)
+          .header('Content-Disposition', reportAttachmentDisposition(report.name, reportExporter.getExtension(exportFormat), Number(id)))
           .send(content);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });

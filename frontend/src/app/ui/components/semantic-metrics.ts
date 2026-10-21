@@ -9,7 +9,8 @@ import './app-empty-state.js';
 import './app-badge.js';
 import './metric-chart.js';
 import './investigation-operation-context.ts';
-import { metricName } from './resource-metric-summary.js';
+import { metricDisplayName as metricName } from './metric-display.js';
+import { showToast } from './app-toast-container.js';
 export interface MetricResult {
   definition: { id: string; category: string; meaning: string; unit: string }; state: string; capability: unknown;
   observed_at?: string;
@@ -78,6 +79,12 @@ export class SemanticMetrics extends LitElement {
     window.removeEventListener('slide-session-expired', this.onAccessChanged);
     super.disconnectedCallback();
   }
+  override updated() {
+    // Native selects can reset while Lit removes/reinserts async options. Apply
+    // the state after the children commit, even when the selected ID is unchanged.
+    const select = this.renderRoot.querySelector<HTMLSelectElement>('select[aria-label="指标"]');
+    if (select && select.value !== this.selectedMetric) select.value = this.selectedMetric;
+  }
   async load() {
     if (this.accessInvalidated || !this.resourceId) return;
     const generation = ++this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
@@ -93,6 +100,10 @@ export class SemanticMetrics extends LitElement {
       if (current()) this.result = result;
     } catch (e) { if (current()) this.error = e instanceof Error ? e.message : errors(503); }
     finally { if (current()) this.busy = false; }
+  }
+  private async copyMetric(id: string) {
+    try { await navigator.clipboard.writeText(id); showToast('已复制指标标识', 'success'); }
+    catch { showToast('复制失败，请展开指标标识手动复制', 'error'); }
   }
   private renderTrend(metric: MetricResult, series: MetricResult['series'][number]) {
     return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? metric.definition.unit}
@@ -117,7 +128,8 @@ export class SemanticMetrics extends LitElement {
       .quality-badges { display:flex; flex-wrap:wrap; gap:var(--space-xs); }
       app-data-table { display:block; max-width:100%; overflow-x:auto; }
       .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:var(--space-md); border-bottom:1px solid var(--border); padding-block:var(--space-md); }
-      .metric-name { margin:0 0 var(--space-sm); font-size:14px; color:var(--muted); }
+      .metric-name { margin:0 0 var(--space-sm); font-size:14px; color:var(--text-strong); }
+      .metric-id { color:var(--muted); font-size:12px; user-select:text; }
       .current strong { font-size:24px; color:var(--text-strong); }
       .current { font-size:12px; min-width:0; overflow-wrap:anywhere; }
       .current time { display:block; color:var(--muted); margin-block:var(--space-xs); }
@@ -133,13 +145,15 @@ export class SemanticMetrics extends LitElement {
         this.hours = Number((e.target as HTMLSelectElement).value); this.result = null; this.chartKeys = new Set(); this.baselineKey = '';
         const absolute = this.from || this.to; this.from = ''; this.to = ''; if (!absolute) void this.load();
       }}><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24">最近 24 小时</option></select></label>
-      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} .value=${this.selectedMetric} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; }}><option value="">全部指标</option>${this.result?.metrics.map(m => html`<option value=${m.definition.id}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
+      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
       <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.result ? html`<p class="window">查询窗口：${this.result.window.from} — ${this.result.window.to} · 窗口不代表实际观测时间</p>` : nothing}
     </div>
     ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
     ${this.busy && !this.result ? html`<div class="skeleton" aria-label="正在读取指标"></div>` : nothing}
+    ${this.result && this.selectedMetric && !metrics.length ? html`<p role="status">当前窗口未返回所选指标；可刷新或选择全部指标。</p>` : nothing}
     ${metrics.length ? html`<div class="summary-grid" aria-label="当前指标比较">${metrics.map(m => html`<div class="current"><h3 class="metric-name">${metricName(m.definition.id)}</h3>
+      <details class="metric-id"><summary>指标标识</summary><code>${m.definition.id}</code><button class="btn btn-sm btn-ghost" aria-label=${`复制 ${m.definition.id}`} @click=${() => void this.copyMetric(m.definition.id)}>复制标识</button></details>
       <span>${states[m.state] ?? m.state}</span>
       ${!m.series.length ? html`<p>暂无可用观测</p>` : m.series.map(series => {
         const b = series.buckets.at(-1);

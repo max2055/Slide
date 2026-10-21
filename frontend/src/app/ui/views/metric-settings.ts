@@ -10,7 +10,8 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import '../components/resource-collection-section.js';
 import type { PolicyGroup } from '../components/metric-api.js';
 import { authFetch } from '../../../api/index.js';
-import { metricName, packageName, resourceLabels } from '../components/resource-metric-summary.js';
+import { packageName, resourceLabels } from '../components/resource-metric-summary.js';
+import { metricDisplayName as metricName } from '../components/metric-display.js';
 import { numericFields } from '../components/metric-policy-fields.js';
 import '../components/app-notice.js';
 
@@ -100,7 +101,7 @@ export class MetricSettings extends LitElement {
         emptyMessage="暂无配置变更记录"></app-data-table></div>`}`;
   }
   static componentStyles = [sharedBtnStyles, css`
-    :host { display:block; min-width:0; } .scroll { overflow:auto; max-width:100%; } app-data-table { min-width:48rem; }
+    :host { display:block; min-width:0; container-type:inline-size; } .scroll { overflow:auto; max-width:100%; } app-data-table { min-width:48rem; }
     input,select,textarea { box-sizing:border-box; max-width:100%; width:100%; padding:var(--space-sm); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); background:var(--bg); }
     .actions { display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-block:var(--space-md); }
     .filter-toolbar { display:flex; flex-wrap:wrap; gap:var(--space-md); margin-block:var(--space-lg); }
@@ -122,7 +123,7 @@ export class MetricSettings extends LitElement {
     .package-sections li + li { margin-top:var(--space-sm); }
     .package-sections p { margin-block:var(--space-sm); }
     .skeleton { height:4rem; margin-block:var(--space-md); border-radius:var(--radius-sm); background:var(--bg-hover); }
-    @media (max-width:720px) {
+    @container (max-width:960px) {
       .package-summary { grid-template-columns:minmax(0,1fr); }
       .package-table { min-width:0; }
       .package-table .data-table, .package-table tbody, .package-table tr, .package-table td { display:block; width:100%; box-sizing:border-box; }

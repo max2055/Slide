@@ -64,6 +64,18 @@ describe('ServerDiagnosticService', () => {
     expect(getConnection).not.toHaveBeenCalled();
   });
 
+  it('parses bracketed and unbracketed IPv6 endpoints without leaking a bracket into the address', async () => {
+    const original = execCommands.getMockImplementation()! as (client: unknown, commands: string[]) => Promise<ReturnType<typeof ok>[]>;
+    execCommands.mockImplementation(async (client: unknown, commands: string[]) => commands[0].includes('ss -lntup')
+      ? [ok('tcp LISTEN 0 128 [::]:22 [::]:*\ntcp LISTEN 0 128 [::1]:3306 [::]:*\nudp UNCONN 0 0 [fe80::1%eth0]:53 [::]:*\ntcp LISTEN 0 128 :::443 :::*\ntcp LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*\n')]
+      : original(client, commands));
+    const result = await create().collectDiagnostics(3);
+    expect(result.listeningPorts.items.map(({address, port}) => ({address, port}))).toEqual([
+      { address: '::', port: 22 }, { address: '::1', port: 3306 }, { address: 'fe80::1%eth0', port: 53 },
+      { address: '::', port: 443 }, { address: '127.0.0.1', port: 8080 },
+    ]);
+  });
+
   it('closes the session after a fatal bounded-command error', async () => {
     execCommands.mockRejectedValue(new Error('SSH_COMMAND_OUTPUT_LIMIT'));
     await expect(create().collectDiagnostics(3)).rejects.toThrow('SSH_COMMAND_OUTPUT_LIMIT');

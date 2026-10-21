@@ -65,3 +65,30 @@ it('old backends without observation timestamps remain unknown instead of using 
   expect(el.shadowRoot!.querySelector('app-data-table')!.textContent).toContain('观测时间：未知');
   expect(el.shadowRoot!.querySelector('time')).toBeNull();
 });
+it('keeps the selected metric through window loading, refresh, empty series and missing definitions', async () => {
+  const data = structuredClone(result);
+  data.metrics.push({ ...structuredClone(data.metrics[0]), definition: { ...data.metrics[0].definition, id: 'mysql.key_cache.used_percent' }, series: [] });
+  authFetch.mockResolvedValue({ ok: true, json: async () => data });
+  const el = await mount();
+  const select = el.shadowRoot!.querySelector<HTMLSelectElement>('select[aria-label="指标"]')!;
+  select.value = 'mysql.key_cache.used_percent'; select.dispatchEvent(new Event('change'));
+  await el.updateComplete;
+  let finish!: (value: unknown) => void;
+  authFetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const window = el.shadowRoot!.querySelector<HTMLSelectElement>('select[aria-label="时间范围"]')!;
+  window.value = '6'; window.dispatchEvent(new Event('change')); await el.updateComplete;
+  expect(select.value).toBe('mysql.key_cache.used_percent');
+  finish({ ok: true, json: async () => data }); await settle();
+  expect(select.value).toBe('mysql.key_cache.used_percent');
+  expect(el.shadowRoot!.querySelectorAll('.metric-name')).toHaveLength(1);
+  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  expect(query.view).toBe('all'); // Selection filters the all-metric response locally.
+  expect(Date.parse(query.to) - Date.parse(query.from)).toBe(6 * 3600000);
+  await el.load(); await el.updateComplete; expect(select.value).toBe('mysql.key_cache.used_percent');
+  authFetch.mockResolvedValue({ ok: true, json: async () => result });
+  await el.load(); await el.updateComplete;
+  expect(select.value).toBe('mysql.key_cache.used_percent');
+  expect(el.shadowRoot!.textContent).toContain('当前窗口未返回所选指标');
+  select.value = ''; select.dispatchEvent(new Event('change')); await el.updateComplete;
+  expect(select.value).toBe(''); expect(el.shadowRoot!.querySelectorAll('.metric-name')).toHaveLength(1);
+});

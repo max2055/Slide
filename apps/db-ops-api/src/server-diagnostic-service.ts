@@ -183,11 +183,11 @@ function parsePorts(stdout: string): ListeningPort[] {
     const protocol = fields[0]?.toLowerCase();
     const local = fields.slice(3, 6).find((field) => /:\d+$/.test(field));
     if (!local) continue;
-    const match = /^(.*):(\d+)$/.exec(local.replace(/^\[|\]$/g, ''));
+    const match = /^(.*):(\d+)$/.exec(local);
     if (!match) continue;
     const port = Number(match[2]);
     if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
-    const address = boundedText(match[1], 128);
+    const address = boundedText(match[1].replace(/^\[(.*)\]$/, '$1'), 128);
     if (!address) continue;
     const processField = fields.find((field) => field.startsWith('users:')) ?? null;
     rows.push({

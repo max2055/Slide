@@ -1,5 +1,6 @@
 import type { Catalog, RecommendationResult } from './metric-api.js';
-import { metricName, packageName, resourceLabels } from './resource-metric-summary.js';
+import { packageName, resourceLabels } from './resource-metric-summary.js';
+import { metricDisplayName as metricName } from './metric-display.js';
 
 export type Release = Catalog['packages'][number];
 export type PackageEvidence = RecommendationResult['packages'][number];
@@ -36,10 +37,11 @@ export const scopeLabel = (p: Release) => p.package.applicability?.map(a =>
   || resourceLabels[p.package.resource_type] || p.package.resource_type;
 
 const directoryNames: Record<string, string> = { 'linux.uptime.seconds': '主机运行时长', 'linux.load.one_minute': '一分钟系统负载' };
-export const directoryMetricName = (id: string) => directoryNames[id] ?? (metricName(id) === id ? '扩展指标（名称未提供）' : metricName(id));
+export const directoryMetricName = (id: string) => directoryNames[id] ?? metricName(id);
 export function templateName(id: string) {
   const engine = id.replace(/-diagnostics$/, '');
-  return id.endsWith('-diagnostics') && engineNames[engine] ? `${engineNames[engine]} 诊断采集` : packageName(id) === id ? '扩展采集模板' : packageName(id);
+  const extensions: Record<string, string> = { 'mysql-custom-processlist-connections': 'MySQL 自定义会话数', 'mysql-custom-slow-query-snapshot': 'MySQL 自定义慢查询快照' };
+  return extensions[id] ?? (id.endsWith('-diagnostics') && engineNames[engine] ? `${engineNames[engine]} 诊断采集` : packageName(id));
 }
 export function packagePurpose(p: Release) {
   if (['mysql-diagnostics', 'postgresql-diagnostics', 'oracle-diagnostics', 'dameng-diagnostics'].includes(p.package.id)
