@@ -57,6 +57,7 @@ export class ResourceMetricsTable extends LitElement {
     window.addEventListener('slide-permissions-loaded', this.accessChanged);
     window.addEventListener('slide-session-expired', this.accessChanged);
     window.addEventListener('slide-bulk-selection-changed', this.selectionChanged);
+    window.addEventListener('keydown', this.fullValueKeydown);
     window.addEventListener('resize', this.positionFullValue);
     window.addEventListener('scroll', this.positionFullValue, true);
   }
@@ -88,6 +89,7 @@ export class ResourceMetricsTable extends LitElement {
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
     window.removeEventListener('slide-bulk-selection-changed', this.selectionChanged);
+    window.removeEventListener('keydown', this.fullValueKeydown);
     window.removeEventListener('resize', this.positionFullValue);
     window.removeEventListener('scroll', this.positionFullValue, true);
     this.closeFullValue();
@@ -154,11 +156,11 @@ export class ResourceMetricsTable extends LitElement {
     if (event.type === 'mouseout' && source.contains(this.shadowRoot?.activeElement ?? null)) return;
     this.closeFullValue();
   }
-  private fullValueKeydown(event: KeyboardEvent) {
+  private fullValueKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape' && this.fullValue) {
       event.preventDefault(); event.stopPropagation(); this.closeFullValue();
     }
-  }
+  };
   private health(entry: ResourceEntry) {
     const item = this.observations.get(entry.id);
     const age = item ? freshness(item) : 'missing';
@@ -308,7 +310,7 @@ export class ResourceMetricsTable extends LitElement {
       <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>` : nothing}
       <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
     <metric-bulk-dialog></metric-bulk-dialog>
-    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} @keydown=${this.fullValueKeydown} role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
+    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }
 }
