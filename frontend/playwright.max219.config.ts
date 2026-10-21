@@ -8,7 +8,7 @@ export default defineConfig({
     storageState: process.env.MAX219_STORAGE_STATE,
     trace: 'retain-on-failure',
   },
-  webServer: {
+  webServer: process.env.T06_TEST_MYSQL_PORT ? undefined : {
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5219 --strictPort',
     url: 'http://127.0.0.1:5219', reuseExistingServer: false,
   },

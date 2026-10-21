@@ -549,6 +549,12 @@
   transform: translateY(-1px);
 }
 
+.nav-collapse-toggle:focus-visible,
+.topbar-nav-toggle:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: 3px;
+}
+
 .nav-collapse-toggle__icon {
   display: flex;
   align-items: center;
