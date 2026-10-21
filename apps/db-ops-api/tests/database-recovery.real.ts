@@ -104,6 +104,9 @@ try {
     localStorage.setItem('permissions', '["*"]'); localStorage.setItem('user', JSON.stringify({ id: 1, username: 'admin' }));
   }, session);
   const page = await context.newPage();
+  const browserLog = createWriteStream(`${output}/browser.log`);
+  page.on('console', message => browserLog.write(`${new Date().toISOString()} ${message.type()} ${message.text()}\n`));
+  page.on('pageerror', error => browserLog.write(`${new Date().toISOString()} pageerror ${error.message}\n`));
   const overviewReads: Array<{ status: number; at: number }> = [];
   const mutations: string[] = [];
   page.on('response', response => { if (response.url().includes('/api/resources/overview')) overviewReads.push({ status: response.status(), at: Date.now() }); });

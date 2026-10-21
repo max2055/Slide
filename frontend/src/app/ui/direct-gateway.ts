@@ -161,7 +161,8 @@ export class DirectGatewayClient {
   private unconfirmedChats = new Map<string, { frame: Record<string, unknown>; accepted: boolean }>();
   private lastCloseDetails: WebSocketCloseDetails | null = null;
   private deviceIdentity: DeviceIdentity | null = null;
-  private deviceAuthProvider?: () => Promise<NonNullable<DirectGatewayClient['deviceAuth']>>;
+  private devicePreparation?: AbortController;
+  private deviceAuthProvider?: (signal: AbortSignal) => Promise<NonNullable<DirectGatewayClient['deviceAuth']>>;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
   constructor(opts: DirectGatewayClientOptions) {
@@ -188,7 +189,7 @@ export class DirectGatewayClient {
   }
 
   connect(): void {
-    if (this.closed || this.authFailed || this.ws) {
+    if (this.closed || this.authFailed || this.ws || this.devicePreparation) {
       return;
     }
     this.clearReconnectTimer();
@@ -201,24 +202,38 @@ export class DirectGatewayClient {
     this.authenticated = false;
     this.authenticatedAt = null;
     this.onStateChange('connecting');
+    if (this.deviceAuthProvider) {
+      // Finish the bounded HTTP challenge before opening the socket: the
+      // server's authentication deadline must not include dependency recovery.
+      const controller = new AbortController(); this.devicePreparation = controller;
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+      void this.deviceAuthProvider(controller.signal).then(proof => {
+        if (this.closed || this.authFailed) return;
+        controller.signal.throwIfAborted();
+        this.openSocket(proof);
+      }).catch(error => {
+        if (this.closed) return;
+        if (error?.status === 401 || error?.status === 403) {
+          this.authFailed = true; this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
+          this.rejectPendingChatAcknowledgements(new Error(SESSION_EXPIRED_MESSAGE));
+          this.onStateChange('auth_failed');
+        } else {
+          reportServiceUnavailable(); this.onStateChange('disconnected'); this.scheduleReconnect();
+        }
+      }).finally(() => { clearTimeout(timeout); this.devicePreparation = undefined; });
+      return;
+    }
+    this.openSocket(this.deviceAuth);
+  }
+
+  private openSocket(deviceAuth: typeof this.deviceAuth): void {
     const socket = new WebSocket(this.url);
     const connectionId = generateUUID();
     this.ws = socket;
-
     socket.onopen = () => {
-      const authenticate = async () => {
-        // A challenge is single-use. Every new transport signs a fresh nonce;
-        // dependency failure must never fall back to omitting device proof.
-        const deviceAuth = this.deviceAuthProvider ? await this.deviceAuthProvider() : this.deviceAuth;
-        if (this.ws !== socket || this.closed) return;
-        const token = typeof window !== 'undefined' ? (window as any).__apiClient?.getToken?.() : null;
-        if (token) socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth }));
-      };
-      void authenticate().catch(error => {
-        if (this.ws !== socket || this.closed) return;
-        if (error?.status === 401 || error?.status === 403) socket.close(4001, 'Unauthorized');
-        else { reportServiceUnavailable(); socket.close(1013, 'Service unavailable'); }
-      });
+      if (this.ws !== socket || this.closed) return;
+      const token = typeof window !== 'undefined' ? (window as any).__apiClient?.getToken?.() : null;
+      if (token) socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth }));
     };
 
 
@@ -288,6 +303,7 @@ export class DirectGatewayClient {
   }
 
   disconnect(): void {
+    this.devicePreparation?.abort();
     this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
     this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: true });
     this.investigationObservers.clear();
@@ -1300,9 +1316,9 @@ export function initChatClient(host: Record<string, unknown>): void {
           body: JSON.stringify({ deviceId: identity.deviceId, publicKey: identity.publicKey }),
         });
         if (!registered.ok) return;
-        directClient.setDeviceAuthProvider(async () => {
+        directClient.setDeviceAuthProvider(async signal => {
           const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
             body: JSON.stringify({ deviceId: identity.deviceId }),
           });
           if (!challengeResponse.ok) throw Object.assign(new Error('DEVICE_CHALLENGE_UNAVAILABLE'), { status: challengeResponse.status });
