@@ -292,3 +292,12 @@ it('a failed repeat trial returns the activation flow to trial instead of keepin
   authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ decision: 'attempted', attempts: [{ status: 'failed' }], samples: [] }) });
   await el.execute('trial'); expect(el.activationStep).toBe(1); expect(el.publishReady()).toBe(false);
 });
+
+it.each([false, true])('connection edits preserve existing collection dirty=%s without inventing a draft', async dirty => {
+  mock(); const el = await mount();
+  el.dirty = dirty;
+  el.connectionPending = true; await el.updateComplete;
+  expect(el.dirty).toBe(dirty);
+  const leave = vi.fn(); el.confirmDiscard(leave);
+  expect(leave).toHaveBeenCalledTimes(dirty ? 0 : 1);
+});
