@@ -1,4 +1,5 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
+import { subscribeServiceRecovery } from '../../../api/service-recovery.js';
 import { LitElement, html, nothing } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { customElement, state } from 'lit/decorators.js';
@@ -61,14 +62,20 @@ export class DashboardPage extends LitElement {
   private restorePosition = true;
   private readonly onPopState = () => { this.readUrl(); this.normalizeSelection(); void this.loadTrend(); };
   private readonly onPermissions = () => this.readPermissions();
+  private stopRecovery?: () => void;
 
   override connectedCallback() {
     super.connectedCallback(); this.readPermissions(); this.readUrl();
     window.addEventListener('popstate', this.onPopState);
     window.addEventListener('slide-permissions-loaded', this.onPermissions);
+    this.stopRecovery = subscribeServiceRecovery(() => {
+      this.trendCache.clear();
+      void this.loadDashboardData();
+    });
     void this.loadDashboardData();
   }
   override disconnectedCallback() {
+    this.stopRecovery?.(); this.stopRecovery = undefined;
     this.overviewVersion++; this.trendVersion++; this.backupVersion++; this.disposeChart();
     window.removeEventListener('popstate', this.onPopState);
     window.removeEventListener('slide-permissions-loaded', this.onPermissions);

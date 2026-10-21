@@ -123,6 +123,7 @@ export class CronManager {
     console.log('CronManager: 正在停止...');
     this.running = false;
     this.stopAllJobs();
+    await Promise.all([...this.executions.values(), ...this.pendingSettlements.values()]);
     console.log('CronManager: 已停止');
   }
 

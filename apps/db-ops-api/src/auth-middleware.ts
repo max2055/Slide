@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { actorContextService, type ActorContextService } from './auth/actor-context.js';
+import { PlatformUnavailableError, platformUnavailableResponse } from './lifecycle/platform-unavailable.js';
 
 export function createVerifyToken(
   secret: string,
@@ -24,7 +25,11 @@ export function createVerifyToken(
         secret,
         String(request.id || randomUUID()),
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof PlatformUnavailableError) {
+        reply.code(503).send(platformUnavailableResponse);
+        return;
+      }
       reply.code(401).send({ error: '无效的认证令牌' });
     }
   };

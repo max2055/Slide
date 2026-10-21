@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-interface LeasePool {
+export interface LeasePool {
   query<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>;
 }
 

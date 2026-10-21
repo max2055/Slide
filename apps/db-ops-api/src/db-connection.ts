@@ -47,6 +47,8 @@ class DbConnectionManager {
         database: dbConfig.database,
         connectionLimit: 10,
         waitForConnections: true,
+        connectTimeout: 3_000,
+        queueLimit: 100,
         charset: 'utf8mb4',
         // Persist instants in UTC so Date-backed workflow availability and
         // lease predicates remain comparable with MySQL NOW() across hosts.
@@ -64,9 +66,10 @@ class DbConnectionManager {
 
       // 测试连接
       const connection = await this.pool.getConnection();
-      await connection.query("SET time_zone = '+00:00'");
-      await connection.ping();
-      connection.release();
+      try {
+        await connection.query("SET time_zone = '+00:00'");
+        await connection.ping();
+      } finally { connection.release(); }
 
       this.connected = true;
       console.log(`✅ 系统数据库连接成功：${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);

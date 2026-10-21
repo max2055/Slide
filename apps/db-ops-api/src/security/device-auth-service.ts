@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from 'node:crypto';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import { dbConnection } from '../db-connection.js';
 import type { ActorContext } from '../auth/actor-context.js';
 
@@ -26,7 +27,7 @@ export class DeviceAuthService {
 
   private executor(): Executor {
     const executor = this.executorProvider();
-    if (!executor) throw new Error('DEVICE_AUTH_STORE_UNAVAILABLE');
+    if (!executor) throw new PlatformUnavailableError();
     return executor;
   }
 
@@ -62,12 +63,12 @@ export class DeviceAuthService {
     const [rows] = await this.executor().execute(
       `SELECT id, public_key, status, challenge_hash, challenge_expires_at FROM device_registrations WHERE user_id = ? AND device_id = ? LIMIT 1`,
       [actor.userId, params.deviceId],
-    );
+    ).catch(error => { throw new PlatformUnavailableError(error); });
     if (!Array.isArray(rows) || !rows[0] || rows[0].status !== 'paired' || rows[0].public_key !== params.publicKey) return false;
     if (rows[0].challenge_hash !== createHash('sha256').update(params.nonce).digest('hex') || !rows[0].challenge_expires_at || new Date(rows[0].challenge_expires_at).getTime() < Date.now()) return false;
     const payload = deviceSigningPayload(params);
     const valid = verifySignature(null, Buffer.from(payload), publicKeyObject(params.publicKey), decodeBase64Url(params.signature));
-    if (valid) await this.executor().execute(`UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL WHERE id = ?`, [rows[0].id]);
+    if (valid) await this.executor().execute(`UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL WHERE id = ?`, [rows[0].id]).catch(error => { throw new PlatformUnavailableError(error); });
     return valid;
   }
 }

@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolRegistry } from '@slide/agent-core';
 import type { LLMProvider, LLMResponse, LLMCallOptions, StreamCallbacks, Message, ToolSchema } from '@slide/agent-core';
+import { PlatformUnavailableError } from '../../lifecycle/platform-unavailable.js';
 import { DirectAdapter } from '../direct-adapter.js';
 import type { ChatEvent } from '../types.js';
 import { WebSocket } from 'ws';
@@ -537,13 +538,16 @@ describe('DirectAdapter', () => {
       });
     }, 10000);
 
-    it('closes with 4001 when a revoked access token fails authentication', async () => {
+    it.each([
+      [new Error('Session revoked'), 4001, 'Unauthorized'],
+      [new PlatformUnavailableError(), 1013, 'Service unavailable'],
+    ])('closes WS authentication failures with the right retry semantics (%s)', async (failure, code, reason) => {
       const port = 28995;
       const previousPort = process.env.AGENT_WS_PORT;
       const previousSecret = process.env.JWT_SECRET_KEY;
       process.env.AGENT_WS_PORT = String(port);
       process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
-      const authenticateAccessToken = vi.fn().mockRejectedValue(new Error('Session revoked'));
+      const authenticateAccessToken = vi.fn().mockRejectedValue(failure);
       const adapter = isolatedAdapter({
         tools: new ToolRegistry(),
         llmProvider: new MockLLMProvider(),
@@ -575,7 +579,7 @@ describe('DirectAdapter', () => {
           process.env.JWT_SECRET_KEY,
           expect.any(String),
         );
-        expect(close).toEqual({ code: 4001, reason: 'Unauthorized' });
+        expect(close).toEqual({ code, reason });
       } finally {
         if (previousPort === undefined) delete process.env.AGENT_WS_PORT;
         else process.env.AGENT_WS_PORT = previousPort;

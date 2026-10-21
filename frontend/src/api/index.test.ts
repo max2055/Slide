@@ -15,6 +15,40 @@ describe('API authentication response handling', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it('retains the session after refresh 503 and never blindly repeats unknown rotation', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }));
+    const first = await authFetch('/api/protected');
+    expect(first.status).toBe(503);
+    expect(apiClient.getToken()).toBe('access-token');
+    expect(apiClient.getRefreshToken()).toBe('refresh-token');
+    expect((await authFetch('/api/protected')).status).toBe(503);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(1);
+  });
+
+  it('keeps an unknown network refresh result without sending the rotation again', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockRejectedValueOnce(new TypeError('response lost after commit'))
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }));
+    expect((await authFetch('/api/protected')).status).toBe(503);
+    expect((await authFetch('/api/protected')).status).toBe(503);
+    expect(apiClient.getToken()).toBe('access-token');
+    expect(apiClient.getRefreshToken()).toBe('refresh-token');
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/auth/refresh'))).toHaveLength(1);
+  });
+
+  it('does not replay a failed write when the next read succeeds', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    expect((await authFetch('/api/action', { method: 'POST', body: '{}' })).status).toBe(503);
+    await authFetch('/api/protected');
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+  });
+
   it('refreshes and retries a raw authenticated request after a 401', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response('{}', { status: 401 }))

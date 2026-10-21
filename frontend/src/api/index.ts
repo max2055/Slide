@@ -2,6 +2,7 @@
  * Slide - API Client
  */
 
+import { reportServiceUnavailable } from './service-recovery.js';
 const BASE_URL = '/api'; // 使用 Vite 代理到后端
 export const SESSION_EXPIRED_EVENT = 'slide-session-expired';
 
@@ -91,6 +92,7 @@ class ApiClient {
   }
 
   setRefreshToken(token: string | null) {
+    sessionStorage.removeItem('slide-refresh-uncertain');
     if (token) {
       localStorage.setItem('refreshToken', token);
     } else {
@@ -160,8 +162,11 @@ class ApiClient {
       });
 
       if (!response.ok) {
-        // Refresh failed — clear everything, user must re-login
-        notifySessionExpired();
+        if (response.status === 401 || response.status === 403) notifySessionExpired();
+        else {
+          sessionStorage.setItem('slide-refresh-uncertain', 'true');
+          reportServiceUnavailable();
+        }
         return null;
       }
 
@@ -170,7 +175,10 @@ class ApiClient {
       this.setRefreshToken(data.refreshToken);
       return data.token;
     } catch {
-      // Network error — don't clear tokens, might succeed later
+      // The server may have committed the rotation before the response was
+      // lost. Never resend that refresh token: reuse detection revokes sessions.
+      sessionStorage.setItem('slide-refresh-uncertain', 'true');
+      reportServiceUnavailable();
       return null;
     }
   }
@@ -191,9 +199,13 @@ class ApiClient {
 
     const hadAccessToken = Boolean(this.getToken());
     const hadRefreshToken = Boolean(this.getRefreshToken());
-    let response = await executeFetch(this.getToken());
+    let response: Response;
+    try { response = await executeFetch(this.getToken()); }
+    catch (error) { if (!options.signal?.aborted) reportServiceUnavailable(); throw error; }
+    if (response.status >= 500) reportServiceUnavailable();
 
     if (response.status === 401) {
+      if (sessionStorage.getItem('slide-refresh-uncertain')) return this.uncertainRefreshResponse();
       // Try token refresh first
       if (!this.refreshPromise) {
         this.refreshPromise = this.attemptTokenRefresh().finally(() => {
@@ -206,10 +218,17 @@ class ApiClient {
         if (response.status === 401) notifySessionExpired();
       } else if (!hadRefreshToken && hadAccessToken) {
         notifySessionExpired();
+      } else if (sessionStorage.getItem('slide-refresh-uncertain')) {
+        return this.uncertainRefreshResponse();
       }
     }
 
     return response;
+  }
+
+  private uncertainRefreshResponse(): Response {
+    return new Response(JSON.stringify({ error: 'SESSION_REFRESH_UNCONFIRMED', message: '会话刷新结果未确认，请重新认证以继续；当前草稿已保留。' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } });
   }
 
   private async fetchWithAuth<T>(url: string, options: RequestInit): Promise<T> {

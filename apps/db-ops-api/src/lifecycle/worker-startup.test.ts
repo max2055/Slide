@@ -9,6 +9,25 @@ function setup(acquired = true) {
   return { lease, close, startup };
 }
 describe('startup lease lifecycle', () => {
+  it('does not confirm drain until a cancelled initializer and its late disposer finish', async () => {
+    const { startup } = setup();
+    let arrive!: () => void;
+    const initialize = new Promise<void>(resolve => { arrive = resolve; });
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const lateDispose = vi.fn(async () => {});
+    const starting = startup.start(async () => {}, () => startup.step(() => {
+      entered(); return initialize;
+    }, lateDispose));
+    const failed = expect(starting).rejects.toThrow('WORKER_STOPPED');
+    await waiting;
+    let drained = false;
+    const stop = startup.drain().then(() => { drained = true; });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(drained).toBe(false);
+    arrive(); await stop; await failed;
+    expect(lateDispose).toHaveBeenCalledOnce();
+  });
   it('renews before initialization and keeps ownership throughout a 45 second startup', async () => {
     vi.useFakeTimers();
     const { lease, startup } = setup();

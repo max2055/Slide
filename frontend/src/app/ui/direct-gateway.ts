@@ -1,4 +1,5 @@
 import { applyChatRecoveryNotice, clearChatRecoveryNotice, markChatRecoveryInterruption } from './chat/recovery-notice.ts';
+import { reportServiceUnavailable, subscribeServiceRecovery } from '../../api/service-recovery.js';
 import { PARTS_STREAM_CAPABILITY, readDisplayStreamEvent, inspectDisplayWatermark, type DisplayCursor, type DisplayStreamState, type DisplayStreamEvent } from '../../../../packages/agent-core/src/display-stream.ts';
 import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
 import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';
@@ -150,6 +151,8 @@ export class DirectGatewayClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
+  private authFailed = false;
+  private stopServiceRecovery?: () => void;
   private authenticated = false;
   private authenticatedAt: number | null = null;
   private readonly chatAcceptTimeoutMs: number;
@@ -158,6 +161,8 @@ export class DirectGatewayClient {
   private unconfirmedChats = new Map<string, { frame: Record<string, unknown>; accepted: boolean }>();
   private lastCloseDetails: WebSocketCloseDetails | null = null;
   private deviceIdentity: DeviceIdentity | null = null;
+  private devicePreparation?: AbortController;
+  private deviceAuthProvider?: (signal: AbortSignal) => Promise<NonNullable<DirectGatewayClient['deviceAuth']>>;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
 
   constructor(opts: DirectGatewayClientOptions) {
@@ -179,26 +184,56 @@ export class DirectGatewayClient {
     this.deviceAuth = auth;
   }
 
+  setDeviceAuthProvider(provider: NonNullable<DirectGatewayClient['deviceAuthProvider']>): void {
+    this.deviceAuthProvider = provider;
+  }
+
   connect(): void {
-    if (this.closed || this.ws) {
+    if (this.closed || this.authFailed || this.ws || this.devicePreparation) {
       return;
     }
     this.clearReconnectTimer();
+    this.stopServiceRecovery ??= subscribeServiceRecovery(() => {
+      if (!this.closed && !this.authFailed && !this.ws && this.reconnectAttempts >= this.maxReconnectAttempts) {
+        this.reconnectAttempts = 0;
+        this.connect();
+      }
+    });
     this.authenticated = false;
     this.authenticatedAt = null;
     this.onStateChange('connecting');
+    if (this.deviceAuthProvider) {
+      // Finish the bounded HTTP challenge before opening the socket: the
+      // server's authentication deadline must not include dependency recovery.
+      const controller = new AbortController(); this.devicePreparation = controller;
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+      void this.deviceAuthProvider(controller.signal).then(proof => {
+        if (this.closed || this.authFailed) return;
+        controller.signal.throwIfAborted();
+        this.openSocket(proof);
+      }).catch(error => {
+        if (this.closed) return;
+        if (error?.status === 401 || error?.status === 403) {
+          this.authFailed = true; this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
+          this.rejectPendingChatAcknowledgements(new Error(SESSION_EXPIRED_MESSAGE));
+          this.onStateChange('auth_failed');
+        } else {
+          reportServiceUnavailable(); this.onStateChange('disconnected'); this.scheduleReconnect();
+        }
+      }).finally(() => { clearTimeout(timeout); this.devicePreparation = undefined; });
+      return;
+    }
+    this.openSocket(this.deviceAuth);
+  }
+
+  private openSocket(deviceAuth: typeof this.deviceAuth): void {
     const socket = new WebSocket(this.url);
     const connectionId = generateUUID();
     this.ws = socket;
-
     socket.onopen = () => {
-      if (this.ws !== socket) return;
-      const token = typeof window !== 'undefined'
-        ? (window as any).__apiClient?.getToken?.()
-        : null;
-      if (token) {
-        socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth: this.deviceAuth }));
-      }
+      if (this.ws !== socket || this.closed) return;
+      const token = typeof window !== 'undefined' ? (window as any).__apiClient?.getToken?.() : null;
+      if (token) socket.send(JSON.stringify({ type: 'auth', capabilities: [PARTS_STREAM_CAPABILITY], token, deviceIdentity: this.deviceIdentity, deviceAuth }));
     };
 
 
@@ -233,6 +268,8 @@ export class DirectGatewayClient {
         pendingMessages: this.pendingChatDetails(),
       });
       if (ev.code === 4001) {
+        this.authFailed = true;
+        this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
         const error = new Error(SESSION_EXPIRED_MESSAGE);
         this.rejectPendingChatAcknowledgements(error);
         this.onStateChange('auth_failed');
@@ -246,6 +283,7 @@ export class DirectGatewayClient {
         return;
       }
       this.pausePendingChatAcknowledgements();
+      reportServiceUnavailable();
       if (ev.code === 1012) {
         this.onStateChange('service_restarting');
       } else if (ev.code === 1006) {
@@ -265,6 +303,8 @@ export class DirectGatewayClient {
   }
 
   disconnect(): void {
+    this.devicePreparation?.abort();
+    this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
     this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: true });
     this.investigationObservers.clear();
     this.closed = true;
@@ -1270,23 +1310,24 @@ export function initChatClient(host: Record<string, unknown>): void {
       directClient.setDeviceIdentity(identity);
       const token = apiClient.getToken();
       if (token) {
-        await apiClient.fetchResponseWithAuth('/api/device/register', {
+        const registered = await apiClient.fetchResponseWithAuth('/api/device/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ deviceId: identity.deviceId, publicKey: identity.publicKey }),
         });
-        const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ deviceId: identity.deviceId }),
-        });
-        if (challengeResponse.ok) {
+        if (!registered.ok) return;
+        directClient.setDeviceAuthProvider(async signal => {
+          const challengeResponse = await apiClient.fetchResponseWithAuth('/api/device/challenge', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+            body: JSON.stringify({ deviceId: identity.deviceId }),
+          });
+          if (!challengeResponse.ok) throw Object.assign(new Error('DEVICE_CHALLENGE_UNAVAILABLE'), { status: challengeResponse.status });
           const challenge = await challengeResponse.json() as { nonce: string };
           const { signDevicePayload } = await import('./device-identity.ts');
           const timestamp = Date.now();
           const payload = [identity.deviceId, timestamp, challenge.nonce, 'GET', '/ws/auth', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'].join('.');
-          directClient.setDeviceAuth({ deviceId: identity.deviceId, publicKey: identity.publicKey, signature: await signDevicePayload(identity.privateKey, payload), timestamp, nonce: challenge.nonce });
-        }
+          return { deviceId: identity.deviceId, publicKey: identity.publicKey, signature: await signDevicePayload(identity.privateKey, payload), timestamp, nonce: challenge.nonce };
+        });
       }
     } catch {
       // Device registration is additive; JWT login remains available if it fails.

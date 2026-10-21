@@ -243,8 +243,10 @@ export class ServersPage extends LitElement {
     this._loadServers();
   }
 
-  private async _loadServers() {
-    this._loading = true;
+  async refreshReadData() { await this._loadServers(true); }
+
+  private async _loadServers(background = false) {
+    if (background !== true) this._loading = true;
     try {
       const serversRes = await authFetch("/api/servers");
       if (serversRes.status === 401) {

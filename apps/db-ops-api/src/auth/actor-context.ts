@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import { securityEventService } from '../security/security-event-service.js';
 import { isInvestigationServiceIdentity, isValidInvestigationServiceIdentity, INVESTIGATION_SERVICE_PERMISSIONS } from './investigation-service-identity.js';
 
@@ -86,10 +87,10 @@ function isAccessTokenClaims(value: unknown): value is AccessTokenClaims {
     && Number(claims.sessionVersion) > 0;
 }
 
-function asAuthenticationError(error: unknown): ActorAuthenticationError {
+function asAuthenticationError(error: unknown): ActorAuthenticationError | PlatformUnavailableError {
   return error instanceof ActorAuthenticationError
     ? error
-    : new ActorAuthenticationError({ cause: error });
+    : error instanceof PlatformUnavailableError ? error : new PlatformUnavailableError(error);
 }
 
 async function schemaObjectExists(
@@ -189,7 +190,7 @@ export class ActorContextService {
     requestId: string = randomUUID(),
   ): Promise<ActorContext> {
     const pool = this.poolProvider();
-    if (!pool) throw new ActorAuthenticationError();
+    if (!pool) throw new PlatformUnavailableError();
 
     try {
       return await this.loadActorFrom(pool, userId, expectedSessionVersion, requestId);
@@ -203,13 +204,11 @@ export class ActorContextService {
     secret: string,
     requestId: string = randomUUID(),
   ): Promise<ActorContext> {
-    try {
-      const decoded = jwt.verify(token, secret);
-      if (!isAccessTokenClaims(decoded)) throw new ActorAuthenticationError();
-      return await this.loadActiveActor(decoded.userId, decoded.sessionVersion, requestId);
-    } catch (error) {
-      throw asAuthenticationError(error);
-    }
+    let decoded: unknown;
+    try { decoded = jwt.verify(token, secret); }
+    catch (error) { throw new ActorAuthenticationError({ cause: error }); }
+    if (!isAccessTokenClaims(decoded)) throw new ActorAuthenticationError();
+    return this.loadActiveActor(decoded.userId, decoded.sessionVersion, requestId);
   }
 
   /** Trusted investigation port. The same transaction performs current grant
@@ -231,7 +230,7 @@ export class ActorContextService {
       networkDeviceIds: Object.freeze([...boundary.networkDeviceIds]),
     }) : undefined;
     const servicePool = actor.principalKind === 'service' ? this.poolProvider() : undefined;
-    if (actor.principalKind === 'service' && !servicePool) throw new ActorAuthenticationError();
+    if (actor.principalKind === 'service' && !servicePool) throw new PlatformUnavailableError();
     const current = actor.principalKind === 'service'
       ? await this.loadInvestigationActorFrom(servicePool!,
         actor.userId, 'service', actor.sessionVersion, requestId)
@@ -245,7 +244,7 @@ export class ActorContextService {
   ): Promise<string> {
     if (actor.principalKind === 'service' || isInvestigationServiceIdentity(actor.username)) throw new ActorAuthenticationError();
     const pool = this.poolProvider();
-    if (!pool) throw new ActorAuthenticationError();
+    if (!pool) throw new PlatformUnavailableError();
 
     const token = randomBytes(48).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
@@ -267,7 +266,7 @@ export class ActorContextService {
     rotatedExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   ): Promise<{ actor: ActorContext; refreshToken: string }> {
     const pool = this.poolProvider();
-    if (!pool?.getConnection) throw new ActorAuthenticationError();
+    if (!pool?.getConnection) throw new PlatformUnavailableError();
 
     let connection: TransactionConnection | undefined;
     let committed = false;
@@ -359,7 +358,8 @@ export class ActorContextService {
   ): Promise<ActorContext> {
     if (!Number.isInteger(userId) || userId <= 0) throw new ActorAuthenticationError();
 
-    const [rows] = await executor.execute(ACTOR_SNAPSHOT_SQL + (currentRead ? ' FOR SHARE' : ''), [userId]);
+    const [rows] = await executor.execute(ACTOR_SNAPSHOT_SQL + (currentRead ? ' FOR SHARE' : ''), [userId])
+      .catch(error => { throw new PlatformUnavailableError(error); });
     if (!Array.isArray(rows) || rows.length === 0) throw new ActorAuthenticationError();
 
     const actorRows = rows as ActorSnapshotRow[];

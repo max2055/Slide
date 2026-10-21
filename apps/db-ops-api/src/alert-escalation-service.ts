@@ -51,18 +51,19 @@ class AlertEscalationService {
       },
       null,
       true,
-      'Asia/Shanghai'
+      'Asia/Shanghai', undefined, false, undefined, false, true
     );
 
     this.running = true;
     console.log('✅ 告警升级任务已启动（每 5 分钟）');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.escalationJob) {
-      this.escalationJob.stop();
+      const job = this.escalationJob;
       this.escalationJob = null;
       this.running = false;
+      await job.stop();
       console.log('🛑 告警升级任务已停止');
     }
   }

@@ -1,4 +1,4 @@
-interface StartupLease {
+export interface StartupLease {
   acquire(): Promise<boolean>;
   renew(): Promise<boolean>;
   release(): Promise<void>;
@@ -12,10 +12,13 @@ export class WorkerStartup {
   private timer?: ReturnType<typeof setInterval>;
   private renewal?: Promise<void>;
   private closing?: Promise<void>;
+  private pending = new Set<Promise<unknown>>();
+  private disposalError?: unknown;
   readonly signal = this.controller.signal;
 
   constructor(private readonly lease: StartupLease, private readonly close: () => Promise<void>,
-    private readonly options: { intervalMs?: number; timeoutMs?: number; onStopped?: () => Promise<void> } = {}) {}
+    private readonly options: { intervalMs?: number; timeoutMs?: number; onStopped?: () => Promise<void>;
+      onStopping?: (reason: Error) => void; releaseOnStop?: boolean } = {}) {}
 
   get ready(): boolean { return this.owned && this.initialized && !this.signal.aborted; }
 
@@ -46,11 +49,21 @@ export class WorkerStartup {
       this.signal.addEventListener('abort', onAbort, { once: true });
     });
     const pending = Promise.resolve().then(() => { this.signal.throwIfAborted(); return operation(); }).then(async value => {
-      if (this.signal.aborted) { await disposeLate?.(value); this.signal.throwIfAborted(); }
+      if (this.signal.aborted) {
+        try { await disposeLate?.(value); } catch (error) { this.disposalError = error; throw error; }
+        this.signal.throwIfAborted();
+      }
       return value;
     });
+    this.track(pending);
     try { return await Promise.race([pending, aborted]); }
     finally { this.signal.removeEventListener('abort', onAbort); }
+  }
+
+  private track<T>(pending: Promise<T>): Promise<T> {
+    this.pending.add(pending);
+    void pending.then(() => this.pending.delete(pending), () => this.pending.delete(pending));
+    return pending;
   }
 
   /** Renewal is serialized and bounded, including checks immediately before effects. */
@@ -62,7 +75,7 @@ export class WorkerStartup {
       let deadline: ReturnType<typeof setTimeout> | undefined;
       try {
         const renewed = await this.step(() => Promise.race([
-          this.lease.renew(),
+          this.track(this.lease.renew()),
           new Promise<boolean>((_, reject) => { deadline = setTimeout(() => reject(new Error('WORKER_LEASE_TIMEOUT')), (this.options.timeoutMs ?? 5_000)); }),
         ]));
         if (!renewed) throw new Error('WORKER_LEASE_LOST');
@@ -81,16 +94,25 @@ export class WorkerStartup {
     if (this.closing) return this.closing;
     this.initialized = false;
     this.controller.abort(reason);
+    this.options.onStopping?.(reason);
     if (this.timer) clearInterval(this.timer);
     this.closing = Promise.resolve().then(async () => {
       try {
         await this.close();
-        if (this.owned) await this.lease.release();
+        if (this.owned && this.options.releaseOnStop !== false) await this.lease.release();
       } finally {
         this.owned = false;
         await this.options.onStopped?.();
       }
     });
     return this.closing;
+  }
+
+  /** Stop admits no new work; drain additionally proves all cancelled I/O and
+   * late resource disposers settled. A successor must wait for this method. */
+  async drain(): Promise<void> {
+    await this.stop();
+    while (this.pending.size) await Promise.allSettled([...this.pending]);
+    if (this.disposalError) throw this.disposalError;
   }
 }

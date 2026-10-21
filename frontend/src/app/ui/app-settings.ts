@@ -37,6 +37,7 @@ type SettingsHost = {
   sessionKey: string;
   tab: Tab;
   connected: boolean;
+  querySelector?: (selector: string) => Element | null;
   chatHasAutoScrolled: boolean;
   logsAtBottom: boolean;
   eventLog: unknown[];
@@ -254,11 +255,19 @@ export async function refreshActiveTab(host: SettingsHost) {
       );
       return;
     case "dashboard":
+      // Dashboard subscribes directly to the shared service recovery event.
+      return;
     case "instances-db":
+    case "servers":
+    case "network-devices":
     case "alerts":
     case "reports":
-    case "llm-usage":
-      // Slide pages - no action needed
+      // Only explicit read refresh entrypoints participate. Never remount a
+      // page or replay the failed action; local editors and filters survive.
+      const selector = { 'instances-db': 'instances-page', servers: 'servers-page',
+        'network-devices': 'network-devices-page', alerts: 'alerts-page', reports: 'reports-page' }[host.tab];
+      const page = host.querySelector?.(selector) as (Element & { refreshReadData?: () => Promise<void> }) | null;
+      await page?.refreshReadData?.();
       return;
   }
 }

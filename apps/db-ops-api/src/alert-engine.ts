@@ -60,7 +60,7 @@ class AlertEngine {
         },
         null,
         true,
-        'Asia/Shanghai'
+        'Asia/Shanghai', undefined, false, undefined, false, true
       );
 
       this.running = true;
@@ -83,11 +83,12 @@ class AlertEngine {
   /**
    * 停止评估循环
    */
-  stopEvaluationLoop(): void {
+  async stopEvaluationLoop(): Promise<void> {
     if (this.evaluationJob) {
-      this.evaluationJob.stop();
+      const job = this.evaluationJob;
       this.evaluationJob = null;
       this.running = false;
+      await job.stop();
       console.log('🛑 告警评估任务已停止');
     }
   }

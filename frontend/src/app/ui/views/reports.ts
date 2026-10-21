@@ -404,6 +404,31 @@ export class ReportsPage extends LitElement {
     }
   }
 
+  async refreshReadData() {
+    // Re-read the already loaded range without resetting pagination or drafts.
+    if (this.historyLoadingMore) return;
+    const initialBatch = this.historyBatch;
+    const batches = Math.max(1, initialBatch);
+    try {
+      const reports: Report[] = [];
+      for (let batch = 1; batch <= batches; batch++) {
+        const response = await authFetch(`/api/reports?page=${batch}&limit=100`, { headers: this.headers });
+        if (!response.ok) throw new Error(`报表历史加载失败 (HTTP ${response.status})`);
+        const data = await response.json();
+        if (!Array.isArray(data)) throw new Error('报表历史响应无效');
+        reports.push(...data);
+      }
+      if (!this.isConnected || this.historyBatch !== initialBatch || this.historyLoadingMore) return;
+      this.reports = [...new Map(reports.map(report => [report.id, report])).values()];
+      this.historyBatch = batches; this.error = null; this.loading = false;
+      await this.loadStats();
+    } catch (error) {
+      if (this.isConnected && this.historyBatch === initialBatch && !this.historyLoadingMore) {
+        this.error = error instanceof Error ? error.message : '报表历史加载失败';
+      }
+    }
+  }
+
   private async loadReports(append = false) {
     if (this.historyLoadingMore) return;
     if (append) this.historyLoadingMore = true;

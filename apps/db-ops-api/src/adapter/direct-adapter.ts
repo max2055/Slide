@@ -12,6 +12,7 @@ import { BoundedSocketWriter } from './bounded-socket-writer.js';
 import { orderedChatConsumer } from './chat-event-consumer.js';
 import { BusinessMemoryService } from './memory-service.js';
 import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 /**
  * DirectAdapter — Default IAgentEngine implementation.
  *
@@ -73,8 +74,6 @@ import {
   FixedWindowRateLimiter,
   loadAgentRuntimeLimits,
 } from '../security/agent-runtime-limits.js';
-
-let _subagentManagerInitialized = false;
 
 function analysisCompletionTools(analysisId?: number, completion?: InvokeOptions['completeAnalysis']): ToolRegistry {
   const tools = new ToolRegistry();
@@ -237,11 +236,13 @@ export class DirectAdapter implements IAgentEngine {
   }
 
   async executeInvestigation(command: import('../investigations/executor.js').InvestigationExecuteCommand): Promise<import('./agent-run-service.js').AgentRun> {
+    this.lifecycle.signal.throwIfAborted();
     if (!this.investigationExecutor || !this.toolsForActor) throw new Error('INVESTIGATION_EXECUTOR_UNAVAILABLE');
-    return this.investigationExecutor.execute(command, {
+    const context = { ...command.context, signal: AbortSignal.any([command.context.signal, this.lifecycle.signal]) };
+    return this.observeOperation(this.investigationExecutor.execute({ ...command, context }, {
       providerForPurpose: purpose => this.providerForPurpose ? this.providerForPurpose(purpose) : Promise.resolve(this.provider),
       toolsForActor: actor => this.toolsForActor!(actor),
-    });
+    }));
   }
 
   private runner: AgentRunner;
@@ -266,6 +267,15 @@ export class DirectAdapter implements IAgentEngine {
   private readonly investigationWatches: InvestigationWatchService;
   private readonly partsPeers = new WeakSet<WebSocket>();
   private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
+  private lifecycle = new AbortController();
+  private operations = new Set<Promise<unknown>>();
+  private disposing?: Promise<void>;
+
+  private observeOperation<T>(operation: Promise<T>): Promise<T> {
+    this.operations.add(operation);
+    void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation));
+    return operation;
+  }
   private sessionOperations = new Map<string, Set<Promise<void>>>();
   private sessionLocks = new Map<string, Promise<void>>();
   /** Track WebSocket clients subscribed to each session for invoke() broadcast. */
@@ -322,11 +332,12 @@ export class DirectAdapter implements IAgentEngine {
   // ── start() — minimal WS transport (D-25 Option B) ──
 
   async start(): Promise<void> {
+    this.lifecycle.signal.throwIfAborted();
+    if (this.wsServer) return;
     // Initialize SubagentManager so spawn_subagent tool can actually execute subagents
-    if (!_subagentManagerInitialized) {
+    {
       const subagentManager = new SubagentManager(this.runner, undefined, this.toolsForActor);
       setSubagentManager(subagentManager);
-      _subagentManagerInitialized = true;
       console.log(`[DirectAdapter] SubagentManager initialized with ${this.registry.toolNames.length} parent tools`);
     }
 
@@ -484,9 +495,9 @@ export class DirectAdapter implements IAgentEngine {
               connectionActor = nextActor;
               (ws as any)._actorContext = nextActor;
             }
-          }).catch(() => {
+          }).catch((error) => {
             if (authState === 'authenticated' && authGeneration === revalidationGeneration) {
-              closeAfterAuthFailure(4001, 'Unauthorized');
+              closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, error instanceof PlatformUnavailableError ? 'Service unavailable' : 'Unauthorized');
             }
           }).finally(() => {
             if (authGeneration === revalidationGeneration) {
@@ -595,9 +606,9 @@ export class DirectAdapter implements IAgentEngine {
               this.sendSocketEvent(ws, { type: 'auth_ok', ...(partsEnabled ? { capabilities: [PARTS_STREAM_CAPABILITY] } : {}) });
               console.log('[DirectAdapter] WS authenticated', JSON.stringify({ connectionId, userId: authenticatedUserId }));
             }
-          } catch {
+          } catch (error) {
             if (authGeneration === authenticationGeneration) {
-              closeAfterAuthFailure(4001, 'Unauthorized');
+              closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, error instanceof PlatformUnavailableError ? 'Service unavailable' : 'Unauthorized');
             }
           }
           return;
@@ -649,8 +660,8 @@ export class DirectAdapter implements IAgentEngine {
             || authGeneration !== commandGeneration) return;
           connectionActor = revalidatedActor;
           (ws as any)._actorContext = connectionActor;
-        } catch {
-          closeAfterAuthFailure(4001, 'Unauthorized');
+        } catch (error) {
+          closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, error instanceof PlatformUnavailableError ? 'Service unavailable' : 'Unauthorized');
           return;
         }
 
@@ -1004,15 +1015,15 @@ export class DirectAdapter implements IAgentEngine {
 
       // EventEmitter does not await async listeners. Contain failures here so a
       // single message cannot become a process-level unhandled rejection.
-      ws.on('message', async (raw: Buffer) => {
-        try {
-          await handleMessage(raw);
-        } catch {
+      ws.on('message', (raw: Buffer) => {
+        if (this.lifecycle.signal.aborted) return;
+        const operation = handleMessage(raw).catch(() => {
           clearAuthentication();
           platformLogs.record({ component: 'ws', eventType: 'message.error', status: 'failed', correlationId: connectionId, errorCode: 'WS_MESSAGE_HANDLER_ERROR' });
           console.error('[DirectAdapter] WS message handling failed', JSON.stringify({ connectionId, errorCode: 'WS_MESSAGE_HANDLER_ERROR' }));
           if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'Message handling failed');
-        }
+        });
+        return this.observeOperation(operation);
       });
 
       ws.on('error', (err: Error & { code?: string }) => {
@@ -1072,9 +1083,12 @@ export class DirectAdapter implements IAgentEngine {
     runtimeRunId?: string,
     persistedUserId?: string,
   ): Promise<ChatResult> {
-    return this.withSessionLock(sessionKey, () =>
-      this.runChat(sessionKey, message, onEvent, _actor, signal, idempotencyKey, runtimeRunId, persistedUserId),
-    );
+    this.lifecycle.signal.throwIfAborted();
+    const combined = signal ? AbortSignal.any([signal, this.lifecycle.signal]) : this.lifecycle.signal;
+    return this.observeOperation(this.withSessionLock(sessionKey, () => {
+      combined.throwIfAborted();
+      return this.runChat(sessionKey, message, onEvent, _actor, combined, idempotencyKey, runtimeRunId, persistedUserId);
+    }));
   }
 
   private async runChat(
@@ -1387,9 +1401,12 @@ export class DirectAdapter implements IAgentEngine {
     systemPrompt?: string,
     options?: InvokeOptions,
   ): Promise<InvokeResult> {
-    return this.withSessionLock(sessionKey, () =>
-      this.runInvoke(sessionKey, message, systemPrompt, options),
-    );
+    this.lifecycle.signal.throwIfAborted();
+    const signal = options?.signal ? AbortSignal.any([options.signal, this.lifecycle.signal]) : this.lifecycle.signal;
+    return this.observeOperation(this.withSessionLock(sessionKey, () => {
+      signal.throwIfAborted();
+      return this.runInvoke(sessionKey, message, systemPrompt, { ...options, signal });
+    }));
   }
 
   private async runInvoke(
@@ -1578,15 +1595,31 @@ ${result.finalContent || ''}`
    * Used for test cleanup. Not part of IAgentEngine interface.
    */
   async dispose(): Promise<void> {
-    this.displayStreams.dispose();
-    this.investigationWatches.dispose();
-    await this.businessMemory.close();
-    if (this.wsServer) {
-      for (const ws of this.wsServer.clients) {
+    if (this.disposing) return this.disposing;
+    this.lifecycle.abort(new Error('PLATFORM_UNAVAILABLE'));
+    this.disposing = (async () => {
+      this.displayStreams.dispose();
+      this.investigationWatches.dispose();
+      for (const run of this.activeRuns.values()) run.controller.abort(this.lifecycle.signal.reason);
+      const server = this.wsServer;
+      const closed = server ? new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) : Promise.resolve();
+      for (const ws of server?.clients ?? []) {
         if (ws.readyState === WebSocket.OPEN) ws.close(1012, 'Service restart');
+        // A transport peer cannot hold the worker generation open forever.
+        const timeout = setTimeout(() => ws.terminate(), 1_000);
+        ws.once('close', () => clearTimeout(timeout));
       }
-      this.wsServer.close();
+      while (this.operations.size) await Promise.allSettled([...this.operations]);
+      while (this.sessionOperations.size) {
+        const pending = [...this.sessionOperations.values()].flatMap(set => [...set]);
+        if (!pending.length) break;
+        await Promise.allSettled(pending);
+      }
+      await Promise.all([...this.sessionLocks.values()]);
+      await this.businessMemory.close();
+      await closed;
       this.wsServer = null;
-    }
+    })();
+    return this.disposing;
   }
 }

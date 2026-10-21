@@ -58,6 +58,20 @@ describe('operations overview semantics', () => {
 });
 
 describe('dashboard behavior', () => {
+  it('refreshes read data on recovery while retaining a date draft and cleans up on detach', async () => {
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ collectedAt: new Date().toISOString(), items: [] }) });
+    const dashboard = document.createElement('dashboard-page') as any;
+    document.body.append(dashboard);
+    await dashboard.updateComplete;
+    dashboard.startDate = '2026-10-01';
+    const load = vi.spyOn(dashboard, 'loadDashboardData');
+    window.dispatchEvent(new CustomEvent('slide-service-recovered'));
+    expect(load).toHaveBeenCalledOnce();
+    expect(dashboard.startDate).toBe('2026-10-01');
+    dashboard.remove();
+    window.dispatchEvent(new CustomEvent('slide-service-recovered'));
+    expect(load).toHaveBeenCalledOnce();
+  });
   it('preserves the last successful snapshot after refresh failure', async () => {
     const dashboard = document.createElement('dashboard-page') as any;
     const snapshot = { collectedAt: new Date().toISOString(), items: [item()] };

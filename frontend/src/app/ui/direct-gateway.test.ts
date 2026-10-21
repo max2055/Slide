@@ -7,6 +7,7 @@
  * - sendChat produces correct JSON wire format
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SERVICE_RECOVERED_EVENT } from '../../api/service-recovery.js';
 import { registerChatSend } from './chat-session-state.ts';
 import * as directGateway from './direct-gateway.ts';
 import { ChatAcceptanceTimeoutError, DirectGatewayClient } from './direct-gateway.ts';
@@ -123,6 +124,44 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
+  it('uses a fresh single-use device challenge for every reconnect', async () => {
+    vi.useFakeTimers(); vi.spyOn(Math, 'random').mockReturnValue(1);
+    const socket = installMockWebSocket();
+    const proof = (nonce: string) => ({ deviceId: 'device', publicKey: 'key', signature: 'signature', timestamp: Date.now(), nonce });
+    const provider = vi.fn().mockResolvedValueOnce(proof('first')).mockResolvedValueOnce(proof('second'));
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    (window as any).__apiClient = { getToken: () => 'jwt' };
+    client.setDeviceAuthProvider(provider); client.connect();
+    await vi.advanceTimersByTimeAsync(0); socket.onopen?.(new Event('open'));
+    expect(socket.frames[0]).toMatchObject({ type: 'auth', deviceAuth: { nonce: 'first' } });
+    socket.receive({ type: 'auth_ok' }); socket.closeWith(1012, 'restart');
+    await vi.advanceTimersByTimeAsync(1_000); socket.onopen?.(new Event('open'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.frames[0]).toMatchObject({ type: 'auth', deviceAuth: { nonce: 'second' } });
+    expect(provider).toHaveBeenCalledTimes(2); client.disconnect();
+    delete (window as any).__apiClient;
+  });
+
+  it('opens no socket while a device challenge is unavailable', async () => {
+    vi.useFakeTimers(); const Socket = vi.fn(); vi.stubGlobal('WebSocket', Socket);
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.setDeviceAuthProvider(async () => { throw Object.assign(new Error('offline'), { status: 503 }); });
+    client.connect(); await vi.advanceTimersByTimeAsync(0);
+    expect(Socket).not.toHaveBeenCalled(); expect(onStateChange).toHaveBeenLastCalledWith('disconnected');
+    client.disconnect();
+  });
+
+  it('bounds device preparation and ignores proof arriving after disconnect', async () => {
+    vi.useFakeTimers(); const Socket = vi.fn(); vi.stubGlobal('WebSocket', Socket);
+    let signal!: AbortSignal, finish!: (value: any) => void;
+    const provider = vi.fn((s: AbortSignal) => { signal = s; return new Promise<any>(resolve => { finish = resolve; }); });
+    const client = new DirectGatewayClient({ onEvent, onStateChange }); client.setDeviceAuthProvider(provider);
+    client.connect(); client.connect(); await vi.advanceTimersByTimeAsync(5_000);
+    expect(signal.aborted).toBe(true); expect(provider).toHaveBeenCalledOnce(); expect(Socket).not.toHaveBeenCalled();
+    client.disconnect(); finish({ nonce: 'late' }); await vi.advanceTimersByTimeAsync(0);
+    expect(Socket).not.toHaveBeenCalled();
+  });
+
   it('does not report connected until auth_ok is received', async () => {
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
@@ -161,9 +200,12 @@ describe('109-04: DirectGatewayClient', () => {
     const count = onStateChange.mock.calls.length;
     await vi.advanceTimersByTimeAsync(300_000);
     expect(onStateChange).toHaveBeenCalledTimes(count);
-    client.reconnect();
+    window.dispatchEvent(new CustomEvent(SERVICE_RECOVERED_EVENT));
     expect(onStateChange).toHaveBeenLastCalledWith('connecting');
     client.disconnect();
+    const afterDisconnect = onStateChange.mock.calls.length;
+    window.dispatchEvent(new CustomEvent(SERVICE_RECOVERED_EVENT));
+    expect(onStateChange).toHaveBeenCalledTimes(afterDisconnect);
   });
 
   it.each([false, true])('resets backoff after 30 seconds only if authenticated (auth=%s)', async (authenticate) => {

@@ -703,6 +703,17 @@ export class AlertsPage extends LitElement {
 
   private alertReadSequence = 0;
 
+  async refreshReadData() {
+    // Keep the active editor and list pagination; read the current section.
+    if (this.activeAlertTab === 'rules') await this.loadRules();
+    else if (this.activeAlertTab === 'escalation') await this.loadEscalationRules();
+    else if (this.activeAlertTab === 'maintenance') await this.loadMaintenanceWindows();
+    else if (this.activeAlertTab === 'silence') await this.loadSilencePeriods();
+    else if (this.activeAlertTab === 'baselines') await this.loadBaselines();
+    else if (this.activeAlertTab === 'notifications') await this.loadNotificationDeadLetters();
+    else await this.loadAlerts();
+  }
+
   private async loadAlerts() {
     const sequence = ++this.alertReadSequence;
     this.loading = true;
