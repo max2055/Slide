@@ -16,6 +16,7 @@ describe('report export bytes agree with MIME and extension', () => {
   it('produces a real PDF document', async () => {
     const result = await reportExporter.export(report, 'pdf');
     expect(Buffer.isBuffer(result)).toBe(true);
+    if (!Buffer.isBuffer(result)) throw new Error('Expected PDF bytes');
     expect(result.subarray(0, 5).toString()).toBe('%PDF-');
     expect(result.toString()).toContain('%%EOF');
   });
@@ -31,5 +32,10 @@ describe('report export bytes agree with MIME and extension', () => {
   });
   it('rejects unknown formats rather than labeling fallback HTML', async () => {
     await expect(reportExporter.export(report, 'unsupported' as any)).rejects.toThrow(/format|格式/i);
+  });
+  it('protects CSV names from spreadsheet formulas and handles empty data', async () => {
+    const result = String(await reportExporter.export({ ...report, name: '=1+1', data: null }, 'csv'));
+    expect(result).toContain('"\'=1+1"');
+    expect(result).toContain('"null"\r\n');
   });
 });

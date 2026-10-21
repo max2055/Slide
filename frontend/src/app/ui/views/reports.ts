@@ -11,6 +11,7 @@ import "../components/app-form-field.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
+import { reportDownloadFilename } from './report-download.js';
 
 interface Report {
   id: number;
@@ -781,9 +782,12 @@ export class ReportsPage extends LitElement {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${report.name || report.title || 'report'}.pdf`;
+      link.download = reportDownloadFilename(res.headers, report.name || report.title || 'report', report.format);
+      document.body.append(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      // Allow the browser to consume the Blob before releasing it.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err: any) {
       showToast(`Download failed: ${err.message}`, 'error');
     }

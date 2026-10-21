@@ -2,8 +2,7 @@
  * 报表导出服务
  */
 import PDFDocument from 'pdfkit';
-import { Report, ReportFormat } from './report-database-service';
-import { Readable } from 'stream';
+import type { Report, ReportFormat } from './report-database-service';
 
 class ReportExporter {
   /**
@@ -161,6 +160,18 @@ class ReportExporter {
     );
   }
 
+  async exportToCSV(report: Report): Promise<string> {
+    const cell = (value: unknown) => {
+      let text = String(value ?? '');
+      // Quoting alone does not prevent spreadsheet formula evaluation.
+      if (/^\s*[=+\-@\t\r]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    return 'id,name,type,status,created_at,data\r\n' +
+      [report.id, report.name, report.type, report.status, report.created_at, JSON.stringify(report.data ?? null)]
+        .map(cell).join(',') + '\r\n';
+  }
+
   /**
    * 统一导出方法
    */
@@ -174,8 +185,10 @@ class ReportExporter {
         return this.exportToJSON(report);
       case 'md':
         return this.exportToMarkdown(report);
+      case 'csv':
+        return this.exportToCSV(report);
       default:
-        return this.exportToHTML(report);
+        throw new Error(`不支持的导出格式：${format}`);
     }
   }
 
