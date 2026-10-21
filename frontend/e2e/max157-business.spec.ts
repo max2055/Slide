@@ -127,7 +127,12 @@ test('real resource overview/navigation, database help and diagnosis evidence/re
   await capture(page, 'navigation-overview-1280-dark');
   await page.goto(`${env.url}/instances-db`); const metrics = page.locator('resource-metrics-table');
   await expect(metrics).toContainText('合成资源');
-  const help = metrics.getByRole('button', { name: /数据库大小.*说明/ }); await help.click();
+  const help = metrics.getByRole('button', { name: /数据库大小.*说明/ });
+  await expect(help).toHaveCount(0);
+  await page.locator('instances-page').getByRole('button', { name: '列设置', exact: true }).click();
+  await metrics.getByRole('checkbox', { name: '数据库大小', exact: true }).check();
+  await metrics.getByRole('button', { name: '完成', exact: true }).click();
+  await help.click();
   await expect(metrics.locator('app-dialog[title="数据库大小：支持范围与统计口径"]')).toContainText('Redis 内存不计为磁盘大小');
   await capture(page, 'database-help-1280-dark'); await page.keyboard.press('Escape'); await expect(help).toBeFocused();
   await capture(page, 'database-1280-dark');

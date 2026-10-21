@@ -23,6 +23,12 @@ export class ResourceMetricsTable extends LitElement {
   @property() search = '';
   @property({ type: Number }) refreshVersion = 0;
   openColumnSettings() { this.columnsOpen = true; }
+  async focusEditAction(id: number) {
+    await this.updateComplete;
+    const layout = window.matchMedia?.('(max-width: 640px)').matches ? '.mobile-resources' : '.desktop-resources';
+    await Promise.all([...this.renderRoot.querySelectorAll<LitElement>(`${layout} app-data-table`)].map(table => table.updateComplete));
+    this.renderRoot.querySelector<HTMLButtonElement>(`${layout} [data-resource-edit-id="${id}"]`)?.focus();
+  }
   @state() private columnsOpen = false;
   private previousSearch = '';
   @state() private page = 1;
@@ -53,13 +59,15 @@ export class ResourceMetricsTable extends LitElement {
     this.restoredType = this.resourceType;
     try {
       const saved = JSON.parse(sessionStorage.getItem(`resource-list:${this.resourceType}`) ?? 'null');
-      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = saved.hiddenColumns ?? []; }
+      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && (saved.densityVersion === 1 || saved.hiddenColumns.length > 0) ? saved.hiddenColumns : this.defaultHiddenColumns; }
     } catch { /* Storage may be unavailable; navigation still works. */ }
   }
-  @state() private hiddenColumns: string[] = [];
+  private get defaultHiddenColumns() { return ['type', 'version', 'model', 'site', 'binding', 'database_size', 'uptime', 'disk', 'network', 'interfaces']; }
+  @state() private hiddenColumns: string[] = this.defaultHiddenColumns;
   override updated(changed: PropertyValues) {
+    if (!this.isConnected) return;
     this.restorePreferences();
-    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns })); } catch { /* Optional preference storage. */ }
+    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 1 })); } catch { /* Optional preference storage. */ }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
     const entriesChanged = identity !== this.identity;
     const searchChanged = this.search !== this.previousSearch;
@@ -156,7 +164,7 @@ export class ResourceMetricsTable extends LitElement {
       : [{ key: 'interfaces', label: '接口摘要' }];
     const columns = [{ key: 'bulk_select', label: '选择', width: '3rem' }, { key: 'row_number', label: '序号', width: '4rem' }, ...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'binding', label: '模板绑定' }, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
     const offset = (Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize))) - 1) * this.pageSize;
-    const rows = this.visible.map((entry, index) => {
+    const rows = this.visible.map((entry, index): ResourceEntry => {
       const row = this.rows.get(entry.id);
       const ref = this.bulkResource(entry);
       return { ...entry, bulk_select: html`<input type="checkbox" aria-label=${`选择${ref.label}用于批量绑定`} .checked=${bulkSelection.has(ref)} .disabled=${!bulkSelection.has(ref) && bulkSelection.values().length >= 100} @change=${() => bulkSelection.toggle(ref)}>`, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
@@ -166,9 +174,23 @@ export class ResourceMetricsTable extends LitElement {
         collection: html`<span>${row?.bindingError ? '当前采集状态暂不可用' : row?.collection?.blockers.length ? row.collection.blockers.map(b => statusLabel(b)).join('；') : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection?.binding.state === 'bound' && row.state === 'not_configured' ? '当前模板未覆盖核心列' : row?.collection && !['stale', 'partial', 'query_failed', 'temporary_failure', 'permission_denied'].includes(row.state) ? statusLabel(row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
           ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
     });
+    const identityKey = this.resourceType === 'instance' ? 'name' : this.resourceType === 'server' ? 'host' : 'device';
+    const statusKey = this.resourceType === 'instance' ? 'health' : 'status';
+    const selected = bulkSelection.values().length;
     return html`<style>${sharedBtnStyles}
       :host { display:block; box-sizing:border-box; min-width:0; max-width:100%; padding:var(--space-lg); color:var(--text); } .pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin:0 0 var(--space-md); } .pages { margin:var(--space-md) 0 0; } @media(max-width:640px) { :host { padding:var(--space-md); } }
-      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; }  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:48rem; } .scroll.expanded app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; align-items:start; } .actions > button { white-space:nowrap; } .actions details { position:relative; } summary { cursor:pointer; color:var(--accent-text); padding:var(--space-xs); } .actions details[open] { display:grid; gap:var(--space-xs); } .actions details button { display:block; margin-block:var(--space-xs); } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; }  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+      .mobile-resources { display:none; } .bulk-tools { margin:0 0 var(--space-md); } .scroll-hint { color:var(--muted); font-size:var(--text-sm); margin:0 0 var(--space-sm); }
+      summary:focus-visible, .resource-identity input:focus-visible { outline-color:var(--text-strong); }
+      .identity-meta { color:var(--muted); font-size:var(--text-xs); overflow-wrap:anywhere; }
+      @media(max-width:640px) {
+        :host { padding:var(--space-sm) var(--space-md); } .desktop-resources { display:none; } .mobile-resources { display:grid; gap:var(--space-md); }
+        .resource-summary { min-width:0; border-bottom:1px solid var(--border); padding-bottom:var(--space-md); overflow-wrap:anywhere; }
+        .resource-identity { display:flex; gap:var(--space-sm); align-items:start; } .resource-identity > div { min-width:0; flex:1; } .resource-identity h2 { margin:0; font-size:var(--text-md); min-width:0; } .resource-identity input { margin-top:var(--space-sm); }
+        .resource-status { display:grid; gap:var(--space-sm); margin:var(--space-sm) 0; } .resource-status dt { color:var(--muted); font-size:var(--text-xs); } .resource-status dd { margin:0; font-size:var(--text-sm); }
+        .resource-summary .btn-sm, .resource-summary summary, .bulk-tools button { min-height:44px; box-sizing:border-box; }
+        .resource-details .scroll { margin-top:var(--space-sm); } .resource-details app-data-table { min-width:36rem; }
+      }
     </style>
     ${this.resourceType === 'instance' ? html`<app-dialog .open=${this.sizeHelpOpen} size="lg" title="数据库大小：支持范围与统计口径" @app-dialog-close=${() => { this.sizeHelpOpen = false; }}>
       <p>单位使用 B / KiB / MiB / GiB（1024 进制）。读取最近一次已发布采集结果；刷新和翻页只读取指标存储。过期值保留并标注采集时间。</p>
@@ -179,17 +201,28 @@ export class ResourceMetricsTable extends LitElement {
       <div slot="footer"><button class="btn" @click=${() => { this.sizeHelpOpen = false; }}>关闭</button></div>
     </app-dialog>` : nothing}
     <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
+      <p>调整桌面表格显示的列。手机摘要保留关键状态，完整信息可展开每项明细查看。</p>
       ${columns.filter(c => !['bulk_select', 'row_number', 'actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
-      <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = []; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
+      <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = this.defaultHiddenColumns; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
     </app-dialog>
     ${this.pending && this.searchesCollection ? html`<p role="status">正在检查全部搜索资源的采集状态，结果尚未完整。</p>` : nothing}
-    <div class="pages" aria-label="批量采集配置"><span role="status">已选 ${bulkSelection.values().length} 个对象（可跨类型，最多 100 个）</span>
-      <button class="btn" @click=${() => { const refs = this.visible.map(entry => this.bulkResource(entry)); const all = refs.every(ref => bulkSelection.has(ref)); refs.filter(ref => all || !bulkSelection.has(ref)).forEach(ref => bulkSelection.toggle(ref)); }}>选择 / 取消当前页</button>
-      <button class="btn" .disabled=${!bulkSelection.values().length} @click=${() => bulkSelection.clear()}>清空选择</button>
-      <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>
+    <div class="pages bulk-tools" aria-label="批量采集配置">${selected ? html`<span role="status">已选 ${selected} 个对象（可跨类型，最多 100 个）</span>` : nothing}
+      <button class="btn" @click=${() => { const refs = this.visible.map(entry => this.bulkResource(entry)); const all = refs.every(ref => bulkSelection.has(ref)); refs.filter(ref => all || !bulkSelection.has(ref)).forEach(ref => bulkSelection.toggle(ref)); }}>${this.visible.length && this.visible.every(entry => bulkSelection.has(this.bulkResource(entry))) ? '取消当前页' : '选择当前页'}</button>
+      ${selected ? html`
+      <button class="btn" .disabled=${!bulkSelection.values().length} @click=${() => { bulkSelection.clear(); void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>('.bulk-tools button')?.focus()); }}>清空选择</button>
+      <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>` : nothing}
       <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
     <metric-bulk-dialog></metric-bulk-dialog>
-    <div class="scroll" tabindex="0" aria-label="资源表格，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns.filter(c => !this.hiddenColumns.includes(c.key))} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div>
+    <div class="mobile-resources" aria-label="资源摘要">
+      ${rows.map(row => html`<article class="resource-summary" aria-label=${this.bulkResource(row).label}>
+        <div class="resource-identity">${row.bulk_select}<div><h2>${row[identityKey]}</h2><div class="identity-meta">${unknown(row.type)} · ${unknown(row.version)}</div>${row.address ? html`<small>${row.address}</small>` : this.resourceType === 'network_device' ? html`<small>${row.host}</small>` : nothing}</div></div>
+        <dl class="resource-status"><div><dt>${this.resourceType === 'instance' ? '当前观测健康 / 连接配置' : this.resourceType === 'server' ? '连接状态' : '设备状态'}</dt><dd>${row[statusKey]}</dd></div><div><dt>采集状态 / 最近成功时间</dt><dd>${row.collection}</dd></div></dl>
+        ${row.actions}
+        <details class="resource-details"><summary>指标与资源明细</summary><p class="scroll-hint">左右滑动查看全部明细</p><div class="scroll" tabindex="0" aria-label="资源明细，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .dense=${true} .columns=${columns.filter(c => !['bulk_select', 'row_number', identityKey, statusKey, 'collection', 'actions'].includes(c.key))} .rows=${[row]}></app-data-table></div></details>
+      </article>`)}
+      ${rows.length ? nothing : html`<app-empty-state title="没有符合条件的资源"></app-empty-state>`}
+    </div>
+    <div class="desktop-resources"><p class="scroll-hint">表格超出时可左右滚动；次要指标可通过列设置展开。</p><div class="scroll ${metricColumns.some(c => !this.hiddenColumns.includes(c.key)) ? 'expanded' : ''}" tabindex="0" aria-label="资源表格，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns.filter(c => !this.hiddenColumns.includes(c.key))} .rows=${rows.map(row => ({ ...row, [identityKey]: html`${row[identityKey]}<div class="identity-meta">${unknown(row.type)} · ${unknown(row.version)}</div>` }))} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }
 }

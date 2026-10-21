@@ -336,7 +336,8 @@ export class ServersPage extends LitElement {
     const table = this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table');
     await table?.updateComplete;
     await (table?.renderRoot.querySelector('app-data-table') as LitElement | null)?.updateComplete;
-    (id ? table?.renderRoot.querySelector<HTMLElement>(`[data-resource-edit-id="${id}"]`) : this.renderRoot.querySelector<HTMLElement>('.resource-action--add'))?.focus();
+    if (id) await table?.focusEditAction(id);
+    else this.renderRoot.querySelector<HTMLElement>('.resource-action--add')?.focus();
   }
 
   private _updateForm<K extends keyof ServerFormData>(field: K, value: ServerFormData[K]) {
@@ -558,8 +559,8 @@ export class ServersPage extends LitElement {
           <div class="actions">
             <button class="btn-sm" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
             <button class="btn-sm" data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
-            <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${this._testingServerId === srv.id}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
-            <button class="btn-sm danger" @click=${() => this._confirmDelete(srv)}>删除</button>
+            <details><summary>更多</summary><button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${this._testingServerId === srv.id}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
+            <button class="btn-sm danger" @click=${() => this._confirmDelete(srv)}>删除</button></details>
           </div>`,
       };
     });
@@ -582,12 +583,12 @@ export class ServersPage extends LitElement {
   override render() {
     if (this._showDialog) return this._renderFormDialog();
     if (this._loading && this._servers.length === 0) {
-      return html`<div class="page"><div class="loading">加载中...</div></div>`;
+      return html`<div class="page"><header class="resource-page-header"><h1>服务器</h1></header><div class="loading">加载中...</div></div>`;
     }
 
     if (this._servers.length === 0) {
       return html`
-        <div class="page">
+        <div class="page"><header class="resource-page-header"><h1>服务器</h1></header>
           <div class="card">
             <div class="toolbar resource-toolbar">
               <div class="toolbar-actions">
@@ -619,7 +620,7 @@ export class ServersPage extends LitElement {
     const rows = this._getRows();
 
     return html`
-      <div class="page">
+      <div class="page"><header class="resource-page-header"><h1>服务器</h1></header>
         <div class="card">
           <div class="toolbar resource-toolbar">
             <div class="search-box">

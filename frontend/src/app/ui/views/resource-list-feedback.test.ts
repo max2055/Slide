@@ -26,7 +26,7 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
   const page = document.createElement(tag) as any;
   document.body.append(page);
   const root = page.renderRoot;
-  await vi.waitFor(() => expect(root.querySelector('resource-metrics-table')?.shadowRoot.querySelector('app-data-table')?.rows).toHaveLength(1));
+  await vi.waitFor(() => expect(root.querySelector('resource-metrics-table')?.shadowRoot.querySelector('.desktop-resources app-data-table')?.rows).toHaveLength(1));
   const refresh = root.querySelector('.btn-refresh') as HTMLButtonElement;
   await vi.waitFor(() => expect(refresh.disabled).toBe(false));
   const table = root.querySelector('resource-metrics-table');
@@ -44,10 +44,10 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
   finish!(response({}, 503));
   await vi.waitFor(() => expect(refresh.disabled).toBe(false));
   expect(authFetch.mock.calls.map(call => call[0])).toEqual(tag === 'instances-page' ? [endpoint, '/api/resources/overview', '/api/metrics/query'] : [endpoint, '/api/metrics/query']);
-  expect(table.shadowRoot.querySelector('app-data-table').columns.slice(0, 2).map((c: any) => c.label)).toEqual(['选择', '序号']);
+  expect(table.shadowRoot.querySelector('.desktop-resources app-data-table').columns.slice(0, 2).map((c: any) => c.label)).toEqual(['选择', '序号']);
   if (tag === 'servers-page') {
-    const cell = table.shadowRoot.querySelector('app-data-table tbody td:nth-child(3)');
+    const cell = table.shadowRoot.querySelector('.desktop-resources app-data-table tbody td:nth-child(3)');
     expect(cell.textContent.match(/192\.0\.2\.1/g)).toHaveLength(1);
   }
-  if (tag === 'network-devices-page') expect(table.shadowRoot.querySelector('app-data-table tbody .btn-ghost')).toBeTruthy();
+  if (tag === 'network-devices-page') expect(table.shadowRoot.querySelector('.desktop-resources app-data-table tbody .btn-ghost')).toBeTruthy();
 });

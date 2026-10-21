@@ -186,7 +186,8 @@ export class NetworkDevicesPage extends LitElement {
     const table = this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table');
     await table?.updateComplete;
     await (table?.renderRoot.querySelector('app-data-table') as LitElement | null)?.updateComplete;
-    (id ? table?.renderRoot.querySelector<HTMLElement>(`[data-resource-edit-id="${id}"]`) : this.renderRoot.querySelector<HTMLElement>('.resource-action--add'))?.focus();
+    if (id) await table?.focusEditAction(id);
+    else this.renderRoot.querySelector<HTMLElement>('.resource-action--add')?.focus();
   }
 
   private updateForm<K extends keyof DeviceForm>(key: K, value: DeviceForm[K]) {
@@ -395,8 +396,8 @@ export class NetworkDevicesPage extends LitElement {
       actions: html`<div class="actions">
         <button class="btn-sm" type="button" @click=${() => this.navigate(device.id)}>详情</button>
         <button class="btn-sm" type="button" data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
-        <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId === device.id}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
-        <button class="btn-sm danger" type="button" @click=${() => this.confirmDelete(device)}>删除</button>
+        <details><summary>更多</summary><button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId === device.id}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
+        <button class="btn-sm danger" type="button" @click=${() => this.confirmDelete(device)}>删除</button></details>
       </div>`,
     }));
   }
@@ -504,6 +505,7 @@ export class NetworkDevicesPage extends LitElement {
         .dialog-actions > .dialog-spacer { display:none; }
       }
     </style>${this.showDialog ? this.renderDialog() : html`
+    <header class="resource-page-header"><h1>网络设备</h1></header>
     ${this.loading && this.devices.length === 0 ? html`<div class="loading" role="status">正在加载网络设备…</div>` : this.error ? html`<app-card><div class="error" role="alert">${this.error}<br><button class="btn" type="button" @click=${this.loadDevices}>重试</button></div></app-card>` : html`
       <app-card .compact=${true}>
         <div class="resource-toolbar">
