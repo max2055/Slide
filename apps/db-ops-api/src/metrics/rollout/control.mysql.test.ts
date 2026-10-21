@@ -114,6 +114,42 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect(await formal.dimensions({ type: 'instance', id: 1 }, definition, from, to)).toEqual([]);
     expect(await storage.range(series, from, to)).toHaveLength(4);
   });
+  it('looks up published observations by primary key across the production character sets', async () => {
+    await control.switch(series, 1, { ...target, source: 'semantic', read: 'semantic', revision: 2 });
+    const t = { source: 'semantic', generation: 2, revision: 2 };
+    await control.applied(series, t);
+    const accepted = observation(1, 2);
+    await control.publish(accepted, definition, t);
+    // A populated observation history must not be scanned once for every publication.
+    await pool.query(`INSERT INTO metric_observations
+      (id, series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash)
+      SELECT CONCAT('unrelated-', n), series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash
+      FROM metric_observations CROSS JOIN JSON_TABLE(?, '$[*]' COLUMNS(n INT PATH '$')) numbers
+      WHERE id = ?`, [JSON.stringify(Array.from({ length: 2048 }, (_, i) => i)), accepted.id]);
+    await pool.query('ANALYZE TABLE metric_observations, metric_publications, metric_rollout');
+    const execute = vi.spyOn(pool, 'execute'); // Calls through to the real MySQL pool.
+    try {
+      const formal = new MysqlFormalMetricStore(pool);
+      expect(await formal.dimensions({ type: 'instance', id: 1 }, definition,
+        '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z')).toEqual([{}]);
+      const [sql, params] = execute.mock.calls[0];
+      const [plan] = await pool.query<RowDataPacket[]>(`EXPLAIN FORMAT=TRADITIONAL ${sql}`, params);
+      expect(plan.find(row => row.table === 'o')).toMatchObject({ key: 'PRIMARY', type: 'eq_ref', rows: 1 });
+    } finally { execute.mockRestore(); }
+  });
+  it.each(['uppercase', 'trailing-space', 'non-ascii'] as const)('rejects %s publication identifiers rather than matching a different byte sequence', async variant => {
+    await control.switch(series, 1, { ...target, source: 'semantic', read: 'semantic', revision: 2 });
+    const t = { source: 'semantic', generation: 2, revision: 2 };
+    await control.applied(series, t);
+    const accepted = observation(1, 2);
+    await control.publish(accepted, definition, t);
+    const id = variant === 'uppercase' ? accepted.id.toUpperCase()
+      : variant === 'trailing-space' ? `${accepted.id} ` : `${accepted.id}é`;
+    await pool.execute('UPDATE metric_publications SET observation_id = ?', [id]);
+    const formal = new MysqlFormalMetricStore(pool);
+    expect(await formal.dimensions({ type: 'instance', id: 1 }, definition,
+      '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z')).toEqual([]);
+  });
   it('20 concurrent repeats create one real alert; recovery and old-window replay cannot refire', async () => {
     await control.publish(series, definition, ticket, async () => {});
     const input = { rule: 'rule-1', ruleVersion: '1', observationId: series.id, windowEnd: Date.parse(series.observed_at),
