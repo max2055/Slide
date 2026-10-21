@@ -102,6 +102,7 @@ async function captureFocus(page: Page, selector: string, name: string) {
   expect(sample.focusVisible).toBe(true);
   expect(sample.outlineStyle).toBe('solid');
   expect(parseFloat(sample.outlineWidth)).toBeGreaterThanOrEqual(2);
+  expect(sample.rect.y - parseFloat(sample.outlineWidth) - parseFloat(sample.outlineOffset)).toBeGreaterThanOrEqual(0);
   expect(sample.layers.every(layer => layer.image === 'none')).toBe(true);
   expect(sample.contrast).toBeGreaterThanOrEqual(3);
   await page.screenshot({ path: test.info().outputPath(`${name}.png`), animations: 'disabled' });

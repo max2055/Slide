@@ -552,7 +552,7 @@
 .nav-collapse-toggle:focus-visible,
 .topbar-nav-toggle:focus-visible {
   outline: 2px solid var(--text-strong);
-  outline-offset: 3px;
+  outline-offset: 1px;
 }
 
 .nav-collapse-toggle__icon {
