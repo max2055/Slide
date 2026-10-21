@@ -12,7 +12,7 @@ export const executionLabels: Record<string, string> = {
   queued: '排队中', running: '运行中', completed: '执行完成', failed: '执行失败', cancelled: '已取消',
   timed_out: '执行超时', partial: '部分完成', unknown: '结果未知',
 };
-const lifecycleLabels = { open: '开放', waiting: '等待处理', closed: '已关闭', archived: '已归档' };
+export const lifecycleLabels = { open: '开放', waiting: '等待处理', closed: '已关闭', archived: '已归档' };
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 export function renderInvestigationDetail(controller: InvestigationsController, options: {
   draft: string; onDraft: (value: string) => void; onContinue: () => void; onEvidence: () => void;
@@ -35,7 +35,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <div><dt>调查进度</dt><dd><app-badge>${lifecycleLabels[detail.lifecycle]}</app-badge></dd></div>
         <div><dt>业务问题</dt><dd><app-badge>${problemLabels[detail.problemStatus]}</app-badge></dd></div>
       </dl>
-      <p class="muted">${detail.profileId === 'system' ? 'System' : 'Ops'} · 只读调查 · ${detail.resources.map(r => `${r.type}:${r.id}`).join('、') || '平台'} · ${detail.sessionId}</p>
+      <p class="muted">${detail.profileId === 'system' ? '平台调查' : '资源调查'} · 只读检查</p>
       <p class="investigation-resource-links">${detail.resources.map(ref => html`<a href=${resourceDetailUrl(ref.type, ref.id)}>返回原资源 ${ref.type}:${ref.id}</a> `)}</p>
       ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
         <p class="muted">原结果不补跑；根因与恢复尚未验证。</p><pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre>` : nothing}
@@ -45,12 +45,35 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
+    <app-card><span slot="header">${active && result ? '最近已保存的结果' : '本次调查结果'}</span>
+      <section aria-label="本次调查结果">
+      ${result ? html`
+        ${active ? html`<p role="status">当前执行仍在进行；以下为上一份已保存结果 V${result.version}。</p>` : nothing}
+        <p class="investigation-result-summary">${result.result.summary}</p>
+        <p class="muted">执行状态与业务问题分别记录；工具返回不代表根因或恢复已验证。</p>
+        <h3>已完成的检查</h3>
+        ${result.result.facts.length ? html`<ul>${result.result.facts.slice(0, 6).map(f => html`<li>${f.statement}</li>`)}</ul>`
+          : html`<p>没有已绑定的检查事实。历史结果可能未整理工具记录，请查看证据与执行过程。</p>`}
+        <h3>证据缺口</h3>${result.result.unresolvedQuestions.map(q => html`<p>${q}</p>`)}
+        <h3>下一步</h3>${result.result.recommendations.length
+          ? result.result.recommendations.map(r => html`<p>${r.action}</p>`)
+          : html`<p>先核对已有证据与停止原因；需要时提交新的只读调查，保留原执行记录。</p>`}
+        <button class="btn" @click=${options.onEvidence}>查看完整结果与证据</button>
+      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>`}
+      </section>
+    </app-card>
     <investigation-operation-context .investigationId=${detail.id} .resultVersion=${result?.version ?? 0} .resources=${detail.resources}></investigation-operation-context>
     <investigation-feedback .investigationId=${detail.id} .resultId=${result?.id ?? ''}
       .resultVersion=${result?.version ?? 0} .investigationVersion=${detail.version}
       .activeRequest=${active} .readonly=${controller.operationForbidden || !controller.online}
       @investigation-feedback-saved=${() => void controller.refreshFacts()}></investigation-feedback>
     <app-card><span slot="header">执行与协作</span>
+      <details aria-label="执行过程与技术详情"><summary>执行过程与技术详情</summary>
+      <dl><dt>会话标识</dt><dd>${detail.sessionId}</dd>
+        ${result ? html`<dt>运行标识</dt><dd>${result.runId}</dd><dt>停止原因码</dt><dd>${result.result.execution?.reasonCode ?? '历史记录未保留具体停止原因'}</dd>
+          <dt>模型配置标识</dt><dd>${result.result.provenance.modelVersion === 'unavailable' ? '历史记录未保留' : result.result.provenance.modelVersion}</dd>
+          <dt>提示词版本与哈希</dt><dd>${result.result.provenance.promptVersion === 'unavailable' ? '历史记录未保留' : result.result.provenance.promptVersion}</dd>` : nothing}
+      </dl>
       ${controller.historyBefore ? html`<button class="btn" @click=${() => void controller.loadHistory()}>加载更早消息</button>` : nothing}
       <div class="investigation-messages" aria-label="调查消息">
         ${messages.length ? messages.flatMap((message, i) => (messagePartsRenderRows(message, tools) ?? [{ partId: null, message }]).map(row =>
@@ -59,6 +82,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
           { showReasoning: false, showToolCalls: true, autoExpandToolCalls: false, assistantAttachmentAuthToken: apiClient.getToken() })))
           : html`<app-empty-state title="暂无消息"></app-empty-state>`}
       </div>
+      </details>
       <app-form-field label="继续调查" hint=${active ? '本次执行结束后可提交新目标；草稿会保留。' : controller.continuationUnavailable ? '当前结果尚未确认或关联信息未就绪，请刷新核对。' : execution === 'partial' ? '保留部分结果，创建关联的新 Run，不重放原执行。' : '新请求将创建新的 Run，保留历次结果。'}>
         <textarea aria-label="继续调查" rows="3" maxlength="2000" .value=${options.draft}
           @input=${(e: Event) => options.onDraft((e.target as HTMLTextAreaElement).value)}></textarea>

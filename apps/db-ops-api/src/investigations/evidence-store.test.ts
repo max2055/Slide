@@ -15,3 +15,12 @@ describe('investigation evidence snapshot', () => {
         observedTo: '2026-10-13T00:00:00.000Z', collectedAt: '2026-10-13T00:00:00.000Z', raw: {} })).toThrow();
   });
 });
+it('recovery retains the original summary so a deployment cannot change evidence identity', async () => {
+  const { InvestigationEvidenceStore } = await import('./evidence-store.js');
+  const store:any = Object.create(InvestigationEvidenceStore.prototype);
+  let receipt:any; store.putOnConnection=async(...args:any[])=>{receipt=args.at(-1);};
+  const c:any={execute:async(sql:string)=>[sql.includes('NOW(3)')?[{collected_at:new Date()}]:[{metadata_json:{summary:'历史原始观察；不代表根因已验证。',collectedAt:'2026-10-13T00:00:00.000Z'}}]]};
+  await store.captureToolResult(c,{}, {id:'inv',resources:[]}, {investigationId:'inv',requestId:'req',runId:'run'},
+    {id:'fact',name:'get_resource_observations',content:{success:true,data:{observations:[]}}});
+  expect(receipt.summary).toBe('历史原始观察；不代表根因已验证。');
+});

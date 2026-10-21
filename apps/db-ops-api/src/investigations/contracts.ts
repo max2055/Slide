@@ -96,6 +96,9 @@ export const InvestigationResultSchema = Type.Object({
   recommendations: Type.Array(Type.Object({ action: text(), priority: Type.Union([Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('critical')]) }, strict), { maxItems: 50 }),
   problemStatus: InvestigationProblemStatusSchema,
   recoveryVerification: Type.Optional(InvestigationRecoveryVerificationSchema),
+  execution: Type.Optional(Type.Object({ state: text(32), stopReason: text(128), reasonCode: text(128),
+    source: Type.Union([Type.Literal('runtime'), Type.Literal('tool_receipt'), Type.Literal('checkpoint'), Type.Literal('legacy')]),
+  }, strict)),
   provenance: Type.Object({
     modelVersion: text(256), promptVersion: text(256), toolVersions: Type.Record(text(128), text(128), { maxProperties: 100 }),
     providerId: Type.Optional(ordinal()), routeVersion: Type.Optional(text(256)), inputHash: Type.Optional(hash()),

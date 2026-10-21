@@ -45,18 +45,23 @@ export class InvestigationContext extends LitElement {
             ${result.claims.map(c => html`<p>${c.kind === 'fact' ? '事实' : '推断'}：${c.statement}<br>${refs(c.supportingEvidenceIds)} ${refs(c.contradictingEvidenceIds)}</p>`)}
             <h3>待确认问题</h3>${result.unresolvedQuestions.map(q => html`<p>${q}</p>`)}
             <h3>建议</h3>${result.recommendations.map(r => html`<p>${r.action}</p>`)}
-            <p>模型：${result.provenance.modelVersion} · 提示词：${result.provenance.promptVersion} · 用量：${result.provenance.usageStatus}</p>
+            <details><summary>结果来源与技术详情</summary>
+              <p>停止原因：${result.execution?.reasonCode ?? '历史记录未保留具体停止原因'}</p>
+              <p>模型配置标识：${result.provenance.modelVersion === 'unavailable' ? '历史记录未保留' : result.provenance.modelVersion}</p>
+              <p>提示词版本与哈希：${result.provenance.promptVersion === 'unavailable' ? '历史记录未保留' : result.provenance.promptVersion}</p>
+              <p>用量记录：${({ available: '可用', unavailable: '不可用', partial: '部分可用' })[result.provenance.usageStatus]}</p>
+            </details>
           ` : html`<app-empty-state title="暂无持久化成果" description="执行结束与业务恢复分别记录。"></app-empty-state>`}
           ${this.results.nextBefore ? html`<button class="btn" @click=${this.onMore}>加载更早结果版本</button>` : nothing}
         </app-card>
         <app-card><span slot="header">证据记录</span>
           <app-data-table .columns=${[{ key: 'source', label: '来源' }, { key: 'status', label: '状态' }]}
-            .rows=${this.evidence.map(e => ({ source: e.source, status: e.status === 'expired' ? '原文已过期' : '可用' }))} emptyMessage="暂无证据"></app-data-table>
-          ${this.evidence.map(e => html`<section class="evidence-entry" data-evidence=${e.id} aria-label=${`证据 ${e.id.slice(0, 8)}`}>
-            <h3>${e.source}</h3><p>${e.summary}</p>
+            .rows=${this.evidence.map((e, index) => ({ source: e.source.startsWith('tool:') ? `工具检查记录 ${index + 1}` : e.source, status: e.status === 'expired' ? '原文已过期' : '可用' }))} emptyMessage="暂无证据"></app-data-table>
+          ${this.evidence.map((e, index) => html`<section class="evidence-entry" data-evidence=${e.id} aria-label=${`证据 ${e.id.slice(0, 8)}`}>
+            <h3>${e.source.startsWith('tool:') ? `工具检查记录 ${index + 1}` : e.source}</h3><p>${e.summary}</p>
             <app-badge variant=${e.status === 'expired' ? 'warn' : 'muted'}>${e.status === 'expired' ? '原文已过期' : '引用已关联；不代表根因验证'}</app-badge>
-            <dl><dt>观察窗口</dt><dd>${e.observedFrom ?? '未知'} — ${e.observedTo ?? '未知'}</dd><dt>采集时间</dt><dd>${e.collectedAt}</dd>
-              <dt>内容哈希</dt><dd>${e.contentHash}</dd><dt>Run</dt><dd>${e.runId}</dd></dl>
+            <dl><dt>观察窗口</dt><dd>${e.observedFrom ?? '未知'} — ${e.observedTo ?? '未知'}</dd><dt>采集时间</dt><dd>${e.collectedAt}</dd></dl>
+            <details><summary>证据技术详情</summary><dl><dt>原始来源标识</dt><dd>${e.source}</dd><dt>内容哈希</dt><dd>${e.contentHash}</dd><dt>运行标识</dt><dd>${e.runId}</dd></dl></details>
           </section>`)}
         </app-card>
       </div>`;

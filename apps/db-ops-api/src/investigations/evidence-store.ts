@@ -3,6 +3,7 @@ import type { PoolConnection } from 'mysql2/promise';
 import type { ActorContext } from '../auth/actor-context.js';
 import { evidenceHash, redactEvidence } from '../analysis/analysis-evidence.js';
 import { InvestigationStoreError, type AdmissionInvestigation, type InvestigationResource } from './store.js';
+import { toolReceiptSummary } from './execution-summary.js';
 import { InvestigationObservationDatabase, appendObservation, observationRows, decode, instant,
   invalidObservation, absentObservation, isId, type ResultBinding } from './observation-db.js';
 
@@ -56,7 +57,8 @@ export class InvestigationEvidenceStore extends InvestigationObservationDatabase
     const observedFrom = typeof window?.observedFrom === 'string' && instant(window.observedFrom) ? window.observedFrom : null;
     const observedTo = typeof window?.observedTo === 'string' && instant(window.observedTo) ? window.observedTo : null;
     const prepared = prepareEvidence({ source: `tool:${entry.tool_call_id ?? entry.id}`.slice(0, 128),
-      summary: '只读工具返回的原始观察；引用关联不代表根因已验证。', resources: investigation.resources.map(r => ({ type: r.type, id: r.id })),
+      summary: existing ? decode(existing.metadata_json).summary : toolReceiptSummary(entry.name, raw),
+      resources: investigation.resources.map(r => ({ type: r.type, id: r.id })),
       observedFrom: observedFrom && observedTo ? observedFrom : null, observedTo: observedFrom && observedTo ? observedTo : null, collectedAt, raw });
     await this.putOnConnection(c, actor, investigation, { investigationId: binding.investigationId, requestId: binding.requestId, runId: binding.runId }, key, prepared);
   }

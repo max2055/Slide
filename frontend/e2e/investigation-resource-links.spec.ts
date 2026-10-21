@@ -81,7 +81,9 @@ for(const type of ['instance','server','network_device'] as const)test(`${type}:
 });
 test('same JWT revocation blocks source/deep link/evidence/WS and every required scope',async({page})=>{
   await login(page);const id=receipts.network_device.investigation;
-  await page.goto(`${env.url}/investigations?investigation=${id}`);await expect(page.locator('.investigation-messages')).toBeVisible();
+  await page.goto(`${env.url}/investigations?investigation=${id}`);
+  await page.locator('details[aria-label="执行过程与技术详情"] > summary').click();
+  await expect(page.locator('.investigation-messages')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>(document.querySelector('investigations-page') as any)?.controller?.online)).toBe(true);
   const multi=await env.bridge.create(env.owner,{title:'全部必需 scope',goal:'不得越权',profileId:'ops',profileVersion:1,resources:[{type:'instance',id:101,role:'primary'},{type:'network_device',id:101,role:'related'}],idempotencyKey:crypto.randomUUID()});
   await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='network_devices:view'");

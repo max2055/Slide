@@ -9347,6 +9347,56 @@
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
             "type": "string"
           },
+          "execution": {
+            "additionalProperties": false,
+            "properties": {
+              "reasonCode": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "runtime",
+                    "type": "string"
+                  },
+                  {
+                    "const": "tool_receipt",
+                    "type": "string"
+                  },
+                  {
+                    "const": "checkpoint",
+                    "type": "string"
+                  },
+                  {
+                    "const": "legacy",
+                    "type": "string"
+                  }
+                ]
+              },
+              "state": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "stopReason": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "stopReason",
+              "reasonCode",
+              "source"
+            ],
+            "type": "object"
+          },
           "facts": {
             "items": {
               "additionalProperties": false,
@@ -9979,6 +10029,56 @@
                     "createdAt": {
                       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
                       "type": "string"
+                    },
+                    "execution": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "reasonCode": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "const": "runtime",
+                              "type": "string"
+                            },
+                            {
+                              "const": "tool_receipt",
+                              "type": "string"
+                            },
+                            {
+                              "const": "checkpoint",
+                              "type": "string"
+                            },
+                            {
+                              "const": "legacy",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "state": {
+                          "maxLength": 32,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        },
+                        "stopReason": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "\\S",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "stopReason",
+                        "reasonCode",
+                        "source"
+                      ],
+                      "type": "object"
                     },
                     "facts": {
                       "items": {
@@ -23381,6 +23481,56 @@
               "createdAt": {
                 "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
                 "type": "string"
+              },
+              "execution": {
+                "additionalProperties": false,
+                "properties": {
+                  "reasonCode": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "const": "runtime",
+                        "type": "string"
+                      },
+                      {
+                        "const": "tool_receipt",
+                        "type": "string"
+                      },
+                      {
+                        "const": "checkpoint",
+                        "type": "string"
+                      },
+                      {
+                        "const": "legacy",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "stopReason": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "state",
+                  "stopReason",
+                  "reasonCode",
+                  "source"
+                ],
+                "type": "object"
               },
               "facts": {
                 "items": {

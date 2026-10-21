@@ -36,6 +36,10 @@ async function observed(page: Page) {
     return c?.online === true && c.refreshing === undefined;
   })).toBe(true);
 }
+async function openProcess(page: Page) {
+  const details = page.locator('details[aria-label="执行过程与技术详情"]');
+  if (!await details.getAttribute('open').then(value => value !== null)) await details.locator('summary').first().click();
+}
 async function create(page: Page, title: string) {
   await page.getByRole('button', { name: '创建手动调查' }).click();
   await page.getByRole('textbox', { name: '调查标题', exact: true }).fill(title);
@@ -453,7 +457,7 @@ test('history over 200 canonical facts loads older pages and survives reload', a
     for (let i = 0; i < 8; i++) {
       const before = await page.evaluate(() => (document.querySelector('investigations-page') as any).controller.historyBefore);
       if (!before) break;
-      await page.getByRole('button', { name: '加载更早消息', exact: true }).click();
+      await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click();
       await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.historyBefore)).not.toBe(before);
     }
     await expect(page.locator('.investigation-messages')).toContainText('分页事实 000');
@@ -464,7 +468,7 @@ test('history over 200 canonical facts loads older pages and survives reload', a
   env.disconnectObservers();
   await expect(page.getByRole('alert')).toContainText('连接中断');
   await expect(page.locator('.investigation-messages')).toContainText('分页事实 204', { timeout: 15000 });
-  await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toBeVisible();
+  await openProcess(page); await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toBeVisible();
   await loadAll();
   const text = await page.locator('.investigation-messages').innerText();
   expect(text.indexOf('分页事实 000')).toBeLessThan(text.indexOf('分页事实 204'));
@@ -510,7 +514,7 @@ for (const phase of ['initial', 'reconnect'] as const) {
         env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
         await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204', { timeout: 15000 });
       } else await initial!.started;
-      await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
+      await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
       const beforeSnapshot = snapshotCount;
       if (initial) initial.release();
       else await page.evaluate(id => (document.querySelector('investigations-page') as any).client.refreshInvestigation(id), id);
@@ -522,7 +526,7 @@ for (const phase of ['initial', 'reconnect'] as const) {
       const text = await page.locator('.investigation-messages').innerText();
       expect(text.indexOf('延迟分页 000')).toBeLessThan(text.indexOf('延迟分页 204'));
       await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204');
-      await page.getByRole('button', { name: '加载更早消息', exact: true }).click();
+      await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click();
       await expect(page.locator('.investigation-messages')).toContainText('延迟分页 000');
     } finally { initial?.release(); releasePage(); }
   });
@@ -612,7 +616,7 @@ for (const action of ['revocation', 'selection'] as const) {
       try { await route.fulfill({ response }); } finally { delivered(); }
     });
     try {
-      await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
+      await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
       if (action === 'revocation') {
         await page.getByRole('button', { name: '创建手动调查', exact: true }).click();
         await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('需随撤权清空的创建草稿');
@@ -647,3 +651,46 @@ for (const action of ['revocation', 'selection'] as const) {
     }
   });
 }
+
+test('MAX-212 partial outcome is readable before collapsed process in both themes and widths', async ({ page }) => {
+  env.exhaustProviderSteps(true);
+  let id = '';
+  try {
+    const created = await env.bridge.create(env.owner, { title: '部分结果验收（受控模型）', goal: '只读检查，保留已完成检查与停止原因',
+      profileId: 'ops', profileVersion: 1, resources: [{ type: 'instance', id: 101, role: 'primary' }], idempotencyKey: crypto.randomUUID() },
+      { message: '检查并报告证据缺口，不推断恢复', idempotencyKey: crypto.randomUUID() });
+    id = created.investigation.id;
+    await expect.poll(async () => (await env.pool.query('SELECT COUNT(*) AS n FROM investigation_results WHERE investigation_id=?', [id]))[0][0].n).toBe(1);
+  } finally { env.exhaustProviderSteps(false); }
+  const [versions] = await env.pool.query('SELECT result_json FROM investigation_results WHERE investigation_id=?', [id]);
+  expect(versions[0].result_json.execution.reasonCode).toMatch(/MAX_|LIMIT/);
+  const statements = versions[0].result_json.facts.map((f: any) => f.statement);
+  expect(statements.some((text: string) => text.includes('失败或被阻止'))).toBe(true);
+  expect(statements.join()).not.toContain('执行已停止');
+  await login(page); await page.goto(`${env.url}/investigations?investigation=${id}`);
+  const resultSection = page.locator('section[aria-label="本次调查结果"]');
+  await expect(resultSection).toContainText('已保留');
+  await expect(resultSection).toContainText('运行限制');
+  await expect(resultSection).not.toContainText('执行已停止');
+  await expect(page.locator('.investigation-states')).toContainText('部分完成');
+  await expect(page.locator('.investigation-states')).toContainText('未确认');
+  const process = page.locator('details[aria-label="执行过程与技术详情"]');
+  await expect(process).not.toHaveAttribute('open', '');
+  for (const width of [1600, 390]) for (const theme of ['light', 'dark']) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.locator('slide-app').evaluate((e: any, theme) => e.applySettings({ ...e.settings, themeMode: theme }), theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme-mode', theme);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await resultSection.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath(`MAX-212-partial-${width}-${theme}.png`), fullPage: false });
+  }
+  const summary = process.locator('summary').first(); await summary.focus(); await page.keyboard.press('Enter');
+  await expect(process).toHaveAttribute('open', ''); await expect(process).toContainText('controlled-fixture');
+  await page.keyboard.press('Enter'); await expect(process).not.toHaveAttribute('open', '');
+  const evidence = page.getByRole('button', { name: '查看完整结果与证据', exact: true });
+  await evidence.click(); await expect(page.getByRole('dialog', { name: '证据与成果' })).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(evidence).toBeFocused();
+  const counts = env.counts(); await page.reload(); await expect(resultSection).toContainText('已保留');
+  expect(env.counts()).toEqual(counts);
+  await expect(page.locator('investigation-feedback')).toBeVisible();
+});
