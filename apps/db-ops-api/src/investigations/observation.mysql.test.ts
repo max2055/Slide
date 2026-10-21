@@ -370,7 +370,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     const tools = new ToolRegistry(); tools.register({ name: 'get_instance_summary', description: 'Controlled read',
       parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false,
       execute: async () => { toolCalls++; return mode === 'crash-after-returned-error' && toolCalls === 1
-        ? 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' : { success: true, summary: '后续检查成功' }; } });
+        ? 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' : { success: true, summary: calls > 6 ? '后续检查成功' : '前序检查成功' }; } });
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
       toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
     if (mode !== 'normal') {
@@ -398,7 +398,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     expect(saved.execution).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
     expect(saved.summary).toContain('运行限制');
     expect(saved.facts.map(f => f.statement).join()).not.toContain('执行已停止');
-    expect(saved.facts.at(-1)?.statement).toContain('后续检查成功');
+    expect(saved.facts.map(f => f.statement).join()).toContain('后续检查成功');
     expect(saved.facts).toHaveLength(8);
     expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 8 : 7);
     await executor.execute(completionCommand()); expect(calls).toBe(8);

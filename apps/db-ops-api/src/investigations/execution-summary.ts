@@ -8,7 +8,9 @@ export function investigationStop(value: any): InvestigationStop {
   const resolution = value.resolution ?? value.terminal_resolution;
   const stopReason = value.stopReason ?? resolution?.kind ?? 'unknown';
   if (resolution?.reasonCode) return { stopReason, reasonCode: resolution.reasonCode, source: value.terminal_resolution ? 'checkpoint' : 'runtime' };
-  const errors = [value.error, ...(value.completedToolResults ?? []).map((t: any) => t.content)];
+  // Returned tool text does not establish a terminal state. Runtime's actual
+  // fatal exception (or the executor's matching thrown-tool receipt) does.
+  const errors = value.stopReason === 'tool_error' ? [value.error] : [];
   for (const error of errors) {
     const code = typeof error === 'string' && /^(?:Error:\s*)+(INVESTIGATION_[A-Z0-9_]+)\s*$/.exec(error)?.[1];
     if (code) return { stopReason, reasonCode: code, source: 'tool_receipt' };
@@ -35,7 +37,9 @@ export function toolReceiptSummary(name: string | undefined, raw: any): string {
     get_resource_observations: '正式观测检查', list_active_alerts: '告警检查', get_server_metrics: '服务器指标检查',
     get_server_alerts: '服务器告警检查', get_resource_relations: '资源关系检查' };
   const label = labels[name ?? ''] ?? '只读工具检查';
-  if (typeof raw === 'string' && raw.startsWith('Error:')) return `${label}失败：${stopExplanation(investigationStop({ stopReason: 'tool_error', error: raw }).reasonCode)}。`;
+  // A tool result can be a nonfatal guard/returned error. Only the Run's
+  // terminal receipt can say that execution stopped.
+  if (typeof raw === 'string' && raw.startsWith('Error:')) return `${label}失败或被阻止；具体原因见关联证据。`;
   if (raw?.success === false || raw?.status === 'error') return `${label}失败；工具返回未提供可用观测，请查看证据详情。`;
   if (raw?.data?.observations?.length === 0) return `${label}已完成；本次查询返回 0 条观测，不能据此判断资源正常。`;
   return `${label}已返回${raw?.status === 'warning' ? '（存在证据缺口）' : ''}。${typeof raw?.summary === 'string' ? `工具报告：${raw.summary.slice(0, 1000)}` : '具体观测见关联证据。'}`;

@@ -692,6 +692,7 @@ export class InvestigationExecutor {
         && (result as { success?: boolean }).success === true && (result as { status?: string }).status !== 'error'
         ? JSON.stringify(result) : result;
       let currentToolId: string | undefined;
+      let fatalToolFailure: { toolCallId: string; stop: InvestigationStop } | undefined;
       const effective = await this.transaction(async (c) =>
         this.authorization.authorize(
           c,
@@ -734,55 +735,63 @@ export class InvestigationExecutor {
           execute: async (value, toolContext) => {
             const toolId = currentToolId;
             if (!toolId) throw new Error('INVESTIGATION_TOOL_BINDING_INVALID');
-            toolContext?.signal?.throwIfAborted();
-            control.signal.throwIfAborted();
-            const { args, targets } = boundedInvestigationArguments(name, value, profile.budget, Date.now());
-            const live = await this.transaction(async (c) => {
-              await this.canonical.lockInvestigationExecution(c, actor, binding);
-              return this.authorization.authorizeTool(
-                c,
-                actor,
-                await this.authorization.load(c, investigationId),
-                frozen,
-                name,
-                targets.length
-                  ? targets
-                  : security.resource === 'instance'
-                    ? snapshot.resources.filter((r: any) => r.type === 'instance')
-                    : [],
+            try {
+              toolContext?.signal?.throwIfAborted();
+              control.signal.throwIfAborted();
+              const { args, targets } = boundedInvestigationArguments(name, value, profile.budget, Date.now());
+              const live = await this.transaction(async (c) => {
+                await this.canonical.lockInvestigationExecution(c, actor, binding);
+                return this.authorization.authorizeTool(
+                  c,
+                  actor,
+                  await this.authorization.load(c, investigationId),
+                  frozen,
+                  name,
+                  targets.length
+                    ? targets
+                    : security.resource === 'instance'
+                      ? snapshot.resources.filter((r: any) => r.type === 'instance')
+                      : [],
+                );
+              });
+              const existing = state.tools[toolId];
+              if (existing) {
+                if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
+                  throw new Error('INVESTIGATION_TOOL_UNKNOWN');
+                return contextToolResult(existing.result, toolId);
+              }
+              await update((s) => {
+                s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
+              });
+              toolContext?.signal?.throwIfAborted();
+              control.signal.throwIfAborted();
+              const liveTool = scopedRegistry(live.actor).get(name);
+              if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
+                throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
+              const result = boundedResult(
+                await liveTool.execute(args, { ...toolContext, signal: toolContext?.signal ?? control.signal }),
+                profile.budget.maxRows,
+                profile.budget.maxBytes,
               );
-            });
-            const existing = state.tools[toolId];
-            if (existing) {
-              if (existing.inputHash !== hash(args) || existing.name !== name || existing.status !== 'returned')
-                throw new Error('INVESTIGATION_TOOL_UNKNOWN');
-              return contextToolResult(existing.result, toolId);
+              toolContext?.signal?.throwIfAborted();
+              control.signal.throwIfAborted();
+              await this.transaction(async c => {
+                await this.canonical.lockInvestigationExecution(c, actor, binding);
+                await this.authorization.authorizeTool(c, actor, await this.authorization.load(c, investigationId), frozen, name,
+                  targets.length ? targets : security.resource === 'instance' ? snapshot.resources.filter((r: any) => r.type === 'instance') : []);
+              });
+              await update(async (s, c) => {
+                if (name === 'search_case_references') await this.cases.retain(c, investigationId, result);
+                s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
+              });
+              return contextToolResult(result, toolId);
+            } catch (error) {
+              // failOnToolError is enabled: an actual thrown tool exception is
+              // fatal. Returned Error text and Core's repeat guard are not.
+              fatalToolFailure = { toolCallId: toolId, stop: { ...investigationStop({ stopReason: 'tool_error',
+                error: `Error: ${error instanceof Error ? error.message : String(error)}` }), source: 'tool_receipt' } };
+              throw error;
             }
-            await update((s) => {
-              s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
-            });
-            toolContext?.signal?.throwIfAborted();
-            control.signal.throwIfAborted();
-            const liveTool = scopedRegistry(live.actor).get(name);
-            if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
-              throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
-            const result = boundedResult(
-              await liveTool.execute(args, { ...toolContext, signal: toolContext?.signal ?? control.signal }),
-              profile.budget.maxRows,
-              profile.budget.maxBytes,
-            );
-            toolContext?.signal?.throwIfAborted();
-            control.signal.throwIfAborted();
-            await this.transaction(async c => {
-              await this.canonical.lockInvestigationExecution(c, actor, binding);
-              await this.authorization.authorizeTool(c, actor, await this.authorization.load(c, investigationId), frozen, name,
-                targets.length ? targets : security.resource === 'instance' ? snapshot.resources.filter((r: any) => r.type === 'instance') : []);
-            });
-            await update(async (s, c) => {
-              if (name === 'search_case_references') await this.cases.retain(c, investigationId, result);
-              s.tools[toolId] = { name, inputHash: hash(args), status: 'returned', result };
-            });
-            return contextToolResult(result, toolId);
           },
         });
       }
@@ -849,7 +858,10 @@ export class InvestigationExecutor {
           if (e.phase === 'running' && !e.progress) currentToolId = e.toolCallId;
         },
         checkpointCallback: async (payload) => {
-          await this.persistCheckpoint(actor, binding, payload);
+          const fatalStop = payload.phase === 'tools_completed' && fatalToolFailure
+            && (payload.completedToolResults as Message[] | undefined)?.some(t => t.tool_call_id === fatalToolFailure!.toolCallId)
+            ? fatalToolFailure.stop : undefined;
+          await this.persistCheckpoint(actor, binding, payload, fatalStop);
           const current = await this.transaction((c) => this.canonical.lockInvestigationExecution(c, actor, binding));
           state = decode(current.run.result_json).investigationExecution;
           if (!state.provider) modelMessageId = undefined;
@@ -942,6 +954,7 @@ export class InvestigationExecutor {
     actor: ActorContext,
     binding: InvestigationExecutionBinding,
     payload: Record<string, unknown>,
+    fatalToolStop?: InvestigationStop,
   ): Promise<void> {
     await this.transaction(async (c) => {
       const access = await this.canonical.lockInvestigationExecution(c, actor, binding);
@@ -1005,12 +1018,11 @@ export class InvestigationExecutor {
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
       }
-      if (payload.terminal_resolution || Array.isArray(payload.completedToolResults)
-        && payload.completedToolResults.some((t: any) => typeof t.content === 'string' && t.content.startsWith('Error:'))) {
+      if (payload.terminal_resolution || fatalToolStop) {
         const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
         const result = decode(current.run.result_json), state: ExecutionState = result?.investigationExecution;
         if (state) {
-          const terminal = investigationStop(payload);
+          const terminal = payload.terminal_resolution ? investigationStop(payload) : fatalToolStop!;
           if (!state.terminal || terminal.reasonCode !== 'INVESTIGATION_RUNTIME_PARTIAL') state.terminal = terminal;
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
