@@ -38,6 +38,8 @@ import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
 import { investigationToolContract } from './tool-contract.js';
 import { systemInvestigationHistory } from './system-tools.js';
+import { investigationStop, type InvestigationStop } from './execution-summary.js';
+import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
 
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -122,6 +124,8 @@ interface ExecutionState {
   usageUnknown: boolean;
   provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
   lastSummaryReceipt?: unknown;
+  provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
+  terminal?: InvestigationStop;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
 }
 const usageOf = (response: LLMResponse): BudgetUsage | null => {
@@ -519,12 +523,15 @@ export class InvestigationExecutor {
       // Runtime response_ready is durable evidence to stage the same answer.
       // An unaccepted candidate or any other terminal checkpoint must never
       // re-enter the model loop after an OS exit.
-      if (checkpoint?.terminal_resolution || checkpoint?.phase === 'final_response') {
-        const resolution = checkpoint.terminal_resolution as { kind?: string; reasonCode?: string } | undefined;
-        const candidate = checkpoint.assistantMessage as Message | undefined;
+      if (checkpoint?.terminal_resolution || checkpoint?.phase === 'final_response' || state.terminal?.source === 'tool_receipt') {
+        // A fatal-tool checkpoint can precede Runtime's terminal checkpoint.
+        // Its durable receipt closes this execution after a process exit too.
+        const resolution = (checkpoint?.terminal_resolution ?? (state.terminal?.source === 'tool_receipt'
+          ? { kind: 'partial', reasonCode: state.terminal.reasonCode } : undefined)) as { kind?: string; reasonCode?: string } | undefined;
+        const candidate = checkpoint?.assistantMessage as Message | undefined;
         if (
           resolution?.kind === 'response_ready' &&
-          checkpoint.phase === 'final_response' &&
+          checkpoint?.phase === 'final_response' &&
           candidate?.role === 'assistant' &&
           typeof candidate.content === 'string' &&
           !candidate.tool_calls?.length
@@ -549,6 +556,10 @@ export class InvestigationExecutor {
           });
           throw new Error('INVESTIGATION_FINAL_RESPONSE_UNKNOWN');
         }
+        await update(s => {
+          const terminal = investigationStop(checkpoint ?? {});
+          if (!s.terminal || terminal.reasonCode !== 'INVESTIGATION_RUNTIME_PARTIAL') s.terminal = terminal;
+        });
         const terminalState =
           resolution.kind === 'cancelled' ? 'cancelled' : resolution.kind === 'timed_out' ? 'timed_out' : 'partial';
         const terminal = await this.transaction((c) =>
@@ -557,7 +568,7 @@ export class InvestigationExecutor {
             actor,
             binding,
             terminalState,
-            resolution.reasonCode ?? 'INVESTIGATION_RUNTIME_PARTIAL',
+            state.terminal?.reasonCode ?? investigationStop(checkpoint ?? {}).reasonCode,
           ),
         );
         await this.settle(terminal, base);
@@ -583,6 +594,13 @@ export class InvestigationExecutor {
       if ((checkpoint?.context_request_v1 as any)?.status === 'rejected') throw new Error('SUMMARY_INVALID');
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
+      const model = actual.getDefaultModel();
+      await update(s => {
+        const identity = analysisProviderIdentity(actual);
+        s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(investigationPrompt(profile)).digest('hex')}`,
+          ...(identity.providerId === undefined ? {} : { providerId: identity.providerId }),
+          ...(identity.routeVersion === 'unavailable' ? {} : { routeVersion: identity.routeVersion }) };
+      });
       const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
@@ -596,6 +614,7 @@ export class InvestigationExecutor {
           // supplied lane/domain may authorize this provider call.
           receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
+          if (s.provenance && !s.provenance.inputHash) s.provenance.inputHash = hash(input);
           s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
@@ -659,7 +678,7 @@ export class InvestigationExecutor {
         return response;
       };
       const provider: LLMProvider = {
-        getDefaultModel: () => actual.getDefaultModel(),
+        getDefaultModel: () => model,
         getModelCapabilities: actual.getModelCapabilities?.bind(actual),
         countPromptTokens: actual.countPromptTokens?.bind(actual),
         projectMessages: (messages, model) => investigationContextMessages(actual.projectMessages?.(messages, model) ?? messages, profile.id),
@@ -794,7 +813,7 @@ export class InvestigationExecutor {
         runtimeRunId: run.id,
         initialMessages,
         tools,
-        model: provider.getDefaultModel(),
+        model,
         ...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
         maxIterations: profile.budget.maxProviderAttempts,
         // Context admission must reserve the same configured output ceiling
@@ -844,6 +863,7 @@ export class InvestigationExecutor {
       state = decode(access.run.result_json).investigationExecution;
       if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
       if (Object.values(state.tools).some((t) => t.status === 'running')) throw new Error('INVESTIGATION_TOOL_UNKNOWN');
+      await update(s => { s.terminal = investigationStop(result); });
       let terminal: AgentRun;
       if (result.stopReason === 'completed' && (!result.resolution || result.resolution.kind === 'response_ready')) {
         await this.transaction((c) =>
@@ -862,7 +882,7 @@ export class InvestigationExecutor {
           this.runs.recoverInvestigationCompletion(c, this.canonical, actor, binding),
         );
       } else {
-        const state: Exclude<AgentRunState, 'running' | 'completed'> =
+        const terminalState: Exclude<AgentRunState, 'running' | 'completed'> =
           result.resolution?.kind === 'timed_out'
             ? 'timed_out'
             : result.resolution?.kind === 'cancelled'
@@ -873,8 +893,8 @@ export class InvestigationExecutor {
             c,
             actor,
             binding,
-            state,
-            result.resolution?.reasonCode ?? 'INVESTIGATION_RUNTIME_PARTIAL',
+            terminalState,
+            state.terminal!.reasonCode,
           ),
         );
       }
@@ -982,6 +1002,16 @@ export class InvestigationExecutor {
           (payload.assistantMessage as { id?: string } | undefined)?.id === state.provider.messageId
         ) {
           state.provider = null;
+          await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
+        }
+      }
+      if (payload.terminal_resolution || Array.isArray(payload.completedToolResults)
+        && payload.completedToolResults.some((t: any) => typeof t.content === 'string' && t.content.startsWith('Error:'))) {
+        const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
+        const result = decode(current.run.result_json), state: ExecutionState = result?.investigationExecution;
+        if (state) {
+          const terminal = investigationStop(payload);
+          if (!state.terminal || terminal.reasonCode !== 'INVESTIGATION_RUNTIME_PARTIAL') state.terminal = terminal;
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
       }

@@ -319,6 +319,47 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
   const completionCommand=()=>({investigationId:inv.id,requestId:binding.requestId,
     job:{id:binding.jobId,type:'investigation.execute',payload:{investigationId:inv.id,requestId:binding.requestId},attempts:1,maxAttempts:5,fencingToken:binding.fencingToken},
     context:{workerId:binding.workerId,fencingToken:binding.fencingToken,signal:new AbortController().signal}});
+  it.each(['normal', 'crash-after-tool-receipt'])('preserves the fatal-tool window error and evidence without another send: %s', async mode => {
+    let calls = 0;
+    const provider: LLMProvider = { getDefaultModel: () => 'controlled-regression', chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
+      chat: async () => { calls++; const first = calls === 1; return { content: null, finishReason: 'tool_calls',
+        toolCalls: [{ id: first ? 'summary' : 'alerts', name: first ? 'get_instance_summary' : 'list_active_alerts',
+          arguments: first ? { instance_id: 101 } : { since: new Date(Date.now() - 3_606_000).toISOString(), limit: 20 } }],
+        hasToolCalls: true, shouldExecuteTools: true, usage: { prompt_tokens: 20, completion_tokens: 10 } }; } };
+    const tools = new ToolRegistry();
+    for (const name of ['get_instance_summary', 'list_active_alerts']) tools.register({ name, description: 'Controlled read',
+      parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false,
+      execute: async () => ({ success: true, data: { observations: [] } }) });
+    const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
+      toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
+    if (mode === 'crash-after-tool-receipt') {
+      const control = new AbortController(), persist = (executor as any).persistCheckpoint.bind(executor);
+      (executor as any).persistCheckpoint = async (...args: any[]) => {
+        await persist(...args);
+        if (args[2].phase === 'tools_completed' && args[2].completedToolResults?.some((t: any) => String(t.content).startsWith('Error:'))) {
+          control.abort(new Error('CONTROLLED_PROCESS_EXIT')); throw new Error('CONTROLLED_PROCESS_EXIT');
+        }
+      };
+      const command = completionCommand(); command.context.signal = control.signal;
+      await expect(executor.execute(command)).rejects.toThrow('CONTROLLED_PROCESS_EXIT');
+      (executor as any).persistCheckpoint = persist;
+      await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+      const recovered = await new MysqlWorkflowStore(() => pool as never).claim('t05-fatal-recovery', 60, { types: ['investigation.execute'], exclude: false });
+      binding = { ...binding, workerId: 't05-fatal-recovery', fencingToken: recovered!.fencingToken };
+    }
+    const terminal = await executor.execute(completionCommand());
+    expect(terminal.state).toBe('partial'); expect(terminal.error).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT' });
+    const saved = (await results.list(owner, inv.id)).items[0].result;
+    expect(saved.execution).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' });
+    expect(saved.facts).toHaveLength(2); expect(saved.summary).toContain('时间范围');
+    expect(saved.facts.map(f => f.statement).join()).toContain('0 条观测');
+    expect(saved.provenance.modelVersion).toBe('controlled-regression');
+    expect(saved.provenance.promptVersion).toMatch(/^ops@1\/prompt:1\/sha256:[a-f0-9]{64}$/);
+    expect(saved.provenance.inputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(saved.rootCauseVerification.status).toBe('unverified'); expect(saved.problemStatus).toBe('unconfirmed');
+    await executor.execute(completionCommand()); expect(calls).toBe(2);
+    expect((await results.list(owner, inv.id)).items).toHaveLength(1);
+  });
   it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {
     const {executor,counts}=completionFixture();
     const terminal=await executor.execute({investigationId:inv.id,requestId:binding.requestId,
@@ -334,7 +375,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     const afterObservation=await rows('SELECT event_json FROM investigation_stream_events WHERE investigation_id=? ORDER BY sequence',[inv.id]);
     expect(afterObservation.find(r=>r.event_json.type==='result.persisted')!.event_json.sequence, 'Result must be durable before publishing terminal').toBeLessThan(afterObservation.find(r=>r.event_json.type==='run.terminal')!.event_json.sequence);
     const summary=(await results.list(owner,inv.id)).items[0];expect(summary.result.rootCauseVerification).toEqual({status:'unverified'});
-    expect(summary.result.provenance).toMatchObject({runtimeRunId:terminal.id,usageStatus:'available',modelVersion:'unavailable'});
+    expect(summary.result.provenance).toMatchObject({runtimeRunId:terminal.id,usageStatus:'available',modelVersion:'fixture'});
     const restart=await new InvestigationStreamStore(()=>pool,authorization).snapshot(owner,inv.id);
     expect(restart.projectionHash).toBe(snapshot.projectionHash);expect(restart.results).toEqual(snapshot.results);
   });

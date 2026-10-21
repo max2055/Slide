@@ -5,6 +5,7 @@ import { Value } from '@sinclair/typebox/value';
 import { evidenceHash, redactEvidence } from '../analysis/analysis-evidence.js';
 import { InvestigationResultSchema, validateInvestigationResult, readInvestigationResult, type InvestigationResult } from './contracts.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
+import { executionSummary } from './execution-summary.js';
 import { InvestigationObservationDatabase, appendObservation, observationRows, decode,
   invalidObservation, absentObservation, type ResultBinding } from './observation-db.js';
 
@@ -89,14 +90,10 @@ export class InvestigationResultStore extends InvestigationObservationDatabase {
     const subject = snapshot.context?.subject ?? (primary ? { kind: 'resource', resource: { type: primary.type, id: primary.id } } : null);
     if (!subject) throw invalidObservation();
     const [latest] = await observationRows(c, 'SELECT COALESCE(MAX(version), 0) AS version FROM investigation_results WHERE investigation_id = ?', [investigation.id]);
-    const execution = decode(run.result_json)?.investigationExecution;
-    await this.putOnConnection(c, actor, investigation, binding, source, Number(latest.version), {
-      schemaVersion: 2, subject, summary: `执行状态：${run.state}；根因与业务恢复尚未验证。`,
-      facts: [], hypotheses: [], claims: [], rootCauseVerification: { status: 'unverified' },
-      unresolvedQuestions: ['工具事实与结果引用仅表示关联；需要独立证据确认根因和恢复。'], recommendations: [], problemStatus: 'unconfirmed',
-      provenance: { modelVersion: 'unavailable', promptVersion: 'unavailable', toolVersions: {}, runtimeRunId: run.id,
-        usageStatus: execution && !execution.usageUnknown ? 'available' : 'unavailable' }, createdAt: new Date(run.finished_at).toISOString(),
-    });
+    const evidence = await observationRows(c, `SELECT id, metadata_json, expires_at, expired_at FROM investigation_evidence
+      WHERE investigation_id = ? AND request_id = ? AND run_id = ? ORDER BY id LIMIT 100`,
+    [binding.investigationId, binding.requestId, binding.runId]);
+    await this.putOnConnection(c, actor, investigation, binding, source, Number(latest.version), executionSummary(run, subject, evidence));
   }
   private view(row: any): VersionedInvestigationResult {
     return { id: row.id, investigationId: row.investigation_id, requestId: row.request_id, runId: row.run_id,

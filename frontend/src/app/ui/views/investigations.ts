@@ -3,7 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
 import type { DirectGatewayClient } from '../direct-gateway.ts';
 import { InvestigationsController } from '../controllers/investigations.ts';
-import { renderInvestigationDetail } from './investigation-detail.ts';
+import { renderInvestigationDetail, lifecycleLabels } from './investigation-detail.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { icons } from '../../../icons.ts';
 import { hasSlidePermission } from '../app-settings.ts';
@@ -165,6 +165,9 @@ export class InvestigationsPage extends LitElement {
       investigations-page dd { margin:var(--space-xs) 0; }
       investigations-page p, investigations-page .investigation-messages { overflow-wrap:anywhere; }
       investigations-page .investigation-messages { min-width:0; }
+      investigations-page .investigation-result-summary { white-space:pre-wrap; line-height:1.7; }
+      investigations-page details summary { cursor:pointer; color:var(--accent); padding:var(--space-sm) 0; }
+      investigations-page details dd { overflow-wrap:anywhere; }
       investigations-page .investigation-messages .chat-group { max-width:100%; }
       investigations-page .investigation-messages pre { max-width:100%; overflow:auto; }
       investigations-page .evidence-toggle { display:none; }
@@ -200,7 +203,7 @@ export class InvestigationsPage extends LitElement {
         ${[['调查与对话', '临时交流可进入对话；需要保留过程与证据时，创建调查。'], ['不会扩大资源权限', '仅显示当前可读取的资源，提交时仍需核验当前授权与操作权限。'], ['没有证据，不代表正常', '缺失、失效和未知结果会单独提示。']].map(([title, text]) => html`<div class="start-note"><h3>${title}</h3><p>${text}</p></div>`)}
       </app-card></aside></div>` : html`<div class="workspace">
         <aside aria-label="调查导航"><app-card><span slot="header">调查列表</span>
-          <div class="investigation-list">${c.list.items.map(row => html`<button class="btn" aria-current=${row.id === c.detail?.id ? 'true' : 'false'} @click=${() => void this.openInvestigation(row.id)}>${row.title}<br><span class="muted">${row.profileId} · ${row.lifecycle}</span></button>`)}</div>
+          <div class="investigation-list">${c.list.items.map(row => html`<button class="btn" aria-current=${row.id === c.detail?.id ? 'true' : 'false'} @click=${() => void this.openInvestigation(row.id)}>${row.title}<br><span class="muted">${row.profileId === 'system' ? '平台调查' : '资源调查'} · ${lifecycleLabels[row.lifecycle]}</span></button>`)}</div>
           ${c.listLoaded && !c.loading && !c.listError && !c.list.items.length ? html`<app-empty-state title="暂无匹配调查" description="更换名称、状态或资源筛选；也可清除筛选查看全部调查。"></app-empty-state>` : nothing}
           ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void c.loadList(undefined, true)}>加载更多调查</button>` : nothing}
         </app-card></aside>
