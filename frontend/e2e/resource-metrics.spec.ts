@@ -26,6 +26,34 @@ for (const width of [375, 768, 1440, 1920]) for (const theme of ['light', 'dark'
     const detailButton = activeLayout.getByRole('button', { name: '详情', exact: true });
     await expect(detailButton).toBeVisible();
     if (mobile) {
+      // A user-selected accent can have low contrast on dark surfaces. Check the
+      // actual keyboard indicator rather than relying on axe's contrast scan.
+      await page.evaluate(() => document.documentElement.style.setProperty('--accent', '#265f99'));
+      const checkbox = activeLayout.getByRole('checkbox');
+      for (let i = 0; i < 30 && !(await checkbox.evaluate(el => el.matches(':focus-visible'))); i++) await page.keyboard.press('Tab');
+      const focus = await checkbox.evaluate(el => {
+        const style = getComputedStyle(el);
+        let ancestor: Element | null = el.parentElement, background = '';
+        while (ancestor) {
+          const color = getComputedStyle(ancestor).backgroundColor;
+          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') { background = color; break; }
+          ancestor = ancestor.assignedSlot ?? ancestor.parentElement ?? (ancestor.getRootNode() as ShadowRoot).host;
+        }
+        const luminance = (color: string) => {
+          const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(value => {
+            const channel = Number(value) / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        const a = luminance(style.outlineColor), b = luminance(background);
+        return { visible: el.matches(':focus-visible'), width: parseFloat(style.outlineWidth), contrast: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+      });
+      expect(focus.visible).toBe(true);
+      expect(focus.width).toBeGreaterThanOrEqual(2);
+      expect(focus.contrast).toBeGreaterThanOrEqual(3);
+    }
+    if (mobile) {
       await expect(activeLayout.getByText(/^(当前观测健康 \/ 连接配置|连接状态|设备状态)$/)).toBeVisible();
       await expect(activeLayout.getByText('采集状态 / 最近成功时间', { exact: true })).toBeVisible();
       await expect(activeLayout.getByText('当前采集状态暂不可用', { exact: true })).toBeVisible();
