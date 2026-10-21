@@ -18,6 +18,11 @@ export interface PolicyTransaction {
 export interface PolicyStore { transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> }
 const decode = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
 
+// SQL already serializes all policy transactions on one row. Admit waiters
+// before checkout so they cannot consume the connections the lock holder needs
+// for inventory/authorization reads. Share admission across stores using a pool.
+const admission = new WeakMap<Pool, { tail: Promise<void>; waiting: number }>();
+
 class MysqlTransaction implements PolicyTransaction {
   constructor(private readonly connection: PoolConnection) {}
   async groups(): Promise<Group[]> {
@@ -70,16 +75,31 @@ export class MysqlPolicyStore implements PolicyStore {
   constructor(private readonly provider: () => Pool | null = () => dbConnection.getPool()) {}
   async transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> {
     const pool = this.provider(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
-    const connection = await pool.getConnection();
+    const queue = admission.get(pool) ?? { tail: Promise.resolve(), waiting: 0 };
+    rule(queue.waiting < 100, 'POLICY_STORE_UNAVAILABLE', 503);
+    const previous = queue.tail;
+    let release!: () => void;
+    const turn = new Promise<void>(resolve => { release = resolve; });
+    queue.tail = turn;
+    queue.waiting++;
+    admission.set(pool, queue);
+    await previous;
+    queue.waiting--;
     try {
-      await connection.beginTransaction();
-      const [lock] = await connection.execute<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
-      rule(lock.length === 1, 'POLICY_STORE_UNAVAILABLE', 503);
-      const result = await fn(new MysqlTransaction(connection));
-      await connection.commit();
-      return result;
-    } catch (error) { await connection.rollback().catch(() => undefined); throw error; }
-    finally { connection.release(); }
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [lock] = await connection.execute<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
+        rule(lock.length === 1, 'POLICY_STORE_UNAVAILABLE', 503);
+        const result = await fn(new MysqlTransaction(connection));
+        await connection.commit();
+        return result;
+      } catch (error) { await connection.rollback().catch(() => undefined); throw error; }
+      finally { connection.release(); }
+    } finally {
+      release();
+      if (queue.tail === turn) admission.delete(pool);
+    }
   }
 
   /** Internal MAX-70 integration port. No HTTP route. Caller must authenticate/fence the worker. */
