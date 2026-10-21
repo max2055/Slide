@@ -389,6 +389,19 @@
    Navigation Sidebar
    =========================================== */
 
+:where(dialog).shell-nav {
+  /* Reset native dialog defaults for the mobile navigation only. */
+  position: static;
+  margin: 0;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+
 .shell-nav {
   grid-area: nav;
   display: flex;
@@ -396,10 +409,6 @@
   overflow: hidden;
   border-right: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
   transition: width var(--shell-focus-duration) var(--shell-focus-ease);
-}
-
-.shell-nav-backdrop {
-  display: none;
 }
 
 .sidebar {
@@ -1303,21 +1312,23 @@
     pointer-events: auto;
   }
 
-  .shell-nav-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-dropdown);
-    border: 0;
+  .shell-nav::backdrop {
     background: color-mix(in srgb, black 52%, transparent);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--shell-focus-duration) var(--shell-focus-ease);
   }
 
-  .shell--nav-drawer-open .shell-nav-backdrop {
-    opacity: 1;
-    pointer-events: auto;
+  .shell-nav:modal {
+    height: 100dvh;
+    min-height: 0;
+    overscroll-behavior: contain;
+  }
+
+  :root[data-sidebar-position="right"] .shell-nav {
+    left: auto;
+    right: 0;
+  }
+
+  :root[data-sidebar-position="right"] .shell:not(.shell--nav-drawer-open):not(.shell--nav-collapsed) .shell-nav {
+    transform: translateX(100%);
   }
 
   /* Show the hamburger toggle at the same breakpoint where the drawer takes over. */
@@ -1325,8 +1336,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
     border-radius: var(--radius-full);
@@ -1363,6 +1374,13 @@
 
   .sidebar-shell__header .nav-collapse-toggle {
     display: none;
+  }
+
+  .shell--nav-drawer-open .sidebar-shell__header .nav-collapse-toggle {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
   }
 
   .shell--nav-collapsed:not(.shell--nav-drawer-open) .sidebar-shell__header {
@@ -1509,8 +1527,8 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
     border-radius: var(--radius-full);

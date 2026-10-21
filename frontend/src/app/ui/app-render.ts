@@ -1,5 +1,6 @@
 import { dismissChatRecoveryNotice } from './chat/recovery-notice.ts';
-import { html, nothing } from "lit";
+import { nothing } from "lit";
+import { html, literal } from "lit/static-html.js";
 import { readCachedPermissions, renderPermissionsError } from "./permissions.ts";
 import {
   buildAgentMainSessionKey,
@@ -233,6 +234,7 @@ export function renderApp(state: AppViewState) {
   const chatFocus = isChat && (state.settings.chatFocusMode || state.onboarding);
   const navDrawerOpen = state.navDrawerOpen && !chatFocus && !state.onboarding;
   const navCollapsed = state.settings.navCollapsed && !navDrawerOpen;
+  const navTag = window.matchMedia?.('(max-width: 1100px)').matches ? literal`dialog` : literal`div`;
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
   const showToolCalls = state.onboarding ? true : state.settings.chatShowToolCalls;
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
@@ -346,14 +348,6 @@ export function renderApp(state: AppViewState) {
         ? "shell--nav-drawer-open"
         : ""} ${state.onboarding ? "shell--onboarding" : ""}"
     >
-      <button
-        type="button"
-        class="shell-nav-backdrop"
-        aria-label="${t("nav.collapse")}"
-        @click=${() => {
-          state.navDrawerOpen = false;
-        }}
-      ></button>
       <header class="topbar">
         <div class="topnav-shell">
           <button
@@ -365,6 +359,8 @@ export function renderApp(state: AppViewState) {
             title="${navDrawerOpen ? t("nav.collapse") : t("nav.expand")}"
             aria-label="${navDrawerOpen ? t("nav.collapse") : t("nav.expand")}"
             aria-expanded=${navDrawerOpen}
+            aria-controls="shell-navigation"
+            aria-haspopup="dialog"
           >
             <span class="nav-collapse-toggle__icon" aria-hidden="true">${icons['menu']}</span>
           </button>
@@ -412,7 +408,22 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
       </header>
-      <div class="shell-nav">
+      <${navTag}
+        id="shell-navigation"
+        class="shell-nav"
+        aria-label=${t("nav.control")}
+        @cancel=${(event: Event) => {
+          event.preventDefault();
+          state.navDrawerOpen = false;
+        }}
+        @click=${(event: MouseEvent) => {
+          // Native ::backdrop clicks target the dialog; only clicks outside its box close it.
+          const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+          if (event.target === event.currentTarget &&
+              (event.clientX < rect.left || event.clientX > rect.right ||
+               event.clientY < rect.top || event.clientY > rect.bottom)) state.navDrawerOpen = false;
+        }}
+      >
         <aside class="sidebar ${navCollapsed ? "sidebar--collapsed" : ""}">
           <div class="sidebar-shell">
             <div class="sidebar-shell__header">
@@ -434,11 +445,15 @@ export function renderApp(state: AppViewState) {
               <button
                 type="button"
                 class="nav-collapse-toggle"
-                @click=${() =>
-                  state.applySettings({
+                @click=${() => {
+                  if (navDrawerOpen) state.navDrawerOpen = false;
+                  else state.applySettings({
                     ...state.settings,
                     navCollapsed: !state.settings.navCollapsed,
-                  })}
+                  });
+                }}
+                aria-controls="shell-navigation"
+                aria-expanded=${!navCollapsed}
                 title="${navCollapsed ? t("nav.expand") : t("nav.collapse")}"
                 aria-label="${navCollapsed ? t("nav.expand") : t("nav.collapse")}"
               >
@@ -498,7 +513,7 @@ export function renderApp(state: AppViewState) {
             </div>
           </div>
         </aside>
-      </div>
+      </${navTag}>
       <main class="content ${isChat ? "content--chat" : ""}">
         ${renderPermissionsError(state)}
         ${state.updateAvailable &&
