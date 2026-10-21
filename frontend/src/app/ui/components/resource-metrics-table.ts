@@ -121,6 +121,8 @@ export class ResourceMetricsTable extends LitElement {
   };
   private showFullValue(event: Event) {
     const source = (event.target as Element).closest<HTMLElement>('.cell-value, .resource-name');
+    const focusedSource = this.shadowRoot?.activeElement?.closest('.cell-value, .resource-name');
+    if (event.type === 'mouseover' && focusedSource && focusedSource !== source) return;
     const value = source?.querySelector<HTMLElement>('.full-value');
     if (!source || !value || this.fullValue === value) return;
     this.closeFullValue();
