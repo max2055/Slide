@@ -102,7 +102,12 @@ export class MetricConfiguration extends LitElement {
     p { overflow-wrap:anywhere; } .error { color:var(--danger); }
   `];
   override willUpdate(changes: Map<string, unknown>) {
-    if (changes.has('connectionPending') && this.connectionPending) this.invalidate();
+    if (changes.has('connectionPending') && this.connectionPending) {
+      // Connection edits invalidate checks, but do not create a collection draft.
+      const dirty = this.dirty;
+      this.invalidate();
+      this.dirty = dirty;
+    }
     if (changes.has('resourceId') || changes.has('resourceType')) void this.load();
   }
   override disconnectedCallback() { this.stopPolling(); clearTimeout(this.groupSearchTimer); this.groupSearchVersion++; this.generation++; window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('slide-navigate', this.navigate, true); window.removeEventListener('slide-permissions-loaded', this.accessChanged); window.removeEventListener('slide-session-expired', this.accessChanged); super.disconnectedCallback(); }
