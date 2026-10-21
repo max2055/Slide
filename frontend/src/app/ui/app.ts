@@ -18,6 +18,7 @@ import {
 } from "./app-lifecycle.ts";
 import { readCachedPermissions } from "./permissions.ts";
 import { renderApp } from "./app-render.ts";
+import { MobileNavigationController } from "./mobile-navigation.ts";
 import { switchChatSession } from "./app-render.helpers.ts";
 import {
   exportLogs as exportLogsInternal,
@@ -174,6 +175,7 @@ export class SlideApp extends LitElement {
   @state() chatAttachments: ChatAttachment[] = [];
   @state() chatManualRefreshInFlight = false;
   @state() navDrawerOpen = false;
+  private mobileNavigation = new MobileNavigationController(this);
 
   onSlashAction?: (action: string) => void;
 
