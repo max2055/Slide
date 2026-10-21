@@ -102,6 +102,15 @@ export class InstancesPage extends LitElement {
       padding: 0;
     }
 
+    @media (max-width: 700px) {
+      .resource-toolbar-meta {
+        flex-wrap: wrap;
+        gap: var(--space-xs) var(--space-md);
+        padding-block: var(--space-sm);
+      }
+      #instance-search-help { flex-basis: 100%; order: 1; }
+    }
+
     /* 主卡片 */
     .card {
       background: var(--card);
@@ -509,6 +518,8 @@ export class InstancesPage extends LitElement {
   @state() private testStatus: "idle" | "testing" | "success" | "error" = "idle";
   @state() private testMessage = "";
   @state() private isSubmitting = false;
+  @state() private formErrors: Partial<Record<keyof InstanceFormData, string>> = {};
+  @state() private saveError = "";
   @state() private instanceHosts: InstanceHostMapping[] | null = [];
   @state() private hostRelationLoading = false;
   @state() private hostRelationError: string | null = null;
@@ -664,6 +675,7 @@ export class InstancesPage extends LitElement {
   private resetFilters() {
     this.searchQuery = "";
     this.filter = "all";
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLInputElement>('.search-input')?.focus());
   }
 
   override render() {
@@ -687,7 +699,10 @@ export class InstancesPage extends LitElement {
               <span class="search-icon"><span style="width:14px;height:14px;display:flex;">${icons['search']}</span></span>
               <input
                 class="search-input"
-                placeholder="搜索名称、主机、类型、版本、状态（空格组合）"
+                type="search"
+                aria-label="搜索数据库实例"
+                aria-describedby="instance-search-help"
+                placeholder="搜索数据库实例"
                 name="search-instances"
                 autocomplete="off"
                 .value=${this.searchQuery}
@@ -728,6 +743,7 @@ export class InstancesPage extends LitElement {
 
           <div class="resource-toolbar-meta" aria-live="polite">
             <span class="resource-result-count">共 ${filtered.length} 个数据库实例</span>
+            <span id="instance-search-help">支持名称、主机、类型、版本、状态；空格组合搜索</span>
             ${this.activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>`
               : nothing}
@@ -802,6 +818,8 @@ export class InstancesPage extends LitElement {
     };
     this.testStatus = "idle";
     this.testMessage = "";
+    this.formErrors = {};
+    this.saveError = "";
     this.instanceHosts = [];
     this.hostRelationLoading = false;
     this.hostRelationError = null;
@@ -829,6 +847,8 @@ export class InstancesPage extends LitElement {
     };
     this.testStatus = "idle";
     this.testMessage = "";
+    this.formErrors = {};
+    this.saveError = "";
     this.instanceHosts = this.canViewHostRelations ? null : [];
     this.hostRelationLoading = this.canViewHostRelations;
     this.hostRelationError = null;
@@ -990,18 +1010,24 @@ export class InstancesPage extends LitElement {
     this.testingInstance = null;
     this.testStatus = "idle";
     this.testMessage = "";
+    this.formErrors = {};
+    this.saveError = "";
     this.instanceHosts = [];
     this.hostRelationLoading = false;
     this.hostRelationError = null;
     this.pendingCreatedInstanceId = null;
   }
 
-  private _confirmEditorLeave(action: () => void) {
+  private _confirmEditorLeave<T>(action: () => T): T | undefined {
     const section = this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section');
-    // The confirmation belongs to the collection editor, whose panel must be
-    // visible for its dialog and focused controls to be accessible.
-    if (section) this.editorTab = 'collection';
-    if (section) section.confirmDiscard(action); else action();
+    let proceeded = false;
+    let result: T | undefined;
+    const proceed = () => { proceeded = true; result = action(); };
+    if (section) section.confirmDiscard(proceed); else proceed();
+    // A clean collection editor runs the action immediately. Reveal its panel
+    // only when an actual unsaved collection draft needs confirmation.
+    if (!proceeded) this.editorTab = 'collection';
+    return result;
   }
   private _closeDialogs() {
     if (this.isSubmitting) return;
@@ -1027,8 +1053,24 @@ export class InstancesPage extends LitElement {
     table?.renderRoot.querySelector<HTMLButtonElement>(`button[data-resource-edit-id="${id}"]`)?.focus();
   }
 
-  private async _handleSubmit(isEdit: boolean, configureCollection = false) {
+  private async _handleSubmit(isEdit: boolean, configureCollection = false, collectionConfirmed = false) {
     if (this.isSubmitting) return;
+
+    this.formErrors = this.validateForm();
+    this.saveError = "";
+    const firstError = Object.keys(this.formErrors).find(field => this.formErrors[field as keyof InstanceFormData]);
+    if (firstError) {
+      this.editorTab = 'basic';
+      await this.updateComplete;
+      const control = this.renderRoot.querySelector<HTMLInputElement>(`[name="${firstError}"]`);
+      await control?.closest<LitElement>('app-form-field')?.updateComplete;
+      control?.focus();
+      return;
+    }
+    if (!collectionConfirmed) {
+      await this._confirmEditorLeave(() => this._handleSubmit(isEdit, configureCollection, true));
+      return;
+    }
 
     const canManageHostRelations = this.canManageHostRelations;
     if (canManageHostRelations && (this.hostRelationLoading || this.instanceHosts === null)) {
@@ -1040,12 +1082,6 @@ export class InstancesPage extends LitElement {
     const instanceHosts = (this.instanceHosts ?? []).map((host) => ({ ...host }));
     const editingInstanceId = this.editingInstance?.id ?? null;
     const pendingCreatedInstanceId = this.pendingCreatedInstanceId;
-
-    // Validate
-    if (!formData.name || !formData.host || !formData.username) {
-      showToast("Please fill in: name, host, username", "warning");
-      return;
-    }
 
     this.isSubmitting = true;
 
@@ -1106,7 +1142,9 @@ export class InstancesPage extends LitElement {
         this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
       }
     } catch (err: any) {
-      showToast(`Update failed: ${err.message}`, "error");
+      this.editorTab = 'basic';
+      this.saveError = `保存失败：${err instanceof Error ? err.message : '请稍后重试'}`;
+      showToast(this.saveError, "error");
     } finally {
       this.isSubmitting = false;
     }
@@ -1166,9 +1204,20 @@ export class InstancesPage extends LitElement {
     }
   }
 
+  private validateForm(): Partial<Record<keyof InstanceFormData, string>> {
+    const errors: Partial<Record<keyof InstanceFormData, string>> = {};
+    if (!this.formData.name.trim()) errors.name = '请输入实例名称';
+    if (!Number.isInteger(this.formData.port) || this.formData.port < 1 || this.formData.port > 65535) errors.port = '请输入 1～65535 之间的整数端口';
+    if (!this.formData.host.trim()) errors.host = '请输入主机地址';
+    if (!this.formData.username.trim()) errors.username = '请输入用户名';
+    return errors;
+  }
+
   private _updateForm(field: keyof InstanceFormData, value: string | number) {
     this.connectionPending = true;
     this.formData = { ...this.formData, [field]: value };
+    if (this.formErrors[field]) this.formErrors = { ...this.formErrors, [field]: this.validateForm()[field] };
+    this.saveError = "";
   }
 
   private _renderAddDialog() {
@@ -1182,18 +1231,18 @@ export class InstancesPage extends LitElement {
   }
 
   private _renderFormDialog(title: string, isEdit: boolean) {
-    const baseFieldsLocked = this.pendingCreatedInstanceId !== null;
+    const baseFieldsLocked = this.pendingCreatedInstanceId !== null || this.isSubmitting;
     const canViewHostRelations = this.canViewHostRelations;
     const canManageHostRelations = this.canManageHostRelations;
     const relationUnavailable = canManageHostRelations
       && (this.hostRelationLoading || this.instanceHosts === null);
     return html`
-      <section aria-label="资源编辑" class="resource-editor">
+      <section aria-label="资源编辑" class="resource-editor" aria-busy=${String(this.isSubmitting)}>
         <style>
           .resource-editor{max-width:1360px;margin:auto}.resource-editor [hidden]{display:none!important}
           .resource-editor h1{font-size:26px;color:var(--text-strong);margin:var(--space-lg) 0 var(--space-sm)}
           .resource-editor .editor-head{display:flex;justify-content:space-between;gap:var(--space-lg);align-items:center;margin-bottom:var(--space-xl)}
-          .resource-editor .editor-head p{margin:0;color:var(--muted);font-size:12px}
+          .resource-editor .editor-head p{overflow-wrap:anywhere;margin:0;color:var(--muted);font-size:12px}
           .resource-editor .editor-tabs{display:flex;gap:28px;border-bottom:1px solid var(--border);margin-bottom:var(--space-xl)}
           .resource-editor .editor-tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:0 0 13px;font:inherit;cursor:pointer}
           .resource-editor .editor-tabs button[aria-selected=true]{color:var(--accent-text);border-color:var(--accent);font-weight:600}
@@ -1210,8 +1259,8 @@ export class InstancesPage extends LitElement {
         <app-card><h2 slot="header">连接与识别</h2><div class="instance-form">
 
         <div class="form-row">
-          <app-form-field label="实例名称" required .inline=${true}>
-            <input class="form-input" type="text" .value=${this.formData.name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
+          <app-form-field .error=${this.formErrors.name ?? ""} label="实例名称" required .inline=${true}>
+            <input name="name" class="form-input" type="text" .value=${this.formData.name} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("name", e.target.value)} placeholder="如：生产主库" />
           </app-form-field>
           <app-form-field label="环境" .inline=${true}>
             <select class="form-select" .value=${this.formData.environment} .disabled=${baseFieldsLocked} @change=${(e: any) => this._updateForm("environment", e.target.value)}>
@@ -1236,20 +1285,20 @@ export class InstancesPage extends LitElement {
               <option value="dameng">达梦</option>
             </select>
           </app-form-field>
-          <app-form-field label="端口" .inline=${true}>
-            <input class="form-input" type="number" .value=${this.formData.port} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("port", parseInt(e.target.value) || 0)} />
+          <app-form-field .error=${this.formErrors.port ?? ""} label="端口" .inline=${true}>
+            <input name="port" class="form-input" type="number" .value=${this.formData.port} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("port", e.target.valueAsNumber)} />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="主机地址" required .inline=${true}>
-            <input class="form-input" type="text" .value=${this.formData.host} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
+          <app-form-field .error=${this.formErrors.host ?? ""} label="主机地址" required .inline=${true}>
+            <input name="host" class="form-input" type="text" .value=${this.formData.host} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("host", e.target.value)} placeholder="如：localhost 或 192.168.1.100" />
           </app-form-field>
         </div>
 
         <div class="form-row">
-          <app-form-field label="用户名" required .inline=${true}>
-            <input class="form-input" type="text" autocomplete="off" .value=${this.formData.username} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("username", e.target.value)} />
+          <app-form-field .error=${this.formErrors.username ?? ""} label="用户名" required .inline=${true}>
+            <input name="username" class="form-input" type="text" autocomplete="off" .value=${this.formData.username} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("username", e.target.value)} />
           </app-form-field>
           <app-form-field label="密码${isEdit ? ' (留空不修改)' : ''}" .required=${!isEdit} .inline=${true}>
             <input class="form-input" type="password" autocomplete="new-password" .value=${this.formData.password} .disabled=${baseFieldsLocked} @input=${(e: any) => this._updateForm("password", e.target.value)} placeholder=${isEdit ? "留空表示不修改" : ""} />
@@ -1282,7 +1331,9 @@ export class InstancesPage extends LitElement {
 
         ${this.testMessage ? html`<div class="test-result ${this.testStatus}">${this.testStatus === 'success' ? icons['check-circle'] : icons['x-circle']} ${this.testMessage}</div>` : ''}
         </div>
-        <div slot="footer" class="basic-actions">
+        <div slot="footer">
+        ${this.saveError ? html`<p role="alert" style="color:var(--danger);overflow-wrap:anywhere">${this.saveError}。输入已保留，请修正后重试。</p>` : nothing}
+        <div class="basic-actions" aria-busy=${String(this.isSubmitting)}>
           <button class="btn" @click=${this._handleTestConnection} .disabled=${this.testStatus === 'testing' || this.isSubmitting || baseFieldsLocked}>
             ${this.testStatus === 'testing' ? '测试中...' : '测试连接'}
           </button>
@@ -1290,10 +1341,10 @@ export class InstancesPage extends LitElement {
           <button class="btn" .disabled=${this.isSubmitting || relationUnavailable} @click=${() => this._handleSubmit(isEdit, true)}>保存连接并配置采集</button>
           <button
             class="btn-primary"
-            @click=${() => this._confirmEditorLeave(() => void this._handleSubmit(isEdit))}
+            @click=${() => this._handleSubmit(isEdit)}
             .disabled=${this.isSubmitting || relationUnavailable}
           >${this.isSubmitting ? '保存中...' : baseFieldsLocked ? '重试关联' : isEdit ? '保存修改' : '添加实例'}</button>
-        </div>
+        </div></div>
         </app-card></div>
         <div id="resource-edit-panel-collection" role="tabpanel" aria-labelledby="resource-edit-tab-collection" ?hidden=${this.editorTab !== 'collection'}>
           <resource-collection-section mode="edit" resourceType="instance" .resourceId=${isEdit ? this.editingInstance?.id ?? 0 : this.pendingCreatedInstanceId ?? 0} .connectionPending=${this.connectionPending}></resource-collection-section>
@@ -1343,13 +1394,13 @@ export class InstancesPage extends LitElement {
 
     return html`
       <app-dialog .open=${true} size="sm" title="测试连接 - ${this.testingInstance.name}" @app-dialog-close=${this._closeDialogs}>
-        <app-form-field label="主机地址">
+        <app-form-field .error=${this.formErrors.host ?? ""} label="主机地址">
           <div class="form-value">${this.testingInstance.host || '-'}</div>
         </app-form-field>
-        <app-form-field label="端口">
+        <app-form-field .error=${this.formErrors.port ?? ""} label="端口">
           <div class="form-value">${this.testingInstance.port || '-'}</div>
         </app-form-field>
-        <app-form-field label="用户名">
+        <app-form-field .error=${this.formErrors.username ?? ""} label="用户名">
           <div class="form-value">${this.testingInstance.username || '-'}</div>
         </app-form-field>
         ${isConnected
