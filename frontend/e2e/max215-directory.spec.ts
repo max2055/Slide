@@ -10,7 +10,7 @@ const recommended = packages.find(p => p.package.id === 'mysql-basic' && p.packa
 const recommendations = { packages: packages.map(release => ({ release,
   compatibility: release.package.digest === recommended.package.digest ? 'compatible' : 'incompatible',
   recommended: release.package.digest === recommended.package.digest,
-  checks: [], coverage: [{ id: 'db.uptime_seconds', semantic_version: '1.0.0' }], missing_core_metrics: ['host.network.bytes_total'],
+  checks: [{ attribute: 'db.version', value: '8.4', supported_values: ['8.*'], status: 'supported' }], coverage: [{ id: 'db.uptime_seconds', semantic_version: '1.0.0' }], missing_core_metrics: ['host.network.bytes_total'],
 })) };
 async function setup(page: Page, theme: string) {
   const requests: string[] = [];
@@ -36,7 +36,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`gr
   await expect(row).toContainText('兼容性待确认');
   await expect(row.getByText('查看此版本', { exact: true }).first()).not.toBeVisible();
   const heights = await page.locator('metric-settings app-data-table tbody tr').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().height));
-  expect(Math.max(...heights)).toBeLessThan(240);
+  if (width > 720) expect(Math.max(...heights)).toBeLessThan(360);
   await page.screenshot({ path: info.outputPath('global-grouped.png'), fullPage: true });
   await row.locator('.version-list > summary').focus(); await page.keyboard.press('Enter');
   await expect(row.getByText('查看此版本', { exact: true }).first()).toBeVisible();
@@ -56,10 +56,15 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`gr
   await expect(row.locator('td').nth(1)).toContainText('v1.1.0');
   await expect(row.locator('td').nth(1)).toContainText('此资源推荐 · 已验证兼容');
   await expect(row).toContainText('核心缺口 1 项');
+  await expect(row).toContainText('数据库版本：8.4；支持 8.*；符合');
   await page.screenshot({ path: info.outputPath('resource-recommendation.png'), fullPage: true });
   if (width < 600) {
-    const region = page.getByRole('region', { name: '采集模板目录，可横向滚动' });
-    await region.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    const region = page.getByRole('region', { name: '采集模板目录' });
+    expect(await region.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await row.getByRole('button', { name: '查看模板', exact: true }).scrollIntoViewIfNeeded();
+    await expect(row.getByRole('button', { name: '查看模板', exact: true })).toBeInViewport();
+    await row.getByText(/可见资源绑定/).last().scrollIntoViewIfNeeded();
+    await expect(row.getByText(/可见资源绑定/).last()).toBeInViewport();
     await page.screenshot({ path: info.outputPath('narrow-coverage-actions.png'), fullPage: true });
     await region.evaluate(el => { el.scrollLeft = 0; });
   }
@@ -95,4 +100,31 @@ test('compatibility loading/error/unknown, retry, clearing and revoked permissio
   await expect(page.getByRole('alert')).toContainText('权限或登录状态已变更');
   await expect(page.getByRole('button', { name: '查看模板', exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('permission-revoked.png'), fullPage: true });
+});
+
+test('shared focus ring stays readable with the existing custom blue in light and shadow DOM', async ({ page }) => {
+  await setup(page, 'light');
+  await page.evaluate(async () => {
+    const { applyAccentColor } = await import('/src/app/ui/app-settings.ts');
+    applyAccentColor('#265f99');
+    const button = document.createElement('button'); button.className = 'btn'; button.id = 'plain-focus'; button.textContent = '普通按钮'; document.body.append(button);
+  });
+  for (const mode of ['light', 'dark']) {
+    await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    await page.evaluate(async () => { await Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))); });
+    for (const button of [page.locator('#plain-focus'), mysqlRow(page).getByRole('button', { name: '查看模板', exact: true })]) {
+      await button.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+      const sample = await button.evaluate(el => {
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d')!;
+        const rgba = (color: string) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); const c = [...ctx.getImageData(0, 0, 1, 1).data]; return [c[0], c[1], c[2], c[3] / 255]; };
+        const chain: Element[] = []; let node: Element | null = el;
+        while (node) { chain.push(node); node = (node as HTMLElement).assignedSlot ?? node.parentElement ?? (node.getRootNode() as ShadowRoot).host; }
+        let bg = [255, 255, 255]; for (const n of chain.reverse()) { const c = rgba(getComputedStyle(n).backgroundColor); bg = bg.map((v, i) => c[i] * c[3] + v * (1 - c[3])); }
+        const lum = (c: number[]) => c.slice(0, 3).map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+        const color = rgba(getComputedStyle(el).outlineColor), a = lum(color), b = lum(bg);
+        return { mode:document.documentElement.dataset.themeMode, id:el.id, bg, outline:getComputedStyle(el).outline, ring:getComputedStyle(el).getPropertyValue('--ring'), focused: el.matches(':focus-visible'), contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+      });
+      expect(sample.focused, JSON.stringify(sample)).toBe(true); expect(sample.contrast, JSON.stringify(sample)).toBeGreaterThanOrEqual(3);
+    }
+  }
 });

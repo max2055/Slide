@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './metric-settings.js';
+import { collectionStatus } from '../components/metric-test-fixtures.js';
 
 const response = (body: unknown, status = 200) => ({ ok: status === 200, status, json: async () => body });
 const audit = { action: 'binding.publish', revision: 3, at: '2026-10-16T00:00:00Z', configuration: { package: { id: 'mysql-basic' } } };
@@ -73,4 +74,29 @@ it('keeps the server resource visibly selected when entering configuration from 
   expect(el.shadowRoot.querySelector('app-form-field[label="资源类型"] select').value).toBe('server');
   expect(el.shadowRoot.querySelector('select[aria-label="资源"]').value).toBe('7');
   expect(authFetch.mock.calls.every(c => !c[1]?.method || c[1].method === 'GET')).toBe(true);
+});
+
+it('counts immutable pins only in readable resources and keeps partial counts explicit', async () => {
+  mock(); const el = await mount();
+  el.resources = [1, 2, 3].map(id => ({ resource: { type: 'instance', id }, label: `resource-${id}` }));
+  authFetch.mockImplementation(async (url: string) => url.includes('/3/') ? response({}, 403)
+    : response({ ...collectionStatus(), binding: { ...collectionStatus().binding, state: 'bound', package: { digest: url.includes('/1/') ? 'current' : 'old' } } }));
+  await el.loadPackageBindings();
+  expect(el.bindingLabel({ package: { digest: 'current' } })).toBe('可见资源绑定 至少 1 个（统计不完整）');
+  expect(el.bindingLabel({ package: { digest: 'unbound' } })).toContain('至少 0 个');
+  window.dispatchEvent(new Event('slide-session-expired'));
+  expect(el.packageBindings).toEqual([]);
+  expect(el.bindingLabel({ package: { digest: 'current' } })).toContain('统计不完整');
+});
+
+it('does not publish late binding counts after permission invalidation', async () => {
+  mock(); const el = await mount();
+  el.resources = [{ resource: { type: 'instance', id: 1 }, label: 'one' }];
+  let release!: (value: unknown) => void;
+  authFetch.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const pending = el.loadPackageBindings();
+  window.dispatchEvent(new Event('slide-permissions-loaded'));
+  release(response({ binding: { state: 'bound', package: { digest: 'revoked' } } }));
+  await pending;
+  expect(el.packageBindings).toEqual([]); expect(el.bindingsLoading).toBe(false);
 });
