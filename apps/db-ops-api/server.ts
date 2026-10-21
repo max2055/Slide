@@ -174,6 +174,7 @@ import { serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 import { serverDiagnosticService } from './src/server-diagnostic-service.js';
+import sshSessionPool from './src/ssh-session-pool.js';
 import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
 import { registerAgentSecurityRoutes } from './src/security/agent-security-routes.js';
 import { getAgentToolApprovalService } from './src/security/agent-tool-approval-service.js';
@@ -327,6 +328,9 @@ async function start() {
       await recovery.stop();
       await systemComposition?.close();
       await fastify.close();
+      // HTTP drain finishes diagnostic requests before their reusable SSH
+      // sessions are ended; idle keepalive sockets must not outlive the API.
+      sshSessionPool.closeAll();
       await dbConnection.close();
     } finally { clearTimeout(deadline); }
   })();
