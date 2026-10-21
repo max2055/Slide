@@ -102,6 +102,15 @@ export class InstancesPage extends LitElement {
       padding: 0;
     }
 
+    @media (max-width: 700px) {
+      .resource-toolbar-meta {
+        flex-wrap: wrap;
+        gap: var(--space-xs) var(--space-md);
+        padding-block: var(--space-sm);
+      }
+      #instance-search-help { flex-basis: 100%; order: 1; }
+    }
+
     /* 主卡片 */
     .card {
       background: var(--card);
