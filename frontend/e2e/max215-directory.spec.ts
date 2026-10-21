@@ -111,6 +111,7 @@ test('shared focus ring stays readable with the existing custom blue in light an
   });
   for (const mode of ['light', 'dark']) {
     await page.evaluate(mode => { document.documentElement.dataset.themeMode = mode; }, mode);
+    await page.evaluate(async () => { await Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))); });
     for (const button of [page.locator('#plain-focus'), mysqlRow(page).getByRole('button', { name: '查看模板', exact: true })]) {
       await button.focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
       const sample = await button.evaluate(el => {
@@ -121,9 +122,9 @@ test('shared focus ring stays readable with the existing custom blue in light an
         let bg = [255, 255, 255]; for (const n of chain.reverse()) { const c = rgba(getComputedStyle(n).backgroundColor); bg = bg.map((v, i) => c[i] * c[3] + v * (1 - c[3])); }
         const lum = (c: number[]) => c.slice(0, 3).map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
         const color = rgba(getComputedStyle(el).outlineColor), a = lum(color), b = lum(bg);
-        return { focused: el.matches(':focus-visible'), contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+        return { mode:document.documentElement.dataset.themeMode, id:el.id, bg, outline:getComputedStyle(el).outline, ring:getComputedStyle(el).getPropertyValue('--ring'), focused: el.matches(':focus-visible'), contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
       });
-      expect(sample.focused).toBe(true); expect(sample.contrast).toBeGreaterThanOrEqual(3);
+      expect(sample.focused, JSON.stringify(sample)).toBe(true); expect(sample.contrast, JSON.stringify(sample)).toBeGreaterThanOrEqual(3);
     }
   }
 });

@@ -42,6 +42,8 @@ async function settle(page, mode) {
  const toggle=page.locator('.topbar-nav-toggle');
  if(await toggle.getAttribute('aria-expanded')==='true') await toggle.click();
  await pause(500);
+ await page.evaluate(async()=>{const {applyAccentColor}=await import('/src/app/ui/app-settings.ts');applyAccentColor('#265f99');});
+ await pause(200);
 }
 async function shot(page,name) {
  await page.screenshot({path:path.join(out,name+'.png'),animations:'disabled'});
@@ -131,7 +133,7 @@ try {
   }
   await row.locator('.version-list > summary').focus();await page.keyboard.press('Enter');
   const old=row.getByRole('button',{name:'查看 MySQL 基础采集 1.0.0',exact:true});await old.click();
-  await expect(page.getByRole('dialog',{name:'采集模板详情'})).toContainText('v1.0.0');await shot(page,'template-history');await page.keyboard.press('Escape');await expect(old).toBeFocused();
+  await expect(page.locator('app-dialog[title="采集模板详情"]')).toContainText('v1.0.0');await shot(page,'template-history');await page.keyboard.press('Escape');await expect(old).toBeFocused();
  });
  await run('health-consistency',async()=>{
   await page.goto(base+'/instances-db');await expect(page.locator('resource-metrics-table')).toBeVisible();await pause(1000);
