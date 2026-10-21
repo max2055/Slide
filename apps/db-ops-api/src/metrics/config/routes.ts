@@ -2,6 +2,7 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
+import { actorContextService, ActorAuthenticationError } from '../../auth/actor-context.js';
 import { dbConnection } from '../../db-connection.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { PolicyError, RefSchema, refKey, rule } from '../policy/model.js';
@@ -23,7 +24,8 @@ export function createTrialStore(pool: () => Pool, registry: PackageRegistry): T
     return rows.map(r => CollectionAttemptSchema.parse(typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload));
   },
 }; }
-export const metricConfigurationService = new MetricConfigurationService(policyService, registry, createTrialStore(pool, registry), trialAccess, configurationReader(pool));
+export const metricConfigurationService = new MetricConfigurationService(policyService, registry, createTrialStore(pool, registry), trialAccess, configurationReader(pool),
+  actor => actorContextService.revalidateActor(actor, actor.requestId));
 export async function registerMetricConfigurationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
   implementation = metricConfigurationService): Promise<void> {
   for (const operation of ['catalog', 'access', 'attempts', 'trial', 'status', 'recommendations', 'activate', 'migration'] as const) {
@@ -46,6 +48,7 @@ export async function registerMetricConfigurationRoutes(app: FastifyInstance, ve
           if (operation === 'activate') return await implementation.activate(actor, ref, request.body);
           return await implementation.trial(actor, ref, request.body);
         } catch (error) {
+          if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
           if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
           if (error instanceof z.ZodError) return reply.code(400).send({ error: 'POLICY_INPUT_INVALID' });
           if (error instanceof Error && error.message === 'PACKAGE_PIN') return reply.code(400).send({ error: 'POLICY_PACKAGE_PIN' });

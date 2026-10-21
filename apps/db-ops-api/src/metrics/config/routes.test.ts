@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBuiltinRegistry } from '../packages/builtins.js';
 import { PolicyService } from '../policy/service.js';
 import { MemoryPolicyStore, admin, pin, resource, testResources } from '../policy/test-support.js';
@@ -7,6 +7,7 @@ import { MetricConfigurationService } from './service.js';
 import { registerMetricConfigurationRoutes } from './routes.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { AdapterError } from '../packages/adapters.js';
+import { actorContextService, ActorAuthenticationError } from '../../auth/actor-context.js';
 
 describe('configuration HTTP routes', () => {
   let app: ReturnType<typeof Fastify>, actor: ActorContext | undefined, store: MemoryPolicyStore;
@@ -33,6 +34,17 @@ describe('configuration HTTP routes', () => {
     await registerMetricConfigurationRoutes(app, async request => { (request as any).user = actor; }, implementation);
   });
   afterEach(async () => { await app.close(); });
+  it.each(['trial', 'activate'])('production %s reloads session and delegation before accessing configuration', async operation => {
+    const live = Fastify();
+    const reload = vi.spyOn(actorContextService, 'revalidateActor').mockRejectedValue(new ActorAuthenticationError());
+    try {
+      await registerMetricConfigurationRoutes(live, async request => { (request as any).user = admin; });
+      const response = await live.inject({ method: 'POST', url: `${base}/resources/instance/1/${operation}`, payload });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toEqual({ error: 'POLICY_AUTH_REQUIRED' });
+      expect(reload).toHaveBeenCalledWith(admin, admin.requestId);
+    } finally { reload.mockRestore(); await live.close(); }
+  });
   it('lists stable catalog and trial samples without secrets or persistence', async () => {
     const catalog = await app.inject(`${base}/catalog`); expect(catalog.statusCode).toBe(200);
     expect(catalog.json().metrics.some((m: any) => m.category === 'canonical')).toBe(true);
