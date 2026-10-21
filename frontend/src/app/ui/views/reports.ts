@@ -406,7 +406,9 @@ export class ReportsPage extends LitElement {
 
   async refreshReadData() {
     // Re-read the already loaded range without resetting pagination or drafts.
-    const batches = Math.max(1, this.historyBatch);
+    if (this.historyLoadingMore) return;
+    const initialBatch = this.historyBatch;
+    const batches = Math.max(1, initialBatch);
     try {
       const reports: Report[] = [];
       for (let batch = 1; batch <= batches; batch++) {
@@ -416,11 +418,15 @@ export class ReportsPage extends LitElement {
         if (!Array.isArray(data)) throw new Error('报表历史响应无效');
         reports.push(...data);
       }
-      if (!this.isConnected) return;
+      if (!this.isConnected || this.historyBatch !== initialBatch || this.historyLoadingMore) return;
       this.reports = [...new Map(reports.map(report => [report.id, report])).values()];
       this.historyBatch = batches; this.error = null; this.loading = false;
       await this.loadStats();
-    } catch (error) { this.error = error instanceof Error ? error.message : '报表历史加载失败'; }
+    } catch (error) {
+      if (this.isConnected && this.historyBatch === initialBatch && !this.historyLoadingMore) {
+        this.error = error instanceof Error ? error.message : '报表历史加载失败';
+      }
+    }
   }
 
   private async loadReports(append = false) {
