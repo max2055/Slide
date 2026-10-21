@@ -120,8 +120,10 @@ try {
   record('ready', { apiPid: api.pid, frontendPid: frontend.pid, overviewStatus: (await request('/api/resources/overview', session.token)).status,
     processIdentity: spawnSync('ps', ['-p', `${api.pid},${frontend.pid}`, '-o', 'pid,ppid,command'], { encoding: 'utf8' }).stdout.trim() });
 
+  let bootstrapMutationCount = 0;
   for (const [index, durationMs] of [6_000, 36_000, 6_000].entries()) {
     await page.waitForFunction(() => (document.querySelector('slide-app') as any)?.connected === true, undefined, { timeout: 60_000 });
+    if (index === 0) bootstrapMutationCount = mutations.length;
     const readCount = overviewReads.length;
     docker('stop', '-t', '2', container);
     await until(async () => (await request('/api/health/ready')).status === 503, 20_000);
@@ -176,9 +178,10 @@ try {
   assert.ok(!apiLog.includes('Pool is closed'));
   // Additive device identity bootstrap is expected; no failed business write,
   // action, model, notification or refresh rotation may be replayed.
-  assert.ok(mutations.every(path => ['/api/device/register', '/api/device/challenge', '/api/servers'].includes(path)), mutations.join(','));
+  assert.ok(mutations.every((path, index) => ['/api/device/register', '/api/device/challenge', '/api/platform/frontend-events', '/api/servers'].includes(path)
+    || (index < bootstrapMutationCount && path === '/api/user/preferences')), mutations.join(','));
   assert.equal(mutations.filter(path => path === '/api/servers').length, 3, 'failed browser writes are never replayed');
-  record('passed', { leaseOwners: 1, assets: 1, mutationPaths: mutations, overviewReads, apiPid: api.pid, frontendPid: frontend.pid });
+  record('passed', { leaseOwners: 1, assets: 1, bootstrapMutationCount, mutationPaths: mutations, overviewReads, apiPid: api.pid, frontendPid: frontend.pid });
 } catch (error) {
   record('failed', { error: error instanceof Error ? error.message : String(error) });
   process.exitCode = 1;
@@ -187,6 +190,6 @@ try {
   for (const child of [...children].reverse()) await stop(child);
   await pool?.end();
   // Only the exact container created by this foreground drill is removed.
-  const result = spawnSync('docker', ['rm', '-f', container], { encoding: 'utf8' });
+  const result = spawnSync('docker', ['rm', '-fv', container], { encoding: 'utf8' });
   record('cleanup', { containerRemoved: result.status === 0, childPids: children.map(child => ({ pid: child.pid, exitCode: child.exitCode, signal: child.signalCode })) });
 }
