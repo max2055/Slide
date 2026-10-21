@@ -681,17 +681,18 @@ export class InstancesPage extends LitElement {
   override render() {
     if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑资源' : '添加资源', this.showEditDialog);
     if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
+      return html`<header class="resource-page-header"><h1>数据库实例</h1></header><div class="loading">加载中...</div>`;
     }
 
     if (this.error) {
-      return html`<div class="loading" style="color: var(--danger);">${this.error}</div>`;
+      return html`<header class="resource-page-header"><h1>数据库实例</h1></header><div class="loading" role="alert" style="color: var(--danger);">${this.error}</div>`;
     }
 
     const filtered = this.filteredInstances;
 
     return html`
       <div class="page">
+        <header class="resource-page-header"><h1>数据库实例</h1></header>
         <!-- 实例列表卡片 -->
         <app-card .compact=${true}>
           <div class="toolbar resource-toolbar">
@@ -755,7 +756,7 @@ export class InstancesPage extends LitElement {
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><details><summary>更多</summary><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></details></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -1050,7 +1051,7 @@ export class InstancesPage extends LitElement {
     await table?.updateComplete;
     const data = table?.renderRoot.querySelector<LitElement>('app-data-table');
     await data?.updateComplete;
-    table?.renderRoot.querySelector<HTMLButtonElement>(`button[data-resource-edit-id="${id}"]`)?.focus();
+    await table?.focusEditAction(id);
   }
 
   private async _handleSubmit(isEdit: boolean, configureCollection = false, collectionConfirmed = false) {

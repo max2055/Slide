@@ -179,8 +179,9 @@ export class MetricSettings extends LitElement {
     const c = this.catalog;
     return html`<style>${sharedFieldStyles}${MetricSettings.componentStyles.map(s => s.cssText).join('\n')}
       small { display:block;color:var(--muted);overflow-wrap:anywhere; } :focus-visible { outline:2px solid var(--accent); }
-    </style>${this.error ? html`<app-notice role="alert">${this.error}</app-notice>` : nothing}
-    ${['policies', 'audit'].includes(this.view) ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><h2 slot="header">指标目录</h2><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
+      .metric-page-header h1 { margin:0 0 var(--space-sm); font-size:var(--text-xl); color:var(--text-strong); }
+    </style><header class="metric-page-header"><h1>${({ catalog: "指标目录", packages: "指标与采集", policies: "采集策略", audit: "采集审计" } as Record<string, string>)[this.view] ?? "指标与采集"}</h1></header>${this.error ? html`<app-notice role="alert">${this.error}</app-notice>` : nothing}
+    ${['policies', 'audit'].includes(this.view) ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
         <div class="filter-toolbar" role="group" aria-label="指标目录筛选">
         <app-form-field label="搜索名称或标识"><input aria-label="搜索指标" .value=${this.search} @input=${(e: Event) => { this.search = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="指标资源类型" .value=${this.type} @change=${(e: Event) => { this.type = (e.target as HTMLSelectElement).value; }}><option value="" .selected=${!this.type}>全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k} .selected=${this.type === k}>${v}</option>`)}</select></app-form-field>
@@ -231,7 +232,7 @@ export class MetricSettings extends LitElement {
     const filtered = groups.filter(g => (!this.packageType || g.primary.package.resource_type === this.packageType)
       && `${templateName(g.id)} ${g.id} ${g.versions.map(scopeLabel).join(' ')}`.toLowerCase().includes(query));
     const detail = c?.packages.find(p => p.package.digest === this.packageDetail);
-    return html`<h2>指标与采集</h2><p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
+    return html`<p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
       <app-card .compact=${true}><div class="filter-toolbar" role="group" aria-label="采集包筛选">
         <app-form-field label="搜索名称或标识"><input type="search" aria-label="搜索采集包" placeholder="搜索模板名称、引擎" .value=${this.packageSearch} @input=${(e: Event) => { this.packageSearch = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="采集包资源类型" .value=${this.packageType} @change=${(e: Event) => { this.packageType = (e.target as HTMLSelectElement).value; }}><option value="">全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>

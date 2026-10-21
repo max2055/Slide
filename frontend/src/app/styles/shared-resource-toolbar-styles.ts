@@ -2,6 +2,9 @@ import { css } from "lit";
 
 /** Shared layout contract for resource list search, filters, actions, and result feedback. */
 export const sharedResourceToolbarStyles = css`
+  .resource-page-header { margin-bottom:var(--space-sm); }
+  .resource-page-header h1 { margin:0; color:var(--text-strong); font-size:var(--text-xl); line-height:1.3; }
+
   .resource-toolbar {
     display: flex;
     align-items: center;
@@ -188,7 +191,12 @@ export const sharedResourceToolbarStyles = css`
   @media (max-width: 640px) {
     .resource-toolbar {
       padding: var(--space-sm) var(--space-md);
+      gap:var(--space-xs);
     }
+    .resource-toolbar .filter-group { flex-wrap:nowrap; overflow-x:auto; width:100%; padding-bottom:var(--space-xs); }
+    .resource-toolbar .filter-btn { flex:0 0 auto; }
+    .resource-toolbar .toolbar-actions { gap:var(--space-xs); flex-wrap:wrap; }
+    .resource-toolbar .resource-action--add { min-width:0; }
 
     .resource-toolbar .search-box,
     .resource-toolbar .resource-search,
@@ -198,6 +206,9 @@ export const sharedResourceToolbarStyles = css`
       width: 100%;
       max-width: none;
     }
+
+    .resource-toolbar .filter-select,
+    .resource-toolbar .resource-filter { flex:1 1 calc(50% - var(--space-xs)); width:calc(50% - var(--space-xs)); min-width:0; }
 
     .resource-toolbar .toolbar-actions {
       width: 100%;

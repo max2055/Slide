@@ -345,15 +345,14 @@ export class SettingsShell extends LitElement {
   }
 
   private renderMobileNavigation() {
-    const activeItem = settingsItemById(this.activePage);
     const activeGroup = this.visibleGroups.find((group) => group.items.some((item) => item.id === this.activePage));
     return html`
       <div class="mobile-heading">
         <div class="mobile-heading__path">设置 / ${activeGroup?.label ?? ""}</div>
         <div class="mobile-heading__row">
-          <div class="mobile-heading__title">${activeItem?.label ?? "设置"}</div>
+          <label for="settings-page-select" class="mobile-heading__title">设置页面</label>
           <select
-            class="settings-select"
+            id="settings-page-select" class="settings-select"
             aria-label="选择设置页面"
             .value=${this.activePage}
             @change=${(event: Event) => {

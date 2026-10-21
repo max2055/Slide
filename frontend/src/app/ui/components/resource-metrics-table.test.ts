@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
+import { bulkSelection } from './metric-bulk-selection.js';
 import { ResourceMetricsTable } from './resource-metrics-table.js';
 import { collectionState, metricSummary, diskSummary } from './resource-metric-summary.js';
 import { collectionStatus } from './metric-test-fixtures.js';
@@ -8,7 +9,7 @@ import { coverageAvailability } from './metric-api.js';
 const sample = (value: number | null = 0, state = 'available'): any => ({ profile: { columns: [] }, window: { from: '2026-09-20T00:00:00Z', to: '2026-09-20T00:01:00Z' }, metrics: [{ definition: { id: 'db.uptime_seconds', unit: 's' }, state, series: [{ dimensions: {}, buckets: [{ value: value == null ? null : { value }, unit: 's', quality: { status: 'good' }, coverage: 1, freshness: 'fresh' }] }] }] });
 const response = (data: unknown, status = 200) => ({ ok: status === 200, status, json: async () => data });
 const mount = async (count = 1) => { const el = new ResourceMetricsTable(); el.entries = Array.from({ length: count }, (_, i) => ({ id: i + 1, type: i % 2 ? null : 'MySQL', version: '8' })); document.body.append(el); await el.updateComplete; return el as any; };
-afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); sessionStorage.clear(); history.replaceState({}, '', '/'); });
+afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); bulkSelection.clear(); sessionStorage.clear(); history.replaceState({}, '', '/'); });
 it('distinguishes zero from missing and retains stale and partial evidence', () => {
   expect(metricSummary(sample(), 'db.uptime_seconds')).toBe('0 天 0 小时');
   expect(collectionState(sample())).toBe('available');
@@ -75,7 +76,8 @@ it('requests stored latest capacity and renders its own timestamp independently 
   data.metrics.push(size);
   authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? [] : data));
   const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
-  const table = el.shadowRoot.querySelector('app-data-table');
+  el.hiddenColumns = el.hiddenColumns.filter((key: string) => key !== 'database_size'); await el.updateComplete;
+  const table = el.shadowRoot.querySelector('.desktop-resources app-data-table');
   expect(table.columns.some((c: any) => c.key === 'database_size')).toBe(true);
   await table.updateComplete;
   expect(table.textContent).toContain('8.00 KiB · 已过期');
@@ -111,7 +113,7 @@ it('numbers filtered rows continuously across pages and keeps the number column 
   authFetch.mockResolvedValue(response({}, 503));
   const el = await mount(25);
   await vi.waitFor(() => expect(el.pending).toBe(false));
-  let table = el.shadowRoot.querySelector('app-data-table');
+  let table = el.shadowRoot.querySelector('.desktop-resources app-data-table');
   expect(table.rows.map((r: any) => r.row_number)).toEqual(Array.from({length: 20}, (_, i) => i + 1));
   el.page = 2; await el.load(); await el.updateComplete;
   expect(table.rows.map((r: any) => r.row_number)).toEqual([21, 22, 23, 24, 25]);
@@ -129,8 +131,8 @@ it('keeps an actually bound linux-basic object bound when its core columns are n
   authFetch.mockImplementation(async (url: string) => response(url.endsWith('/status') ? status : result));
   const el = await mount(); el.resourceType = 'server'; await el.updateComplete;
   await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
-  const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
-  expect(table.textContent).toContain('已绑定'); expect(table.textContent).toContain('当前模板未覆盖'); expect(table.textContent).not.toContain('未绑定');
+  const table = el.shadowRoot.querySelector('.desktop-resources app-data-table'); await table.updateComplete;
+  expect(el.shadowRoot.querySelector('.resource-details').textContent).toContain('已绑定'); expect(table.textContent).toContain('当前模板未覆盖'); expect(table.textContent).not.toContain('未绑定');
 });
 
 it('marks capacity unsupported only when all providers reject the actual version', () => {
@@ -141,4 +143,51 @@ it('marks capacity unsupported only when all providers reject the actual version
   data.packages[0].compatibility = 'unknown'; expect(coverageAvailability(status, data).coverage[0].state).toBe('not_covered');
   data.packages[0].compatibility = 'compatible'; expect(coverageAvailability(status, data).coverage[0].state).toBe('not_covered');
   expect(status.coverage[0].state).toBe('not_covered');
+});
+
+
+it('keeps identity and actual status in the mobile summary and puts secondary metrics in a disclosure', async () => {
+  authFetch.mockResolvedValue(response({}, 503));
+  const el = await mount();
+  el.columns = [{ key: 'name', label: '实例' }, { key: 'health', label: '当前观测健康' }, { key: 'actions', label: '操作' }];
+  el.entries = [{ id: 1, type: 'MySQL', version: '8', name: '长名称-生产订单数据库', health: '未知 · 连接配置已暂停', actions: '详情' }];
+  await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
+  const summary = el.shadowRoot.querySelector('.resource-summary');
+  expect(summary.querySelector('h2').textContent).toContain('长名称-生产订单数据库');
+  expect(summary.querySelector('.resource-status').textContent).toContain('未知 · 连接配置已暂停');
+  expect(summary.querySelector('.resource-status').textContent).toContain('指标加载失败');
+  expect(summary.querySelector('details').open).toBe(false);
+  const table = el.shadowRoot.querySelector('.desktop-resources app-data-table');
+  expect(table.columns.map((c: any) => c.key)).not.toContain('uptime');
+  expect(table.columns.map((c: any) => c.key)).toContain('collection');
+});
+
+it('expands tools for selections across pages and resource types, then collapses after clearing', async () => {
+  authFetch.mockResolvedValue(response({}, 503));
+  const el = await mount(25); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
+  const tools = () => el.shadowRoot.querySelector('.bulk-tools');
+  expect(tools().textContent).not.toContain('清空选择');
+  expect(tools().textContent).toContain('查看批量任务');
+  (tools().querySelector('button') as HTMLButtonElement).click(); await el.updateComplete;
+  expect(bulkSelection.values()).toHaveLength(20);
+  el.page = 2; await el.load(); await el.updateComplete;
+  bulkSelection.toggle({ type: 'server', id: 1, label: '另一类型' }); await el.updateComplete;
+  expect(tools().textContent).toContain('已选 21 个对象');
+  expect(tools().textContent).toContain('批量绑定采集模板');
+  const clear = [...tools().querySelectorAll('button')].find((b: any) => b.textContent.includes('清空选择')) as HTMLButtonElement;
+  clear.click(); await el.updateComplete;
+  expect(bulkSelection.values()).toHaveLength(0);
+  expect(tools().textContent).not.toContain('批量绑定采集模板');
+});
+
+
+it('upgrades the old automatic all-column default while retaining explicit current column choices', async () => {
+  authFetch.mockResolvedValue(response({}, 503));
+  sessionStorage.setItem('resource-list:instance', JSON.stringify({ page: 1, hiddenColumns: [] }));
+  const legacy = await mount(); await legacy.updateComplete;
+  expect(legacy.hiddenColumns).toContain('uptime');
+  legacy.remove();
+  sessionStorage.setItem('resource-list:instance', JSON.stringify({ page: 1, hiddenColumns: [], densityVersion: 1 }));
+  const current = await mount(); await current.updateComplete;
+  expect(current.hiddenColumns).toEqual([]);
 });
