@@ -1,3 +1,4 @@
+import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-metrics-table.js";
 import type { ResourceMetricsTable } from "../components/resource-metrics-table.js";
@@ -547,11 +548,13 @@ export class InstancesPage extends LitElement {
     super.connectedCallback();
     this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
     window.addEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+    window.addEventListener("slide-session-expired", this.handlePermissionsLoaded);
   }
 
   override disconnectedCallback(): void {
     clearInterval(this.ageTimer);
     window.removeEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
+    window.removeEventListener("slide-session-expired", this.handlePermissionsLoaded);
     super.disconnectedCallback();
   }
 
@@ -578,9 +581,10 @@ export class InstancesPage extends LitElement {
   private renderHealthEvidence(instance: DatabaseInstance) {
     const observedAt = this.currentEvidence(instance)?.observedAt;
     const connection = ({ active: '已启用（可用性需测试）', inactive: '已暂停', paused: '已暂停', disabled: '已停用', pending_credentials: '待补凭据', error: '连接错误' } as Record<string, string>)[instance.status] ?? '未知';
-    return html`${this._renderStatusBadge(this.currentStatus(instance))}
-      <div style="color:var(--muted);font-size:var(--text-xs);overflow-wrap:anywhere;">观测 ${evidenceTime(observedAt)} · ${evidenceTimeState(observedAt)}</div>
-      <div style="color:var(--muted);font-size:var(--text-xs);">连接配置：${connection}</div>`;
+    const age = evidenceTimeState(observedAt);
+    const label = `${this.currentStatus(instance) === 'unknown' ? '未知' : ({ healthy: '健康', warning: '警告', critical: '异常', error: '异常' } as Record<string, string>)[this.currentStatus(instance)]}${age.startsWith('已过期') ? ' · 已过期' : ''}`;
+    const full = `${label}；观测 ${evidenceTime(observedAt)}；${age}；连接配置：${connection}`;
+    return html`<span class="cell-value" tabindex="0" title=${full} aria-label=${full}><span class="truncated">${this._renderStatusBadge(this.currentStatus(instance), label)}</span><span class="full-value" aria-hidden="true">${full}</span></span>`;
   }
 
 
@@ -751,12 +755,12 @@ export class InstancesPage extends LitElement {
           </div>
 
           <resource-metrics-table resourceType="instance" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'type', label: '数据库类型' }, { key: 'version', label: '数据库版本' }, { key: 'address', label: '连接地址' }, { key: 'health', label: '当前观测健康' }, { key: 'actions', label: '操作' }]}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'database_size', label: '数据量', help: '支持范围与统计口径' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
-              name: html`<button class="btn-ghost" @click=${() => this._viewDetail(inst)}>${inst.name}</button>`,
+              name: html`<span class="resource-name"><button class="btn-ghost" title=${inst.name} @click=${() => this._viewDetail(inst)}>${inst.name}</button><span class="full-value" aria-hidden="true">${inst.name}</span></span>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><details><summary>更多</summary><button class="btn-sm" @click=${() => this._testConnection(inst)}>测试</button><button class="btn-sm danger" @click=${() => this._deleteInstance(inst)}>删除</button></details></div>`
+              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:manage") ? "编辑实例" : "需要实例管理权限"} .disabled=${!hasListPermission("instance:manage")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:manage") ? "删除实例" : "需要实例管理权限"} .disabled=${!hasListPermission("instance:manage")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -770,7 +774,7 @@ export class InstancesPage extends LitElement {
     `;
   }
 
-  private _renderStatusBadge(status: string) {
+  private _renderStatusBadge(status: string, label?: string) {
     const statusMap: Record<string, { class: string; label: string }> = {
       healthy: { class: "ok", label: "健康" },
       warning: { class: "warn", label: "警告" },
@@ -780,7 +784,7 @@ export class InstancesPage extends LitElement {
     };
     const s = statusMap[status] || { class: "muted", label: "未知" };
     return html`
-      <app-badge variant="${s.class}">${s.label}</app-badge>
+      <app-badge variant="${s.class}">${label ?? s.label}</app-badge>
     `;
   }
 
@@ -906,28 +910,13 @@ export class InstancesPage extends LitElement {
     this.testPassword = "";
     this.showTestDialog = true;
 
-    // 如果实例已连接（healthy），直接显示状态，不要求输密码
-    if (inst.hasCredential === true && inst.health_status === "healthy") {
-      this.listTestStatus = "success";
-      this.listTestMessage = "连接正常";
-      return;
-    }
-
-    // A stale health value must not bypass credential entry for an instance
-    // whose credential is missing or was rejected by the backend.
-    if (inst.hasCredential !== true) {
-      this.listTestStatus = "idle";
-      this.listTestMessage = "";
-      return;
-    }
-
-    // Non-healthy resources require an explicit connection test.
+    // A stored health result is not a new connection test.
     this.listTestStatus = "idle";
     this.listTestMessage = "";
   }
 
   private async _handleListTestConnection() {
-    if (!this.testingInstance) return;
+    if (!this.testingInstance || this.listTestStatus === "testing") return;
 
     const validationError = validateTestConnectionForm({
       host: this.testingInstance.host,
@@ -960,11 +949,11 @@ export class InstancesPage extends LitElement {
         }),
       });
       const result = await res.json();
-      this.listTestStatus = result.success ? "success" : "error";
+      this.listTestStatus = res.ok && result.success ? "success" : "error";
       this.listTestMessage = normalizeConnectionTestMessage(result.message || result.error);
 
       // 测试成功后自动保存密码并重载连接
-      if (result.success) {
+      if (res.ok && result.success) {
         await this._savePasswordAndReload();
       }
     } catch (err: any) {
@@ -1006,6 +995,7 @@ export class InstancesPage extends LitElement {
     this.showEditDialog = false;
     this.showDeleteDialog = false;
     this.showTestDialog = false;
+    this.listTestStatus = "idle";
     this.editingInstance = null;
     this.deletingInstance = null;
     this.testingInstance = null;
@@ -1031,14 +1021,15 @@ export class InstancesPage extends LitElement {
     return result;
   }
   private _closeDialogs() {
-    if (this.isSubmitting) return;
+    if (this.isSubmitting || this.listTestStatus === "testing") return;
     this._confirmEditorLeave(() => this._finishCloseDialogs());
   }
   private _finishCloseDialogs() {
     const abandonedCreatedInstance = this.pendingCreatedInstanceId !== null;
+    const wasEditor = this.showEditDialog || this.showAddDialog;
     const focusId = this.editorReturnId;
     this._resetDialogs();
-    void this.restoreEditorFocus(focusId);
+    if (wasEditor) void this.restoreEditorFocus(focusId);
     if (abandonedCreatedInstance) {
       showToast("实例已创建但主机关联未保存", "warning");
       void this.loadInstances();

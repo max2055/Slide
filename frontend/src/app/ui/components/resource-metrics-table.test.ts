@@ -99,7 +99,7 @@ it('combines search terms across metadata and ignores obsolete saved filters', a
   const el = await mount(25);
   el.search = 'mysql 8'; await el.updateComplete;
   expect(el.filtered).toHaveLength(13);
-  expect(el.hiddenColumns).toEqual(['version']);
+  expect(el.hiddenColumns).not.toContain('version');
   expect(el.shadowRoot.querySelectorAll('select')).toHaveLength(0);
   el.search = '未知'; await el.updateComplete;
   expect(el.filtered).toHaveLength(12);
@@ -132,7 +132,8 @@ it('keeps an actually bound linux-basic object bound when its core columns are n
   const el = await mount(); el.resourceType = 'server'; await el.updateComplete;
   await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
   const table = el.shadowRoot.querySelector('.desktop-resources app-data-table'); await table.updateComplete;
-  expect(el.shadowRoot.querySelector('.resource-details').textContent).toContain('已绑定'); expect(table.textContent).toContain('当前模板未覆盖'); expect(table.textContent).not.toContain('未绑定');
+  el.hiddenColumns = el.hiddenColumns.filter((key: string) => key !== 'binding'); await el.updateComplete; await table.updateComplete;
+  expect(table.textContent).toContain('已绑定'); expect(table.textContent).toContain('最近采集成功'); expect(table.textContent).not.toContain('未绑定');
 });
 
 it('marks capacity unsupported only when all providers reject the actual version', () => {
@@ -146,20 +147,44 @@ it('marks capacity unsupported only when all providers reject the actual version
 });
 
 
-it('keeps identity and actual status in the mobile summary and puts secondary metrics in a disclosure', async () => {
+it('keeps the eight business columns fixed even with obsolete hidden-column choices', async () => {
   authFetch.mockResolvedValue(response({}, 503));
   const el = await mount();
-  el.columns = [{ key: 'name', label: '实例' }, { key: 'health', label: '当前观测健康' }, { key: 'actions', label: '操作' }];
-  el.entries = [{ id: 1, type: 'MySQL', version: '8', name: '长名称-生产订单数据库', health: '未知 · 连接配置已暂停', actions: '详情' }];
+  el.columns = [{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作' }];
+  el.entries = [{ id: 101, type: 'MySQL', version: null, address: 'database.example:3306', name: '长名称-生产订单数据库', health: '未知 · 已过期', actions: '详情 编辑 测试 删除' }];
+  el.hiddenColumns = ['name', 'version', 'address', 'health', 'collection', 'last_collection', 'actions', ...el.defaultHiddenColumns];
   await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
-  const summary = el.shadowRoot.querySelector('.resource-summary');
-  expect(summary.querySelector('h2').textContent).toContain('长名称-生产订单数据库');
-  expect(summary.querySelector('.resource-status').textContent).toContain('未知 · 连接配置已暂停');
-  expect(summary.querySelector('.resource-status').textContent).toContain('指标加载失败');
-  expect(summary.querySelector('details').open).toBe(false);
-  const table = el.shadowRoot.querySelector('.desktop-resources app-data-table');
-  expect(table.columns.map((c: any) => c.key)).not.toContain('uptime');
-  expect(table.columns.map((c: any) => c.key)).toContain('collection');
+  const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
+  expect(table.columns.map((c: any) => c.label)).toEqual(['选择', '序号', '实例', '地址', '版本', '观测健康', '采集状态', '最近采集时间', '操作']);
+  expect(table.querySelector('tbody td:nth-child(5)').textContent).toContain('未知');
+  expect(table.textContent).toContain('未知 · 已过期');
+  expect(el.shadowRoot.querySelector('.mobile-resources')).toBeNull();
+  expect(el.shadowRoot.querySelector('.scroll').getAttribute('tabindex')).toBe('0');
+});
+
+it('uses formal last_success_at independently of metric transport and last_attempt_at', async () => {
+  const status = collectionStatus();
+  status.collection = { state: 'failed', in_flight: false, last_success_at: '2026-10-20T03:04:05Z', last_attempt_at: '2026-10-21T05:06:07Z' };
+  authFetch.mockImplementation(async (url: string) => url.endsWith('/status') ? response(status) : response({}, 503));
+  const el = await mount(); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
+  const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
+  expect(table.querySelector('time')?.getAttribute('datetime')).toBe(status.collection.last_success_at);
+  expect(table.querySelector('time')?.getAttribute('datetime')).not.toBe(status.collection.last_attempt_at);
+  expect(table.rows[0].row_number).toBe(1);
+});
+
+it('requires observation evidence for server health and retains expired evidence', async () => {
+  const observedAt = new Date(Date.now() - 600_000).toISOString();
+  const item = { resource: { type: 'server', id: 1 }, status: 'online', observedAt, freshness: 'stale', quality: 'good', gaps: [], unresolvedAlerts: 0 };
+  authFetch.mockImplementation(async (url: string) => url.endsWith('/overview') ? response({ items: [item] }) : response({}, 503));
+  const el = await mount(); el.resourceType = 'server'; el.columns = [{ key: 'health', label: '观测健康' }];
+  await el.updateComplete; await vi.waitFor(() => expect(el.observations.size).toBe(1)); await el.updateComplete;
+  const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
+  expect(table.textContent).toContain('未知 · 已过期');
+  expect(table.querySelector('app-badge').getAttribute('variant')).toBe('muted');
+  window.dispatchEvent(new Event('slide-permissions-loaded')); await el.updateComplete; await table.updateComplete;
+  expect(el.observations.size).toBe(0);
+  expect(table.querySelector('.cell-value').getAttribute('aria-label')).toContain('时间未知');
 });
 
 it('expands tools for selections across pages and resource types, then collapses after clearing', async () => {
@@ -187,7 +212,7 @@ it('upgrades the old automatic all-column default while retaining explicit curre
   const legacy = await mount(); await legacy.updateComplete;
   expect(legacy.hiddenColumns).toContain('uptime');
   legacy.remove();
-  sessionStorage.setItem('resource-list:instance', JSON.stringify({ page: 1, hiddenColumns: [], densityVersion: 1 }));
+  sessionStorage.setItem('resource-list:instance', JSON.stringify({ page: 1, hiddenColumns: [], densityVersion: 2 }));
   const current = await mount(); await current.updateComplete;
   expect(current.hiddenColumns).toEqual([]);
 });

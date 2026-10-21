@@ -6,6 +6,8 @@ import { collectionLabels, collectionState, metricSummary, diskSummary, database
 import { readCollectionStatus, statusLabel } from './metric-api.js';
 import type { SemanticResult } from './semantic-metrics.js';
 import type { Column } from './app-data-table.js';
+import { freshness, runState, type OverviewItem } from '../views/dashboard-model.js';
+import { evidenceTime, evidenceTimeState } from '../views/health-score-state.js';
 import './app-data-table.js';
 import './app-dialog.js';
 import './app-empty-state.js';
@@ -25,11 +27,13 @@ export class ResourceMetricsTable extends LitElement {
   openColumnSettings() { this.columnsOpen = true; }
   async focusEditAction(id: number) {
     await this.updateComplete;
-    const layout = window.matchMedia?.('(max-width: 640px)').matches ? '.mobile-resources' : '.desktop-resources';
+    const layout = '.desktop-resources';
     await Promise.all([...this.renderRoot.querySelectorAll<LitElement>(`${layout} app-data-table`)].map(table => table.updateComplete));
     this.renderRoot.querySelector<HTMLButtonElement>(`${layout} [data-resource-edit-id="${id}"]`)?.focus();
   }
   @state() private columnsOpen = false;
+  @state() private observations = new Map<number, OverviewItem>();
+  private observationGeneration = 0;
   private previousSearch = '';
   @state() private page = 1;
   @state() private rows = new Map<number, MetricRow>();
@@ -44,7 +48,7 @@ export class ResourceMetricsTable extends LitElement {
   }
   private restoredType = '';
   private readonly accessChanged = () => {
-    this.generation++;
+    this.generation++; this.observationGeneration++; this.observations = new Map();
     this.rows = new Map(this.entries.map(entry => [entry.id, { state: 'forbidden' as const }]));
     this.setPending(false);
   };
@@ -59,29 +63,57 @@ export class ResourceMetricsTable extends LitElement {
     this.restoredType = this.resourceType;
     try {
       const saved = JSON.parse(sessionStorage.getItem(`resource-list:${this.resourceType}`) ?? 'null');
-      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && (saved.densityVersion === 1 || saved.hiddenColumns.length > 0) ? saved.hiddenColumns : this.defaultHiddenColumns; }
+      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && saved.densityVersion === 2 ? saved.hiddenColumns : this.defaultHiddenColumns; }
     } catch { /* Storage may be unavailable; navigation still works. */ }
   }
-  private get defaultHiddenColumns() { return ['type', 'version', 'model', 'site', 'binding', 'database_size', 'uptime', 'disk', 'network', 'interfaces']; }
+  private get defaultHiddenColumns() { return ['type', 'site', 'binding', 'database_size', 'uptime', 'disk', 'network', 'interfaces']; }
   @state() private hiddenColumns: string[] = this.defaultHiddenColumns;
   override updated(changed: PropertyValues) {
     if (!this.isConnected) return;
     this.restorePreferences();
-    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 1 })); } catch { /* Optional preference storage. */ }
+    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 2 })); } catch { /* Optional preference storage. */ }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
     const entriesChanged = identity !== this.identity;
     const searchChanged = this.search !== this.previousSearch;
     this.previousSearch = this.search;
     if (searchChanged) this.page = 1;
     if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
+    if (entriesChanged || changed.has('refreshVersion')) void this.loadObservations();
     if (entriesChanged || searchChanged || changed.has('refreshVersion')) void this.load(changed.has('refreshVersion'));
   }
   override disconnectedCallback() {
-    this.generation++; this.setPending(false);
+    this.generation++; this.observationGeneration++; this.setPending(false);
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
     window.removeEventListener('slide-bulk-selection-changed', this.selectionChanged);
     super.disconnectedCallback();
+  }
+  private async loadObservations() {
+    if (this.resourceType === 'instance') return; // Database health also checks credential/configuration state in its page.
+    const generation = ++this.observationGeneration;
+    this.observations = new Map();
+    try {
+      const response = await authFetch('/api/resources/overview', { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return;
+      const body = await response.json();
+      if (generation !== this.observationGeneration) return;
+      this.observations = new Map((Array.isArray(body.items) ? body.items as OverviewItem[] : [])
+        .filter(item => item.resource?.type === this.resourceType && Array.isArray(item.gaps))
+        .map(item => [item.resource.id, item]));
+    } catch { /* Missing observation evidence must remain unknown. */ }
+  }
+  private value(text: unknown, description = unknown(text)) {
+    const full = description;
+    return html`<span class="cell-value" tabindex="0" title=${full} aria-label=${full}><span class="truncated">${unknown(text)}</span><span class="full-value" aria-hidden="true">${full}</span></span>`;
+  }
+  private health(entry: ResourceEntry) {
+    const item = this.observations.get(entry.id);
+    const age = item ? freshness(item) : 'missing';
+    const state = item ? runState(item) : 'unknown';
+    const label = ({ normal: '健康', abnormal: '异常', unavailable: '不可用', unknown: '未知' })[state];
+    const text = `${label}${age === 'stale' ? ' · 已过期' : ''}`;
+    const full = `${text}；观测 ${evidenceTime(item?.observedAt)}；${evidenceTimeState(item?.observedAt)}`;
+    return html`<span class="cell-value" tabindex="0" title=${full} aria-label=${full}><span class="truncated"><app-badge variant=${state === 'normal' ? 'ok' : state === 'unknown' ? 'muted' : 'danger'}>${text}</app-badge></span><span class="full-value" aria-hidden="true">${full}</span></span>`;
   }
   private get terms() { return this.search.trim().toLowerCase().split(/\s+/).filter(Boolean); }
   private isCollectionTerm(term: string) {
@@ -122,16 +154,18 @@ export class ResourceMetricsTable extends LitElement {
           else {
             const result: SemanticResult = await response.json();
             row = { result, state: collectionState(result) };
-            if (generation !== this.generation) return;
-            try {
-              const collection = await readCollectionStatus(type, entry.id);
-              row.collection = collection; row.lastSuccess = collection.collection.last_success_at ?? undefined;
-            } catch (e) {
-              if (e instanceof Error && ['401', '403', '404'].includes(e.message)) row = { state: e.message === '404' ? 'unavailable' : 'forbidden' };
-              else { row.bindingError = '绑定状态暂不可用'; row.timeUnavailable = true; }
-            }
           }
         } catch { row = { state: 'query_failed' }; }
+        if (generation !== this.generation) return;
+        if (!['forbidden', 'unavailable'].includes(row.state)) {
+          try {
+            const collection = await readCollectionStatus(type, entry.id);
+            row.collection = collection; row.lastSuccess = collection.collection.last_success_at ?? undefined;
+          } catch (e) {
+            if (e instanceof Error && ['401', '403', '404'].includes(e.message)) row = { state: e.message === '404' ? 'unavailable' : 'forbidden' };
+            else { row.bindingError = '绑定状态暂不可用'; row.timeUnavailable = true; }
+          }
+        }
         if (generation !== this.generation) return;
         this.rows = new Map(this.rows).set(entry.id, row);
       }
@@ -155,42 +189,49 @@ export class ResourceMetricsTable extends LitElement {
   @state() private sizeHelpOpen = false;
   private databaseSize(entry: ResourceEntry) {
     const row = this.rows.get(entry.id), metric = databaseSizeMetric(row?.result);
-    return html`<span title=${metric?.definition.meaning ?? '容量支持范围见列标题说明'}>${!row ? '正在读取' : !row.result ? collectionLabels[row.state] : databaseSizeSummary(row.result, row.collection)}</span>
-      ${metric?.observed_at ? html`<small>采集于 <time datetime=${metric.observed_at} title=${new Date(metric.observed_at).toString()}>${new Date(metric.observed_at).toLocaleString('zh-CN')}</time></small>` : nothing}`;
+    const summary = !row ? '正在读取' : !row.result ? collectionLabels[row.state] : databaseSizeSummary(row.result, row.collection);
+    const full = `${summary}；采集 ${evidenceTime(metric?.observed_at)}；${metric?.definition.meaning ?? '容量支持范围见列标题说明'}`;
+    return html`${this.value(summary, full)}${metric?.observed_at ? html`<time class="size-observed" datetime=${metric.observed_at} aria-label=${`数据量采集时间 ${evidenceTime(metric.observed_at)}`}></time>` : nothing}`;
   }
   render() {
     const metricColumns = this.resourceType === 'instance' ? [{ key: 'database_size', label: '数据库大小', help: '支持范围与统计口径' }, { key: 'uptime', label: '运行时长' }] : this.resourceType === 'server'
       ? [{ key: 'disk', label: '磁盘（挂载点）' }, { key: 'network', label: '网络速率（逐接口）' }]
       : [{ key: 'interfaces', label: '接口摘要' }];
-    const columns = [{ key: 'bulk_select', label: '选择', width: '3rem' }, { key: 'row_number', label: '序号', width: '4rem' }, ...this.columns.filter(c => c.key !== 'actions'), ...metricColumns, { key: 'binding', label: '模板绑定' }, { key: 'collection', label: '采集状态 / 最近成功时间' }, ...this.columns.filter(c => c.key === 'actions')];
+    const baseKeys = new Set(['bulk_select', 'row_number', ...this.columns.map(c => c.key), 'collection', 'last_collection']);
+    const optionalColumns = [...metricColumns, { key: 'binding', label: '模板绑定' }].filter(c => !baseKeys.has(c.key));
+    const extraColumns = optionalColumns.filter(c => !this.hiddenColumns.includes(c.key));
+    const columns = [{ key: 'bulk_select', label: '选择', width: '2.5rem' }, { key: 'row_number', label: '序号', width: '3.5rem' }, ...this.columns.filter(c => c.key !== 'actions'), { key: 'collection', label: '采集状态', width: '8rem' }, { key: 'last_collection', label: '最近采集时间', width: '10.5rem' }, ...this.columns.filter(c => c.key === 'actions'), ...extraColumns];
     const offset = (Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize))) - 1) * this.pageSize;
-    const rows = this.visible.map((entry, index): ResourceEntry => {
+    const rows = this.visible.map((entry, index) => {
       const row = this.rows.get(entry.id);
       const ref = this.bulkResource(entry);
-      return { ...entry, bulk_select: html`<input type="checkbox" aria-label=${`选择${ref.label}用于批量绑定`} .checked=${bulkSelection.has(ref)} .disabled=${!bulkSelection.has(ref) && bulkSelection.values().length >= 100} @change=${() => bulkSelection.toggle(ref)}>`, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: unknown(entry.version), model: unknown(entry.model),
+      return { ...entry, bulk_select: html`<input type="checkbox" aria-label=${`选择${ref.label}用于批量绑定`} .checked=${bulkSelection.has(ref)} .disabled=${!bulkSelection.has(ref) && bulkSelection.values().length >= 100} @change=${() => bulkSelection.toggle(ref)}>`, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: this.value(entry.version), model: this.value(entry.model), address: this.value(entry.address), ...(this.resourceType !== 'instance' ? { health: this.health(entry) } : {}),
         database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
         binding: html`<span>${row?.collection ? statusLabel(row.collection.binding.state) : row?.bindingError || (row ? ['forbidden', 'unavailable'].includes(row.state) ? collectionLabels[row.state] : '绑定状态未知' : '正在读取')}</span>`,
-        collection: html`<span>${row?.bindingError ? '当前采集状态暂不可用' : row?.collection?.blockers.length ? row.collection.blockers.map(b => statusLabel(b)).join('；') : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection?.binding.state === 'bound' && row.state === 'not_configured' ? '当前模板未覆盖核心列' : row?.collection && !['stale', 'partial', 'query_failed', 'temporary_failure', 'permission_denied'].includes(row.state) ? statusLabel(row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '待验证'}</span><small>${row?.lastSuccess ? html`<time title=${new Date(row.lastSuccess).toString()} datetime=${row.lastSuccess}>${new Date(row.lastSuccess).toLocaleString('zh-CN')}</time>` : row?.timeUnavailable ? '成功时间暂不可用' : '近期无成功采集记录'}</small>
-          ${row && ['query_failed', 'forbidden', 'unavailable'].includes(row.state) ? html`<button class="btn-ghost" @click=${() => { this.rows.delete(entry.id); void this.load(); }}>重试</button>` : nothing}` };
+        collection: this.value(row?.bindingError ? '当前采集状态暂不可用' : row?.collection?.blockers.length ? row.collection.blockers.map(b => statusLabel(b)).join('；') : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection ? statusLabel(row.collection.collection.in_flight ? 'running' : row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '待验证'),
+        last_collection: row?.lastSuccess && Number.isFinite(Date.parse(row.lastSuccess)) ? html`<time datetime=${row.lastSuccess}>${this.value(new Date(row.lastSuccess).toLocaleString('zh-CN'))}</time>` : this.value(row?.timeUnavailable ? '时间暂不可用' : '无成功采集记录') };
     });
-    const identityKey = this.resourceType === 'instance' ? 'name' : this.resourceType === 'server' ? 'host' : 'device';
-    const statusKey = this.resourceType === 'instance' ? 'health' : 'status';
     const selected = bulkSelection.values().length;
     return html`<style>${sharedBtnStyles}
       :host { display:block; box-sizing:border-box; min-width:0; max-width:100%; padding:var(--space-lg); color:var(--text); } .pages { display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center; margin:0 0 var(--space-md); } .pages { margin:var(--space-md) 0 0; } @media(max-width:640px) { :host { padding:var(--space-md); } }
-      .scroll { max-width:100%; overflow:auto; } app-data-table { min-width:48rem; } .scroll.expanded app-data-table { min-width:65rem; } .actions { display:flex; gap:var(--space-xs); flex-wrap:wrap; align-items:start; } .actions > button { white-space:nowrap; } .actions details { position:relative; } summary { cursor:pointer; color:var(--accent-text); padding:var(--space-xs); } .actions details[open] { display:grid; gap:var(--space-xs); } .actions details button { display:block; margin-block:var(--space-xs); } .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); } small { display:block; color:var(--muted); } .btn-ghost { text-align:left; white-space:normal; overflow-wrap:anywhere; }  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-      .mobile-resources { display:none; } .bulk-tools { margin:0 0 var(--space-md); } .scroll-hint { color:var(--muted); font-size:var(--text-sm); margin:0 0 var(--space-sm); }
-      summary:focus-visible, .resource-identity input:focus-visible { outline-color:var(--text-strong); }
-      .identity-meta { color:var(--muted); font-size:var(--text-xs); overflow-wrap:anywhere; }
-      @media(max-width:640px) {
-        :host { padding:var(--space-sm) var(--space-md); } .desktop-resources { display:none; } .mobile-resources { display:grid; gap:var(--space-md); }
-        .resource-summary { min-width:0; border-bottom:1px solid var(--border); padding-bottom:var(--space-md); overflow-wrap:anywhere; }
-        .resource-identity { display:flex; gap:var(--space-sm); align-items:start; } .resource-identity > div { min-width:0; flex:1; } .resource-identity h2 { margin:0; font-size:var(--text-md); min-width:0; } .resource-identity input { margin-top:var(--space-sm); }
-        .resource-status { display:grid; gap:var(--space-sm); margin:var(--space-sm) 0; } .resource-status dt { color:var(--muted); font-size:var(--text-xs); } .resource-status dd { margin:0; font-size:var(--text-sm); }
-        .resource-summary .btn-sm, .resource-summary summary, .bulk-tools button { min-height:44px; box-sizing:border-box; }
-        .resource-details .scroll { margin-top:var(--space-sm); } .resource-details app-data-table { min-width:36rem; }
-      }
+      .scroll { max-width:100%; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); }
+      app-data-table .data-table { table-layout:fixed; }
+      app-data-table .data-table th, app-data-table .data-table td { white-space:nowrap; vertical-align:middle; }
+      .actions { display:flex; gap:var(--space-xs); flex-wrap:nowrap; align-items:center; }
+      .actions > button { white-space:nowrap; flex-shrink:0; }
+      .cell-value, .resource-name { display:block; position:relative; min-width:0; max-width:100%; }
+      .truncated, .resource-name > button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
+      .resource-name > button { font-weight:600; }
+      .full-value { display:none; position:absolute; z-index:5; bottom:100%; left:0; width:max-content; max-width:min(26rem,70vw); white-space:normal; overflow-wrap:anywhere; padding:var(--space-sm); background:var(--bg-elevated); color:var(--text-strong); border:1px solid var(--border); border-radius:var(--radius-sm); box-shadow:var(--shadow-md); font-size:var(--text-sm); }
+      .cell-value:hover > .full-value, .cell-value:focus-visible > .full-value, .resource-name:hover > .full-value, .resource-name:focus-within > .full-value { display:block; }
+      .column-choice { display:flex; align-items:center; gap:var(--space-sm); padding-block:var(--space-xs); }
+      small { display:block; color:var(--muted); }
+      :focus-visible { outline:2px solid var(--text-strong); outline-offset:2px; }
+      .bulk-tools { margin:0 0 var(--space-md); }
+      .scroll-hint { color:var(--muted); font-size:var(--text-sm); margin:0 0 var(--space-sm); }
+      @media(max-width:640px) { :host { padding:var(--space-sm) var(--space-md); } .actions > button, .bulk-tools button { min-height:44px; box-sizing:border-box; } }
+
     </style>
     ${this.resourceType === 'instance' ? html`<app-dialog .open=${this.sizeHelpOpen} size="lg" title="数据库大小：支持范围与统计口径" @app-dialog-close=${() => { this.sizeHelpOpen = false; }}>
       <p>单位使用 B / KiB / MiB / GiB（1024 进制）。读取最近一次已发布采集结果；刷新和翻页只读取指标存储。过期值保留并标注采集时间。</p>
@@ -201,8 +242,8 @@ export class ResourceMetricsTable extends LitElement {
       <div slot="footer"><button class="btn" @click=${() => { this.sizeHelpOpen = false; }}>关闭</button></div>
     </app-dialog>` : nothing}
     <app-dialog .open=${this.columnsOpen} size="sm" title="列设置" @app-dialog-close=${() => { this.columnsOpen = false; }}>
-      <p>调整桌面表格显示的列。手机摘要保留关键状态，完整信息可展开每项明细查看。</p>
-      ${columns.filter(c => !['bulk_select', 'row_number', 'actions', 'name', 'host', 'device'].includes(c.key)).map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
+      <p>${this.resourceType === 'instance' ? '九' : '八'}个业务列始终显示。可按需增加指标列；窄屏左右滚动查看。</p>
+      ${optionalColumns.map(c => html`<label class="column-choice"><input type="checkbox" .checked=${!this.hiddenColumns.includes(c.key)} @change=${(e: Event) => { this.hiddenColumns = (e.target as HTMLInputElement).checked ? this.hiddenColumns.filter(k => k !== c.key) : [...this.hiddenColumns, c.key]; }}>${c.label}</label>`)}
       <div slot="footer"><button class="btn" @click=${() => { this.hiddenColumns = this.defaultHiddenColumns; }}>恢复默认</button> <button class="btn-primary" @click=${() => { this.columnsOpen = false; }}>完成</button></div>
     </app-dialog>
     ${this.pending && this.searchesCollection ? html`<p role="status">正在检查全部搜索资源的采集状态，结果尚未完整。</p>` : nothing}
@@ -213,16 +254,7 @@ export class ResourceMetricsTable extends LitElement {
       <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>` : nothing}
       <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
     <metric-bulk-dialog></metric-bulk-dialog>
-    <div class="mobile-resources" aria-label="资源摘要">
-      ${rows.map(row => html`<article class="resource-summary" aria-label=${this.bulkResource(row).label}>
-        <div class="resource-identity">${row.bulk_select}<div><h2>${row[identityKey]}</h2><div class="identity-meta">${unknown(row.type)} · ${unknown(row.version)}</div>${row.address ? html`<small>${row.address}</small>` : this.resourceType === 'network_device' ? html`<small>${row.host}</small>` : nothing}</div></div>
-        <dl class="resource-status"><div><dt>${this.resourceType === 'instance' ? '当前观测健康 / 连接配置' : this.resourceType === 'server' ? '连接状态' : '设备状态'}</dt><dd>${row[statusKey]}</dd></div><div><dt>采集状态 / 最近成功时间</dt><dd>${row.collection}</dd></div></dl>
-        ${row.actions}
-        <details class="resource-details"><summary>指标与资源明细</summary><p class="scroll-hint">左右滑动查看全部明细</p><div class="scroll" tabindex="0" aria-label="资源明细，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .dense=${true} .columns=${columns.filter(c => !['bulk_select', 'row_number', identityKey, statusKey, 'collection', 'actions'].includes(c.key))} .rows=${[row]}></app-data-table></div></details>
-      </article>`)}
-      ${rows.length ? nothing : html`<app-empty-state title="没有符合条件的资源"></app-empty-state>`}
-    </div>
-    <div class="desktop-resources"><p class="scroll-hint">表格超出时可左右滚动；次要指标可通过列设置展开。</p><div class="scroll ${metricColumns.some(c => !this.hiddenColumns.includes(c.key)) ? 'expanded' : ''}" tabindex="0" aria-label="资源表格，可横向滚动"><app-data-table @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns.filter(c => !this.hiddenColumns.includes(c.key))} .rows=${rows.map(row => ({ ...row, [identityKey]: html`${row[identityKey]}<div class="identity-meta">${unknown(row.type)} · ${unknown(row.version)}</div>` }))} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
+    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 74 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }
 }

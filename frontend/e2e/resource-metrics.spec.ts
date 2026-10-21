@@ -4,114 +4,150 @@ const fixture = async (page: Page, tag: string, file: string) => {
   await page.route('**/resource-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${tag}<script type="module">import '/src/app/styles.css'; import '/src/app/ui/${file}.ts';</script></body></html>` }));
   await page.goto('/resource-fixture');
 };
-for (const width of [375, 768, 1440, 1920]) for (const theme of ['light', 'dark']) test(`three lists ${width} ${theme}`, async ({ page }, info) => {
-  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); await page.setViewportSize({ width, height: 900 });
+// Isolated response fixtures exercise layout and failure states; they are not live collection evidence.
+const lists = [
+  ['instances-page', 'instances-db', '/api/database/instances', 'instance', '实例', '版本'],
+  ['servers-page', 'servers-page', '/api/servers', 'server', '主机名称', '系统版本'],
+  ['network-devices-page', 'network-devices-page', '/api/network-devices', 'network_device', '设备', '型号'],
+] as const;
+const fixtureEntries = Array.from({ length: 25 }, (_, i) => ({
+  id: 1001 + i, name: i === 0 ? '生产资源长名称用于检查截断及完整值'.repeat(4) : `资源-${i + 1}`,
+  label: i === 0 ? '生产资源长名称用于检查截断及完整值'.repeat(4) : `资源-${i + 1}`,
+  db_type: 'mysql', db_version: i === 1 ? null : '8.4.2', host: i === 0 ? 'very-long-address-for-resource-list-layout.example.internal' : `192.0.2.${i + 1}`, port: 3306,
+  os_type: 'linux', os_version: i === 1 ? null : 'Ubuntu 24.04 LTS', model: i === 1 ? null : 'C9300-48T',
+  status: 'online', health_status: 'healthy', hasCredential: true, username: 'readonly', snmp_port: 161, ssh_port: 22, vendor: 'cisco', site: '测试站点',
+}));
+async function listResponses(page: Page, restricted = false) {
+  await page.addInitScript(restricted => { localStorage.setItem('permissions', JSON.stringify(restricted ? ['instance:view', 'servers:view', 'network_devices:view'] : ['*'])); }, restricted);
   await page.route('**/api/**', route => {
-    const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback();
-    return route.fulfill({ json: p === '/api/database/instances' ? [{ id: 1, name: '订单数据库长名称用于布局检查', db_type: 'mysql', db_version: '8.4', host: '192.0.2.1', port: 3306, health_status: 'unknown', data_size_gb: 0 }] : p === '/api/servers' ? [{ id: 2, label: '应用服务器', host: '192.0.2.2', os_type: 'linux', os_version: '24.04', status: 'online' }] : p === '/api/servers/metrics/summary' ? { servers: {} } : p === '/api/network-devices' ? [{ id: 3, name: '核心交换机', host: '192.0.2.3', vendor: 'cisco', model: 'C9300', os_version: '17.9', status: 'unknown' }] : p.endsWith('/query') ? { profile: { columns: [] }, window: { from: '2026-09-20T00:00:00Z', to: '2026-09-20T00:01:00Z' }, metrics: [] } : [] });
+    const p = new URL(route.request().url()).pathname;
+    if (!p.startsWith('/api/')) return route.fallback();
+    if (lists.some(list => list[2] === p)) return route.fulfill({ json: fixtureEntries });
+    if (p === '/api/resources/overview') return route.fulfill({ json: { items: lists.flatMap(list => fixtureEntries.map((entry, i) => ({
+      resource: { type: list[3], id: entry.id }, status: 'healthy', gaps: [], unresolvedAlerts: 0, quality: 'good',
+      freshness: i === 0 ? 'fresh' : i === 1 ? 'missing' : 'stale', observedAt: i === 1 ? null : new Date(Date.now() - (i === 0 ? 1000 : 600000)).toISOString(),
+    }))) } });
+    if (p === '/api/metrics/config/bulk') return route.fulfill({ json: { jobs: [] } });
+    if (p.endsWith('/status')) {
+      const status = collectionStatus();
+      const id = Number(p.split('/').at(-2));
+      status.collection.state = id === 1001 ? 'running' : id === 1002 ? 'failed' : 'succeeded';
+      status.collection.in_flight = id === 1001;
+      status.collection.last_success_at = '2026-10-20T03:04:05Z';
+      status.collection.last_attempt_at = '2026-10-21T05:06:07Z';
+      return route.fulfill({ json: status });
+    }
+    if (p === '/api/metrics/query') {
+      const resource = route.request().postDataJSON().resource;
+      const metric = { definition: { id: 'mysql.tables.estimated_allocated_bytes', unit: 'By', meaning: '隔离构造的表和索引分配空间' }, observed_at: '2026-10-20T03:00:00Z', state: resource.id === 1002 ? 'not_configured' : 'available', series: resource.id === 1002 ? [] : [{ dimensions: {}, buckets: [{ value: { encoding: 'uint64', value: resource.id === 1001 ? '8192' : '0' }, unit: 'By', coverage: 1, quality: { status: 'good' }, freshness: resource.id === 1003 ? 'stale' : 'fresh' }] }] };
+      return route.fulfill({ json: { profile: { columns: resource.type === 'instance' ? [{ key: 'database_size', metric: { id: metric.definition.id } }] : [] }, window: { from: '2026-10-20T00:00:00Z', to: '2026-10-20T00:01:00Z' }, metrics: resource.type === 'instance' ? [metric] : [] } });
+    }
+    if (/\/api\/servers\/\d+$/.test(p)) return route.fulfill({ json: { ...fixtureEntries[0], credential_username: 'readonly' } });
+    if (p.endsWith('/hosts')) return route.fulfill({ json: { hosts: [] } });
+    if (p.endsWith('/access')) return route.fulfill({ json: { can_manage: !restricted } });
+    return route.fulfill({ json: [] });
   });
-  for (const [tag, file, name, type, version] of [['instances-page', 'instances-db', '订单数据库长名称用于布局检查', 'mysql', '8.4'], ['servers-page', 'servers-page', '应用服务器', 'linux', '24.04'], ['network-devices-page', 'network-devices-page', '核心交换机', '未知', '17.9']]) {
-    await fixture(page, `<${tag}></${tag}>`, `views/${file}`); await page.evaluate(t => { document.documentElement.dataset.themeMode = t; }, theme);
+}
+for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) test(`three lists ${width} ${theme}`, async ({ page }, info) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); await page.setViewportSize({ width, height: 1000 });
+  await listResponses(page);
+  for (const [tag, file, , type, identity, version] of lists) {
+    await fixture(page, `<${tag}></${tag}>`, `views/${file}`);
+    await page.evaluate(t => { document.documentElement.dataset.themeMode = t; }, theme);
     const table = page.locator('resource-metrics-table');
-    const mobile = width <= 640;
-    const activeLayout = table.locator(mobile ? '.mobile-resources' : '.desktop-resources');
-    const desktopTable = table.locator('.desktop-resources');
-    await expect(table).toHaveCount(1);
-    await expect(activeLayout).toBeVisible();
-    await expect(table.locator(mobile ? '.desktop-resources' : '.mobile-resources')).toBeHidden();
-    await expect(activeLayout.getByText(name, { exact: true })).toBeVisible();
-    await expect(page.locator('semantic-core-list')).toHaveCount(0);
-    await expect(desktopTable.locator('table')).toHaveCount(1);
-    await expect(table.getByRole('button', { name: '批量绑定采集模板', exact: true })).toHaveCount(0);
-    const detailButton = activeLayout.getByRole('button', { name: '详情', exact: true });
-    await expect(detailButton).toBeVisible();
-    if (mobile) {
-      // A user-selected accent can have low contrast on dark surfaces. Check the
-      // actual keyboard indicator rather than relying on axe's contrast scan.
-      await page.evaluate(() => document.documentElement.style.setProperty('--accent', '#265f99'));
-      const checkbox = activeLayout.getByRole('checkbox');
-      for (let i = 0; i < 30 && !(await checkbox.evaluate(el => el.matches(':focus-visible'))); i++) await page.keyboard.press('Tab');
-      const focus = await checkbox.evaluate(el => {
-        const style = getComputedStyle(el);
-        let ancestor: Element | null = el.parentElement, background = '';
-        while (ancestor) {
-          const color = getComputedStyle(ancestor).backgroundColor;
-          if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') { background = color; break; }
-          ancestor = ancestor.assignedSlot ?? ancestor.parentElement ?? (ancestor.getRootNode() as ShadowRoot).host;
-        }
-        const luminance = (color: string) => {
-          const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(value => {
-            const channel = Number(value) / 255;
-            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-          });
-          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-        };
-        const a = luminance(style.outlineColor), b = luminance(background);
-        return { visible: el.matches(':focus-visible'), width: parseFloat(style.outlineWidth), contrast: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
-      });
-      expect(focus.visible).toBe(true);
-      expect(focus.width).toBeGreaterThanOrEqual(2);
-      expect(focus.contrast).toBeGreaterThanOrEqual(3);
+    const grid = table.locator('app-data-table');
+    await expect(grid.locator('tbody tr')).toHaveCount(20);
+    await expect(grid.locator('th')).toHaveText(['选择', '序号', identity, '地址', version, ...(type === 'instance' ? ['数据量 ⓘ'] : []), '观测健康', '采集状态', '最近采集时间', '操作']);
+    await expect(grid.locator('tbody tr').first().locator('.actions button')).toHaveText(['详情', '编辑', '测试', '删除']);
+    await expect(table.locator('.actions details, .mobile-resources')).toHaveCount(0);
+    await expect(grid.locator('tbody tr').first().locator('td').nth(type === 'instance' ? 7 : 6)).toContainText('采集中');
+    await expect(grid.locator('tbody tr').nth(1).locator('td').nth(type === 'instance' ? 7 : 6)).toContainText('失败');
+    await expect(grid.locator('tbody tr').nth(1).locator('td').nth(4)).toContainText('未知');
+    await expect(grid.locator('tbody tr').nth(2).locator('td').nth(type === 'instance' ? 6 : 5)).toContainText('已过期');
+    await expect(grid.locator('tbody tr').first().locator('time:not(.size-observed)')).toHaveAttribute('datetime', '2026-10-20T03:04:05Z');
+    if (type === 'instance') {
+      await expect(grid.locator('tbody tr').first().locator('td').nth(5)).toContainText('8.00 KiB');
+      await expect(grid.locator('tbody tr').nth(2).locator('td').nth(5)).toContainText('0 B · 已过期');
     }
-    if (mobile) {
-      await expect(activeLayout.getByText(/^(当前观测健康 \/ 连接配置|连接状态|设备状态)$/)).toBeVisible();
-      await expect(activeLayout.getByText('采集状态 / 最近成功时间', { exact: true })).toBeVisible();
-      await expect(activeLayout.getByText('当前采集状态暂不可用', { exact: true })).toBeVisible();
-      for (const control of [activeLayout.getByText(name, { exact: true }), detailButton, activeLayout.locator('.resource-status')]) {
-        const bounds = await control.boundingBox();
-        expect(bounds).not.toBeNull();
-        expect(bounds!.x).toBeGreaterThanOrEqual(0);
-        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-      }
-    }
+    const sizes = await grid.locator('tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
+    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
+    const ys = await grid.locator('tbody tr').first().locator('.actions button').evaluateAll(buttons => buttons.map(b => b.getBoundingClientRect().y));
+    expect(new Set(ys).size).toBe(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`${file}-${width}-${theme}-isolated.png`), fullPage: true });
+    const scroll = table.getByRole('region', { name: '资源表格，可横向滚动' });
+    await scroll.focus(); await page.keyboard.press('ArrowRight');
+    if (width < 1440) await expect.poll(() => scroll.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+    // Full text is available on focus, and long strings do not increase row height.
+    const address = grid.locator('tbody tr').first().locator('td').nth(3).locator('.cell-value');
+    await address.focus(); await expect(address.locator('.full-value')).toBeVisible();
+    await expect(address).toHaveAttribute('aria-label', new RegExp(fixtureEntries[0].host));
+    await grid.locator('tbody tr').first().getByRole('checkbox').check();
+    await expect(table.locator('.bulk-tools')).toContainText('已选 1 个对象');
+    await table.getByRole('button', { name: '批量绑定采集模板', exact: true }).click();
+    await expect(table.getByRole('dialog', { name: '批量绑定采集模板', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await table.getByRole('button', { name: '下一页', exact: true }).click();
+    await expect(grid.locator('tbody tr').first().locator('td').nth(1)).toHaveText('21');
+    await expect(table.locator('.bulk-tools')).toContainText('已选 1 个对象');
     const search = page.locator('input.search-input, input.resource-search-input');
-    await search.fill(`${type} ${version} 采集状态未知`);
-    await expect(activeLayout.getByText(name, { exact: true })).toBeVisible();
-    await expect(table.locator('select')).toHaveCount(0);
-    await search.fill('不存在的资源');
-    await expect(activeLayout.getByText('没有符合条件的资源', { exact: true })).toBeVisible();
+    await expect(search).toHaveAccessibleName(/搜索/);
+    await search.fill('资源-25');
+    await expect(grid.locator('tbody tr')).toHaveCount(1);
+    await expect(grid.locator('tbody tr').first().locator('td').nth(1)).toHaveText('1');
+    await search.fill('没有这条资源'); await expect(grid).toContainText('没有符合条件的资源');
     await search.fill('');
-    await activeLayout.locator('.actions summary').click();
-    const deleteButton = activeLayout.getByRole('button', { name: '删除', exact: true });
-    await expect(deleteButton).toBeVisible();
-    await expect(deleteButton).toHaveClass('btn-sm danger');
-    const buttonStyle = await deleteButton.evaluate(el => ({ color: getComputedStyle(el).color, border: getComputedStyle(el).borderTopColor }));
-    expect(buttonStyle.color).toBe(buttonStyle.border);
-    if (mobile) {
-      await expect(activeLayout.locator('table')).toBeHidden();
-      await activeLayout.getByText('指标与资源明细', { exact: true }).click();
-      await expect(activeLayout.getByText('左右滑动查看全部明细', { exact: true })).toBeVisible();
-    }
-    await expect(activeLayout.locator('table')).toBeVisible();
-    const layout = () => activeLayout.locator('.scroll').evaluate(el => ({ top: (el as HTMLElement).offsetTop, height: (el as HTMLElement).offsetHeight }));
-    const before = await layout();
-    const settings = page.locator(tag).locator('.resource-toolbar').getByRole('button', { name: '列设置', exact: true });
-    await settings.click();
-    const dialog = table.getByRole('dialog', { name: '列设置' });
-    await expect(dialog).toBeVisible();
-    expect(await layout()).toEqual(before);
-    const versionChoice = table.getByRole('checkbox', { name: /版本/ });
-    await expect(versionChoice).not.toBeChecked();
-    await versionChoice.check();
-    await table.getByRole('button', { name: '完成' }).click();
-    await expect(desktopTable.locator('th').filter({ hasText: /版本/ })).toHaveCount(1);
-    await settings.click();
-    await versionChoice.uncheck();
-    await table.getByRole('button', { name: '完成' }).click();
-    await expect(desktopTable.locator('th').filter({ hasText: /版本/ })).toHaveCount(0);
-    await expect(settings).toBeFocused();
-    await settings.click();
-    await versionChoice.check();
-    await table.getByRole('button', { name: '恢复默认' }).click();
-    await expect(versionChoice).not.toBeChecked();
+    await table.getByRole('button', { name: '清空选择', exact: true }).click();
+    await page.locator(tag).locator('.resource-toolbar').getByRole('button', { name: '列设置', exact: true }).click();
+    const dialog = table.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: '列设置' }) });
+    await expect(dialog.getByRole('dialog', { name: '列设置' })).toBeVisible();
+    await expect(dialog.getByRole('checkbox', { name: /序号|地址|版本|型号|观测健康|采集状态|最近采集时间/ })).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
-    await expect(settings).toBeFocused();
-    await expect(desktopTable.locator('th').filter({ hasText: /版本/ })).toHaveCount(0);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`${file}.png`), fullPage: true });
+    await expect(page.locator(tag).locator('.resource-toolbar').getByRole('button', { name: '列设置', exact: true })).toBeFocused();
   }
   expect(errors).toEqual([]);
+});
+
+for (const [tag, file, , type] of lists) test(`${type} four direct actions and permission states`, async ({ page }, info) => {
+  await listResponses(page);
+  const writes: string[] = [];
+  page.on('request', request => { if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname); });
+  await fixture(page, `<${tag}></${tag}><app-toast-container></app-toast-container>`, `views/${file}`);
+  await page.evaluate(() => { (window as any).navigationEvents = []; window.addEventListener('slide-navigate', (event: any) => (window as any).navigationEvents.push(event.detail)); });
+  const table = page.locator('resource-metrics-table');
+  const actions = () => table.locator('tbody tr').first().locator('.actions');
+  await actions().getByRole('button', { name: '详情', exact: true }).click();
+  const navigation = await page.evaluate(() => (window as any).navigationEvents.at(-1));
+  expect(navigation[type === 'network_device' ? 'networkDeviceId' : type === 'server' ? 'serverId' : 'id']).toBe(1001);
+  await actions().getByRole('button', { name: '编辑', exact: true }).click();
+  await expect(page.getByRole('heading', { name: type === 'instance' ? '编辑资源' : type === 'server' ? '编辑服务器' : '编辑网络设备', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '返回资源列表', exact: true }).click();
+  await expect(actions().getByRole('button', { name: '编辑', exact: true })).toBeFocused();
+  await actions().getByRole('button', { name: '删除', exact: true }).click();
+  const dialog = page.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: /确认删除/ }) });
+  await expect(dialog).toContainText(type === 'server' ? fixtureEntries[0].host : fixtureEntries[0].name);
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(actions().getByRole('button', { name: '删除', exact: true })).toBeFocused();
+  const probe = type === 'instance' ? '/api/database/instances/test-connection' : type === 'server' ? '/api/servers/1001/collect' : '/api/network-devices/1001/probe';
+  await page.route(`**${probe}`, route => route.fulfill({ status: 503, json: { success: false, error: '隔离测试：目标暂不可达' } }));
+  await actions().getByRole('button', { name: '测试', exact: true }).click();
+  if (type === 'instance') {
+    const testDialog = page.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: /测试连接/ }) });
+    await testDialog.getByLabel('密码', { exact: true }).fill('isolated-test-password');
+    await testDialog.getByRole('button', { name: '测试连接', exact: true }).click();
+    await expect(testDialog).toContainText('隔离测试：目标暂不可达');
+    await page.keyboard.press('Escape');
+    await expect(actions().getByRole('button', { name: '测试', exact: true })).toBeFocused();
+  } else await expect(page.locator('app-toast-container')).toContainText('隔离测试：目标暂不可达');
+  expect(writes.filter(path => !path.endsWith('/query'))).toEqual([probe]);
+  await page.evaluate(() => { localStorage.setItem('permissions', JSON.stringify(['instance:view', 'servers:view', 'network_devices:view'])); window.dispatchEvent(new Event('slide-permissions-loaded')); });
+  await expect(actions().getByRole('button', { name: '编辑', exact: true })).toBeDisabled();
+  await expect(actions().getByRole('button', { name: '删除', exact: true })).toBeDisabled();
+  await expect(actions().getByRole('button', { name: '测试', exact: true })).toBeEnabled({ enabled: type === 'network_device' });
+  await expect(actions().getByRole('button', { name: '详情', exact: true })).toBeEnabled();
+  await page.screenshot({ path: info.outputPath(`${file}-restricted-isolated.png`), fullPage: true });
 });
 test('preview, failed and empty trials, invalidation, publish and application', async ({ page }) => {
   let published = false, applied = false, succeed = false, hasSamples = false; const writes: string[] = []; const pack = { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }; const resolved = { settings: {}, sources: {}, metric_templates: [], metric_sources: {} };
@@ -120,6 +156,7 @@ test('preview, failed and empty trials, invalidation, publish and application', 
     if (p.endsWith('/catalog')) return route.fulfill({ json: { packages: [{ package: pack, recommendations: {}, documentation: [] }], metrics: [] } });
     if (p.endsWith('/recommendations')) return route.fulfill({ json: { packages: [{ release: { package: pack }, compatibility: 'compatible', recommended: true, checks: [], coverage: [], missing_core_metrics: [] }] } });
     if (p.endsWith('/groups')) return route.fulfill({ json: { groups: [] } });
+    if (p === '/api/metrics/config/bulk') return route.fulfill({ json: { jobs: [] } });
     if (p.endsWith('/status')) {
       const status = collectionStatus(published ? 'bound' : 'unbound');
       status.binding.application = applied ? 'applied' : 'pending'; status.binding.applied_revision = applied ? 1 : null;
