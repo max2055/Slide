@@ -54,5 +54,6 @@ Linux block counter 已由 production host block discovery 提供实际生命周
 - 独立 MySQL formalization：真实 SQL 验证旧正式值在变更后立即不可读，新包需新来源门禁，至少三个后续正式周期；回退为新 revision/generation，旧历史保留。
 - 实际资源：从当前 instance1/mysql-basic@2.0.0 revision1 与 server3/linux-basic@1.0.0 revision2 读取配置和受控凭据到独立平台 schema，使用真实 localhost:3306 MySQL 9.6 与 192.168.49.130 SSH；经既有页面 preview/trial/activate 切换到 mysql-diagnostics@1.1.0 revision2、linux-host@1.1.0 revision3。仅在隔离副本将采集周期设为 5s，未修改共享平台绑定、资产或原 SQL/模板/宏。
 - 正式 API 和配置页有 actual semantic/fresh 证据；数值页面使用既有 semantic-metrics 组件、正式 `/api/metrics/query` 与明确的真实观测时间窗，空时间桶不冒充最新值。fixture 身份为测试管理员，不能替代完整 JWT 导航验收。
+- 本轮真实正式发布计数：MySQL 4 个周期、server 8 个周期；原配置摘要前后一致。最终受影响 metrics/contracts/auth gate 为 631 passed、19 个依条件跳过（包括需要另行 opt-in 的网络/SSH/其他真实环境测试）；显式 opt-in 的本次 MySQL/VM 页面测试另行通过。前端配置与指标组件 54 项通过，后端 typecheck 和 contracts:check 通过。
 - 最终共享服务集成与持续可用性仍依赖 MAX-209 稳定候选及父 MAX-208 复验；PR、CI、合并、运行服务和 Max 最终验收分别报告。本次不重启共享 3000/5173，不合并或部署。
 - 产品 LLM 新增调用为 0；未使用或重置父账本额度。编码代理 token/费用实际遥测不可用。
