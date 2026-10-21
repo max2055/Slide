@@ -72,6 +72,12 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
         expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ numerator: 0, denominator: 1 });
       });
     }
+    it(`${type}: does not merge a fresh padded alias into the stale canonical ID`, async () => {
+      await seed(type, '1', { age: 11 * 60_000 });
+      await connection.execute("INSERT INTO metric_rollout VALUES ('alias',?,'1 ','semantic','semantic',1,1,1)", [type]);
+      await connection.execute("INSERT INTO metric_publications VALUES ('alias',1,?,'observation')", [new Date()]);
+      expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ numerator: 0, denominator: 1 });
+    });
   }
   it('keeps workflow observation failure explicitly unknown', async () => {
     await seed('instance');
