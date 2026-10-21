@@ -78,7 +78,22 @@ export class MetricConfigurationReader {
     const result=configurationStatus(ref, effective, await this.attempts(ref), evidence, await this.reader.inventory(ref), canManageResource(actor, ref), this.clock());
     // Pending custom configurations must remain visible; never imply that preserving a row executes it.
     if(canManageResource(actor,ref)&&this.reader.migration){
-      result.legacy_configuration=await this.reader.migration(ref);
+      result.legacy_configuration=(await this.reader.migration(ref)).map(item=>{
+        const pin=result.binding.package, reviewed=item.package;
+        // Migration review is definition-level; activation belongs to this
+        // exact resource/revision/pin. An applied binding does not prove fresh
+        // values, complete coverage, or migration of alerts/template macros.
+        const applied=item.kind==='custom_sql' && item.state==='reviewed'
+          && item.code==='CUSTOM_SQL_ACTIVATION_REQUIRED' && reviewed && pin
+          && reviewed.id===pin.id && reviewed.version===pin.version && reviewed.digest===pin.digest
+          && result.binding.application==='applied' && result.binding.published_revision!==null
+          && result.binding.applied_revision===result.binding.published_revision;
+        return applied ? {...item,code:'CUSTOM_SQL_BINDING_APPLIED',actions:[
+          'Exact reviewed package binding is applied to this resource revision',
+          'Verify per-metric fresh formal values and quality; binding alone is not coverage acceptance',
+          'Review legacy alerts and template macros separately; no automatic migration',
+        ]} : item;
+      });
       if(result.legacy_configuration.some(c=>c.state==='blocked'))result.blockers.push('LEGACY_CONFIGURATION_REVIEW_REQUIRED');
     }
     return MetricConfigurationStatusSchema.parse(result);

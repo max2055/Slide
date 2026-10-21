@@ -1,9 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { OpenAIProvider, ToolRegistry, type Message } from '@slide/agent-core';
-import { ContextManager, sourceHash } from '../../../../packages/agent-core/src/runtime/context-manager.js';
-import { ModelStep } from '../../../../packages/agent-core/src/runtime/model-step.js';
-import { currentTime, projectContextBlocks, runtimeBlock } from '../../../../packages/agent-core/src/context-block.js';
 import { NoopHook } from '@slide/agent-core';
 import { investigationContextMessages } from './executor.js';
 import { investigationPrompt, INVESTIGATION_PROFILES } from './profiles.js';
@@ -13,6 +10,13 @@ import '../tools/ops/index.js';
 import '../tools/generated/slide-self-mgmt/resource_tools.js';
 import '../tools/generated/slide-self-mgmt/server_tools.js';
 
+// Runtime internals are exercised through file URLs, as in the existing
+// projection tests; they are outside the API compiler's rootDir.
+const core = new URL('../../../../packages/agent-core/src/', import.meta.url);
+const {ContextManager,sourceHash} = await import(new URL('runtime/context-manager.js',core).href);
+const {ModelStep} = await import(new URL('runtime/model-step.js',core).href);
+const {currentTime,projectContextBlocks,runtimeBlock} = await import(new URL('context-block.js',core).href);
+
 // Retained canonical facts from run 0b4413e1, main45fe437b. Diagnostic
 // reconstruction, not original wire telemetry. No handlers or network invoked.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-six-tool-20261021.json', import.meta.url), 'utf8'));
@@ -21,7 +25,8 @@ function setup() {
   for (const name of profile.toolAllowlist) {
     const tool = toolCatalog.get(name)!;
     const contract = investigationToolContract(tool as any, [{type:'instance',id:1},{type:'server',id:3}], profile.budget)!;
-    tools.register({...contract, execute: async () => { throw new Error('offline only'); }});
+    tools.register({...contract, readOnly:true, concurrencySafe:false, exclusive:true,
+      execute: async () => { throw new Error('offline only'); }});
   }
   const actual = new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash'});
   const provider = {
