@@ -1,0 +1,603 @@
+{
+  "users": [
+    {
+      "role": "user",
+      "content": "只读调查 instance:1 与 server:3 在观察窗口内的数据库容量、连接与慢查询，以及服务器 CPU、内存、文件系统和网络覆盖。调用现有授权只读工具获取真实事实，逐条引用证据及时间；区分真零值、unknown、unsupported、过期和失败。仅判断现有证据能支持的结论与缺口，不执行写操作或恢复。"
+    }
+  ],
+  "entries": [
+    {
+      "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8",
+      "role": "assistant",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "_extra": {
+        "reasoning_content": "The user wants a read-only investigation of instance:1 and server:3: database capacity, connections, slow queries; server CPU, memory, filesystem, network coverage. Let me call the authorized tools.\n\nLet me start with independent calls: get_instance_summary(1), get_resource_observations(instance 1), get_resource_relations, get_server_alerts(3), get_server_metrics(3), query_metrics(instance 1).\n\nLet me first call a batch of independent calls.\n\nNote the tools require instance_id enum 1. Let's call.\n\nI'll do a first batch: get_instance_summary, get_resource_relations(instance,1), get_resource_observations(instance,1), get_resource_observations(server,3), get_server_alerts(3), list_active_alerts.\n\nThen query_metrics discover and server metrics.\n\nLet's start."
+      },
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "我先并行获取实例体检摘要、资源关系、资源观测覆盖情况以及活跃告警。",
+      "tool_calls": [
+        {
+          "id": "call_00_VwcCgmNCzys584GhPgee4358",
+          "type": "function",
+          "function": {
+            "name": "get_instance_summary",
+            "arguments": "{\"instance_id\":1}"
+          }
+        },
+        {
+          "id": "call_01_xncmpvAWrn0ynZzByFSq5564",
+          "type": "function",
+          "function": {
+            "name": "get_resource_relations",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+          }
+        },
+        {
+          "id": "call_02_wES9Zj3HFHur1TVX0MOS8110",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_03_vq4YHMjijoW1fk0NiIIG1519",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_04_RSf7Zk4R3JMhM0FTtc6N6275",
+          "type": "function",
+          "function": {
+            "name": "list_active_alerts",
+            "arguments": "{\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_05_bzIJUlqfGMG7yDVeMkjy2649",
+          "type": "function",
+          "function": {
+            "name": "get_server_alerts",
+            "arguments": "{\"serverId\":3,\"activeOnly\":true,\"maxRows\":100}"
+          }
+        }
+      ],
+      "messageParts": {
+        "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8",
+        "role": "assistant",
+        "parts": [
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/0",
+            "text": "我先并行获取实例体检摘要、资源关系、资源观测覆盖情况以及活跃告警。",
+            "type": "text",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/1",
+            "text": "The user wants a read-only investigation of instance:1 and server:3: database capacity, connections, slow queries; server CPU, memory, filesystem, network coverage. Let me call the authorized tools.\n\nLet me start with independent calls: get_instance_summary(1), get_resource_observations(instance 1), get_resource_relations, get_server_alerts(3), get_server_metrics(3), query_metrics(instance 1).\n\nLet me first call a batch of independent calls.\n\nNote the tools require instance_id enum 1. Let's call.\n\nI'll do a first batch: get_instance_summary, get_resource_relations(instance,1), get_resource_observations(instance,1), get_resource_observations(server,3), get_server_alerts(3), list_active_alerts.\n\nThen query_metrics discover and server metrics.\n\nLet's start.",
+            "type": "reasoning",
+            "format": "reasoning_content",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/2",
+            "call": {
+              "id": "call_00_VwcCgmNCzys584GhPgee4358",
+              "type": "function",
+              "function": {
+                "name": "get_instance_summary",
+                "arguments": "{\"instance_id\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/3",
+            "call": {
+              "id": "call_01_xncmpvAWrn0ynZzByFSq5564",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/4",
+            "call": {
+              "id": "call_02_wES9Zj3HFHur1TVX0MOS8110",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/5",
+            "call": {
+              "id": "call_03_vq4YHMjijoW1fk0NiIIG1519",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/6",
+            "call": {
+              "id": "call_04_RSf7Zk4R3JMhM0FTtc6N6275",
+              "type": "function",
+              "function": {
+                "name": "list_active_alerts",
+                "arguments": "{\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          },
+          {
+            "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8/part/7",
+            "call": {
+              "id": "call_05_bzIJUlqfGMG7yDVeMkjy2649",
+              "type": "function",
+              "function": {
+                "name": "get_server_alerts",
+                "arguments": "{\"serverId\":3,\"activeOnly\":true,\"maxRows\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8",
+          "role": "assistant",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "_extra": {
+            "reasoning_content": "The user wants a read-only investigation of instance:1 and server:3: database capacity, connections, slow queries; server CPU, memory, filesystem, network coverage. Let me call the authorized tools.\n\nLet me start with independent calls: get_instance_summary(1), get_resource_observations(instance 1), get_resource_relations, get_server_alerts(3), get_server_metrics(3), query_metrics(instance 1).\n\nLet me first call a batch of independent calls.\n\nNote the tools require instance_id enum 1. Let's call.\n\nI'll do a first batch: get_instance_summary, get_resource_relations(instance,1), get_resource_observations(instance,1), get_resource_observations(server,3), get_server_alerts(3), list_active_alerts.\n\nThen query_metrics discover and server metrics.\n\nLet's start."
+          },
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "我先并行获取实例体检摘要、资源关系、资源观测覆盖情况以及活跃告警。",
+          "tool_calls": [
+            {
+              "id": "call_00_VwcCgmNCzys584GhPgee4358",
+              "type": "function",
+              "function": {
+                "name": "get_instance_summary",
+                "arguments": "{\"instance_id\":1}"
+              }
+            },
+            {
+              "id": "call_01_xncmpvAWrn0ynZzByFSq5564",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+              }
+            },
+            {
+              "id": "call_02_wES9Zj3HFHur1TVX0MOS8110",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_03_vq4YHMjijoW1fk0NiIIG1519",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_04_RSf7Zk4R3JMhM0FTtc6N6275",
+              "type": "function",
+              "function": {
+                "name": "list_active_alerts",
+                "arguments": "{\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_05_bzIJUlqfGMG7yDVeMkjy2649",
+              "type": "function",
+              "function": {
+                "name": "get_server_alerts",
+                "arguments": "{\"serverId\":3,\"activeOnly\":true,\"maxRows\":100}"
+              }
+            }
+          ],
+          "reasoning_content": "The user wants a read-only investigation of instance:1 and server:3: database capacity, connections, slow queries; server CPU, memory, filesystem, network coverage. Let me call the authorized tools.\n\nLet me start with independent calls: get_instance_summary(1), get_resource_observations(instance 1), get_resource_relations, get_server_alerts(3), get_server_metrics(3), query_metrics(instance 1).\n\nLet me first call a batch of independent calls.\n\nNote the tools require instance_id enum 1. Let's call.\n\nI'll do a first batch: get_instance_summary, get_resource_relations(instance,1), get_resource_observations(instance,1), get_resource_observations(server,3), get_server_alerts(3), list_active_alerts.\n\nThen query_metrics discover and server metrics.\n\nLet's start."
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+        },
+        "version": 1,
+        "projectionMessageId": "model_75df6c45-c46b-485c-9d95-0efee6b48fb8"
+      },
+      "reasoning_content": "The user wants a read-only investigation of instance:1 and server:3: database capacity, connections, slow queries; server CPU, memory, filesystem, network coverage. Let me call the authorized tools.\n\nLet me start with independent calls: get_instance_summary(1), get_resource_observations(instance 1), get_resource_relations, get_server_alerts(3), get_server_metrics(3), query_metrics(instance 1).\n\nLet me first call a batch of independent calls.\n\nNote the tools require instance_id enum 1. Let's call.\n\nI'll do a first batch: get_instance_summary, get_resource_relations(instance,1), get_resource_observations(instance,1), get_resource_observations(server,3), get_server_alerts(3), list_active_alerts.\n\nThen query_metrics discover and server metrics.\n\nLet's start."
+    },
+    {
+      "id": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317",
+      "name": "get_instance_summary",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317/part/0",
+            "name": "get_instance_summary",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317"
+            },
+            "generation": "ended",
+            "toolCallId": "call_00_VwcCgmNCzys584GhPgee4358",
+            "sourceMessageId": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317",
+          "name": "get_instance_summary",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_00_VwcCgmNCzys584GhPgee4358"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_9c44aa5f010da77abd490e6987cca48b5c218cd114b636cb838ad952599b4317"
+      },
+      "tool_call_id": "call_00_VwcCgmNCzys584GhPgee4358"
+    },
+    {
+      "id": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c",
+      "name": "get_resource_relations",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c/part/0",
+            "name": "get_resource_relations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c"
+            },
+            "generation": "ended",
+            "toolCallId": "call_01_xncmpvAWrn0ynZzByFSq5564",
+            "sourceMessageId": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c",
+          "name": "get_resource_relations",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_01_xncmpvAWrn0ynZzByFSq5564"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_47ccf0f4347b66c42f414e4d369c34556eea5ff688872ff9a4474d7004a06b1c"
+      },
+      "tool_call_id": "call_01_xncmpvAWrn0ynZzByFSq5564"
+    },
+    {
+      "id": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":13,\"observedAt\":\"2026-10-21T15:52:27.763Z\",\"validUntil\":\"2026-10-21T15:57:27.763Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":13,\"observedAt\":\"2026-10-21T15:52:27.763Z\",\"validUntil\":\"2026-10-21T15:57:27.763Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240"
+            },
+            "generation": "ended",
+            "toolCallId": "call_02_wES9Zj3HFHur1TVX0MOS8110",
+            "sourceMessageId": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":13,\"observedAt\":\"2026-10-21T15:52:27.763Z\",\"validUntil\":\"2026-10-21T15:57:27.763Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_02_wES9Zj3HFHur1TVX0MOS8110"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_3252de1766c67d660c0476ac6e8ecd35c5deb99e86edc96733fbbf181805b240"
+      },
+      "tool_call_id": "call_02_wES9Zj3HFHur1TVX0MOS8110"
+    },
+    {
+      "id": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":67.58,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.03,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":470987.33,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":287,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":67.58,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.03,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":470987.33,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":287,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567"
+            },
+            "generation": "ended",
+            "toolCallId": "call_03_vq4YHMjijoW1fk0NiIIG1519",
+            "sourceMessageId": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":67.58,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.03,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":470987.33,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":287,\"observedAt\":\"2026-10-21T15:52:21.785Z\",\"validUntil\":\"2026-10-21T15:57:21.785Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_03_vq4YHMjijoW1fk0NiIIG1519"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_8a3f498dd0b7e60fdf4189776e219854a8c597388ad9756f282cffbcb49fb567"
+      },
+      "tool_call_id": "call_03_vq4YHMjijoW1fk0NiIIG1519"
+    },
+    {
+      "id": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b",
+      "name": "list_active_alerts",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b/part/0",
+            "name": "list_active_alerts",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b"
+            },
+            "generation": "ended",
+            "toolCallId": "call_04_RSf7Zk4R3JMhM0FTtc6N6275",
+            "sourceMessageId": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b",
+          "name": "list_active_alerts",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_04_RSf7Zk4R3JMhM0FTtc6N6275"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_a84d052c6995f0602d7ad7e6997e93e09888aae4bbd4f39c19fc210b9b4dd67b"
+      },
+      "tool_call_id": "call_04_RSf7Zk4R3JMhM0FTtc6N6275"
+    },
+    {
+      "id": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0",
+      "name": "get_server_alerts",
+      "role": "tool",
+      "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+      "source": "fact",
+      "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+      "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+      "messageParts": {
+        "id": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0/part/0",
+            "name": "get_server_alerts",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0"
+            },
+            "generation": "ended",
+            "toolCallId": "call_05_bzIJUlqfGMG7yDVeMkjy2649",
+            "sourceMessageId": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0"
+          }
+        ],
+        "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+        "legacy": {
+          "id": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0",
+          "name": "get_server_alerts",
+          "role": "tool",
+          "runId": "0b4413e1-7a1e-4359-af03-66f9e9796ae9",
+          "source": "fact",
+          "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+          "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4358e59d-f3aa-496f-b87a-e222f1e86045\"}}",
+          "tool_call_id": "call_05_bzIJUlqfGMG7yDVeMkjy2649"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "e7e6520e-3716-437f-b365-4f23437b9100",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_b732f9e4ed44b266ccf3f2385ef379de5ce3502cae1c206baff7bac72c89cce0"
+      },
+      "tool_call_id": "call_05_bzIJUlqfGMG7yDVeMkjy2649"
+    }
+  ]
+}
