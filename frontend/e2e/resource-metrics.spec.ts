@@ -142,7 +142,10 @@ for (const width of [375, 1440]) for (const theme of ['light', 'dark']) {
     await keyboardFocus(page, toolbarButton);
     await lastName.locator('button').hover();
     const hovered = await visibleFullValue(lastName);
-    await hovered.hover(); await expect(hovered).toBeVisible();
+    const hoverBounds = await hovered.boundingBox();
+    const nameBounds = await lastName.locator('button').boundingBox();
+    await page.mouse.move(nameBounds!.x + nameBounds!.width / 2, hoverBounds!.y + 3, { steps: 20 });
+    await expect(hovered).toBeVisible();
     await page.keyboard.press('Escape'); await expect(hovered).toBeHidden();
     await expect(toolbarButton).toBeFocused();
     await page.mouse.move(1, 1); await lastName.locator('button').hover();
