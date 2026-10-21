@@ -131,6 +131,10 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
       const value = row.locator('td').nth(3).locator('.cell-value');
       await keyboardFocus(page, value);
       const addressTip = await visibleFullValue(value);
+      // A stationary pointer can cross another cell as focus scrolls the table.
+      // Keyboard reading retains priority over unrelated hover previews.
+      await row.locator('td').nth(5).locator('.cell-value').hover();
+      await expect(addressTip).toBeVisible();
       if (width < 1440) {
         // A pending keyboard scroll can finish after focus enters the cell.
         await region.evaluate(el => { el.scrollTo({ left: el.scrollWidth, behavior: 'instant' }); });
