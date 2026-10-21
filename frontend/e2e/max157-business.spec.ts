@@ -127,10 +127,11 @@ test('real resource overview/navigation, database help and diagnosis evidence/re
   await capture(page, 'navigation-overview-1280-dark');
   await page.goto(`${env.url}/instances-db`); const metrics = page.locator('resource-metrics-table');
   await expect(metrics).toContainText('合成资源');
-  const help = metrics.getByRole('button', { name: /数据库大小.*说明/ });
-  await expect(help).toHaveCount(0);
+  await expect(metrics.locator('th')).toHaveText(['选择', '序号', '实例', '地址', '版本', '数据量 ⓘ', '观测健康', '采集状态', '最近采集时间', '操作']);
+  const help = metrics.getByRole('button', { name: '数据量说明', exact: true });
+  await expect(help).toBeVisible();
   await page.locator('instances-page').getByRole('button', { name: '列设置', exact: true }).click();
-  await metrics.getByRole('checkbox', { name: '数据库大小', exact: true }).check();
+  await expect(metrics.getByRole('checkbox', { name: /数据库大小|数据量/ })).toHaveCount(0);
   await metrics.getByRole('button', { name: '完成', exact: true }).click();
   await help.click();
   await expect(metrics.locator('app-dialog[title="数据库大小：支持范围与统计口径"]')).toContainText('Redis 内存不计为磁盘大小');
