@@ -557,6 +557,7 @@ export class InstancesPage extends LitElement {
       const res = await authFetch("/api/database/instances");
       if (!res.ok) throw new Error("Failed to load instances");
       this.instances = await res.json();
+      this.error = '';
       this.metricRefreshVersion++;
       this.loading = false;
       const url = new URL(window.location.href), editId = Number(url.searchParams.get('edit'));
@@ -579,6 +580,8 @@ export class InstancesPage extends LitElement {
       this.refreshing = false;
     }
   }
+
+  async refreshReadData() { await this.loadInstances(); }
 
   private get filteredInstances(): DatabaseInstance[] {
     const filtered = this.instances.filter((inst) => {

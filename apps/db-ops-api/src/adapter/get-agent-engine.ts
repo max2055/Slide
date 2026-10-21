@@ -15,6 +15,7 @@ type CoreToolExecutionContext = {
 };
 import type { IAgentEngine } from './types.js';
 import { DirectAdapter } from './direct-adapter.js';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { normalizeToolResult, type AnyAgentTool } from '../tools/types.js';
 import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from '../tools/policy.js';
@@ -30,6 +31,18 @@ import { TrustedSkillsLoader } from '../skills/trusted-skills-loader.js';
 import { DEFAULT_AGENT_ID, agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
 
 let directEngine: IAgentEngine | null = null;
+let creatingEngine: Promise<IAgentEngine> | undefined;
+let engineSuspended = false;
+
+export function resumeAgentEngine(): void { engineSuspended = false; }
+
+export async function disposeAgentEngine(): Promise<void> {
+  engineSuspended = true;
+  const engine = directEngine ?? await creatingEngine;
+  await engine?.dispose?.();
+  // A successor may only be created after disposal has actually finished.
+  directEngine = null;
+}
 
 // ── Platform tool loading (lazy, once) ──
 
@@ -305,8 +318,11 @@ export function getAdapterType(): 'direct' {
  * @returns IAgentEngine instance (DirectAdapter)
  */
 export async function getAgentEngine(): Promise<IAgentEngine> {
+  if (engineSuspended) throw new PlatformUnavailableError();
   if (!directEngine) {
-    directEngine = await createDirectAdapter();
+    creatingEngine ??= createDirectAdapter().then(engine => { directEngine = engine; return engine; }).finally(() => { creatingEngine = undefined; });
+    await creatingEngine;
   }
-  return directEngine;
+  if (engineSuspended) throw new PlatformUnavailableError();
+  return directEngine!;
 }

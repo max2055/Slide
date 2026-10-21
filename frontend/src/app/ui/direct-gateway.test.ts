@@ -7,6 +7,7 @@
  * - sendChat produces correct JSON wire format
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SERVICE_RECOVERED_EVENT } from '../../api/service-recovery.js';
 import { registerChatSend } from './chat-session-state.ts';
 import * as directGateway from './direct-gateway.ts';
 import { ChatAcceptanceTimeoutError, DirectGatewayClient } from './direct-gateway.ts';
@@ -161,9 +162,12 @@ describe('109-04: DirectGatewayClient', () => {
     const count = onStateChange.mock.calls.length;
     await vi.advanceTimersByTimeAsync(300_000);
     expect(onStateChange).toHaveBeenCalledTimes(count);
-    client.reconnect();
+    window.dispatchEvent(new CustomEvent(SERVICE_RECOVERED_EVENT));
     expect(onStateChange).toHaveBeenLastCalledWith('connecting');
     client.disconnect();
+    const afterDisconnect = onStateChange.mock.calls.length;
+    window.dispatchEvent(new CustomEvent(SERVICE_RECOVERED_EVENT));
+    expect(onStateChange).toHaveBeenCalledTimes(afterDisconnect);
   });
 
   it.each([false, true])('resets backoff after 30 seconds only if authenticated (auth=%s)', async (authenticate) => {

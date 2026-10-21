@@ -84,8 +84,10 @@ export class NetworkDevicesPage extends LitElement {
 
   override firstUpdated() { void this.loadDevices(); }
 
-  async loadDevices(): Promise<void> {
-    this.loading = true;
+  async refreshReadData() { await this.loadDevices(true); }
+
+  async loadDevices(background = false): Promise<void> {
+    if (background !== true) this.loading = true;
     this.error = null;
     try {
       const response = await authFetch("/api/network-devices");

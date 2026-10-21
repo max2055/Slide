@@ -1,4 +1,5 @@
 import { applyChatRecoveryNotice, clearChatRecoveryNotice, markChatRecoveryInterruption } from './chat/recovery-notice.ts';
+import { reportServiceUnavailable, subscribeServiceRecovery } from '../../api/service-recovery.js';
 import { PARTS_STREAM_CAPABILITY, readDisplayStreamEvent, inspectDisplayWatermark, type DisplayCursor, type DisplayStreamState, type DisplayStreamEvent } from '../../../../packages/agent-core/src/display-stream.ts';
 import { normalizeToolEvent, type ToolWireEvent } from '../../../../packages/agent-core/src/tool-stream.js';
 import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';
@@ -150,6 +151,8 @@ export class DirectGatewayClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS;
   private closed = false;
+  private authFailed = false;
+  private stopServiceRecovery?: () => void;
   private authenticated = false;
   private authenticatedAt: number | null = null;
   private readonly chatAcceptTimeoutMs: number;
@@ -180,10 +183,16 @@ export class DirectGatewayClient {
   }
 
   connect(): void {
-    if (this.closed || this.ws) {
+    if (this.closed || this.authFailed || this.ws) {
       return;
     }
     this.clearReconnectTimer();
+    this.stopServiceRecovery ??= subscribeServiceRecovery(() => {
+      if (!this.closed && !this.authFailed && !this.ws && this.reconnectAttempts >= this.maxReconnectAttempts) {
+        this.reconnectAttempts = 0;
+        this.connect();
+      }
+    });
     this.authenticated = false;
     this.authenticatedAt = null;
     this.onStateChange('connecting');
@@ -233,6 +242,8 @@ export class DirectGatewayClient {
         pendingMessages: this.pendingChatDetails(),
       });
       if (ev.code === 4001) {
+        this.authFailed = true;
+        this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
         const error = new Error(SESSION_EXPIRED_MESSAGE);
         this.rejectPendingChatAcknowledgements(error);
         this.onStateChange('auth_failed');
@@ -246,6 +257,7 @@ export class DirectGatewayClient {
         return;
       }
       this.pausePendingChatAcknowledgements();
+      reportServiceUnavailable();
       if (ev.code === 1012) {
         this.onStateChange('service_restarting');
       } else if (ev.code === 1006) {
@@ -265,6 +277,7 @@ export class DirectGatewayClient {
   }
 
   disconnect(): void {
+    this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
     this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: true });
     this.investigationObservers.clear();
     this.closed = true;

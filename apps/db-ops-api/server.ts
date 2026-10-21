@@ -136,9 +136,13 @@ import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
 import { MigrationRunner } from './src/migrations/runner.js';
-import { WorkerLease } from './src/lifecycle/worker-lease.js';
+import { WorkerLease, type LeasePool } from './src/lifecycle/worker-lease.js';
 import { WorkerStartup } from './src/lifecycle/worker-startup.js';
 import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readiness.js';
+import { WorkerRecovery } from './src/lifecycle/worker-recovery.js';
+import { boundedPoolQuery } from './src/lifecycle/bounded-pool-query.js';
+import { platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
+import { ActorAuthenticationError } from './src/auth/actor-context.js';
 import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
 import { JobRegistry } from './src/workflows/job-registry.js';
@@ -158,7 +162,7 @@ import { CronManager } from './src/cron/cron-manager';
 import { CronExecutor } from './src/cron/cron-executor';
 import { CronJob } from 'cron';
 import { registerCronRoutes } from './src/cron/cron-routes.js';
-import { createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry } from './src/adapter/get-agent-engine.js';
+import { createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry, resumeAgentEngine, disposeAgentEngine } from './src/adapter/get-agent-engine.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
@@ -269,60 +273,88 @@ async function start() {
   let workflowTimer: ReturnType<typeof setInterval> | undefined;
   let dispatchAvailable = false;
   let metricLifecycle: MetricSchedulerLifecycle | undefined;
-  const workerLease = new WorkerLease(pool as any);
+  const controlPool: LeasePool = { async query<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]> {
+    return boundedPoolQuery<T>(pool, sql, values);
+  } };
+  const ledgerSql = 'SELECT migration_id, checksum, status FROM app_schema_migrations ORDER BY migration_id';
+  const [ledger] = await controlPool.query(ledgerSql);
+  const schemaFingerprint = JSON.stringify(ledger);
+  const probeInfrastructure = async () => {
+    const [current] = await controlPool.query(ledgerSql);
+    if (JSON.stringify(current) !== schemaFingerprint) throw new Error('WORKER_SCHEMA_INCOMPATIBLE');
+    await controlPool.query('SELECT id, state, lease_owner, lease_expires_at FROM workflow_jobs LIMIT 0');
+    return true;
+  };
   const recoveredConnections = new Set<number>();
-  let closeDeadline: ReturnType<typeof setTimeout> | undefined;
-  let workersClosed = false;
   let stopWorkersPromise: Promise<void> | undefined;
+  const waitForDrain = async (stop: () => Promise<boolean>) => {
+    // A bounded shutdown result of false is NOT permission to replace a worker.
+    while (!await stop()) { /* wait for the same quarantined runtime */ }
+  };
   const stopWorkers = () => stopWorkersPromise ??= (async () => {
     dispatchAvailable = false;
+    notificationWorkflowStore = undefined;
     if (workflowTimer) clearInterval(workflowTimer);
     monitorCollector.stop();
     networkDeviceCollector.stop();
-    alertEngine.stopEvaluationLoop();
-    alertEscalationService.stop();
-    maintenanceWindowService.stopCacheRefresh();
     stopSessionCleanup();
     promptManager.stopWatch();
-    await systemComposition?.close();
-    await Promise.all([
-      configBackupScheduler.stop(), cronManager?.stop(), engine?.dispose?.(),
-      metricLifecycle?.stop().then(stopped => { if (!stopped) throw new Error('METRIC_SHUTDOWN_TIMEOUT'); }),
-      stopWorkflow?.().then(stopped => { if (!stopped) throw new Error('WORKFLOW_SHUTDOWN_TIMEOUT'); }),
+    const results = await Promise.allSettled([
+      alertEngine.stopEvaluationLoop(), alertEscalationService.stop(), maintenanceWindowService.stopCacheRefresh(),
+      configBackupScheduler.stop(), cronManager?.stop(), disposeAgentEngine(),
+      metricLifecycle && waitForDrain(() => metricLifecycle!.stop()),
+      stopWorkflow && waitForDrain(stopWorkflow),
       ...Array.from(recoveredConnections, id => databaseService.removeConnection(id)),
     ]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw new Error('WORKER_DRAIN_FAILED', { cause: failed.reason });
+    recoveredConnections.clear();
   })();
-  const startup = new WorkerStartup(workerLease, async () => {
-    console.info('[WorkerStartup]', startup.signal.reason?.message ?? 'WORKER_STOPPED');
-    // Enforce a process boundary if a third-party initializer/driver cannot drain.
-    closeDeadline = setTimeout(() => { console.error('[WorkerStartup] WORKER_CLOSE_TIMEOUT'); process.exit(1); }, 10_000);
-    await stopWorkers();
-    await fastify.close();
-    workersClosed = true;
-  }, { onStopped: async () => {
-    try { await dbConnection.close(); } finally { if (workersClosed && closeDeadline) clearTimeout(closeDeadline); }
-  } });
-  const readiness = new InfrastructureReadiness(() => startup.ready && dispatchAvailable && !!cronManager?.getStatus().running, async () => {
-    const [rows] = await pool.query<import('mysql2').RowDataPacket[]>(
-      'SELECT owner_id FROM worker_leases WHERE lease_name = ? AND expires_at > NOW()', ['slide-singleton-workers']);
-    await pool.query('SELECT id, state, lease_owner, lease_expires_at FROM workflow_jobs LIMIT 0');
-    return rows[0]?.owner_id === workerLease.ownerId;
+  const recovery = new WorkerRecovery({
+    lease: () => new WorkerLease(controlPool),
+    probe: probeInfrastructure,
+    close: stopWorkers,
+    report: (state, reason) => console.info('[WorkerRecovery]', JSON.stringify({ state, reason })),
   });
+  const readiness = new InfrastructureReadiness(() => recovery.ready && dispatchAvailable && !!cronManager?.getStatus().running, async () => {
+    try { await recovery.assertOwned(); return await probeInfrastructure(); }
+    catch { recovery.degrade(); return false; }
+  }, 5_000);
   let shutdownPromise: Promise<void> | undefined;
-  const shutdown = () => shutdownPromise ??= startup.stop();
+  const shutdown = () => shutdownPromise ??= (async () => {
+    const deadline = setTimeout(() => { console.error('[WorkerRecovery] FINAL_CLOSE_TIMEOUT'); process.exit(1); }, 10_000);
+    try {
+      await recovery.stop();
+      await systemComposition?.close();
+      await fastify.close();
+      await dbConnection.close();
+    } finally { clearTimeout(deadline); }
+  })();
   process.once('SIGTERM', () => { void shutdown().catch(() => process.exit(1)); });
   process.once('SIGINT', () => { void shutdown().catch(() => process.exit(1)); });
-  fastify.addHook('onClose', stopWorkers);
+  fastify.addHook('onClose', async () => { await recovery.stop(); });
+  fastify.addHook('onRequest', async (request, reply) => {
+    if (request.url.split('?')[0] === '/api/health' || request.url.split('?')[0] === '/api/health/ready') return;
+    if (!recovery.ready && recovery.state !== 'standby') return reply.code(503).send(platformUnavailableResponse);
+    if (recovery.ready || !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      try { await recovery.assertOwned(); }
+      catch { return reply.code(503).send(platformUnavailableResponse); }
+    }
+  });
+  fastify.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode === 503 && typeof payload === 'string' && payload.includes('PLATFORM_UNAVAILABLE')) recovery.degrade();
+    return payload;
+  });
 
   // Required on every API process; timers and connection recovery are leader-only.
   const initializeApi = async () => {
-  await startup.step(() => agentSecurityPolicyService.initialize());
-  systemComposition = await startup.step(() => createSystemComposition(() => dbConnection.getPool()), resource => resource.close());
+  await agentSecurityPolicyService.initialize();
+  systemComposition = await createSystemComposition(() => dbConnection.getPool());
   systemComposition.install(); // every API process records; only the leader consumes
 
   // 加载预定义技能到 skillRegistry
   try {
-    const skills = await startup.step(() => loadPredefinedSkills());
+    const skills = await loadPredefinedSkills();
     for (const entry of skills) {
       skillRegistry.register(entry);
     }
@@ -334,15 +366,15 @@ async function start() {
   }
 
   // 加载 AI 分析提示词（支持 PROMPT_VERSION 切换）
-  await startup.step(() => promptManager.initialize());
+  await promptManager.initialize();
 
   // 初始化 LLM 服务（加载已启用的提供商）
-  await startup.step(() => llmService.initialize());
+  await llmService.initialize();
 
-  await startup.step(() => metricRegistry.initialize());
+  await metricRegistry.initialize();
   };
 
-  const initializeLeaderConnections = async () => {
+  const initializeLeaderConnections = async (startup: WorkerStartup) => {
   // 自动重连所有 active 实例（服务重启后恢复连接池）
   console.log('🔄 正在恢复数据库连接...');
   try {
@@ -392,8 +424,8 @@ async function start() {
 
   registerHealthRoutes(fastify, verifyToken, undefined, () => readiness.ready());
   const requireWorker = async (_request: unknown, reply: import('fastify').FastifyReply) => {
-    if (!startup.ready || !dispatchAvailable) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
-    try { await startup.assertOwned(); }
+    if (!recovery.ready || !dispatchAvailable) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
+    try { await recovery.assertOwned(); }
     catch { return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' }); }
   };
 
@@ -612,7 +644,8 @@ async function start() {
         refreshToken: rotated.refreshToken,
         expiresIn: 3600,
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ActorAuthenticationError)) return reply.code(503).send(platformUnavailableResponse);
       reply.code(401).send({ error: '无效的 refresh token' });
     }
   });
@@ -5368,8 +5401,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  const startWorkers = async () => {
-  await initializeLeaderConnections();
+  const startWorkers = async (startup: WorkerStartup) => {
+  stopWorkersPromise = undefined;
+  stopWorkflow = undefined; metricLifecycle = undefined; cronManager = undefined; engine = undefined;
+  dispatchAvailable = false;
+  resumeAgentEngine();
+  await initializeLeaderConnections(startup);
   await startup.assertOwned();
   if (process.env.PROMPT_HOT_RELOAD !== 'false') promptManager.startWatch();
   await startup.assertOwned();
@@ -5485,7 +5522,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await startup.assertOwned();
   workflowTimer = setInterval(() => {
     void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
-      .then(result => { if (result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
+      .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
       .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
   }, 1_000);
 
@@ -5499,13 +5536,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   };
 
-  registerCronRoutes(fastify, verifyToken, () => startup.ready && dispatchAvailable ? cronManager : undefined);
+  registerCronRoutes(fastify, verifyToken, () => recovery.ready && dispatchAvailable ? cronManager : undefined);
 
   // 启动 HTTP API 服务器
   const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
   await fastify.listen({ port: Number(port), host: '0.0.0.0' });
-  await startup.start(initializeApi, startWorkers);
-  if (!startup.ready) console.warn('[WorkerStartup] WORKER_LEASE_UNAVAILABLE: API-only standby; D1 does not auto-promote');
+  await initializeApi();
+  await recovery.start(async () => {}, startWorkers);
+  if (recovery.state === 'standby') console.warn('[WorkerStartup] WORKER_LEASE_UNAVAILABLE: API-only standby; D1 does not auto-promote');
   console.log(`🚀 服务器已启动：http://localhost:${port}`);
 }
 

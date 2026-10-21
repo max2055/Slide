@@ -18,7 +18,7 @@ function findWorker(node: ts.Node) {
 }
 findWorker(source);
 if (!worker) throw new Error('server.ts worker startup not found');
-const startup = ts.transpileModule(`const startWorkers = ${worker.getText(source)}; startWorkers();`, {
+const startup = ts.transpileModule(`const startWorkers = ${worker.getText(source)}; startWorkers(startup);`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 
@@ -41,6 +41,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
       if (id !== './src/db-connection') throw new Error(`Unexpected startup import: ${id}`);
       return { dbConnection: { getPool: () => pool } };
     },
+    resumeAgentEngine: vi.fn(), stopWorkersPromise: undefined, stopWorkflow: undefined, metricLifecycle: undefined, cronManager: undefined, engine: undefined,
     initializeLeaderConnections: vi.fn(), startSessionCleanup: vi.fn(),
     startup: { assertOwned: vi.fn(async () => {}), step: async (operation: () => Promise<unknown>) => operation() },
     process: { env: { PROMPT_HOT_RELOAD: 'false' } }, promptManager: { startWatch: vi.fn() },

@@ -10,6 +10,7 @@ import {
   signAccessToken,
   type ActorContext,
 } from './actor-context.js';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
 import { agentRunService } from '../adapter/agent-run-service.js';
@@ -181,7 +182,7 @@ describe('actor context security boundary', () => {
     } as any));
 
     await expect(service.loadActiveActor(7, 4, 'request-3'))
-      .rejects.toBeInstanceOf(ActorAuthenticationError);
+      .rejects.toBeInstanceOf(PlatformUnavailableError);
   });
 
   it('actor access tokens contain only the server session index claims', async () => {
@@ -206,7 +207,7 @@ describe('actor context security boundary', () => {
     } as any));
 
     await expect(service.issueRefreshToken(actor()))
-      .rejects.toBeInstanceOf(ActorAuthenticationError);
+      .rejects.toBeInstanceOf(PlatformUnavailableError);
   });
 
   it('actor login refresh issuance stores the current session version', async () => {
@@ -597,7 +598,7 @@ describe('refresh failure-closed state machine', () => {
       const fixture = refreshFixture(options);
 
       await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
-        .rejects.toBeInstanceOf(ActorAuthenticationError);
+        .rejects.toBeInstanceOf(_name === 'database error' ? PlatformUnavailableError : ActorAuthenticationError);
       expect(fixture.connection.rollback).toHaveBeenCalledOnce();
       expect(fixture.state().tokens).toHaveLength(options.missing ? 0 : 1);
     },
@@ -630,7 +631,7 @@ describe('refresh failure-closed state machine', () => {
     const fixture = refreshFixture({ failAt: 'insert' });
 
     await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
-      .rejects.toBeInstanceOf(ActorAuthenticationError);
+      .rejects.toBeInstanceOf(PlatformUnavailableError);
     expect(fixture.connection.rollback).toHaveBeenCalledOnce();
     expect(fixture.state().tokens).toHaveLength(1);
     expect(fixture.state().tokens[0].revoked).toBe(false);
@@ -642,7 +643,7 @@ describe('refresh failure-closed state machine', () => {
       const fixture = refreshFixture({ failAt: 'commit', commitAppliedBeforeError });
 
       await expect(fixture.service.rotateRefreshToken('raw-refresh-token'))
-        .rejects.toBeInstanceOf(ActorAuthenticationError);
+        .rejects.toBeInstanceOf(PlatformUnavailableError);
       expect(fixture.connection.release).toHaveBeenCalledOnce();
     },
   );

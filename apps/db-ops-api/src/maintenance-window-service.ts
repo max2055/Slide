@@ -244,16 +244,17 @@ class MaintenanceWindowService {
       },
       null,
       true,
-      'Asia/Shanghai'
+      'Asia/Shanghai', undefined, false, undefined, false, true
     );
 
     console.log(`✅ 维护窗口缓存刷新已启动（每 ${intervalMinutes} 分钟）`);
   }
 
-  stopCacheRefresh(): void {
+  async stopCacheRefresh(): Promise<void> {
     if (this.refreshJob) {
-      this.refreshJob.stop();
+      const job = this.refreshJob;
       this.refreshJob = null;
+      await job.stop();
     }
   }
 

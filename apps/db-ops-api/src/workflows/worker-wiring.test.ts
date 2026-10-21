@@ -9,8 +9,8 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
   const server = readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
   const ordered = [
     "fastify.addHook('onClose'",
-    'const startWorkers = async () => {',
-    'await initializeLeaderConnections()',
+    'const startWorkers = async (startup: WorkerStartup) => {',
+    'await initializeLeaderConnections(startup)',
     'await startup.assertOwned()',
     'await startup.step(() => engine!.start()',
     'new MysqlWorkflowStore(() => dbConnection.getPool() as any)',
@@ -27,7 +27,7 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     'registerCronRunHandler(workflowRegistry',
     'await startup.step(() => cronManager!.start())',
     'workflowTimer = setInterval(',
-    'await startup.start(initializeApi, startWorkers)',
+    'await recovery.start(async () => {}, startWorkers)',
   ];
   let previous = -1;
   for (const marker of ordered) {
@@ -40,16 +40,22 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
   expect(server).not.toContain('networkDeviceCollector.start()');
   expect(server).toContain('startup.assertOwned().then(() => workflowRuntime.runOnce');
   expect(server).toContain("}, 1_000);");
-  expect(server).toContain('startup.ready && dispatchAvailable');
+  expect(server).toContain('recovery.ready && dispatchAvailable');
   expect(server).toContain('dispatchAvailable = false;');
   const close = server.slice(server.indexOf('const stopWorkers ='), server.indexOf('const readiness ='));
   for (const marker of [
-    'clearInterval(workflowTimer)', 'stopWorkflow?.()',
+    'clearInterval(workflowTimer)', 'waitForDrain(stopWorkflow)',
     'monitorCollector.stop()', 'networkDeviceCollector.stop()', 'configBackupScheduler.stop()',
     'alertEngine.stopEvaluationLoop()', 'alertEscalationService.stop()', 'stopSessionCleanup()',
-    'promptManager.stopWatch()', 'cronManager?.stop()', 'engine?.dispose?.()',
-    'maintenanceWindowService.stopCacheRefresh()', 'await fastify.close()', 'await dbConnection.close()',
+    'promptManager.stopWatch()', 'cronManager?.stop()', 'disposeAgentEngine()',
+    'maintenanceWindowService.stopCacheRefresh()',
   ]) expect(close).toContain(marker);
+  expect(close).not.toContain('fastify.close()');
+  expect(close).not.toContain('dbConnection.close()');
+  const finalClose = server.slice(server.indexOf('const shutdown ='), server.indexOf("process.once('SIGTERM'"));
+  expect(finalClose).toContain('await recovery.stop()');
+  expect(finalClose).toContain('await fastify.close()');
+  expect(finalClose).toContain('await dbConnection.close()');
   expect(server).toContain("process.once('SIGTERM'");
   expect(server).toContain("process.once('SIGINT'");
   expect(server.indexOf('new WorkerLease(')).toBeLessThan(server.indexOf('const initializeApi ='));
