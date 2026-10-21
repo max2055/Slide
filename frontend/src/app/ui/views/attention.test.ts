@@ -41,7 +41,8 @@ it.each([{ items: [event(2), event(1)] }, [event(2), event(1)]])('renders numeri
   vi.mocked(authFetch).mockResolvedValue(response(data));
   const page = await view(); await settled(page);
   expect(page.querySelector('[role="alert"]')).toBeNull();
-  expect([...page.querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent))).toEqual([['事项 1', '严重', '待处理'], ['事项 2', '严重', '待处理']]);
+  expect([...page.querySelectorAll('tbody tr strong')].map(row => row.textContent)).toEqual(['事项 1', '事项 2']);
+  expect(page.querySelectorAll('tbody button')).toHaveLength(2);
   expect(empty(page)).toBeNull();
 });
 
@@ -67,8 +68,8 @@ it.each([{}, null, { items: null }, { items: {} }, { items: [null] }, { items: [
 it('retains unknown severity and lifecycle values without claiming an empty result', async () => {
   vi.mocked(authFetch).mockResolvedValue(response({ items: [event(1, { severity: 'future-severity', status: 'future-status' })] }));
   const page = await view(); await settled(page);
-  expect(page.querySelector('tbody')?.textContent).toContain('future-severity');
-  expect(page.querySelector('tbody')?.textContent).toContain('future-status'); expect(empty(page)).toBeNull();
+  expect(page.querySelector('tbody')?.textContent).toContain('未知严重度');
+  expect(page.querySelector('tbody')?.textContent).toContain('未知状态'); expect(empty(page)).toBeNull();
 });
 
 it('network failure exposes an error without the empty state', async () => {
@@ -99,4 +100,45 @@ it.each(['slide-session-expired', 'slide-permissions-loaded'])('%s invalidates i
   deliver(response({ items: [event('sensitive')] })); await settled(page);
   expect(page.textContent).not.toContain('sensitive'); expect(empty(page)).toBeNull(); expect(page.querySelector('app-data-table')).toBeNull();
   expect(page.textContent).toContain(boundary === 'slide-session-expired' ? '登录已失效' : '无访问权限');
+});
+
+async function open(page: AttentionPage, id: number) {
+  page.querySelector<HTMLButtonElement>(`button[aria-label="查看事件 #${id} 详情"]`)!.click();
+  await vi.waitFor(() => expect((page as any).detailLoading).toBe(false)); await flush(page);
+}
+it('distinguishes duplicate titles and reads the exact selected event; filters survive returning', async () => {
+  const items = [event(1, { title: '同名事项', instance_name: 'MySQL A', root_cause: '原因 A' }), event(2, { title: '同名事项', instance_name: 'MySQL B', root_cause: '原因 B' })];
+  vi.mocked(authFetch).mockResolvedValueOnce(response({ items })).mockResolvedValueOnce(response(items[1]));
+  const page = await view(); await settled(page);
+  const input = page.querySelector<HTMLInputElement>('input')!; input.value = 'MySQL B'; input.dispatchEvent(new Event('input')); await flush(page);
+  expect(page.querySelectorAll('tbody tr')).toHaveLength(1);
+  await open(page, 2);
+  expect(authFetch).toHaveBeenLastCalledWith('/api/alerts/events/2', { cache: 'no-store' });
+  expect(page.querySelector('app-dialog')?.textContent).toContain('原因 B');
+  expect(page.querySelector('app-dialog')?.textContent).not.toContain('原因 A');
+  page.querySelector<HTMLButtonElement>('button[slot="footer"]')!.click(); await flush(page);
+  expect((page.querySelector('app-dialog') as any).open).toBe(false);
+  expect(input.value).toBe('MySQL B'); expect(page.querySelectorAll('tbody tr')).toHaveLength(1);
+});
+it.each([403, 404, 500])('detail HTTP %s clears previous content and allows a fresh retry', async status => {
+  vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [event(1), event(2)] })).mockResolvedValueOnce(response(event(1, { root_cause: 'private cause' }))).mockResolvedValueOnce(response({}, status));
+  const page = await view(); await settled(page); await open(page, 1); await open(page, 2);
+  expect(page.querySelector('app-dialog [role="alert"]')).not.toBeNull();
+  expect(page.querySelector('app-dialog')?.textContent).not.toContain('private cause');
+});
+it.each(['slide-session-expired', 'slide-permissions-loaded'])('discards a pending detail after %s', async boundary => {
+  let deliver!: (value: Response) => void;
+  vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [event(1)] })).mockImplementationOnce(() => new Promise(resolve => deliver = resolve));
+  const page = await view(); await settled(page);
+  page.querySelector<HTMLButtonElement>('tbody button')!.click(); await flush(page);
+  window.dispatchEvent(new CustomEvent(boundary, { detail: { permissions: [] } })); await flush(page);
+  deliver(response(event(1, { root_cause: 'sensitive' }))); await flush(page);
+  expect(page.textContent).not.toContain('sensitive'); expect((page.querySelector('app-dialog') as any).open).toBe(false);
+});
+it('ignores an older detail response when another event is selected', async () => {
+  let deliver!: (value: Response) => void;
+  vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [event(1), event(2)] })).mockImplementationOnce(() => new Promise(resolve => deliver = resolve)).mockResolvedValueOnce(response(event(2)));
+  const page = await view(); await settled(page); page.querySelector<HTMLButtonElement>('tbody button')!.click(); await flush(page); await open(page, 2);
+  deliver(response(event(1, { root_cause: 'older private detail' }))); await flush(page);
+  expect(page.querySelector('app-dialog')?.textContent).not.toContain('older private detail'); expect(page.querySelector('app-dialog')?.textContent).toContain('事件 #2');
 });

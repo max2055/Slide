@@ -1,11 +1,28 @@
 // Presentation only: unknown values remain explicit; no health inference from inventory status.
 export const diagnosisLabels: Record<string, string> = {
+  good: '证据完整', partial: '证据不完整', unsupported: '暂不支持', unavailable: '暂不可用', not_covered: '尚未覆盖',
   cpu: 'CPU 使用率', cpu_usage: 'CPU 使用率', memory_usage: '内存使用率', disk_usage: '磁盘使用率',
   observation: '自动观测', invariant: '规则评估', expectation: '统计评估', history: '历史记录',
   inference: '推论（待人工确认）', hypothesis: '假设（待人工确认）',
   pass: '符合配置范围', fail: '超出配置范围', unknown: '无法判断', deviation: '偏离历史基线', 'within-range': '在历史基线范围内',
 };
 export const diagnosisGaps: Record<string, [string, string]> = {
+  SYSTEM_LOGS_EMPTY: ['最近五分钟未取得警告及以上系统日志', '可扩大日志时间范围核对；没有日志不代表服务器正常'],
+  SYSTEM_LOGS_UNAVAILABLE: ['系统日志暂不可用', '检查 journald 或 messages 日志源及读取权限后重新采集'],
+  JOURNAL_UNAVAILABLE_FALLBACK_MESSAGES: ['日志已改用 messages 文件，内容可能不完整', '核对 journald 是否可用，并结合原始日志确认时间范围'],
+  JOURNAL_JSON_MALFORMED: ['部分系统日志格式无法解析', '核对原始日志格式后重新采集'],
+  JOURNAL_OUTPUT_TRUNCATED: ['系统日志未完整返回', '缩小日志范围或查看服务器原始日志'],
+  SERVICE_LIST_EMPTY: ['本次未取得运行中的服务', '核对 systemctl 与服务管理方式后重新采集'],
+  SERVICE_STATUS_UNAVAILABLE: ['服务状态暂不可用', '检查 systemctl 是否可用及 SSH 读取权限'],
+  SERVICE_QUERY_UNAVAILABLE: ['服务查询暂不可用', '检查服务管理工具与 SSH 读取权限'],
+  LISTENING_PORTS_EMPTY: ['本次未取得监听端口', '核对 ss 命令和网络命名空间后重新采集'],
+  LISTENING_PORTS_UNAVAILABLE: ['监听端口暂不可用', '检查 ss 命令与读取权限'],
+  TOP_PROCESSES_EMPTY: ['本次未取得进程样本', '核对 ps 命令与进程读取权限'],
+  TOP_PROCESSES_UNAVAILABLE: ['进程样本暂不可用', '检查 ps 命令与 SSH 读取权限'],
+  INTERFACE_STATS_EMPTY: ['本次未取得网卡统计', '核对 /proc/net/dev 与网络命名空间'],
+  INTERFACE_STATS_UNAVAILABLE: ['网卡统计暂不可用', '检查 /proc/net/dev 的读取权限'],
+  unavailable: ['当前证据暂不可用', '检查连接、采集来源与读取权限后重新采集'],
+  not_covered: ['当前采集范围尚未覆盖', '核对已支持的采集能力与配置'],
   NO_EVIDENCE_IN_WINDOW: ['所选时间范围没有证据', '检查采集是否启用，采集后刷新证据'],
   OBSERVATIONS_EMPTY: ['缺少观测数据', '检查采集连接和权限，采集后刷新证据'],
   OBSERVATIONS_UNAVAILABLE: ['观测数据读取失败', '检查采集服务和连接，恢复后刷新证据'],

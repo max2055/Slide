@@ -317,6 +317,8 @@ export function renderApp(state: AppViewState) {
       }
     </style>` : nothing}
     ${renderCommandPalette({
+      permissions: state.userPermissions,
+      visibleTabs: state.settings.visibleTabs,
       open: state.paletteOpen,
       query: state.paletteQuery,
       activeIndex: state.paletteActiveIndex,

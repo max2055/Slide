@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN" data-theme-mode="light"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>工作台信息呈现回归</title>
+<link rel="stylesheet" href="/src/app/styles/base.css">
+<link rel="stylesheet" href="/src/app/styles/components.css">
+<style>body{margin:16px;background:var(--bg);color:var(--text);font:14px system-ui}*{box-sizing:border-box}#palette{position:relative}server-diagnostic-panel{margin-top:24px}</style>
+<body><button id="search">全局搜索</button><main></main><div id="palette"></div>
+<script type="module">
+import {html, render} from '/node_modules/lit/index.js';
+import '/src/app/ui/views/investigations.ts';
+import '/src/app/ui/components/server-diagnostic-panel.ts';
+import {renderCommandPalette} from '/src/app/ui/views/command-palette.ts';
+const permissions = new Set(['*']);
+const page = document.createElement('attention-page'); page.permissions = permissions;
+document.querySelector('main').append(page);
+const panel = document.createElement('server-diagnostic-panel'); document.querySelector('main').append(panel);
+const props = {permissions,open:false,query:'',activeIndex:0,onToggle(){props.open=!props.open;draw()},onQueryChange(query){props.query=query;draw()},onActiveIndexChange(index){props.activeIndex=index;draw()},onNavigate(tab){window.selectedTab=tab},onSlashCommand(){throw new Error('No upstream commands expected')}};
+function draw(){render(renderCommandPalette(props),document.querySelector('#palette'))}
+document.querySelector('#search').onclick=()=>{props.open=true;draw()};
+window.workbench={page,panel,props,draw};
+</script></body></html>
