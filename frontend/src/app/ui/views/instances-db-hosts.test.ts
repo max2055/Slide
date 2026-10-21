@@ -60,6 +60,7 @@ describe('database instance host relation form', () => {
     authFetch.mockResolvedValue(response([]));
     const page = await mountPage();
     page.instances = [{ ...instance, id: 1, health_status: 'unknown' }, { ...instance, id: 2, health_status: 'critical' }];
+    page.healthEvidence = [{ resource: { type: 'instance', id: 2 }, status: 'critical', quality: 'good', freshness: 'fresh', observedAt: new Date().toISOString(), gaps: [], unresolvedAlerts: 1 }];
     await settle(page);
     expect(page.stats).toMatchObject({ unknown: 1, critical: 1 });
     page.filter = 'critical';

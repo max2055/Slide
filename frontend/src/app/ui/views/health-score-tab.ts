@@ -3,7 +3,9 @@ import { customElement, property, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
 import { authFetch } from "../../../api/index.js";
-import { resolveHealthScoreState, type HealthScoreInstanceState } from "./health-score-state.js";
+import { resolveHealthScoreState, observationTimeState, evidenceTime, evidenceTimeState, type HealthScoreInstanceState } from "./health-score-state.js";
+
+import type { OverviewItem } from './dashboard-model.js';
 
 interface HealthHistory {
   status?: string;
@@ -55,8 +57,11 @@ export class HealthScoreTab extends LitElement {
   @state() private latestChecksStatus = "unknown";
   @state() private healthStatus: string = "unknown";
   @state() private instanceState: HealthScoreInstance | null = null;
+  @state() private collectionEnabled: boolean | null = null;
+  @state() private overview: OverviewItem | null = null;
   @state() private capabilities: CollectionCapability[] = [];
   @state() private loading = true;
+  @state() private evidenceError: string | null = null;
   @state() private error: string | null = null;
   @state() private timeRange: string = "7d";
   @state() private expandedChecks = false;
@@ -317,8 +322,14 @@ export class HealthScoreTab extends LitElement {
     }
   `;
 
+  private ageTimer?: ReturnType<typeof setInterval>;
+  override disconnectedCallback() { super.disconnectedCallback(); clearInterval(this.ageTimer); this.loadRequestVersion++; }
+  override updated(changes: Map<PropertyKey, unknown>) {
+    if (changes.has('instanceId') && changes.get('instanceId') !== undefined) void this._loadData();
+  }
   override connectedCallback() {
     super.connectedCallback();
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
     this._loadData();
   }
 
@@ -326,6 +337,7 @@ export class HealthScoreTab extends LitElement {
     const requestVersion = ++this.loadRequestVersion;
     this.loading = true;
     this.error = null;
+    this.evidenceError = null;
     // Never let a refresh render evidence from the previous instance state.
     this.healthHistory = null;
     this.latestChecks = [];
@@ -333,6 +345,8 @@ export class HealthScoreTab extends LitElement {
     this.latestChecksStatus = "unknown";
     this.healthStatus = "unknown";
     this.instanceState = null;
+    this.overview = null;
+    this.collectionEnabled = null;
     this.capabilities = [];
 
     const instanceId = this.instanceId;
@@ -343,21 +357,36 @@ export class HealthScoreTab extends LitElement {
 
     try {
       const days = this._timeRangeToDays(this.timeRange);
-      const [historyRes, checksRes, capsRes, instanceRes] = await Promise.all([
+      const [historyRes, checksRes, capsRes, instanceRes, overviewRes, collectionRes] = await Promise.all([
         authFetch(`/api/database/instances/${instanceId}/health-history?days=${days}`),
         authFetch(`/api/database/instances/${instanceId}/health-checks`),
         authFetch(`/api/database/instances/${instanceId}/collection-capabilities`),
         authFetch(`/api/database/instances/${instanceId}`),
-      ]);
+        authFetch(`/api/resources/overview`),
+        authFetch(`/api/metrics/config/resources/instance/${instanceId}/status`),
+      ].map(request => request.catch(() => null)));
 
       if (requestVersion !== this.loadRequestVersion) return;
 
-      if (historyRes.ok) {
+      if (![checksRes, instanceRes, overviewRes, collectionRes].every(response => response?.ok)) {
+        this.evidenceError = '当前证据读取失败或无权访问，无法判断当前评分';
+      }
+      if (collectionRes?.ok) {
+        const data = await collectionRes.json();
+        if (requestVersion !== this.loadRequestVersion) return;
+        this.collectionEnabled = typeof data.effective_enabled?.enabled === 'boolean' ? data.effective_enabled.enabled : null;
+      }
+      if (overviewRes?.ok) {
+        const data = await overviewRes.json();
+        if (requestVersion !== this.loadRequestVersion) return;
+        this.overview = data.items?.find((item: OverviewItem) => item.resource.type === 'instance' && item.resource.id === instanceId) ?? null;
+      }
+      if (historyRes?.ok) {
         const history = await historyRes.json();
         if (requestVersion !== this.loadRequestVersion) return;
         this.healthHistory = Array.isArray(history) ? history : null;
       }
-      if (checksRes.ok) {
+      if (checksRes?.ok) {
         const data: HealthChecksResponse = await checksRes.json();
         if (requestVersion !== this.loadRequestVersion) return;
         this.latestChecks = Array.isArray(data?.checks) ? data.checks : [];
@@ -365,7 +394,7 @@ export class HealthScoreTab extends LitElement {
         this.latestChecksStatus = data?.status ?? "unknown";
         this.healthStatus = typeof data?.status === "string" ? data.status : "unknown";
       }
-      if (instanceRes.ok) {
+      if (instanceRes?.ok) {
         const instance = await instanceRes.json();
         if (requestVersion !== this.loadRequestVersion) return;
         if (!isHealthScoreInstance(instance)) {
@@ -379,7 +408,7 @@ export class HealthScoreTab extends LitElement {
         this.instanceState = null;
         this.healthStatus = "unknown";
       }
-      if (capsRes.ok) {
+      if (capsRes?.ok) {
         const capabilities = await capsRes.json();
         if (requestVersion !== this.loadRequestVersion) return;
         this.capabilities = Array.isArray(capabilities) ? capabilities : [];
@@ -453,14 +482,14 @@ export class HealthScoreTab extends LitElement {
   }
 
   private _getLatestScore(): number | null {
-    const historyScore = this.healthHistory?.length
-      ? this.healthHistory[this.healthHistory.length - 1].health_score
-      : null;
-    const latestScore = this.instanceState?.health_score ?? historyScore;
-    return resolveHealthScoreState({
-      ...(this.instanceState || {}),
-      health_status: this.instanceState?.health_status || this.healthStatus,
-    }, latestScore).score;
+    if (this.collectionEnabled !== true) return null;
+    const at = Date.parse(this.latestChecksAt ?? '');
+    const instanceAt = Date.parse(this.instanceState?.last_health_check_at ?? '');
+    if (!this.latestChecks.length || !['healthy', 'warning', 'critical'].includes(this.latestChecksStatus)
+      || this.latestChecksStatus !== this.instanceState?.health_status
+      || this.latestChecks.some(check => !['ok', 'warning', 'critical'].includes(check.status) || !Number.isFinite(check.score) || check.score < 0 || check.score > 100)
+      || !Number.isFinite(at) || Math.abs(at - instanceAt) > 2000) return null;
+    return resolveHealthScoreState(this.instanceState, this.instanceState?.health_score, this.overview).score;
   }
 
   override render() {
@@ -486,7 +515,10 @@ export class HealthScoreTab extends LitElement {
         <div class="score-card">
           <div class="score-number" style="color: ${scoreColor};">${score ?? "未知"}</div>
           <div class="score-label">当前健康评分</div>
-          ${score === null ? html`<div class="score-label">实例未就绪或暂无可用观测数据</div>` : nothing}
+          <div class="score-label">采集：${this.collectionEnabled === true ? '已启用' : this.collectionEnabled === false ? '已暂停' : '状态未知'}</div>
+          <div class="score-label">正式观测：${evidenceTime(this.overview?.observedAt)} · ${evidenceTimeState(this.overview?.observedAt)}</div>
+          <div class="score-label">健康检查：${evidenceTime(this.latestChecksAt)} · ${evidenceTimeState(this.latestChecksAt)}</div>
+          ${score === null ? html`<div class="score-label">${this.evidenceError || '当前证据不足、检查不完整或采集暂停；历史评分仅供回溯'}</div>` : nothing}
         </div>
       </div>
 
@@ -524,9 +556,6 @@ export class HealthScoreTab extends LitElement {
   }
 
   private _renderTrendChart() {
-    if (this._getLatestScore() === null) {
-      return html`<div class="empty">暂无可用评分数据</div>`;
-    }
     if (!this.healthHistory || this.healthHistory.length === 0) {
       return html`<div class="empty">暂无评分数据</div>`;
     }
@@ -536,11 +565,11 @@ export class HealthScoreTab extends LitElement {
       return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
     });
 
-    const totalScores = this.healthHistory.map((h) => h.status === "unknown" ? null : h.health_score);
+    const totalScores = this.healthHistory.map((h) => ["unknown", "error"].includes(h.status ?? "") || !Number.isFinite(h.health_score) ? null : h.health_score);
 
     return html`
       <metric-chart
-        title="健康评分趋势"
+        title="历史健康评分（不代表当前健康）"
         .timeData=${timeData}
         .series=${[
           { name: "总分", data: totalScores, color: "var(--accent)" },
@@ -557,10 +586,12 @@ export class HealthScoreTab extends LitElement {
     const instanceAt = Date.parse(this.instanceState?.last_health_check_at ?? '');
     const freshIncomplete = this.instanceState?.hasCredential === true
       && this.latestChecksStatus === 'unknown' && this.healthStatus === 'unknown'
+      && observationTimeState(this.latestChecksAt) === 'fresh'
       && Number.isFinite(checksAt) && Number.isFinite(instanceAt) && Math.abs(checksAt - instanceAt) <= 2000;
     return html`
       <button
         class="collapsible-toggle ${this.expandedChecks ? "expanded" : ""}"
+        aria-expanded=${String(this.expandedChecks)}
         @click=${() => { this.expandedChecks = !this.expandedChecks; }}
       >
         ${icons['chevron-right']} 最近健康检查详情

@@ -2908,6 +2908,9 @@ class DatabaseService {
     const totalBytes = dbSizeRows.reduce((sum: number, row: any) => sum + Number(row.size_bytes || 0), 0);
 
     return {
+      observed_at: new Date().toISOString(),
+      source: 'MySQL information_schema.TABLES（实时读取，统计值可能为估算）',
+      scope: '当前账号可见的全部非系统库；包含表/视图元数据；总量含数据与索引，Top 20 为子集',
       total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
       databases: dbSizeRows.map((row: any) => ({
         name: row.db_name,

@@ -305,7 +305,7 @@ class SchemaDatabaseService {
   /**
    * 获取当前快照的表列表（去重，含统计）
    */
-  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number; column_count: number }[]> {
+  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number; column_count: number; snapshot_time: Date }[]> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -317,7 +317,8 @@ class SchemaDatabaseService {
                 MAX(table_comment) as table_comment,
                 MAX(table_rows) as table_rows,
                 MAX(data_length) as data_length,
-                COUNT(*) as column_count
+                COUNT(*) as column_count,
+                MAX(snapshot_time) as snapshot_time
          FROM schema_snapshots
          WHERE instance_id = ?
            AND snapshot_time = (
@@ -334,6 +335,7 @@ class SchemaDatabaseService {
         table_rows: Number(row.table_rows),
         data_length: Number(row.data_length),
         column_count: Number(row.column_count),
+        snapshot_time: new Date(row.snapshot_time),
       }));
     } catch (error) {
       console.error('获取表列表失败:', error);
