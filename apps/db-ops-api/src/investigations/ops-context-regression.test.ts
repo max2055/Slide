@@ -43,6 +43,7 @@ describe('normal Ops first six-tool batch admission', () => {
     const manager = new ContextManager(spec, provider as any);
     const request = [...manager.project(raw), ...projectContextBlocks([runtimeBlock('runtime', currentTime(new Date('2026-10-21T15:52:41.400Z')))])];
     const projection = provider.projectMessages(request);
+    console.info('Offline Ops admission estimate', manager.tokens(request), '/', manager.inputBudget);
     expect(manager.split(raw).end).toBe(2); // Only system/user can precede the protected batch.
     expect(spec.tools.getDefinitions()).toHaveLength(7);
     expect(projection.filter(m=>m.role==='tool')).toHaveLength(6);
@@ -61,6 +62,15 @@ describe('normal Ops first six-tool batch admission', () => {
     expect(JSON.stringify(raw)).toBe(before);
     expect(sourceHash(raw)).toBe(digest);
     expect(provider.projectMessages(projection)).toEqual(projection);
+    for (const receipt of raw.filter(m=>m.role==='tool')) {
+      const value=JSON.parse(String(receipt.content));
+      const projected=JSON.parse(String(projection.find(m=>m.tool_call_id===receipt.tool_call_id)!.content));
+      if (!projected.data?.evidenceOmitted) {
+        const {policyDecision: _audit,...business}=value;
+        expect(projected).toEqual(business);
+        expect(value.policyDecision.allow).toBe(true);
+      }
+    }
   });
 
   it('still rejects irreducible protected growth before the recording sink', async () => {

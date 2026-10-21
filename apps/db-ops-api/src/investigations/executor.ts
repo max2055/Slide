@@ -52,7 +52,15 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   if (result === null || typeof result !== 'object' || (result as any).success !== true
     || (result as any).status === 'error') return result;
   const json = JSON.stringify(result);
-  if (profile !== 'ops' || Buffer.byteLength(json) <= 1024) return json;
+  if (profile !== 'ops') return json;
+  if (Buffer.byteLength(json) <= 1024) {
+    // executeToolWithPolicy appends this runtime audit envelope to every
+    // receipt. It is not observation data or model authority. Keep it in
+    // canonical facts/SQL, but do not repeat actor/request ACL metadata in the
+    // live model batch. All business fields and failure semantics stay exact.
+    const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
+    return JSON.stringify(observation);
+  }
   return JSON.stringify({ success: true, status: 'warning',
     summary: '完整工具结果已持久化；本上下文仅含证据引用，未包含观测值，不可据此推断健康或根因。请使用相同资源和时间范围，以 maxRows=1 或 limit=1 缩小只读查询。',
     data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
