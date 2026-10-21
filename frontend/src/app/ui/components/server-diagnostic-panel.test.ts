@@ -80,6 +80,22 @@ describe("server-diagnostic-panel", () => {
     const element = document.createElement("server-diagnostic-panel") as any;
     document.body.append(element);
     await settle(element);
-    expect(element.shadowRoot?.textContent).toContain("No diagnostic evidence");
+    expect(element.shadowRoot?.textContent).toContain("尚无诊断证据");
   });
+});
+
+it('renders each API section once, explains empty logs in Chinese, and hides raw fields in details', async () => {
+  const section = (items: any[], reason?: string) => ({ items, reason, source: ['SSH'], collectedAt: '2026-10-21T00:00:00Z', quality: 'partial' });
+  const services = section([{ name: 'sshd.service', activeState: 'active', loadState: 'loaded', subState: 'running', description: 'SSH server' }]);
+  const logs = section([], 'SYSTEM_LOGS_EMPTY');
+  const element = document.createElement('server-diagnostic-panel') as any;
+  element.evidence = { sections: { services, topProcesses: section([{ pid: 1, cpuPercent: 0 }]), systemLogs: logs, listeningPorts: section([{ port: 22 }]), interfaceErrors: section([{ rxErrors: 0 }]) }, serviceStatus: services, recentSystemLogs: logs, gaps: [{ section: 'systemLogs', reason: 'SYSTEM_LOGS_EMPTY' }] };
+  document.body.append(element); await settle(element);
+  expect(element.shadowRoot.querySelectorAll('.evidence-section')).toHaveLength(5);
+  expect(element.shadowRoot.textContent).toContain('最近五分钟未取得警告及以上系统日志');
+  expect(element.shadowRoot.textContent).toContain('没有日志不代表服务器正常');
+  expect(element.shadowRoot.querySelector('details pre')?.textContent).toBeTruthy();
+  element.sectionFilter = 'logs'; await settle(element);
+  expect(element.shadowRoot.querySelectorAll('.evidence-section')).toHaveLength(1);
+  expect(element.shadowRoot.querySelectorAll('.gap')).toHaveLength(1);
 });

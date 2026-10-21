@@ -1,7 +1,8 @@
 import { html, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { t } from "../../i18n/index.ts";
-import { SLASH_COMMANDS } from "../chat/slash-commands.ts";
+import { hasSlidePermission } from "../app-settings.ts";
+import { TAB_REQUIRED_PERMISSIONS, type Tab } from "../navigation.ts";
 import { icons, type IconName } from "../../../icons.js";
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
 
@@ -14,89 +15,30 @@ type PaletteItem = {
   description?: string;
 };
 
-function buildSlashPaletteItems(): PaletteItem[] {
-  return SLASH_COMMANDS.map((command) => ({
-    id: `slash:${command.name}`,
-    label: `/${command.name}`,
-    icon: command.icon ?? "terminal",
-    category: "search",
-    action: `/${command.name}`,
-    description: command.description,
-  }));
-}
+// Explicit product allowlist: upstream chat commands do not define Slide capabilities.
+const PRODUCT_DESTINATIONS: Array<[Tab, string, IconName, string?]> = [
+  ['dashboard', '资源总览', 'bar-chart'], ['attention', '关注事项', 'activity'],
+  ['investigations', '调查工作台', 'search'], ['chat', '运维对话', 'file-text'],
+  ['instances-db', '数据库实例', 'database'], ['servers', '服务器', 'monitor'],
+  ['network-devices', '网络设备', 'monitor'],
+  ['sql-console', 'SQL 控制台', 'terminal', '执行受实例权限、SQL 边界与审批约束'],
+  ['events', '事件中心', 'activity'], ['reports', '巡检报告', 'file-text'],
+  ['approval', '审批中心', 'file-text'], ['audit-center', '审计中心', 'search'],
+  ['cron-jobs', '定时任务', 'scroll-text'], ['health-center', '平台健康', 'activity'],
+  ['settings', '个人设置', 'settings'],
+];
 
-function getPaletteBaseItems(): PaletteItem[] {
-  return [
-    {
-      id: "nav-overview",
-      label: "Overview",
-      icon: "bar-chart",
-      category: "navigation",
-      action: "nav:overview",
-    },
-    {
-      id: "nav-sessions",
-      label: "Sessions",
-      icon: "file-text",
-      category: "navigation",
-      action: "nav:sessions",
-    },
-    {
-      id: "nav-cron",
-      label: "Scheduled",
-      icon: "scroll-text",
-      category: "navigation",
-      action: "nav:cron",
-    },
-    {
-      id: "nav-skills",
-      label: "Skills",
-      icon: "zap",
-      category: "navigation",
-      action: "nav:skills",
-    },
-    {
-      id: "nav-config",
-      label: "Settings",
-      icon: "settings",
-      category: "navigation",
-      action: "nav:settings",
-    },
-    {
-      id: "nav-agents",
-      label: "Agents",
-      icon: "folder",
-      category: "navigation",
-      action: "nav:agents",
-    },
-    {
-      id: "skill-shell",
-      label: "Shell Command",
-      icon: "monitor",
-      category: "skills",
-      action: "/skill shell",
-      description: "Run shell",
-    },
-    {
-      id: "skill-debug",
-      label: "Debug Mode",
-      icon: "bug",
-      category: "skills",
-      action: "/verbose full",
-      description: "Toggle debug",
-    },
-  ];
-}
-
-function getPaletteItemsInternal(): PaletteItem[] {
-  return [...buildSlashPaletteItems(), ...getPaletteBaseItems()];
-}
-
-export function getPaletteItems(): readonly PaletteItem[] {
-  return getPaletteItemsInternal();
+export function getPaletteItems(permissions: Set<string> | null = null, visibleTabs?: string[]): PaletteItem[] {
+  if (!permissions) return [];
+  return PRODUCT_DESTINATIONS.filter(([tab]) =>
+    (!visibleTabs?.length || visibleTabs.includes(tab)) &&
+    hasSlidePermission(permissions, tab === 'attention' ? 'alert:view' : tab === 'chat' ? 'chat:view' : TAB_REQUIRED_PERMISSIONS[tab])
+  ).map(([tab, label, icon, description]) => ({ id: `nav-${tab}`, label, icon, category: 'navigation', action: `nav:${tab}`, description }));
 }
 
 export type CommandPaletteProps = {
+  permissions?: Set<string> | null;
+  visibleTabs?: string[];
   open: boolean;
   query: string;
   activeIndex: number;
@@ -107,8 +49,8 @@ export type CommandPaletteProps = {
   onSlashCommand: (command: string) => void;
 };
 
-function filteredItems(query: string): PaletteItem[] {
-  const items = getPaletteItemsInternal();
+function filteredItems(query: string, props: CommandPaletteProps): PaletteItem[] {
+  const items = getPaletteItems(props.permissions, props.visibleTabs);
   if (!query) {
     return items;
   }
@@ -138,12 +80,14 @@ function saveFocus() {
 
 function restoreFocus() {
   if (previouslyFocused && previouslyFocused instanceof HTMLElement) {
-    requestAnimationFrame(() => previouslyFocused && (previouslyFocused as HTMLElement).focus());
+    const target = previouslyFocused;
+    requestAnimationFrame(() => { if (target.isConnected) target.focus(); });
   }
   previouslyFocused = null;
 }
 
 function selectItem(item: PaletteItem, props: CommandPaletteProps) {
+  if (!getPaletteItems(props.permissions, props.visibleTabs).some(current => current.id === item.id)) return;
   if (item.action.startsWith("nav:")) {
     props.onNavigate(item.action.slice(4));
   } else {
@@ -161,11 +105,12 @@ function scrollActiveIntoView() {
 }
 
 function handleKeydown(e: KeyboardEvent, props: CommandPaletteProps) {
-  const items = filteredItems(props.query);
+  const items = filteredItems(props.query, props);
   if (items.length === 0 && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
     return;
   }
   switch (e.key) {
+    case "Tab": e.preventDefault(); break;
     case "ArrowDown":
       e.preventDefault();
       props.onActiveIndexChange((props.activeIndex + 1) % items.length);
@@ -191,9 +136,7 @@ function handleKeydown(e: KeyboardEvent, props: CommandPaletteProps) {
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
-  search: "Search",
-  navigation: "Navigation",
-  skills: "Skills",
+  navigation: "产品入口",
 };
 
 function focusInput(el: Element | undefined) {
@@ -208,7 +151,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
     return nothing;
   }
 
-  const items = filteredItems(props.query);
+  const items = filteredItems(props.query, props);
   const grouped = groupItems(items);
 
   return html`
@@ -220,12 +163,16 @@ export function renderCommandPalette(props: CommandPaletteProps) {
       }}
     >
       <div
+        role="dialog" aria-modal="true" aria-label="全局搜索"
         class="cmd-palette"
         @click=${(e: Event) => e.stopPropagation()}
         @keydown=${(e: KeyboardEvent) => handleKeydown(e, props)}
       >
         <input
           ${ref(focusInput)}
+          role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="slide-palette-results"
+          aria-activedescendant=${items[props.activeIndex] ? `palette-${items[props.activeIndex].id}` : nothing}
+          aria-label="搜索产品入口"
           class="cmd-palette__input"
           placeholder="${t("overview.palette.placeholder")}"
           .value=${props.query}
@@ -234,7 +181,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
             props.onActiveIndexChange(0);
           }}
         />
-        <div class="cmd-palette__results">
+        <div id="slide-palette-results" class="cmd-palette__results" role="listbox" aria-label="产品入口">
           ${grouped.length === 0
             ? html`<div class="cmd-palette__empty">
                 <span class="nav-item__icon" style="opacity:0.3;width:20px;height:20px"
@@ -252,6 +199,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
                     const isActive = globalIndex === props.activeIndex;
                     return html`
                       <div
+                        id=${`palette-${item.id}`} role="option" aria-selected=${isActive}
                         class="cmd-palette__item ${isActive ? "cmd-palette__item--active" : ""}"
                         @click=${(e: Event) => {
                           e.stopPropagation();
@@ -273,9 +221,9 @@ export function renderCommandPalette(props: CommandPaletteProps) {
               )}
         </div>
         <div class="cmd-palette__footer">
-          <span><kbd>↑↓</kbd> navigate</span>
-          <span><kbd>↵</kbd> select</span>
-          <span><kbd>esc</kbd> close</span>
+          <span><kbd>↑↓</kbd> 切换</span>
+          <span><kbd>↵</kbd> 打开</span>
+          <span><kbd>esc</kbd> 关闭</span>
         </div>
       </div>
     </div>

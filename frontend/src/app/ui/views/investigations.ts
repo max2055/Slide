@@ -5,6 +5,7 @@ import type { DirectGatewayClient } from '../direct-gateway.ts';
 import { InvestigationsController } from '../controllers/investigations.ts';
 import { renderInvestigationDetail, lifecycleLabels } from './investigation-detail.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
+import { displayTime } from './diagnosis-presentation.ts';
 import { icons } from '../../../icons.ts';
 import { hasSlidePermission } from '../app-settings.ts';
 import '../components/app-card.ts';
@@ -220,7 +221,14 @@ export class InvestigationsPage extends LitElement {
   }
 }
 
-interface AttentionItem { id: string | number; title: string; severity: string; status: string; updated_at: string; }
+interface AttentionItem { id: string | number; title: string; severity: string; status: string; updated_at: string;
+  instance_id?: number | null; instance_name?: string; created_at?: string; root_cause?: string | null;
+  alert_count?: number; alerts?: Array<{ id: string | number; title: string; metric_name?: string }>;
+}
+const attentionStatus = (value: string) => ({ open: '待处理', investigating: '调查中', handled: '待验证', resolved: '已恢复', closed: '已关闭' })[value] ?? '未知状态（查看技术详情）';
+const attentionSeverity = (value: string) => ({ critical: '严重', warning: '警告', info: '信息' })[value] ?? '未知严重度（查看技术详情）';
+const attentionResource = (item: AttentionItem) => item.instance_name || (item.instance_id ? `数据库实例 #${item.instance_id}（名称未提供）` : '资源未提供');
+const attentionSummary = (item: AttentionItem) => item.root_cause || (item.alert_count != null ? `聚合了 ${item.alert_count} 条告警；根因尚未确认` : '根因摘要尚未提供，请查看事件详情');
 export function sortAttentionItems(items: AttentionItem[]) {
   const severity: Record<string, number> = { critical: 0, warning: 1, info: 2 };
   return [...items].sort((a, b) => (severity[a.severity] ?? 3) - (severity[b.severity] ?? 3)
@@ -232,9 +240,33 @@ export class AttentionPage extends LitElement {
   @state() private items: AttentionItem[] = [];
   @state() private readState: 'idle' | 'loading' | 'success' | 'error' | 'expired' = 'idle';
   @state() private error = '';
+  @state() private query = '';
+  @state() private statusFilter = '';
+  @state() private selectedId: string | number | null = null;
+  @state() private detail: AttentionItem | null = null;
+  @state() private detailError = '';
+  @state() private detailLoading = false;
+  private detailGeneration = 0;
+  private closeDetail() { this.detailGeneration++; this.selectedId = null; this.detail = null; this.detailError = ''; this.detailLoading = false; }
+  private async openDetail(id: string | number) {
+    if (!hasSlidePermission(this.permissions, 'alert:view') || this.readState === 'expired') return;
+    this.closeDetail(); this.selectedId = id; this.detailLoading = true;
+    const generation = this.detailGeneration;
+    try {
+      const response = await authFetch(`/api/alerts/events/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      if (generation !== this.detailGeneration) return;
+      if (response.status === 401) { this.expired(); return; }
+      if (!response.ok) throw new Error(response.status === 403 ? '无权访问此事件，请确认当前资源权限。' : response.status === 404 ? '事件不存在或已不可访问，请刷新事项。' : '事件详情读取失败，请重试。');
+      const item = await response.json();
+      if (generation !== this.detailGeneration) return;
+      if (!item || String(item.id) !== String(id) || !['title', 'severity', 'status', 'updated_at'].every(key => typeof item[key] === 'string')) throw new Error('事件详情格式异常，请重试。');
+      this.detail = item;
+    } catch (error) { if (generation === this.detailGeneration) this.detailError = (error as Error).message; }
+    finally { if (generation === this.detailGeneration) this.detailLoading = false; }
+  }
   private get loading() { return this.readState === 'loading'; }
   private generation = 0;
-  private invalidate() { this.generation++; this.items = []; this.readState = 'idle'; this.error = ''; }
+  private invalidate() { this.closeDetail(); this.generation++; this.items = []; this.readState = 'idle'; this.error = ''; }
   private expired = () => { this.invalidate(); this.readState = 'expired'; };
   private permissionsChanged = (e: Event) => { this.invalidate(); this.permissions = new Set((e as CustomEvent<{ permissions: string[] }>).detail.permissions); };
   createRenderRoot() { return this; }
@@ -243,7 +275,7 @@ export class AttentionPage extends LitElement {
   protected updated(changed: Map<string, unknown>) { if (changed.has('permissions')) { this.invalidate(); if (hasSlidePermission(this.permissions, 'alert:view')) void this.load(); } }
   private async load() {
     if (!hasSlidePermission(this.permissions, 'alert:view') || this.readState === 'expired') return;
-    const generation = ++this.generation; this.readState = 'loading'; this.error = ''; this.items = [];
+    this.closeDetail(); const generation = ++this.generation; this.readState = 'loading'; this.error = ''; this.items = [];
     let failureMessage = '事项读取失败，请重试。';
     try {
       const response = await authFetch('/api/alerts/events?limit=20&offset=0&status=open,investigating,handled', { cache: 'no-store' });
@@ -262,14 +294,44 @@ export class AttentionPage extends LitElement {
     } catch { if (generation === this.generation) { this.items = []; this.error = failureMessage; this.readState = 'error'; } }
   }
   render() {
-    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles} attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-lg); margin-bottom:0; } attention-page app-data-table { display:block; overflow:auto; }</style>
-        <app-card><span slot="header">关注事项</span>
-          <p>最近 20 项待处理聚合事件，按严重度、更新时间与 ID 排序。</p>
-          ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : hasSlidePermission(this.permissions, 'alert:view') ? html`
-            ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
-            ${this.loading || this.readState === 'success' ? html`<app-data-table .loading=${this.loading} .columns=${[{ key: 'title', label: '事项' }, { key: 'severity', label: '严重度' }, { key: 'status', label: '状态' }]} .rows=${this.items.map(item => ({ ...item, severity: ({ critical: '严重', warning: '警告', info: '信息' })[item.severity] ?? item.severity, status: ({ open: '待处理', investigating: '调查中', handled: '待验证' })[item.status] ?? item.status }))} emptyMessage="暂无关注事项"></app-data-table>` : nothing}
-            <div class="attention-actions"><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
-          ` : html`<app-empty-state title="无访问权限" description="需要告警读取权限。"></app-empty-state>`}
-        </app-card>`;
+    const canView = hasSlidePermission(this.permissions, 'alert:view');
+    const filtered = this.items.filter(item => (!this.statusFilter || item.status === this.statusFilter) &&
+      [item.title, `#${item.id}`, attentionResource(item), attentionSummary(item)].join(' ').toLocaleLowerCase().includes(this.query.trim().toLocaleLowerCase()));
+    return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles}
+      attention-page { display:block; min-width:0; } attention-page .attention-actions { display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-lg); }
+      attention-page app-data-table { display:block; overflow:auto; } attention-page td { overflow-wrap:anywhere; }
+      attention-page .attention-copy { display:grid; gap:var(--space-xs); min-width:180px; }
+      attention-page .attention-meta { color:var(--muted); font-size:var(--text-sm); }
+      attention-page .attention-scroll-hint { color:var(--muted); font-size:var(--text-sm); }
+      attention-page .attention-filters { display:flex; gap:var(--space-md); flex-wrap:wrap; margin-bottom:var(--space-md); }
+      attention-page app-dialog p { overflow-wrap:anywhere; }
+    </style>
+      <app-card><span slot="header">关注事项</span>
+        <p>最近 20 项待处理聚合事件，按严重度、更新时间与编号排序。筛选仅作用于这 20 项。</p>
+        ${this.readState === 'expired' ? html`<p role="alert">登录已失效，请重新登录后读取关注事项。</p>` : this.permissions === null ? html`<p role="status">正在确认访问权限…</p>` : canView ? html`
+          <div class="attention-filters">
+            <app-form-field class="field" label="搜索事项"><input aria-label="搜索事项" placeholder="标题、资源名或事件编号" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></app-form-field>
+            <app-form-field class="field" label="事项状态"><select aria-label="事项状态" .value=${this.statusFilter} @change=${(e: Event) => this.statusFilter = (e.target as HTMLSelectElement).value}><option value="">全部待处理状态</option><option value="open">待处理</option><option value="investigating">调查中</option><option value="handled">待验证</option></select></app-form-field>
+          </div>
+          ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
+          <p class="attention-scroll-hint">表格可横向滚动查看全部信息与操作，也可用 Tab 定位“查看详情”。</p>
+          ${this.loading || this.readState === 'success' ? html`<app-data-table tabindex="0" role="region" aria-label="关注事项，可横向滚动" .loading=${this.loading}
+            .columns=${[{ key: 'identity', label: '事项与摘要' }, { key: 'resource', label: '资源与时间' }, { key: 'severityLabel', label: '严重度' }, { key: 'statusLabel', label: '状态' }, { key: 'action', label: '操作' }]}
+            .rows=${filtered.map(item => ({ identity: html`<div class="attention-copy"><strong>${item.title}</strong><span class="attention-meta">事件 #${item.id}</span><span>${attentionSummary(item)}</span></div>`, resource: html`<div class="attention-copy"><span>${attentionResource(item)}</span><span class="attention-meta">更新于 ${displayTime(item.updated_at)}</span></div>`, severityLabel: attentionSeverity(item.severity), statusLabel: attentionStatus(item.status), action: html`<button class="btn btn-sm" aria-label=${`查看事件 #${item.id} 详情`} @click=${() => void this.openDetail(item.id)}>查看详情</button>` }))}
+            emptyMessage=${this.query || this.statusFilter ? '暂无匹配事项' : '暂无关注事项'}></app-data-table>` : nothing}
+          <div class="attention-actions"><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading} @click=${() => void this.load()}>刷新事项</button><button class="btn" @click=${() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'events' } }))}>打开事件中心</button></div>
+        ` : html`<app-empty-state title="无访问权限" description="需要告警读取权限。"></app-empty-state>`}
+      </app-card>
+      <app-dialog .open=${canView && this.selectedId !== null} title=${`事件 #${this.selectedId ?? ''} 详情`} size="lg" @app-dialog-close=${() => this.closeDetail()}>
+        ${this.detailLoading ? html`<p role="status">正在核验权限并读取事件详情…</p>` : this.detailError ? html`<p role="alert">${this.detailError}</p><button class="btn" @click=${() => this.selectedId !== null && void this.openDetail(this.selectedId)}>重试详情</button>` : this.detail ? html`
+          <h2>${this.detail.title}</h2><p>事件 #${this.detail.id} · ${attentionResource(this.detail)}</p>
+          <p>${attentionSeverity(this.detail.severity)} · ${attentionStatus(this.detail.status)}</p>
+          <p>创建于 ${displayTime(this.detail.created_at)} · 更新于 ${displayTime(this.detail.updated_at)}</p>
+          <h3>原因摘要</h3><p>${attentionSummary(this.detail)}</p>
+          <h3>关联告警</h3>${this.detail.alerts?.length ? html`<ul>${this.detail.alerts.map(alert => html`<li>告警 #${alert.id}：${alert.title}</li>`)}</ul>` : html`<p>当前事件未返回关联告警；可在事件中心核对关联记录。</p>`}
+          <details><summary>技术详情</summary><p>资源标识：${this.detail.instance_id ?? '未提供'} · 原始严重度：${this.detail.severity} · 原始状态：${this.detail.status}</p></details>
+        ` : nothing}
+        <button slot="footer" class="btn" @click=${() => this.closeDetail()}>返回关注事项</button>
+      </app-dialog>`;
   }
 }
