@@ -18,7 +18,7 @@ const { RecoveryPolicy } = await import(new URL('runtime/recovery-policy.js', co
 const { RapidRefill } = await import(new URL('runtime/rapid-refill.js', core).href);
 const { currentTime, projectContextBlocks, runtimeBlock } = await import(new URL('context-block.js', core).href);
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-second-batch-20261022.json', import.meta.url), 'utf8'));
-const resources = [{ type: 'instance', id: 1 }, { type: 'server', id: 3 }];
+const resources = fixture.resources;
 const profile = INVESTIGATION_PROFILES.ops;
 const clock = projectContextBlocks([runtimeBlock('runtime', currentTime(new Date('2026-10-21T16:49:26Z')))]);
 const summary = { goal: ['Read-only resource investigation'], constraints: [], done: [], pending: [], evidence: [], uncertain: ['Root cause unverified; omitted receipts require narrower reads'] };
@@ -54,7 +54,8 @@ async function setup() {
   const tools = new ToolRegistry();
   for (const name of profile.toolAllowlist) {
     const contract = contracts.investigationToolContract(toolCatalog.get(name)!, resources, profile.budget)!;
-    tools.register({ ...contract, readOnly: true, execute: async () => { throw Error('NO_TOOL_EXECUTION_IN_OFFLINE_REPLAY'); } });
+    tools.register({ ...contract, readOnly: true, concurrencySafe: false, exclusive: true,
+      execute: async () => { throw Error('NO_TOOL_EXECUTION_IN_OFFLINE_REPLAY'); } });
   }
   // Fallback is solely the predecessor reproducer; the production helper must
   // be used once implemented. The failing boundary is actual admission.
@@ -88,6 +89,7 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     expect(received[1].tools).toHaveLength(7);
     const wire = received[1].messages;
     expect(wire[0].content).toContain('All tools (runtime enforced)');
+    expect(wire[0].content).not.toContain('primary');
     expect(wire[0].content).toContain('"maxWindowMs":3600000');
     expect(wire[0].content).toContain('Missing/unknown is not healthy');
     const retainedAssistant = split.retained[0];

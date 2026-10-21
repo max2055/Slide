@@ -55,3 +55,20 @@ it('model references remain ephemeral and repeated projection preserves full can
  const provider=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
  assert.deepEqual(investigationContextMessages(provider.projectMessages(view),'ops').map(m=>m.content),view.map(m=>m.content));
 });
+
+it('post-execution failure projection preserves denial details and all business error fields', async () => {
+ const {investigationContextMessages,investigationToolContextResult}=await import('./executor.js');
+ const business={success:false,status:'error',errorCode:'METRIC_REFERENCE_REVIEW_REQUIRED',error:'Cannot read legacy metric',data:{state:'unknown'},next_actions:['review migration']};
+ const allowed={...business,policyDecision:{allow:true,reasonCode:'ALLOW',actor:{userId:1},requestId:'receipt'}};
+ const denied={...business,policyDecision:{allow:false,reasonCode:'RESOURCE_SCOPE_DENIED',resource:{type:'server',id:3}}};
+ const messages:any[]=[{role:'tool',tool_call_id:'allowed',content:JSON.stringify(allowed,null,2)},
+   {role:'tool',tool_call_id:'denied',content:JSON.stringify(denied,null,2)}];
+ const before=JSON.stringify(messages);
+ const view=investigationContextMessages(messages,'ops');
+ assert.deepEqual(JSON.parse(String(view[0].content)),business);
+ assert.deepEqual(JSON.parse(String(view[1].content)),denied);
+ assert.equal(investigationToolContextResult(allowed,'allowed','ops'),allowed,'executor failure object stays unchanged');
+ assert.equal(JSON.stringify(messages),before);
+ assert.equal(investigationContextMessages(messages,'system'),messages);
+ assert.deepEqual(investigationContextMessages(view,'ops'),view);
+});

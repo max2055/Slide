@@ -1111,5 +1111,17 @@
       },
       "tool_call_id": "call_03_MSFY4b7NRXKLfGOxVfZK7886"
     }
+  ],
+  "resources": [
+    {
+      "id": 1,
+      "role": "primary",
+      "type": "instance"
+    },
+    {
+      "id": 3,
+      "role": "related",
+      "type": "server"
+    }
   ]
 }
