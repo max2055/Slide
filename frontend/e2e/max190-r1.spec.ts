@@ -93,7 +93,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`R1
 for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`R1 template catalog ${width} ${theme}`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 1000 });
   await setup(page, theme, '<metric-settings view="packages"></metric-settings>');
-  await expect(page.getByRole('cell', { name: 'MySQL 基础采集', exact: true })).toBeVisible();
+  await expect(page.locator('app-data-table').getByText('MySQL 基础采集', { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath('templates-r1.png'), fullPage: true });
   await page.getByRole('button', { name: '查看模板', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '采集模板详情' })).toBeVisible();

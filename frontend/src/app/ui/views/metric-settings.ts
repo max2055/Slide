@@ -1,6 +1,10 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
+import { packageGroups, directoryMetricName, packageMetrics, packagePurpose, templateName, scopeLabel, compatibilityLabel, applicabilityLabel, type Release, type PackageEvidence } from '../components/metric-package-directory.js';
+import type { RecommendationResult } from '../components/metric-api.js';
+import { showToast } from '../components/app-toast-container.js';
 import { metricRequest, metricError, type Catalog, type Overrides } from '../components/metric-configuration.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import '../components/resource-collection-section.js';
@@ -22,6 +26,11 @@ export class MetricSettings extends LitElement {
   @state() private packageSearch = '';
   @state() private packageType = '';
   @state() private packageDetail = '';
+  @state() private packageResource = '';
+  @state() private packageEvidence: PackageEvidence[] = [];
+  @state() private compatibilityLoading = false;
+  @state() private compatibilityError = '';
+  private compatibilityGeneration = 0;
 
   @state() private policyTab = 'resource';
   @state() private resources: Array<{ resource: { type: string; id: number }; label: string; attributes?: Record<string, unknown> }> = [];
@@ -47,7 +56,8 @@ export class MetricSettings extends LitElement {
   private readonly accessChanged = () => {
     this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++;
     clearTimeout(this.groupSearchTimer);
-    this.packageDetail = '';
+    this.packageDetail = ''; this.packageResource = ''; this.packageEvidence = [];
+    this.compatibilityGeneration++; this.compatibilityLoading = false; this.compatibilityError = '';
     this.catalog = null; this.resources = []; this.resourceId = 0; this.groups = []; this.audits = [];
     this.groupId = ''; this.groupLoaded = false; this.groupManage = false; this.groupOverrides = {};
     this.groupPreview = null; this.busy = false; this.auditLoading = false;
@@ -60,7 +70,7 @@ export class MetricSettings extends LitElement {
     }
   }
   override disconnectedCallback() {
-    this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++; clearTimeout(this.groupSearchTimer);
+    this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++; this.compatibilityGeneration++; clearTimeout(this.groupSearchTimer);
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
     super.disconnectedCallback();
@@ -94,6 +104,10 @@ export class MetricSettings extends LitElement {
     .package-entry { border-top:1px solid var(--border); padding-block:var(--space-md); overflow-wrap:anywhere; }
     summary { cursor:pointer; color:var(--text-strong); }
     .package-summary { display:inline-grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--space-sm) var(--space-md); width:calc(100% - 1.5em); vertical-align:top; }
+    .package-table { min-width:60rem; } .package-table .data-table { table-layout:fixed; } .package-table td { overflow-wrap:anywhere; }
+    .version-list { margin-top:var(--space-sm); } .version-list li { margin-block:var(--space-sm); }
+    .directory-context { padding:var(--space-md) var(--space-lg); border-top:1px solid var(--border); }
+    .directory-context p { margin-block:var(--space-sm); }
     .package-meta { color:var(--muted); font-size:var(--text-sm); }
     .package-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr)); gap:var(--space-md); margin-block:var(--space-lg); }
     .package-sections h3 { margin-top:0; font-size:var(--text-base); }
@@ -178,43 +192,84 @@ export class MetricSettings extends LitElement {
   private renderCatalogError() {
     return this.catalogError ? html`<app-notice role="alert">${this.catalogError}<button class="btn" @click=${this.load}>重新加载目录</button></app-notice>` : nothing;
   }
+  private async loadCompatibility(value: string) {
+    const generation = ++this.compatibilityGeneration;
+    this.packageResource = value; this.packageEvidence = []; this.compatibilityError = ''; this.packageDetail = '';
+    this.compatibilityLoading = !!value;
+    if (!value) return;
+    const resource = this.resources.find(r => `${r.resource.type}:${r.resource.id}` === value)?.resource;
+    if (!resource) { this.compatibilityLoading = false; return; }
+    try {
+      const result = await metricRequest<RecommendationResult>(`config/resources/${resource.type}/${resource.id}/recommendations`);
+      if (generation === this.compatibilityGeneration) this.packageEvidence = result.packages;
+    } catch (e) { if (generation === this.compatibilityGeneration) this.compatibilityError = metricError(e); }
+    finally { if (generation === this.compatibilityGeneration) this.compatibilityLoading = false; }
+  }
+  private evidence(p: Release) { return this.packageEvidence.find(e => e.release.package.digest === p.package.digest); }
+  private async copyIdentity(p: Release) {
+    try { await navigator.clipboard.writeText(`${p.package.id}@${p.package.version}\n${p.package.digest}`); showToast('已复制模板标识', 'success'); }
+    catch { showToast('复制失败，请展开技术标识手动复制', 'error'); }
+  }
+  private openResourceConfiguration() {
+    const resource = this.resources.find(r => `${r.resource.type}:${r.resource.id}` === this.packageResource)?.resource;
+    this.packageDetail = ''; this.type = resource?.type ?? 'instance'; this.resourceId = resource?.id ?? 0; this.policyTab = 'resource';
+    this.view = 'policies';
+    const url = new URL(window.location.href); url.searchParams.set('view', 'policies');
+    window.history.pushState({}, '', url); window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+  private renderCoverage(p: Release) {
+    const metrics = packageMetrics(p), evidence = this.evidence(p);
+    const named = metrics.map(directoryMetricName).filter(name => name !== '扩展指标（名称未提供）');
+    const unnamed = metrics.length - named.length;
+    return html`<strong>${metrics.length} 项指标</strong><small>${named.slice(0, 3).join('、') || (metrics.length ? '扩展指标，技术定义见详情' : '未提供指标映射')}${unnamed && named.length ? `；另有 ${unnamed} 项扩展指标` : ''}</small>
+      <small>${evidence ? evidence.missing_core_metrics.length ? `核心缺口 ${evidence.missing_core_metrics.length} 项：${evidence.missing_core_metrics.map(directoryMetricName).join('、')}`
+        : '未报告核心指标缺口；样本质量需另行确认' : '核心指标缺口待资源兼容检查确认'}</small>`;
+  }
   private renderPackages() {
     const c = this.catalog, query = this.packageSearch.trim().toLowerCase();
-    const packages = c?.packages.filter(p => (!this.packageType || p.package.resource_type === this.packageType)
-      && `${packageName(p.package.id)} ${p.package.id}`.toLowerCase().includes(query)) ?? [];
+    const groups = packageGroups(c?.packages ?? [], this.packageEvidence);
+    const filtered = groups.filter(g => (!this.packageType || g.primary.package.resource_type === this.packageType)
+      && `${templateName(g.id)} ${g.id} ${g.versions.map(scopeLabel).join(' ')}`.toLowerCase().includes(query));
     const detail = c?.packages.find(p => p.package.digest === this.packageDetail);
     return html`<h2>指标与采集</h2><p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
       <app-card .compact=${true}><div class="filter-toolbar" role="group" aria-label="采集包筛选">
         <app-form-field label="搜索名称或标识"><input type="search" aria-label="搜索采集包" placeholder="搜索模板名称、引擎" .value=${this.packageSearch} @input=${(e: Event) => { this.packageSearch = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="采集包资源类型" .value=${this.packageType} @change=${(e: Event) => { this.packageType = (e.target as HTMLSelectElement).value; }}><option value="">全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
         <button class="btn" .disabled=${!this.packageSearch && !this.packageType} @click=${() => { this.packageSearch = ''; this.packageType = ''; }}>清空筛选</button>
+      </div><div class="directory-context">
+        <app-form-field label="兼容性参考资源（可选）"><select aria-label="兼容性参考资源" .value=${this.packageResource} @change=${(e: Event) => void this.loadCompatibility((e.target as HTMLSelectElement).value)}>
+          <option value="">全局浏览 · 未指定资源</option>${this.resources.map(r => html`<option value=${`${r.resource.type}:${r.resource.id}`}>${r.label} · ${resourceLabels[r.resource.type] ?? r.resource.type}</option>`)}</select></app-form-field>
+        ${this.resourceNotice ? html`<p role="status">${this.resourceNotice}<button class="btn btn-sm" @click=${this.loadResources}>重试资源列表</button></p>` : nothing}
+        <p role="status">${this.compatibilityLoading ? '正在检查资源兼容性，暂不提供推荐' : this.compatibilityError ? '兼容性暂不可确认，目录版本不代表推荐。' : this.packageResource ? '按服务端兼容性证据展示版本；浏览不会改变既有绑定。' : '未指定资源：按版本顺序展示目录，最高版本不代表兼容或推荐。'}</p>
+        ${this.compatibilityError ? html`<app-notice role="alert">兼容性检查失败：${this.compatibilityError}<button class="btn" @click=${() => void this.loadCompatibility(this.packageResource)}>重试兼容检查</button></app-notice>` : nothing}
       </div>${this.renderCatalogError()}
-      ${this.catalogError ? nothing : html`<div class="scroll"><app-data-table .loading=${!c} .columns=${[{ key: 'name', label: '模板', width: '12rem' }, { key: 'version', label: '当前版本', width: '6rem' }, { key: 'scope', label: '适用范围', width: '10rem' }, { key: 'coverage', label: '指标覆盖' }, { key: 'actions', label: '操作', width: '6rem' }]}
-        .rows=${packages.map(p => ({
-          name: html`<strong>${packageName(p.package.id)}</strong>`, version: p.package.version,
-          scope: p.package.applicability?.map(a => a.values.join(' / ')).join(' · ') || resourceLabels[p.package.resource_type] || p.package.resource_type,
-          coverage: (() => {
-            const ids = [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])];
-            return html`${ids.slice(0, 3).map(metricName).join('、') || '未提供指标映射'}${ids.length > 3 ? html`<small>共 ${ids.length} 项，查看模板了解完整覆盖</small>` : nothing}`;
-          })(),
-          actions: html`<button class="btn btn-sm btn-ghost" @click=${() => { this.packageDetail = p.package.digest; }}>查看模板</button>`,
+      ${this.catalogError ? nothing : html`<div class="scroll" role="region" aria-label="采集模板目录，可横向滚动" tabindex="0"><app-data-table class="package-table" .loading=${!c} .columns=${[{ key: 'name', label: '模板与用途', width: '12rem' }, { key: 'version', label: '展示版本', width: '12rem' }, { key: 'scope', label: '适用范围', width: '12rem' }, { key: 'coverage', label: '指标覆盖与缺口', width: '16rem' }, { key: 'actions', label: '操作', width: '6rem' }]}
+        .rows=${filtered.map(g => ({
+          name: html`<strong>${templateName(g.id)}</strong><small>${packagePurpose(g.primary)}</small><details><summary>模板标识</summary><small>${g.id}</small></details>`,
+          version: html`v${g.primary.package.version}<small>${compatibilityLabel(this.evidence(g.primary))}</small>${g.others.length ? html`<details class="version-list"><summary>其他与历史版本（${g.others.length}）</summary><ul>${g.others.map(p => html`<li>v${p.package.version} · ${compatibilityLabel(this.evidence(p))}<small>${scopeLabel(p)} · ${packageMetrics(p).length} 项指标</small><button class="btn btn-sm btn-ghost" aria-label=${`查看 ${templateName(g.id)} ${p.package.version}`} @click=${() => { this.packageDetail = p.package.digest; }}>查看此版本</button></li>`)}</ul></details>` : nothing}`,
+          scope: scopeLabel(g.primary), coverage: this.renderCoverage(g.primary),
+          actions: html`<button class="btn btn-sm btn-ghost" @click=${() => { this.packageDetail = g.primary.package.digest; }}>查看模板</button>`,
         }))} emptyMessage=${c?.packages.length ? '没有符合条件的采集包' : '暂无采集包'}></app-data-table></div>`}
-      ${this.catalogError ? nothing : html`<p class="table-foot" role="status" aria-label=${!c ? '正在读取采集包' : nothing}>${c ? `显示 ${packages.length} / ${c.packages.length} 个采集包版本` : '正在读取采集包'}</p>`}
-      </app-card><section class="template-note"><h3>一个标准，保留有意义的版本</h3><p>模板版本用于追溯、兼容检查与回滚；对象配置在资源编辑中维护。</p></section>
+      ${this.catalogError ? nothing : html`<p class="table-foot" role="status" aria-label=${!c ? '正在读取采集包' : nothing}>${c ? `显示 ${filtered.length} / ${groups.length} 个模板 · 共 ${c.packages.length} 个不可变版本` : '正在读取采集包'}</p>`}
+      </app-card><section class="template-note"><h3>一个标准，保留有意义的版本</h3><p>历史版本用于追溯、兼容检查与回滚；基础包与诊断包独立保留，不自动替换既有绑定。目录覆盖不代表已有正式样本。</p>
+        <button class="btn" @click=${this.openResourceConfiguration}>${this.packageResource ? '管理此资源的采集配置' : '选择资源并检查、试采'}</button></section>
       <app-dialog .open=${!!detail} title="采集模板详情" size="lg" @app-dialog-close=${() => { this.packageDetail = ''; }}>
-        ${detail ? this.renderPackage(detail) : nothing}<div slot="footer"><button class="btn" @click=${() => { this.packageDetail = ''; }}>关闭</button></div>
+        ${detail ? keyed(detail.package.digest, this.renderPackage(detail)) : nothing}<div slot="footer"><button class="btn" @click=${() => { this.packageDetail = ''; }}>关闭</button><button class="btn-primary" @click=${this.openResourceConfiguration}>${this.packageResource ? '管理此资源的采集配置' : '选择资源并检查、试采'}</button></div>
       </app-dialog>`;
   }
   private renderPackage(p: Catalog['packages'][number]) {
-    const metrics = [...new Set([...(p.package.collectors?.flatMap(c => c.mappings?.map(m => m.metric.id) ?? []) ?? []), ...(p.derived?.map(d => d.output.id) ?? [])])];
+    const metrics = packageMetrics(p);
     const applicability = p.package.applicability ?? [];
     const engines = applicability.filter(a => ['db.engine', 'os.family'].includes(a.attribute)).flatMap(a => a.values);
-    const attributeLabel = (attribute: string) => ({ 'db.engine': '数据库引擎', 'db.version': '数据库版本', 'os.family': '操作系统', 'snmp.version': 'SNMP 版本' }[attribute] ?? attribute);
+    const attributeLabel = applicabilityLabel;
     return html`<details class="package-entry" open><summary><span class="package-summary">
-      <span><strong>${packageName(p.package.id)}</strong><small>${p.package.id}</small></span>
+      <span><strong>${templateName(p.package.id)}</strong><small>${packagePurpose(p)}</small></span>
       <span class="package-meta">${resourceLabels[p.package.resource_type] ?? p.package.resource_type}${engines.length ? ` · ${engines.join(' / ')}` : ''} · v${p.package.version} · ${metrics.length} 项指标</span>
-    </span></summary><div class="package-sections">
-      <section><h3>包含指标</h3>${metrics.length ? html`<ul>${metrics.map(id => html`<li>${metricName(id)}${metricName(id) !== id ? html`<small>${id}</small>` : nothing}</li>`)}</ul>` : html`<p>未提供指标映射</p>`}</section>
+    </span></summary><p>${compatibilityLabel(this.evidence(p))} · 此处查看版本不会修改任何资源配置</p>
+      ${this.renderCoverage(p)}
+      <details><summary>技术标识（可复制）</summary><p>${p.package.id}@${p.package.version}</p><p>${p.package.digest}</p><button class="btn btn-sm" @click=${() => void this.copyIdentity(p)}>复制模板标识</button></details>
+      <div class="package-sections">
+      <section><h3>包含指标</h3>${metrics.length ? html`<ul>${metrics.map(id => html`<li>${directoryMetricName(id)}<details><summary>指标技术标识</summary><small>${id}</small></details></li>`)}</ul>` : html`<p>未提供指标映射</p>`}</section>
       <section><h3>适用范围</h3><p>${resourceLabels[p.package.resource_type] ?? p.package.resource_type}</p>${applicability.length ? applicability.map(a => html`<p>${attributeLabel(a.attribute)}：${a.values.join(' / ')}</p>`) : html`<p>未提供适用条件</p>`}</section>
       <section><h3>所需权限</h3>${p.documentation.length ? p.documentation.map(d => html`<p>${d.collector_id ? html`<small>${d.collector_id}</small>` : nothing}${d.permissions?.join('；') || '未提供权限说明'}</p>`) : html`<p>未提供权限说明</p>`}</section>
       <section><h3>发现方式</h3>${p.documentation.length ? p.documentation.map(d => html`<p>${d.collector_id ? html`<small>${d.collector_id}</small>` : nothing}${d.discovery || '未提供发现方式'}</p>`) : html`<p>未提供发现方式</p>`}</section>
@@ -228,9 +283,9 @@ export class MetricSettings extends LitElement {
   private renderPolicies() {
     return html`${this.view !== 'audit' ? html`<div class="actions"><button class="btn" .disabled=${this.policyTab === 'resource'} @click=${() => { this.policyTab = 'resource'; }}>资源策略</button><button class="btn" .disabled=${this.policyTab === 'group'} @click=${() => { this.changeResource(() => { this.policyTab = 'group'; }); }}>策略组</button></div>` : nothing}
       ${this.view === 'audit' || this.policyTab === 'resource' ? html`<app-card><h2 slot="header">资源采集策略</h2>
-        <app-form-field label="资源类型"><select .value=${this.type} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, type = select.value; select.value = this.type; this.changeResource(() => { this.type = type; this.resourceId = 0; }); }}>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>
+        <app-form-field label="资源类型"><select .value=${this.type} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, type = select.value; select.value = this.type; this.changeResource(() => { this.type = type; this.resourceId = 0; }); }}>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k} .selected=${this.type === k}>${v}</option>`)}</select></app-form-field>
         <app-form-field label="搜索资源"><input aria-label="搜索资源" .value=${this.search} @input=${(e: Event) => { this.search = (e.target as HTMLInputElement).value; }}></app-form-field>
-        <app-form-field label="资源"><select aria-label="资源" .value=${String(this.resourceId)} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, id = Number(select.value); select.value = String(this.resourceId); this.changeResource(() => { this.resourceId = id; }); }}><option value="0">请选择资源</option>${this.resources.filter(r => r.resource.type === this.type && (r.resource.id === this.resourceId || `${r.label} ${r.attributes?.host ?? ''}`.toLowerCase().includes(this.search.toLowerCase()))).map(r => html`<option value=${String(r.resource.id)}>${r.label} · ${r.attributes?.host ?? resourceLabels[r.resource.type]}</option>`)}</select></app-form-field>
+        <app-form-field label="资源"><select aria-label="资源" .value=${String(this.resourceId)} @change=${(e: Event) => { const select = e.target as HTMLSelectElement, id = Number(select.value); select.value = String(this.resourceId); this.changeResource(() => { this.resourceId = id; }); }}><option value="0" .selected=${!this.resourceId}>请选择资源</option>${this.resources.filter(r => r.resource.type === this.type && (r.resource.id === this.resourceId || `${r.label} ${r.attributes?.host ?? ''}`.toLowerCase().includes(this.search.toLowerCase()))).map(r => html`<option value=${String(r.resource.id)} .selected=${this.resourceId === r.resource.id}>${r.label} · ${r.attributes?.host ?? resourceLabels[r.resource.type]}</option>`)}</select></app-form-field>
         <p role="status">${this.resourceNotice}</p>${this.resourceNotice ? html`<button class="btn" @click=${this.loadResources}>重试资源列表</button>` : nothing}
         ${this.resourceId > 0 ? this.view === 'audit' ? this.renderAudit() : html`<resource-collection-section .resourceType=${this.type} .resourceId=${this.resourceId}></resource-collection-section>` : html`<app-empty-state title="选择资源后管理采集配置"></app-empty-state>`}</app-card>` : html`
       <app-card><h2 slot="header">策略组</h2><p>选择可见策略组，预览影响后发布。未覆盖字段保留继承。</p>

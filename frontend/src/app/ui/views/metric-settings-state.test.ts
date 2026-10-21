@@ -46,3 +46,31 @@ it('queries groups on the server and preserves the currently inherited group', a
   expect(authFetch.mock.calls.at(-1)?.[0]).toBe('/api/metrics/policy/groups?query=beyond%20first%20page');
   expect(el.groups.map((g: any) => g.id)).toEqual(['current', 'later-match']);
 });
+
+it('clears compatibility evidence immediately and discards late resource or revoked permission responses', async () => {
+  mock(); const el = await mount();
+  el.resources = [1, 2].map(id => ({ resource: { type: 'instance', id }, label: `resource-${id}` }));
+  const pending: Array<(value: unknown) => void> = [];
+  authFetch.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  const first = el.loadCompatibility('instance:1');
+  const second = el.loadCompatibility('instance:2');
+  pending[1](response({ packages: [{ release: { package: { digest: 'second' } } }] })); await second;
+  pending[0](response({ packages: [{ release: { package: { digest: 'first' } } }] })); await first;
+  expect(el.packageEvidence[0].release.package.digest).toBe('second');
+  const revoked = el.loadCompatibility('instance:1');
+  expect(el.packageEvidence).toEqual([]); expect(el.compatibilityLoading).toBe(true);
+  window.dispatchEvent(new Event('slide-permissions-loaded'));
+  pending[2](response({ packages: [{ release: { package: { digest: 'revoked' } } }] })); await revoked;
+  expect(el.packageEvidence).toEqual([]); expect(el.packageResource).toBe(''); expect(el.compatibilityLoading).toBe(false);
+  expect(authFetch.mock.calls.every(c => !c[1]?.method || c[1].method === 'GET')).toBe(true);
+});
+
+it('keeps the server resource visibly selected when entering configuration from the directory', async () => {
+  mock(); const el = await mount();
+  el.resources = [{ resource: { type: 'server', id: 7 }, label: 'server-seven' }];
+  el.packageResource = 'server:7'; el.openResourceConfiguration(); await el.updateComplete;
+  expect(el.view).toBe('policies');
+  expect(el.shadowRoot.querySelector('app-form-field[label="资源类型"] select').value).toBe('server');
+  expect(el.shadowRoot.querySelector('select[aria-label="资源"]').value).toBe('7');
+  expect(authFetch.mock.calls.every(c => !c[1]?.method || c[1].method === 'GET')).toBe(true);
+});

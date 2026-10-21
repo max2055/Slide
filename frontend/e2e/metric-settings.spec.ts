@@ -4,6 +4,7 @@ import { canonicalDefinitions } from '../../apps/db-ops-api/src/metrics/packages
 
 // Use the production immutable releases, including derived outputs and multiple versions.
 const packages = createConfigurationRegistry().list();
+const templateCount = new Set(packages.map(p => p.package.id)).size;
 const catalog = { packages, metrics: [...new Map([...canonicalDefinitions, ...packages.flatMap(p => p.extensions)]
   .map(m => [`${m.id}@${m.semantic_version}`, m])).values()] };
 async function setup(page: Page, theme = 'light') {
@@ -59,7 +60,7 @@ for (const width of [1440, 1280, 375]) for (const theme of ['light', 'dark']) {
     await noOverflow(page);
     await page.screenshot({ path: info.outputPath('catalog.png'), fullPage: true });
     await page.getByRole('tab', { name: '采集包', exact: true }).click();
-    await expect(entries(page)).toHaveCount(packages.length);
+    await expect(entries(page)).toHaveCount(templateCount);
     await expect(entries(page).filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
     await expect(entries(page).filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();
     await noOverflow(page);
@@ -68,8 +69,8 @@ for (const width of [1440, 1280, 375]) for (const theme of ['light', 'dark']) {
     const mysql = detail(page);
     for (const heading of ['包含指标', '适用范围', '所需权限', '发现方式', '推荐周期与配置']) await expect(mysql.getByRole('heading', { name: heading })).toBeVisible();
     await expect(mysql.locator('pre')).not.toBeVisible();
-    await expect(mysql).toContainText('SHOW GLOBAL STATUS');
-    await expect(mysql).toContainText('mysql.queries.per_second');
+    await expect(mysql).toContainText('数据库版本：9.6');
+    await expect(mysql).toContainText('兼容性待确认');
     await noOverflow(page);
     await page.screenshot({ path: info.outputPath('package-detail.png'), fullPage: true });
     expect(errors).toEqual([]);
@@ -82,13 +83,13 @@ for (const width of [1280, 375]) test(`package names/IDs, combined type filter, 
   const search = page.getByLabel('搜索采集包');
   await search.fill(' POSTGRESQL-REPRESENTATIVE ');
   await expect(entries(page)).toHaveCount(1);
-  await expect(page.locator('metric-settings [role="status"]')).toHaveText(`显示 1 / ${packages.length} 个采集包版本`);
+  await expect(page.locator('metric-settings .table-foot')).toHaveText(`显示 1 / ${templateCount} 个模板 · 共 ${packages.length} 个不可变版本`);
   await page.getByLabel('采集包资源类型').selectOption('server');
   await expect(page.getByText('没有符合条件的采集包', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清空筛选' }).click();
   await expect(search).toHaveValue('');
   await expect(page.getByLabel('采集包资源类型')).toHaveValue('');
-  await expect(entries(page)).toHaveCount(packages.length);
+  await expect(entries(page)).toHaveCount(templateCount);
   await search.fill('达梦');
   await expect(entries(page)).toHaveCount(2);
   await page.getByLabel('采集包资源类型').selectOption('instance');
@@ -134,16 +135,18 @@ test('unknown IDs remain distinguishable and metric count deduplicates derived o
   await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: custom, metrics: [] } }));
   await go(page, 'packages');
   await expect(entries(page)).toHaveCount(2);
-  await expect(entries(page).first().locator('strong')).toHaveText('vendor-one');
-  await expect(entries(page).last().locator('strong')).toHaveText('vendor-two');
+  for (const row of await entries(page).all()) await row.getByText('模板标识', { exact: true }).click();
+  await expect(entries(page).first().getByText('vendor-one', { exact: true })).toBeVisible();
+  await expect(entries(page).last().getByText('vendor-two', { exact: true })).toBeVisible();
   await entries(page).first().getByRole('button', { name: '查看模板' }).click();
   await expect(detail(page)).toContainText('2 项指标');
+  await entryExpandMetrics(page);
   await expect(page.getByText('vendor-one.value', { exact: true })).toBeVisible();
   await expect(page.getByText('vendor-one.rate', { exact: true })).toBeVisible();
   await expect(detail(page).getByText('未提供权限说明', { exact: true })).toBeVisible();
 });
 
-test('package loading, forbidden error, retry and empty catalog', async ({ page }) => {
+test('package loading, forbidden error, retry and empty catalog', async ({ page }, info) => {
   await setup(page);
   let finish!: () => void;
   const pending = new Promise<void>(resolve => { finish = resolve; });
@@ -153,12 +156,19 @@ test('package loading, forbidden error, retry and empty catalog', async ({ page 
   await go(page, 'packages');
   await expect(page.getByRole('status', { name: '正在读取采集包' })).toBeVisible();
   await expect(page.getByText('暂无采集包', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('catalog-loading.png'), fullPage: true });
   finish();
   await expect(page.getByRole('alert')).toContainText('没有此资源的操作权限');
   await expect(page.getByText('暂无采集包', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('catalog-forbidden.png'), fullPage: true });
   await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: [], metrics: [] } }));
   await page.getByRole('button', { name: '重新加载目录' }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText('暂无采集包', { exact: true })).toBeVisible();
-  await expect(page.locator('metric-settings [role="status"]')).toHaveText('显示 0 / 0 个采集包版本');
+  await expect(page.locator('metric-settings .table-foot')).toHaveText('显示 0 / 0 个模板 · 共 0 个不可变版本');
+  await page.screenshot({ path: info.outputPath('catalog-empty.png'), fullPage: true });
 });
+
+async function entryExpandMetrics(page: Page) {
+  for (const summary of await detail(page).getByText('指标技术标识', { exact: true }).all()) await summary.click();
+}
