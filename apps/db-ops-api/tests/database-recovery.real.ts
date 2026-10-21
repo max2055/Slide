@@ -44,7 +44,7 @@ async function until(predicate: () => Promise<boolean>, timeoutMs = 60_000) {
   throw new Error('DRILL_CONDITION_TIMEOUT');
 }
 function docker(...args: string[]) {
-  const result = spawnSync('docker', args, { encoding: 'utf8', env: { ...process.env, MYSQL_ROOT_PASSWORD: password } });
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 60_000, env: { ...process.env, MYSQL_ROOT_PASSWORD: password } });
   if (result.status !== 0) throw new Error(`Docker ${args[0]} failed: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -75,7 +75,8 @@ try {
   record('isolation', { root, commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
     diff: spawnSync('git', ['diff', '--stat', '--', 'apps/db-ops-api', 'frontend'], { cwd: root, encoding: 'utf8' }).stdout.trim() });
   docker('run', '-d', '--name', container, '--label', 'slide.task=MAX-209', '--env', 'MYSQL_ROOT_PASSWORD',
-    '--env', 'MYSQL_ROOT_HOST=%', '-p', `127.0.0.1:${ports.db}:3306`, 'mysql:8.4');
+    '--env', 'MYSQL_ROOT_HOST=%', '--memory', '512m', '-p', `127.0.0.1:${ports.db}:3306`, 'mysql:8.4',
+    '--innodb-buffer-pool-size=32M', '--performance-schema=OFF', '--max-connections=60');
   await until(async () => {
     const connection = await mysql.createConnection({ host: '127.0.0.1', port: ports.db, user: 'root', password, connectTimeout: 1_000 });
     await connection.end(); return true;
