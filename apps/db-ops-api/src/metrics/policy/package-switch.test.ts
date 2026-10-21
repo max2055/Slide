@@ -59,15 +59,16 @@ describe('compatible package replacement on an existing binding', () => {
   });
 
   it.each(['resource', 'group'])('rejects incompatible %s metric overrides without silently discarding them', async layer => {
-    const { service } = setup('8.0.46');
-    const overrides = { metrics: { 'mysql.queries.total@1.0.0': 'disable', 'mysql.queries.per_second@1.0.0': 'disable' } };
+    const { service } = setup();
+    const overrides = { metrics: { 'mysql.files.open@1.0.0': 'disable' } };
     if (layer === 'group') await service.changeGroup(admin, 'legacy', { expected_revision: 0, overrides }, true);
-    const original = (await service.changeBinding(admin, ref, { expected_revision: 0, package: pin('mysql-basic', '1.0.0'),
+    const original = (await service.changeBinding(admin, ref, { expected_revision: 0, package: diagnostics,
       ...(layer === 'group' ? { group_id: 'legacy' } : { overrides }) }, true)).resources[0];
-    await expect(service.changeBinding(admin, ref, { expected_revision: 1, package: basic }, false)).rejects.toMatchObject({ code: 'POLICY_UNKNOWN_METRIC' });
+    const target = basic;
+    await expect(service.changeBinding(admin, ref, { expected_revision: 1, package: target }, false)).rejects.toMatchObject({ code: 'POLICY_UNKNOWN_METRIC' });
     expect(await service.binding(admin, ref)).toEqual(original);
     // Explicit resource replacement is already the documented overrides contract.
-    if (layer === 'resource') expect((await service.changeBinding(admin, ref, { expected_revision: 1, package: basic, overrides: {} }, true)).published).toBe(true);
+    if (layer === 'resource') expect((await service.changeBinding(admin, ref, { expected_revision: 1, package: target, overrides: {} }, true)).published).toBe(true);
   });
 
   it.each([false, true])('rejects an incompatible target version even on direct publish (publish=%s)', async publish => {
