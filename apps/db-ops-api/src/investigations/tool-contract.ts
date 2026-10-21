@@ -10,7 +10,7 @@ export function investigationToolPolicy(
 ): string {
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
-    maxWindowMs: budget.maxWindowMs, maxRows: Math.min(100, budget.maxRows),
+    maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
   }) + '. Missing/unknown is not healthy.';
 }
 
