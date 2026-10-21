@@ -90,3 +90,11 @@ dc27b941 将单次 API 初始化交回初始 WorkerStartup：先取得租约，�
 | 租约行锁导致 query 超时 | 3.018 秒 |
 
 receipt 最终事件 passed；初始化/API/前端进程均 exit 0，containerRemoved=true，匿名卷随精确容器删除。新的恢复截图与日志归档在 MAX-209 的 R7 证据记录。首次已上传附件为 R6/b42025e7 历史归档；当前有效候选与 R7 增量以本文件和交付评论为准，不能将旧附件视为覆盖后续产品提交。
+
+## 完整 CI 接续与测试断言同步
+
+811c16a4 的 CI（run 39543792681）最终 11 项成功、3 项失败。recovery-qualification、browser-qualification、安全及前后端检查全部成功；investigation-api-qualification 在隔离 MySQL 全量运行中为 460 文件通过、16 文件跳过，4,831 项通过、91 项跳过，仅 `src/workflows/worker-wiring.test.ts:35` 一项失败。release-artifact 与 ci-gate 日志明确为该 API 失败的门禁传播，未进入打包，非独立打包故障。
+
+唯一失败是本次初始化顺序修复后的测试同步遗漏：装配测试仍查找 `recovery.start(async () => {}, startWorkers)`，而正确调用已改为 `recovery.start(initializeApi, startWorkers)`。本地复现同一 RED，再只更新该断言，保留全部启动顺序、所有权、排空与最终关闭检查。工作流/生命周期模块回归 19 文件、129 项通过，3 文件/47 项环境依赖跳过，未将跳过项算作通过。
+
+该次接续只修改测试与本验收记录，产品源码仍为 dc27b941，R7 及真实双 API 启动证据保持有效；无需重复停库演练。新 head 的完整 CI 由原 PR checks 条件继续核验，不将先前 11 项成功或本地修复结果宣称为新 head 全绿。

@@ -27,7 +27,7 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     'registerCronRunHandler(workflowRegistry',
     'await startup.step(() => cronManager!.start())',
     'workflowTimer = setInterval(',
-    'await recovery.start(async () => {}, startWorkers)',
+    'await recovery.start(initializeApi, startWorkers)',
   ];
   let previous = -1;
   for (const marker of ordered) {
