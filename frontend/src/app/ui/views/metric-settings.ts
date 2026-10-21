@@ -3,7 +3,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { packageGroups, directoryMetricName, packageMetrics, packagePurpose, templateName, scopeLabel, compatibilityLabel, applicabilityLabel, type Release, type PackageEvidence } from '../components/metric-package-directory.js';
-import type { RecommendationResult } from '../components/metric-api.js';
+import type { RecommendationResult, CollectionStatus } from '../components/metric-api.js';
 import { showToast } from '../components/app-toast-container.js';
 import { metricRequest, metricError, type Catalog, type Overrides } from '../components/metric-configuration.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -31,6 +31,10 @@ export class MetricSettings extends LitElement {
   @state() private compatibilityLoading = false;
   @state() private compatibilityError = '';
   private compatibilityGeneration = 0;
+  @state() private packageBindings: CollectionStatus[] = [];
+  @state() private bindingsLoading = false;
+  @state() private bindingsIncomplete = true;
+  private bindingsGeneration = 0;
 
   @state() private policyTab = 'resource';
   @state() private resources: Array<{ resource: { type: string; id: number }; label: string; attributes?: Record<string, unknown> }> = [];
@@ -54,6 +58,7 @@ export class MetricSettings extends LitElement {
   private groupsGeneration = 0;
   private groupSearchTimer?: ReturnType<typeof setTimeout>;
   private readonly accessChanged = () => {
+    this.bindingsGeneration++; this.packageBindings = []; this.bindingsLoading = false; this.bindingsIncomplete = true;
     this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++;
     clearTimeout(this.groupSearchTimer);
     this.packageDetail = ''; this.packageResource = ''; this.packageEvidence = [];
@@ -64,12 +69,14 @@ export class MetricSettings extends LitElement {
     this.error = '权限或登录状态已变更，请重新打开设置后读取配置';
   };
   override willUpdate(changes: Map<string, unknown>) {
+    if (changes.has('view') && this.view === 'packages' && this.resources.length) void this.loadPackageBindings();
     if (['view', 'resourceId', 'type'].some(k => changes.has(k))) {
       this.audits = []; this.auditError = ''; this.auditGeneration++;
       if (this.view === 'audit' && this.resourceId) void this.loadAudit();
     }
   }
   override disconnectedCallback() {
+    this.bindingsGeneration++;
     this.accessGeneration++; this.auditGeneration++; this.groupsGeneration++; this.compatibilityGeneration++; clearTimeout(this.groupSearchTimer);
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
@@ -115,7 +122,17 @@ export class MetricSettings extends LitElement {
     .package-sections li + li { margin-top:var(--space-sm); }
     .package-sections p { margin-block:var(--space-sm); }
     .skeleton { height:4rem; margin-block:var(--space-md); border-radius:var(--radius-sm); background:var(--bg-hover); }
-    @media (max-width:720px) { .package-summary { grid-template-columns:minmax(0,1fr); } }
+    @media (max-width:720px) {
+      .package-summary { grid-template-columns:minmax(0,1fr); }
+      .package-table { min-width:0; }
+      .package-table .data-table, .package-table tbody, .package-table tr, .package-table td { display:block; width:100%; box-sizing:border-box; }
+      .package-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+      .package-table tr { border-bottom:1px solid var(--border); padding-block:var(--space-sm); }
+      .package-table td { border:0; padding:var(--space-sm) var(--space-lg); }
+      .package-table td:nth-child(3)::before { content:'适用范围：'; color:var(--muted); }
+      .package-table td:nth-child(4)::before { content:'指标覆盖与绑定'; display:block; color:var(--muted); }
+      .package-table td small { display:block; }
+    }
     pre { white-space:pre-wrap; overflow-wrap:anywhere; }
   `];
   override connectedCallback() {
@@ -145,7 +162,38 @@ export class MetricSettings extends LitElement {
       if (!response.ok) throw new Error(String(response.status));
       const data = await response.json(); if (generation !== this.accessGeneration) return; this.resources = data.items;
       this.resourceNotice = data.truncated || data.unavailableTypes?.length ? '资源列表不完整；可从资源详情进入采集配置。' : '';
+      if (this.view === 'packages') void this.loadPackageBindings();
     } catch (e) { if (generation === this.accessGeneration) { this.resources = []; this.resourceNotice = metricError(e); } }
+  }
+  // Counts cover only readable resources, with a bounded number of status reads.
+  private async loadPackageBindings() {
+    const generation = ++this.bindingsGeneration;
+    this.packageBindings = []; this.bindingsLoading = true; this.bindingsIncomplete = !!this.resourceNotice || this.resources.length > 50;
+    const targets = this.resources.slice(0, 50), statuses: CollectionStatus[] = [];
+    let cursor = 0, incomplete = this.bindingsIncomplete;
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+      while (cursor < targets.length && generation === this.bindingsGeneration) {
+        const { resource } = targets[cursor++];
+        try {
+          const status = await metricRequest<CollectionStatus>(`config/resources/${resource.type}/${resource.id}/status`);
+          if (!['bound', 'unbound'].includes(status.binding?.state)) { incomplete = true; continue; }
+          statuses.push(status);
+        } catch { incomplete = true; }
+      }
+    }));
+    if (generation !== this.bindingsGeneration) return;
+    this.packageBindings = statuses; this.bindingsIncomplete = incomplete; this.bindingsLoading = false;
+  }
+  private bindingLabel(p: Release) {
+    if (this.bindingsLoading) return '正在读取可见资源绑定数';
+    const count = this.packageBindings.filter(s => s.binding.state === 'bound' && s.binding.package?.digest === p.package.digest).length;
+    return `可见资源绑定 ${this.bindingsIncomplete ? '至少 ' : ''}${count} 个${this.bindingsIncomplete ? '（统计不完整）' : ''}`;
+  }
+  private compatibilityReason(p: Release) {
+    const evidence = this.evidence(p);
+    if (!evidence) return '选择参考资源后可核对引擎、版本等适用条件。';
+    return evidence.checks.length ? evidence.checks.map(c => `${applicabilityLabel(c.attribute)}：${c.value ?? '未知'}；支持 ${c.supported_values.join(' / ') || '未提供'}；${c.status === 'supported' ? '符合' : c.status === 'unsupported' ? '不符合' : '待确认'}`).join('。')
+      : '服务端未提供适用条件明细，请核对模板范围与资源能力。';
   }
   private async load() {
     const generation = this.accessGeneration; this.catalogError = '';
@@ -243,11 +291,11 @@ export class MetricSettings extends LitElement {
         <p role="status">${this.compatibilityLoading ? '正在检查资源兼容性，暂不提供推荐' : this.compatibilityError ? '兼容性暂不可确认，目录版本不代表推荐。' : this.packageResource ? '按服务端兼容性证据展示版本；浏览不会改变既有绑定。' : '未指定资源：按版本顺序展示目录，最高版本不代表兼容或推荐。'}</p>
         ${this.compatibilityError ? html`<app-notice role="alert">兼容性检查失败：${this.compatibilityError}<button class="btn" @click=${() => void this.loadCompatibility(this.packageResource)}>重试兼容检查</button></app-notice>` : nothing}
       </div>${this.renderCatalogError()}
-      ${this.catalogError ? nothing : html`<div class="scroll" role="region" aria-label="采集模板目录，可横向滚动" tabindex="0"><app-data-table class="package-table" .loading=${!c} .columns=${[{ key: 'name', label: '模板与用途', width: '12rem' }, { key: 'version', label: '展示版本', width: '12rem' }, { key: 'scope', label: '适用范围', width: '12rem' }, { key: 'coverage', label: '指标覆盖与缺口', width: '16rem' }, { key: 'actions', label: '操作', width: '6rem' }]}
+      ${this.catalogError ? nothing : html`<div class="scroll" role="region" aria-label="采集模板目录" tabindex="0"><app-data-table class="package-table" .loading=${!c} .columns=${[{ key: 'name', label: '模板与用途', width: '12rem' }, { key: 'version', label: '展示版本', width: '12rem' }, { key: 'scope', label: '适用范围', width: '12rem' }, { key: 'coverage', label: '指标覆盖与缺口', width: '16rem' }, { key: 'actions', label: '操作', width: '6rem' }]}
         .rows=${filtered.map(g => ({
           name: html`<strong>${templateName(g.id)}</strong><small>${packagePurpose(g.primary)}</small><details><summary>模板标识</summary><small>${g.id}</small></details>`,
-          version: html`v${g.primary.package.version}<small>${compatibilityLabel(this.evidence(g.primary))}</small>${g.others.length ? html`<details class="version-list"><summary>其他与历史版本（${g.others.length}）</summary><ul>${g.others.map(p => html`<li>v${p.package.version} · ${compatibilityLabel(this.evidence(p))}<small>${scopeLabel(p)} · ${packageMetrics(p).length} 项指标</small><button class="btn btn-sm btn-ghost" aria-label=${`查看 ${templateName(g.id)} ${p.package.version}`} @click=${() => { this.packageDetail = p.package.digest; }}>查看此版本</button></li>`)}</ul></details>` : nothing}`,
-          scope: scopeLabel(g.primary), coverage: this.renderCoverage(g.primary),
+          version: html`v${g.primary.package.version}<small>${compatibilityLabel(this.evidence(g.primary))}</small><small>${this.compatibilityReason(g.primary)}</small>${g.others.length ? html`<details class="version-list"><summary>其他与历史版本（${g.others.length}）</summary><ul>${g.others.map(p => html`<li>v${p.package.version} · ${compatibilityLabel(this.evidence(p))}<small>${scopeLabel(p)} · ${packageMetrics(p).length} 项指标</small><small>${this.bindingLabel(p)}</small><button class="btn btn-sm btn-ghost" aria-label=${`查看 ${templateName(g.id)} ${p.package.version}`} @click=${() => { this.packageDetail = p.package.digest; }}>查看此版本</button></li>`)}</ul></details>` : nothing}`,
+          scope: scopeLabel(g.primary), coverage: html`${this.renderCoverage(g.primary)}<small>${this.bindingLabel(g.primary)}</small>`,
           actions: html`<button class="btn btn-sm btn-ghost" @click=${() => { this.packageDetail = g.primary.package.digest; }}>查看模板</button>`,
         }))} emptyMessage=${c?.packages.length ? '没有符合条件的采集包' : '暂无采集包'}></app-data-table></div>`}
       ${this.catalogError ? nothing : html`<p class="table-foot" role="status" aria-label=${!c ? '正在读取采集包' : nothing}>${c ? `显示 ${filtered.length} / ${groups.length} 个模板 · 共 ${c.packages.length} 个不可变版本` : '正在读取采集包'}</p>`}
@@ -265,7 +313,7 @@ export class MetricSettings extends LitElement {
     return html`<details class="package-entry" open><summary><span class="package-summary">
       <span><strong>${templateName(p.package.id)}</strong><small>${packagePurpose(p)}</small></span>
       <span class="package-meta">${resourceLabels[p.package.resource_type] ?? p.package.resource_type}${engines.length ? ` · ${engines.join(' / ')}` : ''} · v${p.package.version} · ${metrics.length} 项指标</span>
-    </span></summary><p>${compatibilityLabel(this.evidence(p))} · 此处查看版本不会修改任何资源配置</p>
+    </span></summary><p>${compatibilityLabel(this.evidence(p))} · 此处查看版本不会修改任何资源配置</p><p>${this.compatibilityReason(p)}</p><p>${this.bindingLabel(p)}</p>
       ${this.renderCoverage(p)}
       <details><summary>技术标识（可复制）</summary><p>${p.package.id}@${p.package.version}</p><p>${p.package.digest}</p><button class="btn btn-sm" @click=${() => void this.copyIdentity(p)}>复制模板标识</button></details>
       <div class="package-sections">

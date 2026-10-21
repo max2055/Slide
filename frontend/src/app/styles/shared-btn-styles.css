@@ -96,7 +96,7 @@
 }
 .btn-refresh[aria-busy="true"]::before { animation: button-refresh-spin 1s linear infinite; }
 @keyframes button-refresh-spin { to { transform: rotate(360deg); } }
-:is(.btn, .btn-primary, .btn-ghost, .btn-icon, .btn-sm, .btn-xs, .btn-danger-outline):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:is(.btn, .btn-primary, .btn-ghost, .btn-icon, .btn-sm, .btn-xs, .btn-danger-outline):focus-visible { outline: 2px solid var(--ring, var(--accent-text)); outline-offset: 2px; }
 :is(.btn, .btn-primary, .btn-ghost, .btn-icon, .btn-sm, .btn-xs, .btn-danger-outline):disabled { opacity: var(--disabled-opacity, 0.45); cursor: not-allowed; box-shadow: none; transform: none; }
 @media (pointer: coarse), (max-width: 768px) {
   :is(.btn, .btn-primary, .btn-danger-outline) { min-height: max(44px, var(--control-height, 40px)); }

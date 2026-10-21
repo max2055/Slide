@@ -13,6 +13,12 @@ export const executionLabels: Record<string, string> = {
   timed_out: '执行超时', partial: '部分完成', unknown: '结果未知',
 };
 export const lifecycleLabels = { open: '开放', waiting: '等待处理', closed: '已关闭', archived: '已归档' };
+const stopLabels: Record<string, string> = {
+  INVESTIGATION_TOOL_WINDOW_LIMIT: '检查请求的时间范围超出工具上限，已停止并保留部分结果。',
+  MAX_TOOL_CALLS: '已达到工具调用上限。', MAX_MODEL_STEPS: '已达到分析步骤上限。',
+  RUN_DEADLINE: '已达到本次执行时限。', RECOVERY_LIMIT: '已达到恢复次数上限。',
+  CANCELLED_BY_ACTOR: '用户已取消本次执行。', RUNTIME_RESPONSE_READY: '本次执行已结束；业务问题是否恢复需单独验证。',
+};
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 export function renderInvestigationDetail(controller: InvestigationsController, options: {
   draft: string; onDraft: (value: string) => void; onContinue: () => void; onEvidence: () => void;
@@ -29,12 +35,30 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
     !latest || item.version > latest.version ? item : latest, undefined);
   return html`
     <app-card><span slot="header">${detail.title}</span>
-      <p>${detail.goal}</p>
       <dl class="investigation-states">
         <div><dt>本次执行</dt><dd><app-badge variant=${execution === 'unknown' ? 'warn' : 'info'}>${execution ? executionLabels[execution] ?? '状态未知' : '尚未执行'}</app-badge></dd></div>
         <div><dt>调查进度</dt><dd><app-badge>${lifecycleLabels[detail.lifecycle]}</app-badge></dd></div>
         <div><dt>业务问题</dt><dd><app-badge>${problemLabels[detail.problemStatus]}</app-badge></dd></div>
       </dl>
+      <h3>${active && result ? '最近已保存的结果' : '本次调查结果'}</h3>
+      <section aria-label="本次调查结果">
+      ${result ? html`
+        ${active ? html`<p role="status">当前执行仍在进行；以下为上一份已保存结果 V${result.version}。</p>` : nothing}
+        <p class="investigation-result-summary">${result.result.summary}</p>
+        <p class="muted">执行状态与业务问题分别记录；工具返回不代表根因或恢复已验证。</p>
+        <h3>已完成的检查</h3>
+        ${result.result.facts.length ? html`<ul>${result.result.facts.slice(0, 6).map(f => html`<li>${f.statement}</li>`)}</ul>`
+          : html`<p>没有已绑定的检查事实。历史结果可能未整理工具记录，请查看证据与执行过程。</p>`}
+        <h3>证据缺口</h3>${result.result.unresolvedQuestions.length ? result.result.unresolvedQuestions.map(q => html`<p>${q}</p>`) : html`<p>未记录具体缺口，不代表根因与恢复已验证。</p>`}
+        <h3>${active ? '最近结果的停止原因' : '停止原因'}</h3>
+        <p>${result.result.execution?.reasonCode ? stopLabels[result.result.execution.reasonCode] ?? '已记录停止原因码，请展开执行过程与技术详情核对原始记录。' : '历史记录未保留具体停止原因；不能据此认定检查已完整完成。'}</p>
+        <h3>下一步</h3>${result.result.recommendations.length
+          ? result.result.recommendations.map(r => html`<p>${r.action}</p>`)
+          : html`<p>先核对已有证据与停止原因；需要时提交新的只读调查，保留原执行记录。</p>`}
+        <button class="btn" @click=${options.onEvidence}>查看完整结果与证据</button>
+      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>`}
+      </section>
+      <details aria-label="调查目标"><summary>调查目标</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.goal}</p></details>
       <p class="muted">${detail.profileId === 'system' ? '平台调查' : '资源调查'} · 只读检查</p>
       <p class="investigation-resource-links">${detail.resources.map(ref => html`<a href=${resourceDetailUrl(ref.type, ref.id)}>返回原资源 ${ref.type}:${ref.id}</a> `)}</p>
       ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
@@ -44,23 +68,6 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
       ${active ? html`<button class="btn" ?disabled=${controller.busy || controller.operationForbidden || controller.cancelRequested || !controller.online}
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
-    </app-card>
-    <app-card><span slot="header">${active && result ? '最近已保存的结果' : '本次调查结果'}</span>
-      <section aria-label="本次调查结果">
-      ${result ? html`
-        ${active ? html`<p role="status">当前执行仍在进行；以下为上一份已保存结果 V${result.version}。</p>` : nothing}
-        <p class="investigation-result-summary">${result.result.summary}</p>
-        <p class="muted">执行状态与业务问题分别记录；工具返回不代表根因或恢复已验证。</p>
-        <h3>已完成的检查</h3>
-        ${result.result.facts.length ? html`<ul>${result.result.facts.slice(0, 6).map(f => html`<li>${f.statement}</li>`)}</ul>`
-          : html`<p>没有已绑定的检查事实。历史结果可能未整理工具记录，请查看证据与执行过程。</p>`}
-        <h3>证据缺口</h3>${result.result.unresolvedQuestions.map(q => html`<p>${q}</p>`)}
-        <h3>下一步</h3>${result.result.recommendations.length
-          ? result.result.recommendations.map(r => html`<p>${r.action}</p>`)
-          : html`<p>先核对已有证据与停止原因；需要时提交新的只读调查，保留原执行记录。</p>`}
-        <button class="btn" @click=${options.onEvidence}>查看完整结果与证据</button>
-      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>`}
-      </section>
     </app-card>
     <investigation-operation-context .investigationId=${detail.id} .resultVersion=${result?.version ?? 0} .resources=${detail.resources}></investigation-operation-context>
     <investigation-feedback .investigationId=${detail.id} .resultId=${result?.id ?? ''}

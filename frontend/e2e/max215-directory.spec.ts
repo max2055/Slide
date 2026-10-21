@@ -10,7 +10,7 @@ const recommended = packages.find(p => p.package.id === 'mysql-basic' && p.packa
 const recommendations = { packages: packages.map(release => ({ release,
   compatibility: release.package.digest === recommended.package.digest ? 'compatible' : 'incompatible',
   recommended: release.package.digest === recommended.package.digest,
-  checks: [], coverage: [{ id: 'db.uptime_seconds', semantic_version: '1.0.0' }], missing_core_metrics: ['host.network.bytes_total'],
+  checks: [{ attribute: 'db.version', value: '8.4', supported_values: ['8.*'], status: 'supported' }], coverage: [{ id: 'db.uptime_seconds', semantic_version: '1.0.0' }], missing_core_metrics: ['host.network.bytes_total'],
 })) };
 async function setup(page: Page, theme: string) {
   const requests: string[] = [];
@@ -36,7 +36,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`gr
   await expect(row).toContainText('兼容性待确认');
   await expect(row.getByText('查看此版本', { exact: true }).first()).not.toBeVisible();
   const heights = await page.locator('metric-settings app-data-table tbody tr').evaluateAll(nodes => nodes.map(n => n.getBoundingClientRect().height));
-  expect(Math.max(...heights)).toBeLessThan(240);
+  if (width > 720) expect(Math.max(...heights)).toBeLessThan(360);
   await page.screenshot({ path: info.outputPath('global-grouped.png'), fullPage: true });
   await row.locator('.version-list > summary').focus(); await page.keyboard.press('Enter');
   await expect(row.getByText('查看此版本', { exact: true }).first()).toBeVisible();
@@ -56,10 +56,15 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`gr
   await expect(row.locator('td').nth(1)).toContainText('v1.1.0');
   await expect(row.locator('td').nth(1)).toContainText('此资源推荐 · 已验证兼容');
   await expect(row).toContainText('核心缺口 1 项');
+  await expect(row).toContainText('数据库版本：8.4；支持 8.*；符合');
   await page.screenshot({ path: info.outputPath('resource-recommendation.png'), fullPage: true });
   if (width < 600) {
-    const region = page.getByRole('region', { name: '采集模板目录，可横向滚动' });
-    await region.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    const region = page.getByRole('region', { name: '采集模板目录' });
+    expect(await region.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await row.getByRole('button', { name: '查看模板', exact: true }).scrollIntoViewIfNeeded();
+    await expect(row.getByRole('button', { name: '查看模板', exact: true })).toBeInViewport();
+    await row.getByText(/可见资源绑定/).last().scrollIntoViewIfNeeded();
+    await expect(row.getByText(/可见资源绑定/).last()).toBeInViewport();
     await page.screenshot({ path: info.outputPath('narrow-coverage-actions.png'), fullPage: true });
     await region.evaluate(el => { el.scrollLeft = 0; });
   }
