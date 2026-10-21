@@ -360,6 +360,49 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     await executor.execute(completionCommand()); expect(calls).toBe(2);
     expect((await results.list(owner, inv.id)).items).toHaveLength(1);
   });
+  it.each(['normal', 'crash-after-guard', 'crash-after-returned-error'])('continues after per-call errors and retains only the eventual Run limit: %s', async mode => {
+    let calls = 0, toolCalls = 0;
+    const provider: LLMProvider = { getDefaultModel: () => 'controlled-guard-regression',
+      chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
+      chat: async () => { calls++; return { content: null, finishReason: 'tool_calls',
+        toolCalls: [{ id: `guard-${calls}`, name: 'get_instance_summary', arguments: { instance_id: calls <= 6 ? 101 : 102 } }],
+        hasToolCalls: true, shouldExecuteTools: true, usage: { prompt_tokens: 20, completion_tokens: 10 } }; } };
+    const tools = new ToolRegistry(); tools.register({ name: 'get_instance_summary', description: 'Controlled read',
+      parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false,
+      execute: async () => { toolCalls++; return mode === 'crash-after-returned-error' && toolCalls === 1
+        ? 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' : { success: true, summary: '后续检查成功' }; } });
+    const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
+      toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
+    if (mode !== 'normal') {
+      const control = new AbortController(), persist = (executor as any).persistCheckpoint.bind(executor);
+      (executor as any).persistCheckpoint = async (...args: any[]) => {
+        await persist(...args);
+        if (args[2].phase === 'tools_completed' && args[2].completedToolResults?.some((t: any) => String(t.content).startsWith('Error:'))) {
+          control.abort(new Error('CONTROLLED_PROCESS_EXIT')); throw new Error('CONTROLLED_PROCESS_EXIT');
+        }
+      };
+      const command = completionCommand(); command.context.signal = control.signal;
+      await expect(executor.execute(command)).rejects.toThrow('CONTROLLED_PROCESS_EXIT');
+      const retained = (await rows('SELECT state,result_json FROM agent_runs WHERE id=?', [binding.runId]))[0];
+      expect(retained.state).toBe('running');
+      expect(retained.result_json.investigationExecution.terminal).toBeUndefined();
+      (executor as any).persistCheckpoint = persist;
+      await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+      const recovered = await new MysqlWorkflowStore(() => pool as never).claim('t05-guard-recovery', 60, { types: ['investigation.execute'], exclude: false });
+      binding = { ...binding, workerId: 't05-guard-recovery', fencingToken: recovered!.fencingToken };
+    }
+    const terminal = await executor.execute(completionCommand());
+    expect(terminal.state).toBe('partial');
+    expect(terminal.error).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    const saved = (await results.list(owner, inv.id)).items[0].result;
+    expect(saved.execution).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    expect(saved.summary).toContain('运行限制');
+    expect(saved.facts.map(f => f.statement).join()).not.toContain('执行已停止');
+    expect(saved.facts.at(-1)?.statement).toContain('后续检查成功');
+    expect(saved.facts).toHaveLength(8);
+    expect(calls).toBe(8); expect(toolCalls).toBe(7);
+    await executor.execute(completionCommand()); expect(calls).toBe(8);
+  });
   it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {
     const {executor,counts}=completionFixture();
     const terminal=await executor.execute({investigationId:inv.id,requestId:binding.requestId,

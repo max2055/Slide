@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { investigationStop, executionSummary } from './execution-summary.js';
+import { investigationStop, executionSummary, toolReceiptSummary } from './execution-summary.js';
 import { validateMachineResult } from './result-schema.js';
 const subject = { kind: 'resource', resource: { type: 'instance', id: 1 } };
 const run = { id: 'run', state: 'partial', finished_at: '2026-10-21T02:00:30.000Z', result_json: {
@@ -20,6 +20,20 @@ describe('durable investigation execution summary', () => {
     expect(investigationStop({ terminal_resolution: { kind: 'partial' }, completedToolResults: [
       { content: 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }] })).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT' });
     expect(investigationStop({ stopReason: 'error', error: 'password=do-not-copy' })).toMatchObject({ reasonCode: 'INVESTIGATION_RUNTIME_ERROR' });
+  });
+  it('does not infer Run termination from failed per-call receipts before later successful checks', () => {
+    const summaries = [
+      toolReceiptSummary('get_instance_summary', 'Error: repeated identical tool call blocked'),
+      toolReceiptSummary('get_instance_summary', 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT'),
+      toolReceiptSummary('get_instance_summary', { success: true, summary: '后续检查成功' }),
+    ];
+    expect(summaries[0]).toContain('失败');
+    expect(summaries.join()).not.toContain('执行已停止');
+    const result = executionSummary({ ...run, result_json: { resolution: { reasonCode: 'MAX_MODEL_STEPS' } } }, subject as any,
+      summaries.map((summary, i) => ({ id: `e${i}`, metadata_json: { summary } })));
+    expect(result.summary).toContain('运行限制');
+    expect(result.facts[2].statement).toContain('后续检查成功');
+    expect(result.execution?.reasonCode).toBe('MAX_MODEL_STEPS');
   });
   it('binds completed checks to available evidence and separates business verification', () => {
     const result = executionSummary(run, subject as any, [{ id: 'e1', metadata_json: { summary: '正式观测检查：返回为空。' }, raw_json: { success: true, data: { observations: [] } } }]);
