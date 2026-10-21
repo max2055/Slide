@@ -145,7 +145,7 @@ try {
   }
   report.knownExternalErrors=report.errors.filter((message:string)=>message.includes("addColorStop") && message.includes("var(--accent)40"));
   assert.equal(report.errors.length-report.knownExternalErrors.length,0,'New browser runtime errors');
-  report.limitations=['Full-server integration pending MAX-209','Historical chart rendering has the known shared CanvasGradient failure (QA-004 / MAX-212); retained as a blocker for final visual integration'];
+  report.limitations=['Full-server integration pending MAX-209','Historical chart rendering has the known shared CanvasGradient failure (QA-005 / MAX-213); retained as a blocker for final visual integration'];
   report.result='passed affected real-data subset and controlled health states; final integration remains incomplete';
 } finally {
   await writeFile(resolve(output,'result.json'),JSON.stringify(report,null,2));

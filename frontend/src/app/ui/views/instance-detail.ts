@@ -200,7 +200,14 @@ export class InstanceDetailPage extends LitElement {
   private diagnosisPollTimer: ReturnType<typeof setInterval> | null = null;
   private diagnosisPollingStart = 0;
   private refreshTimer: number | null = null;
+  private ageTimer?: ReturnType<typeof setInterval>;
   private readonly REFRESH_INTERVAL = 30000;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // Evidence still ages when network auto-refresh is disabled.
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
+  }
 
   override firstUpdated() {
     this.loadFromUrl();
@@ -211,6 +218,7 @@ export class InstanceDetailPage extends LitElement {
     this.startAutoRefresh();
   }
   override disconnectedCallback() {
+    clearInterval(this.ageTimer);
     ++this.contextVersion; ++this.overviewRequest;
     window.removeEventListener('slide-navigate', this.onNavigate);
     window.removeEventListener('popstate', this.onPopState);
