@@ -228,16 +228,21 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
     await browserExpect(settings.locator('metric-settings')).toBeVisible();
     const mysqlPackage = settings.getByRole('row')
-      .filter({ has: settings.getByRole('cell', { name: 'MySQL 基础采集', exact: true }) })
-      .filter({ has: settings.getByRole('cell', { name: '1.0.0', exact: true }) });
+      .filter({ has: settings.getByText('MySQL 基础采集', { exact: true }) });
+    await browserExpect(mysqlPackage).toHaveCount(1);
     await browserExpect(mysqlPackage).toBeVisible();
-    await mysqlPackage.getByRole('button', { name: '查看模板', exact: true }).click();
+    await browserExpect(mysqlPackage.getByRole('cell').nth(1)).toContainText('v1.0.1');
+    const historicalVersion = mysqlPackage.getByRole('button', { name: '查看 MySQL 基础采集 1.0.0', exact: true });
+    await browserExpect(historicalVersion).not.toBeVisible();
+    await mysqlPackage.locator('.version-list > summary').click();
+    await historicalVersion.click();
     const detail = settings.locator('app-dialog[title="采集模板详情"]');
     await browserExpect(detail.getByRole('dialog')).toBeVisible();
+    await browserExpect(detail).toContainText('v1.0.0');
     await browserExpect(detail).toContainText('数据库实例');
     await browserExpect(detail).toContainText('数据库运行时长');
     await detail.getByRole('button', { name: '关闭', exact: true }).click();
-    await browserExpect(mysqlPackage.getByRole('button', { name: '查看模板', exact: true })).toBeFocused();
+    await browserExpect(historicalVersion).toBeFocused();
     await settings.close();
   }, 60000);
   it('shows full success only for all-good trial evidence and blocks a trial without valid samples', async () => {
