@@ -48,6 +48,97 @@ async function listResponses(page: Page, restricted = false) {
     return route.fulfill({ json: [] });
   });
 }
+async function keyboardFocus(page: Page, target: import('@playwright/test').Locator) {
+  await target.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(target).toBeFocused();
+  expect(await target.evaluate(el => el.matches(':focus-visible'))).toBe(true);
+}
+async function visibleFullValue(target: import('@playwright/test').Locator) {
+  const tip = target.locator('.full-value');
+  await expect(tip).toBeVisible();
+  // Visibility alone misses overflow clipping. Hit-test the top and bottom of
+  // the actual rendered surface in its ShadowRoot, including after scrolling.
+  await expect.poll(() => tip.evaluate(el => {
+    const r = el.getBoundingClientRect();
+    const root = el.getRootNode() as ShadowRoot;
+    return r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight &&
+      [r.top + 2, r.bottom - 2].every(y => {
+        const hit = root.elementFromPoint(r.left + r.width / 2, y);
+        return hit === el || !!hit && el.contains(hit);
+      });
+  })).toBe(true);
+  return tip;
+}
+for (const width of [375, 1440]) for (const theme of ['light', 'dark']) {
+  test(`capacity help keyboard contrast ${width} ${theme}`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await listResponses(page);
+    await fixture(page, '<instances-page></instances-page>', 'views/instances-db');
+    await page.evaluate(theme => {
+      document.documentElement.dataset.themeMode = theme;
+      document.documentElement.style.setProperty('--accent', '#265f99');
+    }, theme);
+    const table = page.locator('resource-metrics-table');
+    const help = table.getByRole('button', { name: '数据量说明', exact: true });
+    await keyboardFocus(page, help);
+    const measurement = await help.evaluate(el => {
+      const luminance = (rgb: string) => rgb.match(/[\d.]+/g)!.slice(0, 3).map(Number)
+        .map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+        .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      let node: Element | null = el, background = '';
+      while (node) {
+        background = getComputedStyle(node).backgroundColor;
+        if (background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent') break;
+        node = node.parentElement ?? (node.getRootNode() as ShadowRoot).host;
+      }
+      const style = getComputedStyle(el), a = luminance(style.outlineColor), b = luminance(background);
+      return { outline: style.outline, background, width: parseFloat(style.outlineWidth), contrast: (Math.max(a, b) + .05) / (Math.min(a, b) + .05) };
+    });
+    await info.attach('actual-keyboard-contrast', { body: JSON.stringify(measurement), contentType: 'application/json' });
+    await page.screenshot({ path: info.outputPath('capacity-help-focus.png'), fullPage: true });
+    expect(measurement.width).toBeGreaterThanOrEqual(2);
+    expect(measurement.contrast).toBeGreaterThanOrEqual(3);
+    await page.keyboard.press('Enter');
+    await expect(table.getByRole('dialog', { name: '数据库大小：支持范围与统计口径' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(help).toBeFocused();
+  });
+  test(`full text keyboard clipping ${width} ${theme}`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await listResponses(page);
+    // Explicitly constructed 239-character value; no production asset is edited.
+    const long = '首末行可视全文检查'.repeat(26) + '完整值结尾';
+    await page.route('**/api/servers', route => route.fulfill({ json: fixtureEntries.slice(0, 3).map(e => ({ ...e, label: long })) }));
+    await fixture(page, '<servers-page></servers-page>', 'views/servers-page');
+    await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
+    const table = page.locator('resource-metrics-table');
+    await expect(table.locator('tbody tr')).toHaveCount(3);
+    for (const index of [0, 2]) {
+      const row = table.locator('tbody tr').nth(index);
+      const name = row.locator('.resource-name');
+      await keyboardFocus(page, name.locator('button'));
+      const tip = await visibleFullValue(name);
+      await expect(tip).toHaveText(long);
+      await page.screenshot({ path: info.outputPath(`full-name-row-${index}.png`), fullPage: true });
+      await page.keyboard.press('Escape');
+      await expect(tip).toBeHidden();
+      await expect(name.locator('button')).toBeFocused();
+      // Read a different column after horizontal keyboard scrolling.
+      const region = table.getByRole('region', { name: '资源表格，可横向滚动' });
+      await region.focus(); await page.keyboard.press('ArrowRight');
+      const value = row.locator('td').nth(3).locator('.cell-value');
+      await keyboardFocus(page, value);
+      const addressTip = await visibleFullValue(value);
+      await page.screenshot({ path: info.outputPath(`full-address-row-${index}.png`), fullPage: true });
+      await page.keyboard.press('Escape');
+      await expect(addressTip).toBeHidden(); await expect(value).toBeFocused();
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
 for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) test(`three lists ${width} ${theme}`, async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message)); await page.setViewportSize({ width, height: 1000 });
   await listResponses(page);
