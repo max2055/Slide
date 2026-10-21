@@ -400,7 +400,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     expect(saved.facts.map(f => f.statement).join()).not.toContain('执行已停止');
     expect(saved.facts.at(-1)?.statement).toContain('后续检查成功');
     expect(saved.facts).toHaveLength(8);
-    expect(calls).toBe(8); expect(toolCalls).toBe(7);
+    expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 8 : 7);
     await executor.execute(completionCommand()); expect(calls).toBe(8);
   });
   it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {

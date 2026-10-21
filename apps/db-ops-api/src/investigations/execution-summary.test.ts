@@ -17,8 +17,10 @@ describe('durable investigation execution summary', () => {
   });
   it('uses terminal checkpoint evidence on recovery and never guesses a legacy cause', () => {
     expect(investigationStop({ stopReason: 'completed' })).toMatchObject({ reasonCode: 'RUNTIME_RESPONSE_READY' });
+    expect(investigationStop({ stopReason: 'completed', completedToolResults: [{ content: 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }] }))
+      .toMatchObject({ reasonCode: 'RUNTIME_RESPONSE_READY' });
     expect(investigationStop({ terminal_resolution: { kind: 'partial' }, completedToolResults: [
-      { content: 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }] })).toMatchObject({ reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT' });
+      { content: 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }] })).toMatchObject({ reasonCode: 'INVESTIGATION_RUNTIME_PARTIAL' });
     expect(investigationStop({ stopReason: 'error', error: 'password=do-not-copy' })).toMatchObject({ reasonCode: 'INVESTIGATION_RUNTIME_ERROR' });
   });
   it('does not infer Run termination from failed per-call receipts before later successful checks', () => {
