@@ -25,3 +25,15 @@ describe('machine result boundary', () => {
     expect(view.value).toEqual(old);
   });
 });
+it('terminal summary retains completed checks and real execution provenance', async () => {
+  const { InvestigationResultStore } = await import('./result-schema.js');
+  const store:any = Object.create(InvestigationResultStore.prototype);
+  store.authorization={load:async()=>({id:'inv'}),authorize:async()=>{}};
+  store.assertBinding=async()=>({run:{id:'run',state:'partial',finished_at:'2026-10-21T02:00:30.000Z',result_json:{
+    resolution:{reasonCode:'INVESTIGATION_TOOL_WINDOW_LIMIT'},investigationExecution:{usageUnknown:false,provenance:{modelVersion:'deepseek-flash',promptVersion:'ops@1'}}}},snapshot:{context:{subject:result.subject}}});
+  let saved:any; store.putOnConnection=async(...args:any[])=>{saved=args.at(-1);};
+  const c:any={execute:async(sql:string)=>[sql.includes('MAX(version)')?[{version:0}]:sql.includes('investigation_evidence')?[{id:'e',metadata_json:{summary:'已检查正式观测，返回为空。'},raw_json:{success:true}}]:[]]};
+  await store.persistExecutionSummary(c,{}, {investigationId:'inv',requestId:'req',runId:'run'});
+  expect(saved.provenance.modelVersion).toBe('deepseek-flash');
+  expect(saved.facts).toHaveLength(1); expect(saved.recommendations.length).toBeGreaterThan(0);
+});
