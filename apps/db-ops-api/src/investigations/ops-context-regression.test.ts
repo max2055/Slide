@@ -26,6 +26,7 @@ function setup() {
   const actual = new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash'});
   const provider = {
     getDefaultModel: () => 'deepseek-flash',
+    countPromptTokens: actual.countPromptTokens.bind(actual),
     projectMessages: (m:Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'),
   };
   const raw:Message[] = [{role:'system',source:'runtime',contextAuthority:'policy',content:investigationPrompt(profile)},
