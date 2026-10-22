@@ -8,7 +8,7 @@ const opsDescriptions: Record<string, string> = {
   get_server_alerts: 'Server alerts; activeOnly=true.',
   get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
   list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
-  query_metrics: 'For EACH database/server: discover (discovery_limit=8), select IDs by meaning/unit/kind; follow next_offset, restart on revision change. discover+one metric_ids: definition. Read one metric_ids+series_index+UTC from/to(exclusive), one bucket <=60s; follow total_series and requested window. inventory: attributes.',
+  query_metrics: 'For EACH database/server: discover (discovery_limit=8), select IDs by meaning/unit/kind; follow next_offset, restart on revision change. discover+one metric_ids: definition. Read exactly one metric_ids; select series_index for multiple dimension series. UTC from/to(exclusive) preserves the requested window. One series with up to 60 minute buckets is readable; metric_window_v1 bucketDefaults apply to every bucket (local fields override), all values/quality/time/sources remain explicit. Follow total_series and cover the full requested window. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
@@ -57,6 +57,7 @@ export function investigationToolContract(tool: ToolSchema,
   }
   for (const key of ['limit', 'maxRows']) if (p[key])
     p[key] = { ...p[key], type: 'integer', minimum: 1, maximum: Math.min(100, budget.maxRows) };
+  if (tool.name === 'query_metrics') p.metric_ids = { ...p.metric_ids, minItems: 1, maxItems: 1 };
   parameters.required = [...required];
   if (opsDescriptions[tool.name]) {
     // Scope/limits are now executable schema constraints plus shared policy.

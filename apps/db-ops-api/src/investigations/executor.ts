@@ -70,7 +70,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   if (profile !== 'ops') return json;
   if ((result as any).policyDecision?.allow === false) return result;
   if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
-    || ['single_metric_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
+    || ['single_metric_v1', 'metric_window_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
   const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
   const data = observation.data as Record<string, any> | undefined;
@@ -96,6 +96,27 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     const { columns: _columns, ...profile } = data.profile ?? {};
     return JSON.stringify({ ...observation, data: { ...data, profile,
       contextProjection: 'single_metric_v1', contextReference: reference } });
+  }
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && Array.isArray(data.metrics) && data.metrics.length === 1
+    && Array.isArray(data.metrics[0]?.series) && data.metrics[0].series.length === 1) {
+    const series = data.metrics[0].series[0], buckets = series.buckets;
+    const duration = Date.parse(data.window?.to) - Date.parse(data.window?.from);
+    if (duration > 0 && duration <= 3600000 && Array.isArray(buckets) && buckets.length > 1 && buckets.length <= 60
+      && buckets.every((b: any) => Date.parse(b.window?.to) > Date.parse(b.window?.from)
+        && Date.parse(b.window.to) - Date.parse(b.window.from) <= 60000)) {
+      const defaults: Record<string, unknown> = {};
+      // Values, times, quality, coverage and sources stay explicit per bucket.
+      // Hoist only schema/series metadata repeated identically in every row.
+      for (const key of ['contract_version', 'metric', 'unit', 'dimensions'])
+        if (Object.hasOwn(buckets[0], key) && buckets.every((b: any) => Object.hasOwn(b, key)
+          && canonicalReceiptHash(b[key]) === canonicalReceiptHash(buckets[0][key]))) defaults[key] = buckets[0][key];
+      const { columns: _columns, ...profile } = data.profile ?? {};
+      return JSON.stringify({ ...observation, data: { ...data, profile,
+        metrics: [{ ...data.metrics[0], series: [{ ...series, bucketDefaults: defaults,
+          buckets: buckets.map((b: any) => Object.fromEntries(Object.entries(b).filter(([k]) => !Object.hasOwn(defaults, k)))) }] }],
+        contextProjection: 'metric_window_v1', contextReference: reference } });
+    }
   }
   // Generated completion/count labels duplicate structured data; other prose
   // can contain evidence or a warning and must survive the projection.
@@ -236,6 +257,7 @@ interface ExecutionState {
   usageUnknown: boolean;
   provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
   lastSummaryReceipt?: unknown;
+  lastProviderReceipt?: unknown;
   provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
   runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeContext;
   terminal?: InvestigationStop;
@@ -790,7 +812,7 @@ export class InvestigationExecutor {
         await update((s) => {
           if (s.provider?.id !== id) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           s.provider.status = 'received';
-          if(identity) s.provider.response = structuredClone(response);
+          if (identity || response.finishReason === 'length') s.provider.response = structuredClone(response);
           if (!usage) s.usageUnknown = true;
           else {
             s.usage.inputTokens += usage.inputTokens;
@@ -1127,6 +1149,28 @@ export class InvestigationExecutor {
           state.lastSummaryReceipt = { ...payload.context_request_v1 as object, response:state.provider!.response };
           state.provider = null;
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
+        }
+      }
+      if (payload.phase === 'rejected_final_response') {
+        const result = decode(access.run.result_json), state: ExecutionState = result?.investigationExecution;
+        const provider = state?.provider, receipt = payload.model_response_v1 as any;
+        const candidate = payload.assistantMessage as Message | undefined;
+        if (provider) {
+          // This transaction already proved the live actor, original request,
+          // Run/session/turn and lease/fence. A hash-bound raw length receipt is
+          // additionally required: a received flag alone never permits refund.
+          if (provider.purpose || provider.status !== 'received' || !provider.response || !usageOf(provider.response)
+            || state.usageUnknown || !provider.messageId || receipt?.messageId !== provider.messageId
+            || candidate?.id !== provider.messageId || candidate.role !== 'assistant'
+            || candidate.content !== provider.response.content || candidate.tool_calls?.length || provider.response.toolCalls.length
+            || provider.response.error || provider.response.errorKind || provider.response.finishReason !== 'length'
+            || receipt.status !== 'rejected' || receipt.reasonCode !== 'OUTPUT_LIMIT'
+            || (payload.terminal_resolution as any)?.kind !== 'partial'
+            || (payload.terminal_resolution as any)?.reasonCode !== 'OUTPUT_LIMIT'
+            || canonicalReceiptHash(provider.response) !== receipt.responseHash) throw Error('INVESTIGATION_PROVIDER_UNKNOWN');
+          state.lastProviderReceipt = { ...provider, ...receipt, response: provider.response };
+          state.provider = null;
+          await c.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(result), binding.runId]);
         }
       }
       if (['awaiting_tools', 'tools_completed', 'final_response', 'rejected_tool_batch'].includes(String(payload.phase))) {

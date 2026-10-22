@@ -8,6 +8,7 @@ import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Messa
 import { ModelStep, TimeoutError } from "./model-step.js";
 import { ToolExecutor, executeTools } from "./tool-executor.js";
 import { emitCheckpoint } from "./checkpoint.js";
+import { responseHash } from "./summary-receipt.js";
 import { createTurnState, transition } from "./turn-state.js";
 import { ContextManager, ensureNonemptyToolResult } from './context-manager.js';
 import { autoCompact, validateSummaryRecord } from './auto-compact.js';
@@ -542,7 +543,14 @@ export class TurnLoop {
         state.runtimeError = new RuntimeError('OUTPUT_LIMIT', 'Output continuation limit reached');
         state.resolution = { kind: 'partial', reasonCode: 'OUTPUT_LIMIT', retryable: false, safePartialContent: safeContent + continuation.content };
         appendFinalMessage(state.messages, continuation.content);
-        await persistCounters();
+        // A metered but rejected answer is still a known provider response.
+        // Persist the raw candidate identity/hash, never promote it to final.
+        const rejected = buildAssistantMessage(response.content ?? '', response.toolCalls, (response as any)._extra);
+        rejected.id = context.messageId;
+        await emitCheckpoint(spec, { phase: 'rejected_final_response', iteration, model: spec.model,
+          assistantMessage: rejected, completedToolResults: [], pendingToolCalls: [],
+          model_response_v1: { messageId: context.messageId, responseHash: responseHash(response),
+            status: 'rejected', reasonCode: 'OUTPUT_LIMIT' }, terminal_resolution: state.resolution });
         context.finalContent = state.finalContent;
         context.stopReason = state.stopReason;
         await hook.afterIteration(context);

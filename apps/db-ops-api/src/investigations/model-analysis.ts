@@ -10,10 +10,19 @@ const schema = z.strictObject({ analysisVersion: z.literal(1), summary: text,
   recommendations: z.array(z.strictObject({ action: text, priority: z.enum(['low', 'medium', 'high', 'critical']) })).max(30),
 });
 
+// Provider planning is a strict subset of the publication contract. Existing
+// valid persisted analyses remain compatible with the original validator.
+const concise = z.string().trim().min(1).max(160);
+const shortAssertion = assertion.extend({ statement: concise, supportingToolCallIds: refs.max(4), contradictingToolCallIds: refs.max(4) });
+const providerSchema = schema.extend({ summary: text.max(400), claims: z.array(shortAssertion).max(4),
+  hypotheses: z.array(shortAssertion).max(2), unresolvedQuestions: z.array(text.max(120)).max(4),
+  recommendations: z.array(z.strictObject({ action: text.max(120), priority: z.enum(['low', 'medium', 'high', 'critical']) })).max(3),
+});
+
 export const MODEL_ANALYSIS_POLICY = `
 Batch default observations; query_metrics realtime defaults core, discover=extensions, inventory=attributes. Use returned metric IDs; do not repeat gaps. Finish within budget.
-Final: one JSON object <=128000 UTF-8 bytes, no Markdown or extra keys at any level. Put ALL evidence gaps/uncertainty in unresolvedQuestions (string array), never evidenceGaps. Summary in Chinese: time, values, units, quality and gaps. Each claim MUST have a nonempty supportingToolCallIds. Cite returned call IDs from THIS execution only. Claims are inferences; hypotheses remain unverified. Never infer health from unknown.
-Exact final output contract (the same strict schema used to publish results; unknown fields reject the entire analysis): ${JSON.stringify(z.toJSONSchema(schema, { reused: 'ref' }))}`;
+Final: one concise JSON object, no Markdown or extra keys at any level. The 8192 output ceiling includes reasoning: aim for <=2000 visible tokens, reserve room to close ALL fields. Do not reproduce evidence tables or repeat the same gap in summary/claims/questions. Prefer fewer supported claims; empty hypotheses are valid when nothing is supported. Keep summary<=400 characters, claims<=4, hypotheses<=2 (statements<=160 characters), unresolvedQuestions<=4 and recommendations<=3 (each<=120 characters). Put ALL evidence gaps/uncertainty in unresolvedQuestions (string array), never evidenceGaps. Summary in Chinese: time, values, units, quality and gaps. Each claim MUST have a nonempty supportingToolCallIds. Cite returned call IDs from THIS execution only. Claims are inferences; hypotheses remain unverified. Never infer health from unknown.
+Exact final output contract (a bounded subset of the strict publication schema; unknown fields reject the entire analysis): ${JSON.stringify(z.toJSONSchema(providerSchema, { reused: 'ref' }))}`;
 
 /** The model supplies text, never authority or database identities. References
  * resolve exclusively through available evidence from the terminal execution. */
