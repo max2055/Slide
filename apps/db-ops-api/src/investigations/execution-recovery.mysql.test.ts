@@ -48,6 +48,17 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     service: ActorContext;
   let serviceId: number, roleId: number, binding: InvestigationExecutionBinding, sessionId: string, turnId: string;
   const rows = async (sql: string, values: unknown[] = []) => (await pool.query<RowDataPacket[]>(sql, values))[0];
+  async function retainLengthEvidence(name: string, extra: Record<string, unknown> = {}) {
+    const dir = process.env.T04_LENGTH_EVIDENCE_DIR;
+    if (!dir) return;
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await mkdir(dir, { recursive: true });
+    const tables: Record<string, unknown> = {};
+    for (const table of ['investigation_requests','agent_runs','chat_sessions','agent_canonical_facts','investigation_budget_ledger','investigation_results'])
+      tables[table] = await rows(`SELECT * FROM ${table}`);
+    await writeFile(join(dir, name + '.json'), JSON.stringify({ kind: 'disposable real MySQL; retained B9/local fixture responses, zero product calls', binding, tables, ...extra }, null, 2) + '\n');
+  }
   const tx = async <T>(work: (c: InvestigationConnection) => Promise<T>, lostAck = false): Promise<T> => {
     const c = await pool.getConnection();
     try {
@@ -1178,6 +1189,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     });
     const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
     expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
+    await retainLengthEvidence('exact-b9-length', { originalResponse: b9.finalResponse });
     const restarted = fixture(); // fresh executor, dependencies and provider; SQL/checkpoint survives
     await execute(restarted);
     expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
@@ -1987,6 +1999,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(third.messages.find((m: any) => m.httpStatus)).toEqual(http);
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+    await retainLengthEvidence('length-http-worker-restarts', { first, second, third });
   }, 30000);
   it.each(
     ['manual', 'automatic'].flatMap((lane) =>
