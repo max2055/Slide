@@ -42,7 +42,7 @@ function setup(retained = fixture) {
     ...retained.users, ...retained.entries];
   const spec:any = {initialMessages:raw, tools, model:'deepseek-flash', maxIterations:8,
     maxToolResultChars:128000, contextWindowTokens:16000, maxTokens:4096, hook:new NoopHook(),
-    checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1,evidenceReferences:'canonical'}};
+    checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1,evidenceReferences:'canonical',summaryMaxTokens:2048}};
   return {raw,spec,provider};
 }
 
@@ -197,12 +197,14 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number, taskOutpu
   const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
   const metricData=JSON.parse(retained.entries.find((m:any)=>m.name==='query_metrics'&&m.role==='tool').content).data;
   const {raw,spec}=setup(retained),bodies:any[]=[];
+  const capability={model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration' as const,version:'offline-capability'};
   if(taskWindow) {
     // Historic 16k fixture checks above retain their original prompt. Task
     // qualification includes the complete current production output policy.
     raw[0].content += MODEL_ANALYSIS_POLICY;
     const {resolveInvestigationRuntime}=await import('./runtime-configuration.js');
-    Object.assign(spec,resolveInvestigationRuntime({model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'offline-capability'}, {contextWindowTokens:taskWindow,maxTokens:taskOutput}));
+    Object.assign(spec,resolveInvestigationRuntime(capability, {contextWindowTokens:taskWindow,maxTokens:taskOutput}));
+    spec.contextPolicy.summaryMaxTokens=spec.summaryMaxTokens;
   }
   const original=JSON.stringify(raw);
   const summary={goal:['read observations'],constraints:['read only'],done:[],pending:['check source quality'],evidence:[],uncertain:['unknown is not healthy; never replay']};
@@ -216,8 +218,9 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number, taskOutpu
   });
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
   try{
-    const actual=new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash',baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
+    const actual=new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash',capabilities:capability,baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
     const p:any={getDefaultModel:()=>actual.getDefaultModel(),countPromptTokens:actual.countPromptTokens.bind(actual),
+      getModelCapabilities:actual.getModelCapabilities.bind(actual),
       projectMessages:(m:Message[])=>investigationContextMessages(actual.projectMessages(m),'ops'),chat:actual.chat.bind(actual),chatStream:actual.chatStream.bind(actual)};
     const manager=new ContextManager(spec,p),recovery=new RecoveryPolicy(),tracker=new RapidRefill(),saved:any[]=[];
     const persist=async(record:any)=>{if(record)saved.push(structuredClone(record));};
@@ -259,6 +262,7 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number, taskOutpu
     expect(JSON.stringify(raw.slice(0,retained.entries.length+retained.users.length+1))).toBe(original);
     expect(raw.filter(m=>m.role==='tool')).toHaveLength(11+states.length);
     expect(bodies.filter(b=>b.tools?.length)).toHaveLength(states.length);
+    if(taskWindow)for(const body of bodies)expect(body.max_tokens).toBe(body.tools?.length?taskOutput:10240);
     if(!taskWindow)expect(saved).toHaveLength(1+states.length);
     else console.info('Task context six-read compaction state',tracker.snapshot(),'wire bytes',bodies.map(b=>Buffer.byteLength(JSON.stringify(b))));
   }finally{await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}

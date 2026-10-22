@@ -97,8 +97,14 @@ export async function autoCompact(
   // summary ceiling so a small content target cannot force incomplete JSON.
   // The summary request and complete resulting projection must still fit their
   // actual windows; neither a token count nor the target proves that fit.
-  const maxTokens = Math.min(spec.contextPolicy?.summaryMaxTokens ?? 2048, spec.maxTokens ?? 4096);
+  // Summary output is independent of ordinary-answer output. Never silently
+  // clamp an allocation: the capability/window gates must admit it in full.
+  const maxTokens = spec.contextPolicy?.summaryMaxTokens ?? 10240;
   if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid summary output budget');
+  const capability = provider.getModelCapabilities?.(spec.model);
+  if (maxTokens > 4096 && (!capability || capability.source === 'conservative-fallback' || capability.maxOutputTokens === undefined)) {
+    throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Summary output requires verified model capacity');
+  }
   // Project receipts before enclosing history in a synthetic message. Once
   // wrapped as JSON, a provider cannot recognize individual tool results.
   const sourceView = manager.project(raw.slice(0, end));

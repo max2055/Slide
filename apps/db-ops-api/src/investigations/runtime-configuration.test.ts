@@ -3,11 +3,20 @@ import {investigationRuntimeConfiguration, resolveInvestigationRuntime} from './
 const capability:any={model:'deepseek-flash',contextWindowTokens:1048576,maxOutputTokens:393216,preferredOutputTokens:4096,source:'configuration',version:'fixture'};
 afterEach(()=>vi.unstubAllEnvs());
 it('keeps the existing default and selects a bounded task window without changing provider capabilities',()=>{
- expect(resolveInvestigationRuntime(capability)).toEqual({contextWindowTokens:16000,maxTokens:4096});
+ expect(resolveInvestigationRuntime(capability)).toEqual({contextWindowTokens:16000,maxTokens:4096,summaryMaxTokens:10240});
  vi.stubEnv('INVESTIGATION_CONTEXT_WINDOW_TOKENS','32768');
  vi.stubEnv('INVESTIGATION_OUTPUT_TOKENS','4096');
- expect(resolveInvestigationRuntime(capability,investigationRuntimeConfiguration())).toEqual({contextWindowTokens:32768,maxTokens:4096});
+ expect(resolveInvestigationRuntime(capability,investigationRuntimeConfiguration())).toEqual({contextWindowTokens:32768,maxTokens:4096,summaryMaxTokens:10240});
  expect(capability.contextWindowTokens).toBe(1048576);
+});
+it('persists a separate summary allocation, including explicit smaller values and legacy recovery',()=>{
+ vi.stubEnv('INVESTIGATION_SUMMARY_OUTPUT_TOKENS','6000');
+ const configured=investigationRuntimeConfiguration();
+ const saved=resolveInvestigationRuntime(capability,configured);
+ expect(saved.maxTokens).toBe(4096);expect(saved.summaryMaxTokens).toBe(6000);
+ expect(resolveInvestigationRuntime(capability,{summaryMaxTokens:10240},JSON.parse(JSON.stringify(saved)))).toEqual(saved);
+ expect(resolveInvestigationRuntime(capability,{summaryMaxTokens:10240},{contextWindowTokens:32768,maxTokens:8192}).summaryMaxTokens).toBe(2048);
+ expect(()=>resolveInvestigationRuntime(capability,{summaryMaxTokens:0})).toThrow('INVESTIGATION_CONTEXT_CONFIGURATION');
 });
 it.each(['','0','-1','1.5','NaN','1000001'])('rejects invalid task window %s before any model send',value=>{
  vi.stubEnv('INVESTIGATION_CONTEXT_WINDOW_TOKENS',value);

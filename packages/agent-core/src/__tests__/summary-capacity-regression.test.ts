@@ -38,6 +38,7 @@ it("summary output must coexist with protected context", async () => {
       hook: new NoopHook(),
       contextWindowTokens: 16000,
       maxTokens: 4096,
+      contextPolicy: {summaryMaxTokens: 2048},
       checkpointCallback: async () => {},
       ...(mode === "no-room" ? { contextBlockLimit: 6400 } : {}),
     };
@@ -130,7 +131,7 @@ it('a compliant UTF8 summary may need more than one output token per four bytes'
   const required=Buffer.byteLength(content);const complete=o.maxTokens>=required;
   return {content:complete?content:content.slice(0,-1),finishReason:complete?'stop':'length',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:100,completion_tokens:Math.min(required,o.maxTokens)}};
  }};
- const spec:any={initialMessages:raw,tools,model:'unknown-tokenizer',maxIterations:4,maxToolResultChars:128000,hook:new NoopHook(),contextWindowTokens:16000,maxTokens:4096,checkpointCallback:async()=>{}};
+ const spec:any={initialMessages:raw,tools,model:'unknown-tokenizer',maxIterations:4,maxToolResultChars:128000,hook:new NoopHook(),contextWindowTokens:16000,maxTokens:4096,contextPolicy:{summaryMaxTokens:2048},checkpointCallback:async()=>{}};
  const manager=new ContextManager(spec,provider);
  await autoCompact(manager,raw,provider,new RecoveryPolicy(),new RapidRefill(),async()=>{});
  assert.equal(sends,1);assert.deepEqual(manager.summary?.summary,generated);manager.assertFits(manager.project(raw));
@@ -147,7 +148,7 @@ it('a future-growth target cannot truncate a summary that fits actual headroom',
   tools.register({ name: 'inspect', description: 'read only', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: async () => null });
   const raw: any[] = [{ role: 'system', content: 'Read only' }, { role: 'user', content: 'inspect db-42' }, { role: 'assistant', content: 'old facts '.repeat(600) }, { role: 'user', content: 'protected '.repeat(440) }];
   const summary = { goal: ['inspect db-42'], constraints: ['read only'], done: [], pending: ['verify'], evidence: ['e-1 ' + 'x'.repeat(800)], uncertain: ['unknown'] };
-  const spec: any = { initialMessages: raw, tools, model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, checkpointCallback: async () => {} };
+  const spec: any = { initialMessages: raw, tools, model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, contextPolicy: {summaryMaxTokens: 2048}, checkpointCallback: async () => {} };
   const minimum = new ContextManager(spec);
   minimum.summary = { schemaVersion: 1, sourceStart: 0, sourceEnd: 3, sourceHash: sourceHash(raw.slice(0, 3)), generation: 1, provenance: 'legacy/unknown', summary: { goal: ['pending'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] } };
   spec.contextBlockLimit = minimum.tokens(minimum.project(raw)) + 4096 + 400;
@@ -182,7 +183,7 @@ it('summary capacity includes the same clock and continuation suffix as the ordi
   const suffix: any[] = [{ role: 'assistant', content: 'continuation '.repeat(40) }, ...projectContextBlocks([runtimeBlock('runtime', currentTime()), runtimeBlock('reminder', 'Finish the evidence review.')])];
   const targets: number[] = [];
   for (const extra of [[], suffix]) {
-    const spec: any = { initialMessages: raw, tools: new ToolRegistry(), model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, checkpointCallback: async () => {} };
+    const spec: any = { initialMessages: raw, tools: new ToolRegistry(), model: 'unknown-tokenizer', maxIterations: 4, maxToolResultChars: 128000, hook: new NoopHook(), contextWindowTokens: 16000, maxTokens: 4096, contextPolicy: {summaryMaxTokens: 2048}, checkpointCallback: async () => {} };
     const provider: any = { getDefaultModel: () => 'unknown-tokenizer', chatStream: async (messages: any) => {
       targets.push(Number(messages[0].content.match(/within (\d+) UTF-8/)[1]));
       return { content: JSON.stringify({ goal: ['inspect db-42'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] }), finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 100, completion_tokens: 100 } };

@@ -62,7 +62,7 @@ async function setup() {
   const policy = (contracts as any).investigationToolPolicy?.(resources, profile.budget) ?? '';
   const raw: Message[] = [{ role: 'system', source: 'runtime', contextAuthority: 'policy', content: investigationPrompt(profile) + policy }, ...fixture.users, ...fixture.entries];
   const spec: any = { initialMessages: raw, tools, model: 'deepseek-flash', maxIterations: 8, maxToolResultChars: 128000,
-    contextWindowTokens: 16000, maxTokens: 4096, hook: new NoopHook(), checkpointCallback: async () => {}, contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical' } };
+    contextWindowTokens: 16000, maxTokens: 4096, hook: new NoopHook(), checkpointCallback: async () => {}, contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 2048 } };
   return { raw, spec, provider, received };
 }
 
