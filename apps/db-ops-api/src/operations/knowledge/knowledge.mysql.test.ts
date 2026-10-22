@@ -130,7 +130,7 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
       const send = cases.send.bind(cases);
       vi.spyOn(cases, 'send').mockImplementation(async (actor, refs, begin, guard) => { if (refs.length && (mode !== 'summary' || sent.length >= 2)) await afterRetain(investigationId); return send(actor, refs, begin, guard); });
     }
-    const sent: any[][] = []; let summaries = 0;
+    const sent: any[][] = []; const summaryOptions: any[] = []; let summaries = 0;
     const provider: any = { getDefaultModel: () => 'synthetic-b18', ...(mode === 'summary' ? { countPromptTokens: (messages: any[]) => messages.filter(m => m.role === 'tool').length >= 2 ? 9000 : 500 } : {}), chat: async (messages: any[], tools: any[]) => {
       sent.push(structuredClone(messages));
       expect(tools.some(t => t.name === 'search_case_references')).toBe(true);
@@ -138,7 +138,7 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
       const calls = sent.length <= (mode === 'summary' ? 2 : 1) && !historyId ? [{ id: randomUUID(), name: 'search_case_references', arguments: { query: '连接池', limit: 1 } }] : [];
       return { content: calls.length ? null : '案例只是参考，当前事实未知。', finishReason: calls.length ? 'tool_calls' : 'stop', toolCalls: calls, hasToolCalls: !!calls.length,
         shouldExecuteTools: !!calls.length, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
-    }, chatStream: async (_m: any, _t: any, _c: any, options: any) => { summaries++; expect(options.requestIdentity.purpose).toBe('summary'); return { content: JSON.stringify({goal:['只读调查'],constraints:['案例无执行权'],done:[],pending:['核对当前事实'],evidence:[],uncertain:['仅合成参考']}),finishReason:'stop',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:20,completion_tokens:10,cached_tokens:5} }; } };
+    }, chatStream: async (_m: any, _t: any, _c: any, options: any) => { summaries++; summaryOptions.push(structuredClone(options)); expect(options.requestIdentity.purpose).toBe('summary'); return { content: JSON.stringify({goal:['只读调查'],constraints:['案例无执行权'],done:[],pending:['核对当前事实'],evidence:[],uncertain:['仅合成参考']}),finishReason:'stop',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:20,completion_tokens:10,cached_tokens:5} }; } };
     const executor = new InvestigationExecutor({ pool: () => f.pool, authorization: f.authorization,
       providerForPurpose: async () => provider, toolsForActor: () => new ToolRegistry(), ...(mode === 'default' ? {} : { caseReferences: cases }),
       budget: syntheticBudget() });
@@ -171,7 +171,7 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
       providerForPurpose:async()=>provider, toolsForActor:()=>new ToolRegistry(),caseReferences:new InvestigationCaseReferences(service),budget:syntheticBudget() }) : executor;
     const run = await recovered.execute({...command,job:recoveredJob!,context:{...command.context,workerId:recoveredOwner,fencingToken:recoveredJob!.fencingToken}});
     await worker.complete(recoveredJob!.id, recoveredOwner, recoveredJob!.fencingToken);
-    return { run, sent, summaries, investigationId, cases, executor, job:recoveredJob, acceptance };
+    return { run, sent, summaries, summaryOptions, investigationId, cases, executor, job:recoveredJob, acceptance };
   };
 
   it('B18 uses opt-in v2 HTTP and real Executor, retains exact references without promoting them to evidence', async () => {
@@ -266,15 +266,18 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
   });
 
   it.each([false, true])('B18 reauthorizes the actual summary request (withdrawn=%s)', async withdrawn => {
-    const published = await publish();
-    const result = await caseRun(withdrawn ? async () => { await f.rows("UPDATE trusted_cases SET state='withdrawn' WHERE id=?", [published.id]); } : undefined, undefined, 'summary');
+    const published = await publish(); let checks = 0;
+    const result = await caseRun(async () => { checks++; if (withdrawn) await f.rows("UPDATE trusted_cases SET state='withdrawn' WHERE id=?", [published.id]); }, undefined, 'summary');
+    expect(checks, JSON.stringify(result.run.error)).toBe(withdrawn ? 1 : 2);
     if (withdrawn) { expect(result.summaries).toBe(0); expect(result.sent).toHaveLength(2); expect(result.run.state).not.toBe('completed'); }
-    else { expect(result.summaries).toBe(1); expect(result.sent).toHaveLength(3); expect(result.run.state).toBe('completed'); }
+    else { expect(result.summaries).toBe(1); expect(result.summaryOptions[0].maxTokens).toBe(2048); expect(result.sent).toHaveLength(3); expect(result.run.state).toBe('completed'); }
   });
   it('B18 reauthorizes ordinary egress after an accepted case-derived summary', async () => {
     const published = await publish(); let checks = 0;
     const result = await caseRun(async () => { if (++checks === 2) await f.rows("UPDATE trusted_cases SET state='withdrawn' WHERE id=?", [published.id]); }, undefined, 'summary');
     expect(checks).toBe(2); expect(result.summaries).toBe(1); expect(result.sent).toHaveLength(2);
+    expect(result.summaryOptions[0].maxTokens).toBe(2048);
+    expect((result.run.result as any).investigationExecution.runtimeContext.summaryMaxTokens).toBe(2048);
     expect(result.run.state).not.toBe('completed');
     expect((result.run.result as any).investigationExecution.provider).toBeNull();
     expect((result.run.result as any).investigationExecution.usage).toMatchObject({inputTokens:60,outputTokens:30});
