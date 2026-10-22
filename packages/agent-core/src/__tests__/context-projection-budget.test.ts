@@ -232,3 +232,18 @@ it('durable one-batch retention can advance across repeated tools without replay
   expect(saved.some(c=>c.context_summary_v1?.sourceEnd>raw.length)).toBe(true);expect(raw).toEqual(before);
   for(const id of ['prior','batch-1','batch-2','batch-3'])expect(JSON.stringify(result.messages)).toContain(id);
 });
+
+it('canonical evidence pins require persistence and retain recorded/uncertain IDs without copying payloads', () => {
+  const raw: Message[] = [...structuredClone(messages), {role:'assistant',content:'next',tool_calls:[
+    {id:'pending',type:'function',function:{name:'read_only',arguments:'{"id":3}'}}]}];
+  const policy = {recentToolBatches:1 as const,evidenceReferences:'canonical' as const};
+  expect(() => new ContextManager({...spec,contextPolicy:policy},provider)).toThrow('Invalid context');
+  const s = {...spec,checkpointCallback:async()=>{},contextPolicy:policy};
+  const manager=new ContextManager(s,provider), before=JSON.stringify(raw);
+  const pins=manager.pins(raw,raw.length), payload=String(pins.find(m=>m.role==='tool')?.content);
+  expect(payload).toContain('canonicalSource');
+  expect(payload).toContain('call-1'); expect(payload).toContain('pending');
+  expect(payload).toContain('uncertain_do_not_replay');
+  expect(payload).not.toContain('"arguments"');
+  expect(JSON.stringify(raw)).toBe(before);
+});

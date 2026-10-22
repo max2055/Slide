@@ -38,7 +38,7 @@ function setup(retained = fixture) {
     ...retained.users, ...retained.entries];
   const spec:any = {initialMessages:raw, tools, model:'deepseek-flash', maxIterations:8,
     maxToolResultChars:128000, contextWindowTokens:16000, maxTokens:4096, hook:new NoopHook(),
-    checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1}};
+    checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1,evidenceReferences:'canonical'}};
   return {raw,spec,provider};
 }
 
