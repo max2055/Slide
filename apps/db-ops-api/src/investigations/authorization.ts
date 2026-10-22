@@ -268,8 +268,10 @@ export class InvestigationAuthorization {
     const authority = await this.authorize(connection, caller, investigation, 'continue', targets, frozen);
     const security = getToolSecurityDefinition(tool);
     if (!authority.tools.includes(tool) || !security || targets.some(target => !investigation.resources.some(ref => ref.type === target.type && ref.id === target.id))
-      || ['instance', 'server', 'network_device'].includes(security.resource)
-        && (!targets.length || targets.some(target => target.type !== security.resource))) throw forbidden();
+      || (security.resourceTypes
+        ? !targets.length || targets.some(target => !security.resourceTypes!.includes(target.type))
+        : ['instance', 'server', 'network_device'].includes(security.resource)
+          && (!targets.length || targets.some(target => target.type !== security.resource)))) throw forbidden();
     return authority;
   }
 }

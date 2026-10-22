@@ -12,14 +12,15 @@ const schema = z.strictObject({ analysisVersion: z.literal(1), summary: text,
 
 export const MODEL_ANALYSIS_POLICY = `
 Batch default observations; query_metrics realtime defaults core, discover=extensions, inventory=attributes. Use returned metric IDs; do not repeat gaps. Finish within budget.
-Final JSON only: {"analysisVersion":1,"summary":"中文，含时间/数值/单位/质量/缺口","claims":[],"hypotheses":[],"unresolvedQuestions":[],"recommendations":[{"action":"具体建议","priority":"medium"}]}.
-claims/hypotheses items: {"statement":"中文判断/待验证假设","supportingToolCallIds":[],"contradictingToolCallIds":[]}. Cite returned call IDs only. Claims are inferences; hypotheses remain unverified. Never infer health from unknown.`;
+Final: one JSON object, no Markdown or extra keys at any level. Put ALL evidence gaps/uncertainty in unresolvedQuestions (string array), never evidenceGaps. Summary in Chinese: time, values, units, quality and gaps. Each claim MUST have a nonempty supportingToolCallIds. Cite returned call IDs from THIS execution only. Claims are inferences; hypotheses remain unverified. Never infer health from unknown.
+Exact final output contract (the same strict schema used to publish results; unknown fields reject the entire analysis): ${JSON.stringify(z.toJSONSchema(schema, { reused: 'ref' }))}`;
 
 /** The model supplies text, never authority or database identities. References
  * resolve exclusively through available evidence from the terminal execution. */
 export function modelAnalysis(content: string, evidence: readonly any[]): Pick<InvestigationResult,
   'summary' | 'claims' | 'hypotheses' | 'unresolvedQuestions' | 'recommendations'> | null {
   let input: unknown;
+  if (Buffer.byteLength(content) > 128_000) return null;
   try { input = JSON.parse(content); } catch { return null; }
   const parsed = schema.safeParse(input);
   if (!parsed.success) return null;

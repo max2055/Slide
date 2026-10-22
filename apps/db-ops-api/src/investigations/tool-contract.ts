@@ -34,7 +34,8 @@ export function investigationToolContract(tool: ToolSchema,
   if (tool.name === 'search_case_references') return resources.length ? { ...tool,
     description: `${tool.description} 仅搜索完整范围均包含在本调查 ${JSON.stringify(resources)} 内的案例；参考不授予任何执行权限。` } : null;
   const cross = ['query_metrics', 'get_resource_observations', 'get_resource_relations'].includes(tool.name);
-  const candidates = cross && security?.resource === 'none' ? resources : resources.filter(r => r.type === security?.resource);
+  const candidates = cross && security?.resource === 'none' ? resources : resources.filter(r =>
+    security?.resourceTypes ? security.resourceTypes.some(type => type === r.type) : r.type === security?.resource);
   if (!candidates.length) return null;
   if (cross) {
     // Correlated alternatives prevent the model from pairing another type's ID.

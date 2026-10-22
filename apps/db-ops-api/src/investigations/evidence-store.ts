@@ -103,7 +103,11 @@ export class InvestigationEvidenceStore extends InvestigationObservationDatabase
   async get(caller: ActorContext, id: string, evidenceId: string, raw = false): Promise<InvestigationEvidence> {
     if (!isId(evidenceId)) throw invalidObservation();
     return this.transaction(caller, id, async (c, investigation, actor) => {
-      const [row] = await observationRows(c, 'SELECT * FROM investigation_evidence WHERE id = ? AND investigation_id = ? FOR UPDATE', [evidenceId, id]);
+      // mysql2 eagerly decodes JSON scalars. A plain JS string cannot tell us
+      // whether it is a JSON document or the document's string value. Cast at
+      // the storage boundary, then parse exactly once; malformed data throws.
+      const [row] = await observationRows(c, `SELECT *, CAST(raw_json AS CHAR CHARACTER SET utf8mb4) AS raw_document
+        FROM investigation_evidence WHERE id = ? AND investigation_id = ? FOR UPDATE`, [evidenceId, id]);
       if (!row) throw absentObservation();
       const view = this.view(row);
       await this.authorization.authorize(c as never, actor, investigation, 'content', view.resources);
@@ -113,7 +117,7 @@ export class InvestigationEvidenceStore extends InvestigationObservationDatabase
         // tombstone to 410 only for an explicitly requested raw snapshot.
         return view;
       }
-      if (raw) return { ...view, raw: decode(row.raw_json) };
+      if (raw) return { ...view, raw: decode(row.raw_document) };
       return view;
     });
   }
