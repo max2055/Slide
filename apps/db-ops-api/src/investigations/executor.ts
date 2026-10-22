@@ -96,6 +96,10 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   // Preserve warning/recovery metadata even when the observation payload is
   // omitted. It must never turn into an apparently empty healthy response.
   const { data: _data, ...metadata } = observation;
+  // Some handlers return row payloads at the receipt root. They are evidence,
+  // not warning/recovery metadata; keep them in the canonical receipt referenced
+  // below instead of bypassing the oversized-payload projection.
+  if (Array.isArray(metadata.rows)) delete metadata.rows;
   return JSON.stringify({ ...metadata, status: 'warning',
     data: { contextReference: reference, evidenceOmitted: true, requiresNarrowerRead: true,
       ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
