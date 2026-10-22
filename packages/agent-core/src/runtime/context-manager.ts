@@ -97,6 +97,15 @@ export class ContextManager {
   assertFits(messages: Message[], limit = this.inputBudget, tools?: unknown[]): void {
     if (this.tokens(messages, tools) > limit) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Protected context exceeds input budget');
   }
+  /** Shared ordinary-send planning; final request admission remains independent. */
+  shouldCompact(raw: Message[], requestSuffix: Message[] = []): boolean {
+    const input = this.tokens([...this.project(raw), ...requestSuffix]);
+    const pressure = input > this.inputBudget * this.watermark
+      || (!!this.spec.checkpointCallback && this.spec.tools.getDefinitions().length > 0 && input + this.contextConfig.maxTokens > this.inputBudget);
+    if (!pressure) return false;
+    const {end} = this.split(raw), previousEnd = this.summary?.sourceEnd ?? 0;
+    return end > previousEnd && raw.slice(previousEnd, end).some(m => m.role === 'assistant' || m.role === 'tool');
+  }
   project(raw: Message[]): Message[] {
     const isolate = (messages: Message[]) => projectContextBlocks([{ kind: 'history', sourceIds: [], authority: 'user', lifetime: 'session', priority: 50, tokenPolicy: 'bounded', messages }]);
     if (this.summary) {

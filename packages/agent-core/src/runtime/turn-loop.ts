@@ -157,14 +157,7 @@ export class TurnLoop {
           runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
         ])];
         messagesForModel = manager.project(state.messages);
-        const inputTokens = manager.tokens([...messagesForModel, ...requestSuffix]);
-        const aboveWatermark = inputTokens > manager.inputBudget * manager.watermark;
-        // A valid current request can grow into two irreducible recent batches.
-        // Use the same next-batch planning reserve as autoCompact while older
-        // history can still be summarized. This is not a future-output bound.
-        const growthPressure = !!saveCheckpoint && spec.tools.getDefinitions().length > 0
-          && inputTokens + manager.contextConfig.maxTokens > manager.inputBudget;
-        if (forceCompact || aboveWatermark || growthPressure) {
+        if (forceCompact || manager.shouldCompact(state.messages, requestSuffix)) {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
           const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');

@@ -1,6 +1,7 @@
 import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
+import {investigationRuntimeConfiguration} from './src/investigations/runtime-configuration.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
 import { registerSystemEventRoutes, SystemEventReader } from './src/investigations/system-event-routes.js';
@@ -5458,6 +5459,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     pool: () => dbConnection.getPool(), providerForPurpose: createLLMProvider, toolsForActor: createActorBoundToolRegistry,
     systemToolsForInvestigation: systemComposition.toolsForInvestigation,
     budget: investigationBudgetConfiguration(),
+    runtimeContext: investigationRuntimeConfiguration(),
   }));
   registerWorkflowHandlers(workflowRegistry, {
     ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),

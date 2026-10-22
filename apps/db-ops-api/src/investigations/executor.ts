@@ -23,6 +23,7 @@ import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtim
 import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
+import {resolveInvestigationRuntime} from './runtime-configuration.js';
 import { InvestigationCaseReferences } from './case-references.js';
 import {
   MysqlInvestigationBudgetLedger,
@@ -162,6 +163,7 @@ export interface InvestigationExecutorOptions extends InvestigationRuntimeDepend
   caseReferences?: InvestigationCaseReferences;
   /** Trusted server-side test configuration; never taken from workflow payloads. */
   contextInputLimit?: number;
+  runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeConfiguration;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
   budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number };
@@ -188,6 +190,7 @@ interface ExecutionState {
   provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
   lastSummaryReceipt?: unknown;
   provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
+  runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeContext;
   terminal?: InvestigationStop;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
 }
@@ -658,15 +661,23 @@ export class InvestigationExecutor {
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
       const model = actual.getDefaultModel();
+      const modelCapabilities = actual.getModelCapabilities?.();
+      // The task deployment can choose a smaller allocation within verified
+      // provider capacity. Once persisted, an in-flight run keeps its allocation.
+      const legacyContext = this.options.contextInputLimit === undefined ? undefined
+        : {...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
+          maxTokens: Math.min(4096, modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096)};
+      const runtimeContext = resolveInvestigationRuntime(modelCapabilities, this.options.runtimeContext,
+        state.runtimeContext ?? legacyContext);
       const modelPrompt = investigationPrompt(profile) + (profile.id === 'ops'
         ? investigationToolPolicy(snapshot.resources, profile.budget) : '');
       await update(s => {
+        s.runtimeContext = runtimeContext;
         const identity = analysisProviderIdentity(actual);
         s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(modelPrompt).digest('hex')}`,
           ...(identity.providerId === undefined ? {} : { providerId: identity.providerId }),
           ...(identity.routeVersion === 'unavailable' ? {} : { routeVersion: identity.routeVersion }) };
       });
-      const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
@@ -888,13 +899,12 @@ export class InvestigationExecutor {
         initialMessages,
         tools,
         model,
-        ...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
+        ...runtimeContext,
         maxIterations: profile.budget.maxProviderAttempts,
         // Context admission must reserve the same configured output ceiling
         // as dispatch, including qualification-only reductions. Keep the
         // configured context and execution-token ceilings unchanged.
-        maxTokens: Math.min(4096, state.reservedTokens,
-          modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
+        maxTokens: Math.min(runtimeContext.maxTokens, state.reservedTokens),
         maxToolResultChars: profile.budget.maxBytes,
         budgetLimits: {
           maxToolCalls: profile.budget.maxToolCalls,
