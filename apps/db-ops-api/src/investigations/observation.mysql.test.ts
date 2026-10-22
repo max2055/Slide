@@ -9,6 +9,7 @@ import { WebSocket } from 'ws';
 import { ToolRegistry, type LLMProvider } from '@slide/agent-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../migrations/runner.js';
+import { createVerifyToken } from '../auth-middleware.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
@@ -207,17 +208,42 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
   it.each([{ x: 1 }, [1, 'x'], 'Error: server arguments rejected', '{"looks":"like-json"}', '[1,2]', 'null', 'true', '42', '"quoted"', 42, true, null].map(raw => [raw]))('JSON evidence raw survives driver and normal HTTP without reinterpretation: %j', async raw => {
     const saved = await evidence.put(owner, binding, 'raw-document', { ...input(), raw });
     const app = Fastify();
-    await registerInvestigationRoutes(app, async request => { (request as any).user = owner; }, bridge, { stream, evidence, results });
+    const headers = { authorization: `Bearer ${signAccessToken(owner, process.env.JWT_SECRET_KEY!)}` };
+    await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge, { stream, evidence, results });
     try {
-      const response = await app.inject({ method: 'GET', url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
+      const response = await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().raw).toEqual(raw);
       expect(response.json().contentHash).toBe(evidenceHash(raw));
       const restarted = new InvestigationEvidenceStore(() => pool, authorization);
       expect((await restarted.get(owner, inv.id, saved.id, true)).raw).toEqual(raw);
       await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');
-      expect((await app.inject({ method: 'GET', url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` })).statusCode).toBe(404);
     } finally { await app.close(); }
+  });
+
+  it('does not swallow malformed legacy storage documents; MySQL JSON rejects corrupt writes', async () => {
+    const saved = await evidence.put(owner, binding, 'malformed-document', { ...input(), raw: { valid: true } });
+    await expect(pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', ['{"broken":', saved.id])).rejects.toHaveProperty('code', 'ER_INVALID_JSON_TEXT');
+    // Only this disposable test schema: emulate a damaged historical text
+    // column. The production reader must still fail closed, never return text.
+    await pool.query('ALTER TABLE investigation_evidence MODIFY raw_json LONGTEXT NULL');
+    const app = Fastify();
+    const headers = { authorization: `Bearer ${signAccessToken(owner, process.env.JWT_SECRET_KEY!)}` };
+    await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge, { stream, evidence, results });
+    try {
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', ['{"broken":', saved.id]);
+      const response = await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).not.toHaveProperty('raw');
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', [JSON.stringify('stored scalar'), saved.id]);
+      expect((await evidence.get(owner, inv.id, saved.id, true)).raw).toBe('stored scalar');
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', [JSON.stringify({ restored: true }), saved.id]);
+      expect((await evidence.get(owner, inv.id, saved.id, true)).raw).toEqual({ restored: true });
+    } finally {
+      await app.close(); await pool.query('DELETE FROM investigation_evidence WHERE id=?', [saved.id]);
+      await pool.query('ALTER TABLE investigation_evidence MODIFY raw_json JSON NULL');
+    }
   });
 
   it('raw expiry returns a tombstone, purges SQL, preserves result references and refuses new proof', async () => {

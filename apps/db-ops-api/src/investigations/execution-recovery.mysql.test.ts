@@ -220,6 +220,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       zeroSend?: boolean;
       overToolBudget?: boolean;
       analysisAnswer?: boolean;
+      finalContent?: string;
     } = {},
   ) {
     providerCalls = 0;
@@ -237,12 +238,12 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         providerCalls++;
         await options.beforeProvider?.();
         return {
-          content: providerCalls === 1 && options.toolCalls !== false ? null : options.analysisAnswer ? JSON.stringify({
+          content: providerCalls === 1 && options.toolCalls !== false ? null : options.finalContent ?? (options.analysisAnswer ? JSON.stringify({
             analysisVersion: 1, summary: '只读检查完成，根因未验证。',
             claims: [{ statement: '现有观测不足以确认根因。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
             hypotheses: [{ statement: '采集缺口需要进一步验证。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
             unresolvedQuestions: ['核对缺失来源。'], recommendations: [{ action: '补齐只读采集证据。', priority: 'medium' }],
-          }) : '事实不足，根因待验证',
+          }) : '事实不足，根因待验证'),
           finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
@@ -1166,6 +1167,28 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     await execute(executor);
     expect(providerCalls).toBe(2); expect(toolCalls).toBe(1);
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0].result_json).toEqual(saved);
+  });
+  it.each(['extra-field', 'truncated', 'unknown-reference', 'empty-basis', 'wrong-type', 'oversized'])('persists explicit rejected analysis %s without publishing assertions or replay', async mode => {
+    const answer: any = { analysisVersion: 1, summary: '候选判断', claims: [{ statement: '待核验', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+      hypotheses: [], unresolvedQuestions: ['证据缺口'], recommendations: [] };
+    if (mode === 'extra-field') answer.evidenceGaps = ['未获网络数据'];
+    if (mode === 'unknown-reference') answer.claims[0].supportingToolCallIds = ['outside-execution'];
+    if (mode === 'empty-basis') answer.claims[0].supportingToolCallIds = [];
+    if (mode === 'wrong-type') answer.unresolvedQuestions = {};
+    if (mode === 'oversized') answer.summary = 'x'.repeat(2001);
+    const original = mode === 'truncated' ? '{"analysisVersion":1' : JSON.stringify(answer);
+    const executor = fixture({ finalContent: original });
+    expect((await execute(executor)).state).toBe('completed');
+    const [stored] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(stored.result_json.claims).toEqual([]); expect(stored.result_json.hypotheses).toEqual([]);
+    expect(stored.result_json.summary).toContain('模型最终输出未通过');
+    expect(stored.result_json.unresolvedQuestions.join()).toContain('未发布');
+    expect(stored.result_json.facts).toHaveLength(1);
+    const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(run.result_json.event.finalContent).toBe(original);
+    await execute(fixture());
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(stored);
   });
   it('Runtime refuses provider dispatch when the original receipt cannot fit the prompt', async () => {
     const admitted = await automatic(1);

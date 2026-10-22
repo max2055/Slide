@@ -92,7 +92,7 @@ describe('durable investigation execution summary', () => {
     const expired = executionSummary(run, subject as any, [{ id:'old', expired_at: new Date(), metadata_json:{summary:'expired'} }]);
     expect(expired.facts).toEqual([]);
     const completed = executionSummary({ ...run, state: 'completed', result_json: { event: { finalContent: '已检查，仍需验证。' } } }, subject as any, []);
-    expect(completed.summary).toContain('已检查，仍需验证'); expect(completed.provenance.modelVersion).toBe('unavailable');
+    expect(completed.summary).toContain('模型最终输出未通过'); expect(completed.provenance.modelVersion).toBe('unavailable');
     expect(completed.problemStatus).toBe('unconfirmed');
   });
 });

@@ -186,6 +186,7 @@ it('sends actual B6 bounded handlers and discovered semantic reads through 64k S
     const persist = async (r: any) => { if (r) checkpoints.push(structuredClone(r)); };
     await autoCompact(manager, raw, provider, recovery, refill, persist, false);
     const send = async (name: string, args: any, receipt: any) => {
+      expect(tools.prepareCall(name, args).error).toBeNull();
       expect(receipt.success).toBe(true);
       const id = `b6_${observations.length}`;
       raw.push({ role: 'assistant', content: 'Read retained evidence, not a model-generated choice.', tool_calls: [{ id, type: 'function',
@@ -223,10 +224,23 @@ it('sends actual B6 bounded handlers and discovered semantic reads through 64k S
     }
     const service = retainedService(), semantic = createQueryMetricsTool(service), indexes = new Map<string, any>();
     for (const ref of scope) {
-      const args = { resourceType: ref.type, resourceId: ref.id, mode: 'discover' };
-      const receipt = await semantic.handler(args, { actor: admin });
-      const view = await send('query_metrics', args, receipt); indexes.set(ref.type, view.data);
+      const definitions: any[] = [];
+      for (let offset: number | null = 0; offset !== null;) {
+        const args = { resourceType: ref.type, resourceId: ref.id, mode: 'discover',
+          ...(ref.type === 'server' ? { discovery_offset: offset, discovery_limit: 8 } : {}) };
+        const receipt = await semantic.handler(args, { actor: admin });
+        const view = await send('query_metrics', args, receipt);
+        if (ref.type === 'server') expect(view.data.definitions.length).toBeLessThanOrEqual(8);
+        definitions.push(...view.data.definitions); offset = view.data.discovery.next_offset;
+        indexes.set(ref.type, { ...view.data, definitions });
+      }
     }
+    const serverDefinition = indexes.get('server').definitions.find((d: any) => d.kind === 'gauge' && d.unit === '%');
+    expect(serverDefinition).toBeDefined();
+    const detailArgs = { resourceType: 'server', resourceId: 3, mode: 'discover', metric_ids: [serverDefinition.id] };
+    const detail = await send('query_metrics', detailArgs, await semantic.handler(detailArgs, { actor: admin }));
+    expect(detail.data.definitions).toHaveLength(1);
+    expect(detail.data.definitions[0]).toMatchObject({ id: serverDefinition.id, semantic_version: serverDefinition.semantic_version });
     const choices = [ ['instance', 'mysql.threads.connected'], ['instance', 'mysql.connections.limit'],
       ['instance', 'mysql.tables.estimated_allocated_bytes'], ['instance', 'custom.mysql.slow_queries_snapshot'],
       ['server', 'linux.cpu.user_system_percent'], ['server', 'linux.memory.used_bytes'], ['server', 'host.filesystem.used_bytes'],
@@ -271,7 +285,7 @@ it('sends actual B6 bounded handlers and discovered semantic reads through 64k S
     const zeroView = await send('query_metrics', zeroArgs, zero);
     expect(zeroView.data.metrics[0].definition).toMatchObject({ kind: 'gauge', unit: 'count' });
     expect(zeroView.data.metrics[0].series[0].buckets[0].value).toEqual({ encoding: 'uint64', value: '0' });
-    expect(wire.filter(b => b.tools?.length)).toHaveLength(15);
+    expect(wire.filter(b => b.tools?.length)).toHaveLength(18);
     for (const body of wire) expect(body.max_tokens).toBe(body.tools?.length ? 8192 : 10240);
     const prefix = raw.slice(0, history.users.length + history.entries.length + 1);
     expect(JSON.stringify(prefix)).toBe(before); expect(sourceHash(prefix)).toBe(digest);
