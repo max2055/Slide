@@ -1,5 +1,6 @@
 import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
+import { metricDiscoveryPage } from '../metrics/consumers/discovery.js';
 import type { Pool } from 'mysql2/promise';
 import { MODEL_ANALYSIS_POLICY } from './model-analysis.js';
 import {
@@ -57,10 +58,20 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   if (profile !== 'ops') return json;
   if ((result as any).policyDecision?.allow === false) return result;
   if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
-    || (result as any).data?.contextProjection === 'single_metric_v1')) return json;
+    || ['single_metric_v1', 'metric_discovery_v1'].includes((result as any).data?.contextProjection))) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
   const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
   const data = observation.data as Record<string, any> | undefined;
+  if (toolName === 'query_metrics' && Array.isArray(data?.definitions)) {
+    // Old durable discovery includes the whole policy/plan. Keep its hash but
+    // expose a legal first page. New receipts already contain the bounded page.
+    const { columns: _columns, ...profile } = data.profile ?? {};
+    const page = data.discovery ? { definitions: data.definitions, metric_ids: data.metric_ids, discovery: data.discovery }
+      : metricDiscoveryPage(data.definitions);
+    return JSON.stringify({ ...observation, data: { resource: data.resource, profile,
+      configuration_revision: data.configuration_revision ?? data.effective?.published_revision ?? null,
+      ...page, contextProjection: 'metric_discovery_v1', contextReference: reference } });
+  }
   // Semantic selection is the bound, not a larger generic byte threshold.
   // One metric/series/bucket (including null or no series) remains readable with
   // its complete definition, capability, attempt, quality and audited sources.

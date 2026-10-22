@@ -6,14 +6,19 @@ import { metricConsumerService } from '../../metrics/consumers/runtime.js';
 import type { MetricConsumerService } from '../../metrics/consumers/service.js';
 import { migrateReference } from '../../metrics/consumers/migration.js';
 import { PolicyError } from '../../metrics/policy/model.js';
+import { metricDiscoveryPage } from '../../metrics/consumers/discovery.js';
 const Args = z.strictObject({
   instance_id: z.number().int().positive().optional(), resourceType: z.enum(['instance', 'server', 'network_device']).optional(), resourceId: z.number().int().positive().optional(),
   mode: z.enum(['realtime', 'history', 'discover', 'inventory']).default('realtime'),
   metric_ids: z.array(z.string().regex(/^[a-z][a-z0-9_.]{0,127}$/)).min(1).max(32).optional(),
   series_index: z.number().int().min(0).max(99).optional(),
+  discovery_offset: z.number().int().min(0).max(100000).optional(),
+  discovery_limit: z.number().int().min(1).max(64).optional(),
   from: z.iso.datetime().optional(), to: z.iso.datetime().optional(),
   period: z.enum(['1h', '6h', '24h', '7d']).optional(), interval: z.enum(['1m', '5m', '15m', '1h']).optional(),
-}).refine(a => a.series_index === undefined || (a.metric_ids?.length === 1 && ['realtime', 'history'].includes(a.mode)), 'Series selection requires one explicit metric');
+}).refine(a => a.series_index === undefined || (a.metric_ids?.length === 1 && ['realtime', 'history'].includes(a.mode)), 'Series selection requires one explicit metric')
+  .refine(a => (a.discovery_offset === undefined && a.discovery_limit === undefined) || (a.mode === 'discover' && !a.metric_ids), 'Discovery paging requires discover without metric_ids')
+  .refine(a => a.mode !== 'discover' || !a.metric_ids || a.metric_ids.length === 1, 'Discover one complete definition at a time');
 export function createQueryMetricsTool(service: MetricConsumerService = metricConsumerService, clock = () => new Date().toISOString()): AnyAgentTool {
   return {
     name: 'query_metrics', group: 'db_ops',
@@ -24,6 +29,8 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
       mode: { type: 'string', enum: ['realtime', 'history', 'discover', 'inventory'] },
       metric_ids: { type: 'array', items: { type: 'string' }, description: '明确 Canonical 或已发现的 Extension ID；不传默认产品核心指标' },
       series_index: { type: 'integer', minimum: 0, maximum: 99, description: '仅选择一个明确指标的一条维度序列，0起始；响应保留真实dimensions和总序列数' },
+      discovery_offset: { type: 'integer', minimum: 0, maximum: 100000, description: '仅discover索引分页，默认0；按next_offset接续，配置revision改变时重新发现' },
+      discovery_limit: { type: 'integer', minimum: 1, maximum: 64, description: '仅discover索引页大小，默认64；discover配一个metric_ids读取完整定义，不能同时分页' },
       from: { type: 'string', description: 'UTC ISO 窗口起点，与 to 同时指定' }, to: { type: 'string', description: 'UTC ISO 窗口终点（不含）' },
       period: { type: 'string', enum: ['1h', '6h', '24h', '7d'] }, interval: { type: 'string', enum: ['1m', '5m', '15m', '1h'] },
     } },
@@ -35,7 +42,14 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         const ref = { type: args.resourceType ?? 'instance' as const, id: args.resourceId ?? args.instance_id };
         if (!ref.id || Boolean(args.resourceType) !== Boolean(args.resourceId)) throw new Error('RESOURCE_INVALID');
         const resource = { ...ref, id: ref.id };
-        if (args.mode === 'discover') return { success: true, data: await service.discover(context.actor, resource) };
+        if (args.mode === 'discover') {
+          const catalog = await service.discover(context.actor, resource);
+          const id = args.metric_ids?.[0];
+          if (id && !catalog.definitions.some(d => d.id === id)) throw new PolicyError('UNKNOWN_METRIC');
+          return { success: true, data: { resource, profile: catalog.profile,
+            configuration_revision: catalog.effective?.published_revision ?? null,
+            ...metricDiscoveryPage(catalog.definitions, args.discovery_offset, args.discovery_limit, id) } };
+        }
         if (args.mode === 'inventory') return { success: true, data: await service.inventory(context.actor, resource) };
         let migrations: ReturnType<typeof migrateReference>[] = [];
         let ids = args.metric_ids;

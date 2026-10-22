@@ -8,7 +8,7 @@ const opsDescriptions: Record<string, string> = {
   get_server_alerts: 'Read server alerts; activeOnly defaults true.',
   get_server_metrics: 'Read latest or bounded historical server metrics with freshness and gaps.',
   list_active_alerts: 'Read active database alerts; optional severity and since (ISO time).',
-  query_metrics: 'Core metrics; discover extensions then metric_ids; inventory attributes. Narrow: one metric_ids entry + series_index + paired UTC from/to (to exclusive), one bucket.',
+  query_metrics: 'Discover actual IDs first: index pages (discovery_offset/limit, default64, follow next_offset; restart if revision changes). Index omits full definition; discover with one metric_ids reads full definition, no paging. Then one metric_ids + series_index + paired UTC from/to (to exclusive), one bucket. inventory reads attributes. Never guess IDs or equate snapshot gauge with rate.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
