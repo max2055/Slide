@@ -20,7 +20,7 @@ const {currentTime,projectContextBlocks,runtimeBlock} = await import(new URL('co
 // Retained canonical facts from run 0b4413e1, main45fe437b. Diagnostic
 // reconstruction, not original wire telemetry. No handlers or network invoked.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-six-tool-20261021.json', import.meta.url), 'utf8'));
-function setup() {
+function setup(retained = fixture) {
   const tools = new ToolRegistry(), profile = INVESTIGATION_PROFILES.ops;
   for (const name of profile.toolAllowlist) {
     const tool = toolCatalog.get(name)!;
@@ -35,7 +35,7 @@ function setup() {
     projectMessages: (m:Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'),
   };
   const raw:Message[] = [{role:'system',source:'runtime',contextAuthority:'policy',content:investigationPrompt(profile)+investigationToolPolicy([{type:'instance',id:1},{type:'server',id:3}],profile.budget)},
-    ...fixture.users, ...fixture.entries];
+    ...retained.users, ...retained.entries];
   const spec:any = {initialMessages:raw, tools, model:'deepseek-flash', maxIterations:8,
     maxToolResultChars:128000, contextWindowTokens:16000, maxTokens:4096, hook:new NoopHook(),
     checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1}};
@@ -85,5 +85,38 @@ describe('normal Ops first six-tool batch admission', () => {
     await expect(new ModelStep({...provider,chat:async()=>{sends++;}} as any)
       .request(spec,request,spec.hook,{} as any)).rejects.toMatchObject({code:'CONTEXT_UNRECOVERABLE'});
     expect(sends).toBe(0);
+  });
+});
+
+
+describe('post-query-fix Ops second batch admission', () => {
+  it('leaves room for a durable summary with the actual six-tool batch, reasoning and all seven schemas', async () => {
+    const retained = JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json', import.meta.url), 'utf8'));
+    const { raw, spec, provider } = setup(retained), before = JSON.stringify(raw), digest = sourceHash(raw);
+    const manager = new ContextManager(spec, provider as any), split = manager.split(raw);
+    manager.summary = { schemaVersion: 1, sourceStart: 0, sourceEnd: split.end,
+      sourceHash: sourceHash(raw.slice(0, split.end)),
+      summary: { goal: ['pending'], constraints: [], done: [], pending: [], evidence: [], uncertain: [] } };
+    const request = [...manager.project(raw), ...projectContextBlocks([runtimeBlock('runtime', currentTime(new Date('2026-10-22T01:05:34Z')))])];
+    console.info('Offline r4 retained admission', manager.tokens(request), '/', manager.inputBudget);
+    expect(spec.tools.getDefinitions()).toHaveLength(7);
+    const view = provider.projectMessages(request);
+    const liveCalls = retained.entries.filter((m: Message) => m.role === 'assistant').at(-1).tool_calls;
+    for (const call of liveCalls) expect(view.filter(m => m.role === 'tool' && m.tool_call_id === call.id)).toHaveLength(1);
+    expect(view.find(m => m.role === 'assistant' && m.tool_calls?.[0].id === liveCalls[0].id)?._extra)
+      .toEqual(retained.entries.filter((m: Message) => m.role === 'assistant').at(-1)._extra);
+    manager.assertFits(request);
+    // The summary envelope needs positive planning headroom; no context or output cap changes.
+    expect(manager.inputBudget - manager.tokens(request)).toBeGreaterThan(128);
+    let sends = 0;
+    await new ModelStep({ ...provider, chat: async (messages: Message[]) => {
+      sends++;
+      expect(messages).toEqual(provider.projectMessages(view));
+      return { content: 'offline only', toolCalls: [], usage: {}, finishReason: 'stop' };
+    } } as any).request(spec, request, spec.hook, {} as any);
+    expect(sends).toBe(1);
+    expect(JSON.stringify(raw)).toBe(before);
+    expect(sourceHash(raw)).toBe(digest);
+    expect(provider.projectMessages(view)).toEqual(view);
   });
 });
