@@ -188,7 +188,7 @@ it('compacts and restores three completed batches through the real SDK using onl
   } finally {await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
 });
 
-async function sdkReadableMetrics(states:string[]){
+async function sdkReadableMetrics(states:string[], taskWindow?:number){
   const {createServer}=await import('node:http');
   const {autoCompact}=await import(new URL('runtime/auto-compact.js',core).href);
   const {RecoveryPolicy}=await import(new URL('runtime/recovery-policy.js',core).href);
@@ -196,6 +196,10 @@ async function sdkReadableMetrics(states:string[]){
   const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
   const metricData=JSON.parse(retained.entries.find((m:any)=>m.name==='query_metrics'&&m.role==='tool').content).data;
   const {raw,spec}=setup(retained), original=JSON.stringify(raw),bodies:any[]=[];
+  if(taskWindow) {
+    const {resolveInvestigationRuntime}=await import('./runtime-configuration.js');
+    Object.assign(spec,resolveInvestigationRuntime({model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'offline-capability'}, {contextWindowTokens:taskWindow,maxTokens:4096}));
+  }
   const summary={goal:['read observations'],constraints:['read only'],done:[],pending:['check source quality'],evidence:[],uncertain:['unknown is not healthy; never replay']};
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
@@ -234,7 +238,7 @@ async function sdkReadableMetrics(states:string[]){
       const assistant:Message & {_extra:{reasoning_content:string}}={role:'assistant',content:'read the bounded metric',tool_calls:[{id,type:'function',function:{name:'query_metrics',arguments:JSON.stringify(args)}}],_extra:{reasoning_content:'Retain quality and sources before drawing any conclusion.'}};
       raw.push(assistant,{role:'tool',name:'query_metrics',tool_call_id:id,content:JSON.stringify(receipt)});
       tracker.completeBatch();
-      await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
+      if(!taskWindow || manager.shouldCompact(raw,suffix)) await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
       const view=[...manager.project(raw),...suffix];manager.assertFits(view);
       console.info('Offline readable metric admission',state,manager.tokens(view),'/',manager.inputBudget);
       const restored=new ContextManager(spec,p);restored.summary=structuredClone(saved.at(-1));
@@ -249,7 +253,9 @@ async function sdkReadableMetrics(states:string[]){
     }
     expect(JSON.stringify(raw.slice(0,retained.entries.length+retained.users.length+1))).toBe(original);
     expect(raw.filter(m=>m.role==='tool')).toHaveLength(11+states.length);
-    expect(bodies.filter(b=>b.tools?.length)).toHaveLength(states.length);expect(saved).toHaveLength(1+states.length);
+    expect(bodies.filter(b=>b.tools?.length)).toHaveLength(states.length);
+    if(!taskWindow)expect(saved).toHaveLength(1+states.length);
+    else console.info('Task context six-read compaction state',tracker.snapshot(),'wire bytes',bodies.map(b=>Buffer.byteLength(JSON.stringify(b))));
   }finally{await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
 }
 
@@ -262,4 +268,7 @@ it('preserves the rapid-refill stop for repeated narrow-read compactions instead
   // exploratory trace is delivered with the evidence. Core protection is unchanged.
   await expect(sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale']))
     .rejects.toMatchObject({code:'CONTEXT_RAPID_REFILL'});
+});
+it('sends six consecutive readable observations with the production planning predicate in the verified task window',async()=>{
+  await sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],32768);
 });
