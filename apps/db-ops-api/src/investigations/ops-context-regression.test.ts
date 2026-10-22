@@ -41,7 +41,11 @@ function setup(retained = fixture) {
   const raw:Message[] = [{role:'system',source:'runtime',contextAuthority:'policy',content:investigationPrompt(profile)+investigationToolPolicy([{type:'instance',id:1},{type:'server',id:3}],profile.budget)},
     ...retained.users, ...retained.entries];
   const spec:any = {initialMessages:raw, tools, model:'deepseek-flash', maxIterations:8,
-    maxToolResultChars:128000, contextWindowTokens:16000, maxTokens:4096, hook:new NoopHook(),
+    // Controlled historical fixture: lossless bounded pages now cost ~1900
+    // more tokens than their old omitted references. Give these projection/
+    // summary tests 20k to reach their intended boundary; current production
+    // policy at 16k still has its explicit rejection test below.
+    maxToolResultChars:128000, contextWindowTokens:20000, maxTokens:4096, hook:new NoopHook(),
     checkpointCallback:async()=>{}, contextPolicy:{recentToolBatches:1,evidenceReferences:'canonical',summaryMaxTokens:2048}};
   return {raw,spec,provider};
 }
@@ -86,7 +90,7 @@ describe('normal Ops first six-tool batch admission', () => {
 
   it('still rejects irreducible protected growth before the recording sink', async () => {
     const {raw,spec,provider} = setup();
-    const request = [...raw,{role:'user' as const,content:'x'.repeat(20000)}];
+    const request = [...raw,{role:'user' as const,content:'x'.repeat(65536)}];
     let sends=0;
     await expect(new ModelStep({...provider,chat:async()=>{sends++;}} as any)
       .request(spec,request,spec.hook,{} as any)).rejects.toMatchObject({code:'CONTEXT_UNRECOVERABLE'});
@@ -202,7 +206,7 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number, taskOutpu
   const {raw,spec}=setup(retained),bodies:any[]=[];
   const capability={model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration' as const,version:'offline-capability'};
   if(taskWindow) {
-    // Historic 16k fixture checks above retain their original prompt. Task
+    // Controlled historical fixture checks retain their original prompt. Task
     // qualification includes the complete current production output policy.
     raw[0].content += MODEL_ANALYSIS_POLICY;
     const {resolveInvestigationRuntime}=await import('./runtime-configuration.js');

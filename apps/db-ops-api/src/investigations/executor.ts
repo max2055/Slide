@@ -47,21 +47,34 @@ import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+/** A selection route, never an observation or permission to replay a receipt.
+ * Resolve the resource from the current call/receipt, not a guessed metric alias.
+ */
+function metricReadGuidance(result: any, toolName?: string, args?: Record<string, any>) {
+  if (!['query_metrics', 'get_resource_observations', 'get_server_metrics'].includes(toolName ?? '')) return undefined;
+  const ref = result.data?.resource;
+  const type = ref?.type ?? args?.resourceType ?? (toolName === 'get_server_metrics' ? 'server' : undefined);
+  const id = ref?.id ?? args?.resourceId ?? args?.serverId ?? result.details?.server_id;
+  if (!['instance', 'server', 'network_device'].includes(type) || !Number.isSafeInteger(id) || id <= 0) return undefined;
+  return { discover: { tool: 'query_metrics', arguments: { resourceType: type, resourceId: id, mode: 'discover', discovery_limit: 8 } },
+    instructions: 'Read one discovered metric_ids with series_index and UTC from/to (one bucket <=60s); cover remaining series/buckets within the requested window. Legacy scalars lack full semantics.' };
+}
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
  * This cap is a planning limit; ContextManager still enforces final admission.
  */
-export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string, toolName?: string): unknown {
+export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string, toolName?: string, args?: Record<string, any>): unknown {
   if (result === null || typeof result !== 'object' || (result as any).success !== true
     || (result as any).status === 'error') return result;
   const json = JSON.stringify(result);
   if (profile !== 'ops') return json;
   if ((result as any).policyDecision?.allow === false) return result;
   if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
-    || ['single_metric_v1', 'metric_discovery_v1'].includes((result as any).data?.contextProjection))) return json;
+    || ['single_metric_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
   const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
   const data = observation.data as Record<string, any> | undefined;
+  const metricRead = metricReadGuidance(result, toolName, args);
   if (toolName === 'query_metrics' && Array.isArray(data?.definitions)) {
     // Old durable discovery includes the whole policy/plan. Keep its hash but
     // expose a legal first page. New receipts already contain the bounded page.
@@ -99,6 +112,20 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     if (observation.artifacts && typeof observation.artifacts === 'object' && !Object.keys(observation.artifacts).length) delete observation.artifacts;
   }
   const compact = JSON.stringify(observation);
+  // Row/series selection bounds the legacy page. Preserve every business field;
+  // the byte ceiling only rejects opaque oversized records, never truncates them.
+  // These pages have no full metric definition/capability: route to discovery
+  // rather than relabelling a legacy scalar as a semantic observation.
+  const boundedObservations = toolName === 'get_resource_observations'
+    && Array.isArray(data?.observations) && data.observations.length <= 4;
+  const boundedServerMetrics = toolName === 'get_server_metrics'
+    && Array.isArray(data?.latest) && data.latest.length <= 1
+    && Array.isArray(data?.history) && data.history.length <= 1;
+  if ((boundedObservations || boundedServerMetrics) && Buffer.byteLength(compact) <= 16384) {
+    return JSON.stringify({ ...observation, data: { ...data,
+      contextProjection: boundedObservations ? 'bounded_observations_v1' : 'bounded_server_metrics_v1',
+      contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
+  }
   if (Buffer.byteLength(compact) <= 512) {
     // executeToolWithPolicy appends this runtime audit envelope to every
     // receipt. It is not observation data or model authority. Keep it in
@@ -116,33 +143,41 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   return JSON.stringify({ ...metadata, status: 'warning',
     data: { contextReference: reference, evidenceOmitted: true, requiresNarrowerRead: true,
       ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
-        ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}) } });
+        ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}),
+      ...(metricRead ? { metricRead } : {}) } });
 }
 /** Ephemeral model view only. Durable facts and checkpoints retain full results. */
 export function investigationContextMessages(messages: Message[], profile: string): Message[] {
   if (profile !== 'ops') return messages;
   // Provider normalization can omit the optional tool-message name. Resolve it
   // from the adjacent assistant call group, never from an unrelated old ID.
-  const names = new Map<string, string>();
+  const calls = new Map<string, { name: string; args?: Record<string, any> }>();
   return messages.map(message => {
     if (message.role !== 'tool') {
-      names.clear();
-      for (const call of message.tool_calls ?? []) names.set(call.id, call.function.name);
+      calls.clear();
+      for (const call of message.tool_calls ?? []) {
+        let args: Record<string, any> | undefined;
+        try { args = JSON.parse(call.function.arguments); } catch { /* Invalid arguments grant no resource hint. */ }
+        calls.set(call.id, { name: call.function.name, args });
+      }
       return message;
     }
     if (message.name === 'search_case_references') return message;
     if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
     let result: unknown;
     try { result = JSON.parse(message.content); } catch { return message; }
+    const call = calls.get(message.tool_call_id), name = message.name ?? call?.name;
     // A handler can fail after policy allowed execution. Keep the complete
     // business failure in the model view, without repeating an ALLOW audit
     // envelope. This runs after ToolExecutor; failure object semantics and
     // durable receipts stay untouched. A policy denial is never stripped.
     if ((result as any)?.success === false && (result as any)?.policyDecision?.allow === true) {
       const { policyDecision: _audit, ...failure } = result as Record<string, unknown>;
-      return { ...message, content: JSON.stringify(failure), messageParts: undefined };
+      const metricRead = ['METRIC_NAME_INVALID', 'GET_METRICS_FAILED'].includes(String(failure.errorCode))
+        ? metricReadGuidance(result, name, call?.args) : undefined;
+      return { ...message, content: JSON.stringify({ ...failure, ...(metricRead ? { metricRead } : {}) }), messageParts: undefined };
     }
-    const content = investigationToolContextResult(result, message.tool_call_id, profile, message.name ?? names.get(message.tool_call_id));
+    const content = investigationToolContextResult(result, message.tool_call_id, profile, name, call?.args);
     return typeof content === 'string' && content !== message.content
       ? { ...message, content, messageParts: undefined } : message;
   });

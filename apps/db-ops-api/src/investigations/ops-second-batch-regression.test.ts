@@ -108,7 +108,9 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     expect(JSON.stringify(wire)).toContain('METRIC_REFERENCE_REVIEW_REQUIRED');
     const failure = fixture.entries.at(-1), failureValue = JSON.parse(failure.content);
     const { policyDecision: _audit, ...businessFailure } = failureValue;
-    expect(JSON.parse(wire.find((m: any) => m.tool_call_id === failure.tool_call_id).content)).toEqual(businessFailure);
+    const { metricRead, ...projectedFailure } = JSON.parse(wire.find((m: any) => m.tool_call_id === failure.tool_call_id).content);
+    expect(projectedFailure).toEqual(businessFailure);
+    expect(metricRead.discover).toEqual({ tool: 'query_metrics', arguments: { resourceType: 'server', resourceId: 3, mode: 'discover', discovery_limit: 8 } });
     expect(JSON.stringify(wire)).toContain('unknown');
     const projected = provider.projectMessages(request);
     expect(provider.projectMessages(projected)).toEqual(projected);

@@ -3,12 +3,12 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Scoped database metadata/health.',
-  get_resource_observations: 'Latest observations: time/source/quality/dimensions/gaps.',
+  get_resource_observations: 'Legacy scalars, readable <=4 observations; for full semantics use query_metrics discover on this resource, then one returned metric_ids.',
   get_resource_relations: 'Resource relations.',
   get_server_alerts: 'Server alerts; activeOnly=true.',
-  get_server_metrics: 'Server metrics: latest/history, freshness/gaps.',
+  get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
   list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
-  query_metrics: 'discover: index via discovery_offset/limit(default64); follow next_offset, restart if revision changes. One metric_ids: full definition. Read: one metric_ids+series_index+UTC from/to(exclusive), one bucket. inventory: attributes.',
+  query_metrics: 'For EACH database/server: discover (discovery_limit=8), select IDs by meaning/unit/kind; follow next_offset, restart on revision change. discover+one metric_ids: definition. Read one metric_ids+series_index+UTC from/to(exclusive), one bucket <=60s; follow total_series and requested window. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
