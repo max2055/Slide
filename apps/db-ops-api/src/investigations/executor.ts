@@ -53,16 +53,26 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     || (result as any).status === 'error') return result;
   const json = JSON.stringify(result);
   if (profile !== 'ops') return json;
-  if (Buffer.byteLength(json) <= 1024) {
+  if ((result as any).policyDecision?.allow === false) return result;
+  if ((result as any).data?.contextReference && (result as any).data?.evidenceOmitted === true) return json;
+  const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
+  // Successful data is authoritative evidence, generated UI prose and empty
+  // display envelopes are not. Keep all nonempty actions/artifacts and details.
+  // Failures/denials never enter this branch. Complete receipts remain canonical.
+  if (observation.data && typeof observation.data === 'object' && Object.keys(observation.data).length) {
+    delete observation.summary;
+    if (Array.isArray(observation.next_actions) && !observation.next_actions.length) delete observation.next_actions;
+    if (observation.artifacts && typeof observation.artifacts === 'object' && !Object.keys(observation.artifacts).length) delete observation.artifacts;
+  }
+  const compact = JSON.stringify(observation);
+  if (Buffer.byteLength(compact) <= 512) {
     // executeToolWithPolicy appends this runtime audit envelope to every
     // receipt. It is not observation data or model authority. Keep it in
     // canonical facts/SQL, but do not repeat actor/request ACL metadata in the
     // live model batch. All business fields and failure semantics stay exact.
-    const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
-    return JSON.stringify(observation);
+    return compact;
   }
   return JSON.stringify({ success: true, status: 'warning',
-    summary: '完整工具结果已持久化；本上下文仅含证据引用，未包含观测值，不可据此推断健康或根因。请使用相同资源和时间范围，以 maxRows=1 或 limit=1 缩小只读查询。',
     data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
       evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
 }
@@ -869,7 +879,7 @@ export class InvestigationExecutor {
         // System uses deterministic history references; do not attempt an
         // unbudgeted summary at the soft watermark. The hard context cap stays.
         ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } }
-          : profile.id === 'ops' ? { contextPolicy: { recentToolBatches: 1 as const } } : {}),
+          : profile.id === 'ops' ? { contextPolicy: { recentToolBatches: 1 as const, evidenceReferences: 'canonical' as const } } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {

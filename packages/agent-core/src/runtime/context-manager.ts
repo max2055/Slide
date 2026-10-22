@@ -67,6 +67,8 @@ export class ContextManager {
     this.target = spec.contextPolicy?.target ?? 0.5;
     const recentBatches = spec.contextPolicy?.recentToolBatches ?? 2;
     if (![1, 2].includes(recentBatches) || (recentBatches === 1 && !spec.checkpointCallback)
+      || !['full', 'canonical'].includes(spec.contextPolicy?.evidenceReferences ?? 'full')
+      || (spec.contextPolicy?.evidenceReferences === 'canonical' && !spec.checkpointCallback)
       || !Number.isSafeInteger(spec.maxToolResultChars) || spec.maxToolResultChars < 1 || !Number.isSafeInteger(this.inputBudget) || this.inputBudget <= 0 || !(this.target > 0 && this.target < this.watermark && this.watermark <= 1)) {
       throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid context budget or watermarks');
     }
@@ -126,6 +128,18 @@ export class ContextManager {
       status: raw.slice(index + 1, end).some(r => r.role === 'tool' && (!r.source || r.source === 'fact') && r.tool_call_id === call.id) ? 'result_recorded_not_success_assertion' : 'uncertain_do_not_replay',
     })) : []);
     if (evidence.length) {
+      if (this.spec.contextPolicy?.evidenceReferences === 'canonical') {
+        // The summary source is hash-validated on every projection and persisted
+        // before activation. Do not grow the protected suffix by re-copying all
+        // historical arguments. IDs resolve to the complete canonical calls and
+        // receipts; a recorded result does not assert success or authorize replay.
+        pins.push(...historicalData('evidence_references', {
+          canonicalSource: { from: 0, to: end, sha256: sourceHash(raw.slice(0, end)) },
+          result_recorded_not_success_assertion: evidence.filter(e => e.status === 'result_recorded_not_success_assertion').map(e => e.toolCallId),
+          uncertain_do_not_replay: evidence.filter(e => e.status === 'uncertain_do_not_replay').map(e => e.toolCallId),
+        }, sourceHash(raw.slice(0, end))));
+        return pins;
+      }
       // Lossless column encoding avoids paying repeated keys/status text for
       // every protected call. All IDs, arguments, order and uncertainty survive.
       const statuses = ['result_recorded_not_success_assertion', 'uncertain_do_not_replay'];

@@ -72,7 +72,9 @@ describe('normal Ops first six-tool batch admission', () => {
       const projected=JSON.parse(String(projection.find(m=>m.tool_call_id===receipt.tool_call_id)!.content));
       if (!projected.data?.evidenceOmitted) {
         const {policyDecision: _audit,...business}=value;
-        expect(projected).toEqual(business);
+        expect(projected.data).toEqual(business.data);
+        expect(projected.status).toEqual(business.status);
+        expect(projected.success).toBe(true);
         expect(value.policyDecision.allow).toBe(true);
       }
     }
@@ -119,4 +121,66 @@ describe('post-query-fix Ops second batch admission', () => {
     expect(sourceHash(raw)).toBe(digest);
     expect(provider.projectMessages(view)).toEqual(view);
   });
+});
+
+it('compacts and restores three completed batches through the real SDK using only a local receiver', async () => {
+  const {createServer}=await import('node:http');
+  const {autoCompact}=await import(new URL('runtime/auto-compact.js',core).href);
+  const {RecoveryPolicy}=await import(new URL('runtime/recovery-policy.js',core).href);
+  const {RapidRefill}=await import(new URL('runtime/rapid-refill.js',core).href);
+  const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
+  const {raw,spec}=setup(retained), before=JSON.stringify(raw), bodies:any[]=[];
+  const summary={goal:['inspect instance1/server3'],constraints:['read only'],done:[],pending:['narrow reads'],evidence:[],uncertain:['coverage gaps; no replay']};
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
+    const body=JSON.parse(Buffer.concat(chunks).toString());bodies.push(body);
+    res.setHeader('content-type',body.stream?'text/event-stream':'application/json');
+    const content=body.tools?.length?'offline analysis; root cause unverified':JSON.stringify(summary);
+    const response={id:'local',choices:[{index:0,message:{role:'assistant',content},delta:{content},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:10}};
+    res.end(body.stream?'data: '+JSON.stringify(response)+'\n\ndata: [DONE]\n\n':JSON.stringify(response));
+  });
+  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try {
+    const actual=new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash',baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
+    const p:any={getDefaultModel:()=>actual.getDefaultModel(),countPromptTokens:actual.countPromptTokens.bind(actual),
+      projectMessages:(m:Message[])=>investigationContextMessages(actual.projectMessages(m),'ops'),
+      chat:actual.chat.bind(actual),chatStream:actual.chatStream.bind(actual)};
+    const manager=new ContextManager(spec,p), recovery=new RecoveryPolicy(), tracker=new RapidRefill();
+    const checkpoints:any[]=[];
+    const persist=async(record:any)=>{if(record)checkpoints.push(structuredClone(record));};
+    const suffix=projectContextBlocks([runtimeBlock('runtime',currentTime(new Date('2026-10-22T01:05:34Z')))]);
+    await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
+    manager.assertFits([...manager.project(raw),...suffix]);
+    const originalBatch=raw.slice(manager.split(raw).end);
+    // Six real retained receipts per subsequent batch: 11+6+3=20 calls, the Ops ceiling.
+    for(const [batch,count] of [[2,6],[3,3]]) {
+      const copied=structuredClone(originalBatch).map((m:Message)=>{const {messageParts,...fact}=m;return {...fact,...(m.id?{id:`${m.id}_b${batch}`}:{})};});
+      const calls=copied[0].tool_calls!.slice(0,count);
+      const ids=new Map(calls.map(c=>[c.id,`${c.id}_b${batch}`]));
+      copied[0].tool_calls=calls.map(c=>({...c,id:ids.get(c.id)!}));
+      const receipts=copied.slice(1).filter(m=>ids.has(m.tool_call_id!)).map(m=>({...m,tool_call_id:ids.get(m.tool_call_id!)!}));
+      raw.push(copied[0],...receipts);
+      tracker.completeBatch();
+      await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
+      const view=[...manager.project(raw),...suffix];manager.assertFits(view);
+      console.info('Offline multi-batch admission',batch,manager.tokens(view),'/',manager.inputBudget);
+      // Durable recovery must reconstruct the identical request from full canonical facts.
+      const restored=new ContextManager(spec,p);restored.summary=structuredClone(checkpoints.at(-1));
+      expect(p.projectMessages([...restored.project(raw),...suffix])).toEqual(p.projectMessages(view));
+      for(const call of copied[0].tool_calls!) expect(p.projectMessages(view).filter((m:Message)=>m.tool_call_id===call.id)).toHaveLength(1);
+      await new ModelStep(p).request(spec,view,spec.hook,{} as any);
+      expect(raw.filter(m=>m.role==='tool')).toHaveLength(batch===2?17:20);
+    }
+    expect(JSON.stringify(raw.slice(0,retained.entries.length+retained.users.length+1))).toBe(before);
+    expect(checkpoints).toHaveLength(3);expect(bodies).toHaveLength(5);
+    expect(bodies.filter(b=>b.tools?.length)).toHaveLength(2);
+    for(const body of bodies) {
+      expect(body.max_tokens).toBe(body.tools?.length?4096:2048);
+      for(const m of body.messages.filter((m:any)=>m.role==='assistant'&&m.tool_calls)) {
+        for(const call of m.tool_calls) expect(body.messages.filter((r:any)=>r.role==='tool'&&r.tool_call_id===call.id)).toHaveLength(1);
+      }
+    }
+    const changed=structuredClone(raw);changed[1].content='changed source';
+    expect(()=>manager.project(changed)).toThrow('Summary source no longer matches history');
+  } finally {await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
 });

@@ -234,7 +234,9 @@ export interface AgentRunSpec {
   loopGuardThreshold?: number;
   workspace?: string;
   sessionKey?: string;
-  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number; recentToolBatches?: 1 | 2 };
+  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number; recentToolBatches?: 1 | 2;
+    /** Persisted canonical history owns old arguments/results; pins carry source hash and call IDs. */
+    evidenceReferences?: 'full' | 'canonical' };
   /** Caller-owned facts. Never derive authorization from model summaries. */
   contextPins?: { goal?: string; constraints?: string[]; pending?: string[]; evidence?: string[]; uncertain?: string[] };
   contextWindowTokens?: number;

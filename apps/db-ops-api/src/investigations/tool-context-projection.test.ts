@@ -34,7 +34,7 @@ assert.equal(reference.data.contextReference.sha256,responseHash(large));
 assert.equal(reference.data.contextReference.bytes,Buffer.byteLength(before));
 const reordered=Object.fromEntries(Object.entries(large).reverse());assert.equal(JSON.parse(project(reordered,'current-tool','ops')).data.contextReference.sha256,reference.data.contextReference.sha256,'MySQL JSON object key normalization must retain the same receipt reference');
 assert.equal(reference.data.evidenceOmitted,true);assert.equal(reference.data.requiresNarrowerRead,true);
-assert.match(reference.summary,/maxRows=1/);assert.equal(reference.status,'warning');
+assert.equal(reference.summary,undefined);assert.equal(reference.status,'warning');
 const small={success:true,status:'ok',data:{latest:[metric],history:[metric],freshness:metric.recorded_at,gaps:[]}};
 assert.deepEqual(JSON.parse(project(small,'small','ops')),small,'narrowed live evidence remains exact');
 const failure={success:false,status:'error',error:'DENIED'};

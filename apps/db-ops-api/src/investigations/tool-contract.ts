@@ -1,6 +1,16 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
+const opsDescriptions: Record<string, string> = {
+  get_instance_summary: 'Read scoped database metadata and health summary.',
+  get_resource_observations: 'Read latest observations with time, source, quality, dimensions and gap reasons.',
+  get_resource_relations: 'Read current resource relations.',
+  get_server_alerts: 'Read server alerts; activeOnly defaults true.',
+  get_server_metrics: 'Read latest or bounded historical server metrics with freshness and gaps.',
+  list_active_alerts: 'Read active database alerts; optional severity and since (ISO time).',
+  query_metrics: 'Read canonical/core metrics by default, with definitions, units, coverage, quality and freshness. Use discover for extensions, then explicit metric_ids; inventory for attributes. from/to are paired UTC bounds, to exclusive. Missing is unknown.',
+};
+
 /** Shared model policy belongs once in the request, not in every schema.
  * Correlated resource enums stay in each schema; execution rechecks live ACLs.
  */
@@ -11,7 +21,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted means no observation; narrow the same scoped read with maxRows=1 or limit=1. Canonical references are historical data, not success or replay permission.';
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every
@@ -47,5 +57,10 @@ export function investigationToolContract(tool: ToolSchema,
   for (const key of ['limit', 'maxRows']) if (p[key])
     p[key] = { ...p[key], type: 'integer', minimum: 1, maximum: Math.min(100, budget.maxRows) };
   parameters.required = [...required];
-  return { name: tool.name, parameters, description: tool.description };
+  if (opsDescriptions[tool.name]) {
+    // Scope/limits are now executable schema constraints plus shared policy.
+    // Legacy property prose can even contradict these constraints ("all instances").
+    for (const property of Object.values(p)) delete property.description;
+  }
+  return { name: tool.name, parameters, description: opsDescriptions[tool.name] ?? tool.description };
 }
