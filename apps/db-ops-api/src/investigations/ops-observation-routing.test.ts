@@ -285,7 +285,27 @@ it('sends actual B6 bounded handlers and discovered semantic reads through 64k S
     const zeroView = await send('query_metrics', zeroArgs, zero);
     expect(zeroView.data.metrics[0].definition).toMatchObject({ kind: 'gauge', unit: 'count' });
     expect(zeroView.data.metrics[0].series[0].buckets[0].value).toEqual({ encoding: 'uint64', value: '0' });
-    expect(wire.filter(b => b.tools?.length)).toHaveLength(18);
+    // Exact B9 six-minute receipts previously yielded ZERO visible formal
+    // buckets. Scripted local replay tests transport, never autonomous choice.
+    const b9 = JSON.parse(readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
+    const actualCalls = new Map(b9.entries.flatMap((m: any) => m.tool_calls ?? []).map((c: any) => [c.id, c]));
+    let b9Reads = 0;
+    for (const entry of b9.entries.filter((m: any) => m.role === 'tool' && m.name === 'query_metrics')) {
+      const receipt = JSON.parse(entry.content); if (!receipt.data?.metrics) continue;
+      const call: any = actualCalls.get(entry.tool_call_id), args = JSON.parse(call.function.arguments);
+      const view = await send('query_metrics', args, receipt);
+      expect(view.data.contextProjection).toBe('metric_window_v1');
+      const restored = structuredClone(view.data.metrics);
+      for (const metric of restored) for (const series of metric.series) {
+        series.buckets = series.buckets.map((b: any) => ({ ...series.bucketDefaults, ...b })); delete series.bucketDefaults;
+      }
+      expect(restored).toEqual(receipt.data.metrics);
+      expect(view.data.window).toEqual(receipt.data.window);
+      expect(restored[0].series[0].buckets.some((b: any) => b.value !== null)).toBe(true);
+      b9Reads++;
+    }
+    expect(b9Reads).toBe(4);
+    expect(wire.filter(b => b.tools?.length)).toHaveLength(22);
     for (const body of wire) expect(body.max_tokens).toBe(body.tools?.length ? 8192 : 10240);
     const prefix = raw.slice(0, history.users.length + history.entries.length + 1);
     expect(JSON.stringify(prefix)).toBe(before); expect(sourceHash(prefix)).toBe(digest);

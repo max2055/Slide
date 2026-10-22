@@ -1180,6 +1180,41 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
   });
+  it.each(['hash','message','content','sent','usage','request','source','summary','lease','fence','acl'])(
+    'length receipt refuses %s and retains unknown/no-replay protection', async fault => {
+      const executor: any = fixture({ toolCalls: false, outputLength: true, finalContent: '{"analysisVersion":1' });
+      const persist = executor.persistCheckpoint.bind(executor);
+      let changed = false;
+      executor.persistCheckpoint = async (actor: any, bound: any, payload: any, stop: any) => {
+        if (!changed && payload.phase === 'rejected_final_response') {
+          changed = true;
+          if (fault === 'hash') payload.model_response_v1.responseHash = '0'.repeat(64);
+          if (fault === 'message') payload.model_response_v1.messageId = 'model-other';
+          if (fault === 'content') payload.assistantMessage.content = 'not the original';
+          if (['sent','usage','request','source','summary'].includes(fault)) {
+            const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+            const state = run.result_json.investigationExecution;
+            if (fault === 'sent') state.provider.status = 'sent';
+            if (fault === 'usage') state.usageUnknown = true;
+            if (fault === 'request') state.requestId = randomUUID();
+            if (fault === 'source') state.provider.inputHash = 'invalid';
+            if (fault === 'summary') state.provider.purpose = 'summary';
+            await pool.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(run.result_json), binding.runId]);
+          }
+          if (fault === 'lease') await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+          if (fault === 'fence') await pool.query('UPDATE workflow_jobs SET fencing_token=fencing_token+1 WHERE id=?', [binding.jobId]);
+          if (fault === 'acl') await pool.query('DELETE FROM instance_permissions WHERE user_id=? AND instance_id=103', [owner.userId]);
+        }
+        return persist(actor, bound, payload, stop);
+      };
+      if (['lease','fence'].includes(fault)) await expect(execute(executor)).rejects.toThrow('INVESTIGATION_FENCE_LOST');
+      else await execute(executor);
+      expect(changed).toBe(true); expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+      const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+      expect(run.result_json.investigationExecution.provider).not.toBeNull();
+      expect(run.result_json.investigationExecution.lastProviderReceipt).toBeUndefined();
+      expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe(['lease','fence'].includes(fault) ? 'sent' : 'unknown');
+    });
   it('persists completed model analysis with exact execution evidence through SQL and replay', async () => {
     const executor = fixture({ analysisAnswer: true });
     const result = await execute(executor);
@@ -1869,13 +1904,14 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     },
     context: { workerId: binding.workerId, fencingToken: binding.fencingToken },
   });
-  async function child(crash?: string, allowFailure = false) {
+  async function child(crash?: string, allowFailure = false, outputLength = false) {
     const worker = fork(fileURLToPath(new URL('./execution-recovery-child.ts', import.meta.url)), [], {
       execArgv: ['--import', import.meta.resolve('tsx')],
       silent: true,
       env: {
         ...process.env,
         T04_CHILD_DATABASE: database,
+        T04_CHILD_LENGTH: outputLength ? '1' : '',
         T04_CHILD_COMMAND: JSON.stringify(childCommand()),
         ...(crash ? { T04_CHILD_CRASH: crash } : { T04_CHILD_CRASH: '' }),
       },
@@ -1911,6 +1947,30 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     );
     return result;
   }
+  it('SIGKILL after committed length acknowledgement resumes terminal and survives two complete worker restarts without sends', async () => {
+    const first = await child('length-checkpoint', false, true);
+    expect(first.signal).toBe('SIGKILL');
+    const [saved] = await rows('SELECT result_json,state FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(saved.state).toBe('running');
+    expect(saved.result_json.investigationExecution.provider).toBeNull();
+    expect(saved.result_json.investigationExecution.lastProviderReceipt.reasonCode).toBe('OUTPUT_LIMIT');
+    expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe('sent');
+    await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+    const next = await new MysqlWorkflowStore(() => pool as never).claim('length-recovery', 60, { types: ['investigation.execute'], exclude: false });
+    binding = { ...binding, workerId: 'length-recovery', fencingToken: next!.fencingToken };
+    const second = await child(undefined, false, true);
+    expect(second.messages.find((m: any) => m.terminal)).toMatchObject({ terminal: 'partial', error: { reasonCode: 'OUTPUT_LIMIT' } });
+    expect(second.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
+    const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 60 });
+    const third = await child(undefined, false, true);
+    expect(third.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
+    expect(third.messages.find((m: any) => m.terminal)?.terminal).toBe('partial');
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+  }, 30000);
   it.each(
     ['manual', 'automatic'].flatMap((lane) =>
       ['provider-before', 'provider-intent', 'provider-after'].map((point) => [lane, point]),

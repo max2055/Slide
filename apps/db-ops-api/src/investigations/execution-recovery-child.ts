@@ -36,8 +36,9 @@ const acquire = pool.getConnection.bind(pool);
   (c as any).query = async (sql: string, values?: unknown[]) => {
     const result = await query(sql, values);
     if (sql.startsWith("UPDATE agent_runs SET state = 'completed'")) mark('completion-after');
-    if (sql.startsWith('UPDATE agent_runs SET result_json =') && typeof values?.[0] === 'string') {
+    if (/^UPDATE agent_runs SET result_json\s*=/.test(sql) && typeof values?.[0] === 'string') {
       const data = JSON.parse(values[0]);
+      if (data.investigationExecution?.lastProviderReceipt?.reasonCode === 'OUTPUT_LIMIT') mark('length-checkpoint');
       if (data.completionPending === true) mark('staging-after');
       else if (data.investigationExecution?.provider?.status === 'sent') mark('provider-intent');
       else if (data.investigationExecution?.provider?.status === 'received') mark('provider-received');
@@ -82,8 +83,8 @@ const provider: LLMProvider = {
     await pause('provider-after');
     const hasTool = messages.some((m) => m.role === 'tool');
     return {
-      content: hasTool ? '已读取事实，根因待验证' : null,
-      finishReason: hasTool ? 'stop' : 'tool_calls',
+      content: hasTool ? process.env.T04_CHILD_LENGTH ? '{"analysisVersion":1' : '已读取事实，根因待验证' : null,
+      finishReason: hasTool ? process.env.T04_CHILD_LENGTH ? 'length' : 'stop' : 'tool_calls',
       toolCalls: hasTool
         ? []
         : [{ id: 'crash-summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } }],
