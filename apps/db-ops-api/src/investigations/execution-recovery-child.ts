@@ -14,6 +14,9 @@ const pool = mysql.createPool({
   timezone: 'Z',
   connectionLimit: 12,
 });
+// Match the parent fixture's UTC lease timestamps on servers whose default
+// session timezone is local. Otherwise fencing fails before the crash point.
+pool.on('connection', connection => connection.query("SET time_zone='+00:00'"));
 const command = JSON.parse(process.env.T04_CHILD_COMMAND!);
 const mode = process.env.T04_CHILD_CRASH;
 const pause = async (point: string) => {
