@@ -1981,6 +1981,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(saved.result_json.investigationExecution.provider).toBeNull();
     expect(saved.result_json.investigationExecution.lastProviderReceipt.reasonCode).toBe('OUTPUT_LIMIT');
     expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe('sent');
+    await retainLengthEvidence('length-checkpoint-before-restart', { first });
     await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
     const next = await new MysqlWorkflowStore(() => pool as never).claim('length-recovery', 60, { types: ['investigation.execute'], exclude: false });
     binding = { ...binding, workerId: 'length-recovery', fencingToken: next!.fencingToken };
