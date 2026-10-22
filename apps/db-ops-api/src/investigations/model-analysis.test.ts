@@ -27,3 +27,18 @@ describe('strict final output contract and original B8 rejection', () => {
     expect(validate({ ...answer, recommendations: [{ action: 'request', priority: 'medium', arbitrary: true }] })).toBe(false);
   });
 });
+
+it('bounds the advertised final analysis so the 8192 shared reasoning/output budget is not a 128k JSON target', () => {
+  const validate = new Ajv2020({ strict: false }).compile(JSON.parse(MODEL_ANALYSIS_POLICY.split('analysis): ')[1]));
+  const answer = { analysisVersion: 1, summary: '部分证据已读取，不能确认根因。',
+    claims: [{ statement: '当前依据仅支持单点观察。', supportingToolCallIds: ['a'], contradictingToolCallIds: [] }],
+    hypotheses: [], unresolvedQuestions: ['缺少可信重置来源。'], recommendations: [{ action: '核对只读生命周期来源。', priority: 'medium' }] };
+  expect(validate(answer)).toBe(true);
+  expect(modelAnalysis(JSON.stringify(answer), [{ id: 'evidence-a', metadata_json: { source: 'tool:a' } }])).not.toBeNull();
+  expect(validate({ ...answer, claims: Array.from({ length: 5 }, () => answer.claims[0]) })).toBe(false);
+  expect(validate({ ...answer, summary: '中'.repeat(401) })).toBe(false);
+  expect(validate({ ...answer, unresolvedQuestions: Array(5).fill('未知') })).toBe(false);
+  // The publication parser remains backward compatible; this is a Provider
+  // planning bound, not deletion of existing valid evidence or historical text.
+  expect(modelAnalysis(JSON.stringify({ ...answer, summary: '中'.repeat(401) }), [{ id: 'e', metadata_json: { source: 'tool:a' } }])).not.toBeNull();
+});

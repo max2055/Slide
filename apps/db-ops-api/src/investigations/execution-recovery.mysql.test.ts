@@ -221,6 +221,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       overToolBudget?: boolean;
       analysisAnswer?: boolean;
       finalContent?: string;
+      outputLength?: boolean;
     } = {},
   ) {
     providerCalls = 0;
@@ -244,7 +245,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
             hypotheses: [{ statement: '采集缺口需要进一步验证。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
             unresolvedQuestions: ['核对缺失来源。'], recommendations: [{ action: '补齐只读采集证据。', priority: 'medium' }],
           }) : '事实不足，根因待验证'),
-          finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
+          finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : options.outputLength ? 'length' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
               ? [...(options.overToolBudget ? Array.from({ length: 20 }, (_, i) => ({ id: `excess-${i}`, name: 'get_instance_summary', arguments: { instance_id: 101 } })) : []), { id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
@@ -1154,6 +1155,30 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(saved.investigationExecution.provider).toBeNull();
     await execute(executor);
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  it('settles a metered length terminal through core checkpoint, durable result and a fresh executor without replay', async () => {
+    const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
+    const original = b9.finalResponse.content;
+    expect(() => JSON.parse(original)).toThrow();
+    const executor = fixture({ toolCalls: false, outputLength: true, finalContent: original });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(result.error).toMatchObject({ reasonCode: 'OUTPUT_LIMIT' });
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    const [saved] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(saved.result_json.investigationExecution.provider).toBeNull();
+    expect(saved.result_json.investigationExecution.lastProviderReceipt).toMatchObject({
+      status: 'rejected', reasonCode: 'OUTPUT_LIMIT', response: { content: original, finishReason: 'length' },
+    });
+    const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
+    const restarted = fixture(); // fresh executor, dependencies and provider; SQL/checkpoint survives
+    await execute(restarted);
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
   });
   it('persists completed model analysis with exact execution evidence through SQL and replay', async () => {
     const executor = fixture({ analysisAnswer: true });
