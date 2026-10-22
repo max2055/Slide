@@ -189,7 +189,7 @@ it('compacts and restores three completed batches through the real SDK using onl
   } finally {await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
 });
 
-async function sdkReadableMetrics(states:string[], taskWindow?:number){
+async function sdkReadableMetrics(states:string[], taskWindow?:number, taskOutput=4096){
   const {createServer}=await import('node:http');
   const {autoCompact}=await import(new URL('runtime/auto-compact.js',core).href);
   const {RecoveryPolicy}=await import(new URL('runtime/recovery-policy.js',core).href);
@@ -202,7 +202,7 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number){
     // qualification includes the complete current production output policy.
     raw[0].content += MODEL_ANALYSIS_POLICY;
     const {resolveInvestigationRuntime}=await import('./runtime-configuration.js');
-    Object.assign(spec,resolveInvestigationRuntime({model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'offline-capability'}, {contextWindowTokens:taskWindow,maxTokens:4096}));
+    Object.assign(spec,resolveInvestigationRuntime({model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'offline-capability'}, {contextWindowTokens:taskWindow,maxTokens:taskOutput}));
   }
   const original=JSON.stringify(raw);
   const summary={goal:['read observations'],constraints:['read only'],done:[],pending:['check source quality'],evidence:[],uncertain:['unknown is not healthy; never replay']};
@@ -276,6 +276,9 @@ it('preserves the rapid-refill stop for repeated narrow-read compactions instead
 });
 it('sends six consecutive readable observations with the production planning predicate in the verified task window',async()=>{
   await sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],32768);
+});
+it('qualifies the larger task allocation after a real truncated-summary receipt',async()=>{
+  await sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],65536,8192);
 });
 it('refuses the current full analysis prompt at 16k instead of bypassing protected context admission',async()=>{
   await expect(sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],16000))

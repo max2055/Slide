@@ -16,6 +16,7 @@ import { AnomalyGuard } from "./anomaly-guard.js";
 import { CompletionSupervisor } from "./supervisor.js";
 import { RecoveryPolicy, RuntimeError, runtimeError, cancellationError, backoff } from './recovery-policy.js';
 import { OutputContinuation } from './output-continuation.js';
+import { ToolRegistry } from '../tool-registry.js';
 // Process-local key never enters a checkpoint. After restart establish a fresh
 // comparison baseline without crediting the first unverifiable result as progress.
 const progressKey = randomBytes(32);
@@ -144,6 +145,9 @@ export class TurnLoop {
         stopForBudget(new RuntimeError('NO_PROGRESS', 'No material progress within the progress budget')); break;
       }
       state = transition(state, "model_running");
+      const remainingToolCalls = spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxToolCalls - recovery.state.toolCalls - (recovery.state.delegated?.toolCalls ?? 0)) : undefined;
+      const remainingProviderAttempts = spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxProviderAttempts - recovery.state.providerAttempts - (recovery.state.delegated?.providerAttempts ?? 0)) : undefined;
+      const answerOnly = remainingToolCalls === 0;
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
       try {
@@ -155,6 +159,7 @@ export class TurnLoop {
         // and dispatch. It must not enter durable facts or summary source hashes.
         const requestSuffix = [...continuation.project([]), ...projectContextBlocks([
           runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
+          ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${remainingToolCalls}; remainingProviderAttempts=${remainingProviderAttempts}. ${answerOnly ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; finish before the budget is exhausted.'}`)] : []),
         ])];
         messagesForModel = manager.project(state.messages);
         if (forceCompact || manager.shouldCompact(state.messages, requestSuffix)) {
@@ -217,6 +222,9 @@ export class TurnLoop {
           }
         }
       }
+      // With no tool allowance left, offer an answer request. Original request,
+      // usage and tool guards remain; a provider that still emits tools is refused.
+      if (answerOnly) requestSpec = { ...requestSpec, tools: new ToolRegistry() };
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;

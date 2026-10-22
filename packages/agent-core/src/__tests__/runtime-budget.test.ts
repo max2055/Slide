@@ -51,6 +51,19 @@ it('does not execute any part of a batch exceeding tool allowance', async () => 
   const result = await new AgentRunner(provider(async () => ({ ...call(), toolCalls: [...call(1).toolCalls, ...call(2).toolCalls] }))).run(config);
   expect(result.resolution?.reasonCode).toBe('MAX_TOOL_CALLS'); expect(execute).not.toHaveBeenCalled();
 });
+it('offers an answer-only request after the last allowed tool and keeps the exact remaining budget visible', async () => {
+  const config = spec(); config.budgetLimits!.maxToolCalls = 1;
+  const requests: any[] = [];
+  const result = await new AgentRunner(provider(async (messages, tools) => {
+    requests.push({ messages, tools });
+    return requests.length === 1 ? call() : ok;
+  })).run(config);
+  expect(result.stopReason).toBe('completed');
+  expect(requests[0].tools).toHaveLength(1);
+  expect(requests[1].tools).toEqual([]);
+  expect(requests[1].messages.some((m: any) => m.source === 'runtime' && String(m.content).includes('remainingToolCalls=0'))).toBe(true);
+  expect(result.runtimeState?.toolCalls).toBe(1);
+});
 it('preserves unknown reservations across restart and fails closed before dispatch', async () => {
   const chat = vi.fn(async () => ({ ...call(), usage: {} }));
   const first = await new AgentRunner(provider(chat)).run(spec({ maxIterations: 2 }));
