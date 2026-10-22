@@ -126,3 +126,14 @@ it('keeps unknown final-answer usage reserved and cannot send again after restar
   expect(chat).toHaveBeenCalledTimes(1);
   expect(second.runtimeState).toMatchObject({ providerAttempts: 8, unknownRequests: 1, reservedTokens: 15000 });
 });
+
+it('preserves the last attempt for a complete admissible answer before optional watermark compaction', async () => {
+  const f = fixture(7, true), summaries = vi.fn(async () => reply(JSON.stringify(summary)));
+  f.provider.chatStream = summaries;
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(summaries).not.toHaveBeenCalled();
+  expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toEqual([]);
+  expect(f.requests[0].messages.some(m => String(m.content).includes('historical record'))).toBe(true);
+  expect(result.runtimeState?.providerAttempts).toBe(8);
+});
