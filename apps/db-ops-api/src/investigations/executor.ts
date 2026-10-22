@@ -1,4 +1,4 @@
-import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
+import {acknowledgeSummary, summaryRejection, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import { metricDiscoveryPage } from '../metrics/consumers/discovery.js';
 import type { Pool } from 'mysql2/promise';
@@ -262,6 +262,70 @@ interface ExecutionState {
   runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeContext;
   terminal?: InvestigationStop;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
+}
+/** Derived view of durable current-request receipts, never of a model summary.
+ * Raw message IDs need not exist in the in-memory Runtime; do not manufacture
+ * them or rewrite legacy provenance. Caller refreshes state under live ACL/fence.
+ */
+export function investigationExecutionEvidence(source: readonly Message[], state: ExecutionState,
+  binding: Pick<InvestigationExecutionBinding, 'runId' | 'requestId' | 'jobId' | 'fencingToken'>, historyLength = 0, summary?: { sourceHash: string; summary: unknown }) {
+  const view: NonNullable<import('@slide/agent-core').AgentRunSpec['contextEvidence']> = () => ({ runId: binding.runId,
+    requestId: binding.requestId, receipts: [], omitted: [] });
+  const result = view(source);
+  if (state?.schemaVersion !== 1 || state.requestId !== binding.requestId || state.jobId !== binding.jobId
+    || state.fencingToken !== binding.fencingToken) return result;
+  if (summary) {
+    const receipt = state.lastSummaryReceipt as any;
+    const sourceHash = createHash('sha256').update(JSON.stringify(source.map(({ messageParts: _parts, ...fact }) => fact))).digest('hex');
+    if (state.usageUnknown || receipt?.status !== 'accepted' || receipt.purpose !== 'summary'
+      || receipt.sourceHash !== sourceHash || summary.sourceHash !== sourceHash || !receipt.response
+      || receipt.responseHash !== canonicalReceiptHash(receipt.response) || summaryRejection(receipt.response)
+      || canonicalReceiptHash(summary.summary) !== canonicalReceiptHash(JSON.parse(receipt.response.content))) return result;
+  }
+  for (let i = 0; i < source.length; i++) {
+    const assistant = source[i];
+    if (assistant.role !== 'assistant' || assistant.source && assistant.source !== 'fact'
+      || assistant.runId && assistant.runId !== binding.runId
+      || i < historyLength && assistant.runId !== binding.runId) continue;
+    const returned = new Map<string, Message>();
+    for (let j = i + 1; source[j]?.role === 'tool'; j++) {
+      const tool = source[j];
+      if (tool.tool_call_id) returned.set(tool.tool_call_id, tool);
+    }
+    for (const call of assistant.tool_calls ?? []) {
+      const durable = state.tools[call.id], tool = returned.get(call.id);
+      if (!durable || durable.status !== 'returned' || durable.name !== call.function.name || !tool
+        || tool.source && tool.source !== 'fact' || tool.runId && tool.runId !== binding.runId
+        || tool.name && tool.name !== durable.name || typeof tool.content !== 'string') continue;
+      try {
+        const args = JSON.parse(call.function.arguments), raw = JSON.parse(tool.content);
+        if (hash(args) !== durable.inputHash || canonicalReceiptHash(raw) !== canonicalReceiptHash(durable.result)) continue;
+        let content = investigationToolContextResult(raw, call.id, 'ops', durable.name, args);
+        if (typeof content === 'string') {
+          const projected = JSON.parse(content);
+          if (projected.data?.contextProjection === 'metric_window_v1') {
+            for (const metric of projected.data.metrics) for (const series of metric.series) {
+              for (const key of Object.keys(series.buckets[0])) if (!['value','window','observed_at'].includes(key)
+                && series.buckets.every((b: any) => Object.hasOwn(b, key) && canonicalReceiptHash(b[key]) === canonicalReceiptHash(series.buckets[0][key]))) {
+                series.bucketDefaults[key] = series.buckets[0][key];
+                series.buckets = series.buckets.map((b: any) => Object.fromEntries(Object.entries(b).filter(([k]) => k !== key)));
+              }
+              const columns = [...new Set<string>(series.buckets.flatMap((b: object) => Object.keys(b)))];
+              // Missing keys remain distinct from null via an explicit mask.
+              series.bucketColumns = columns;
+              series.buckets = series.buckets.map((b: Record<string, unknown>) => [columns.map(k => Object.hasOwn(b, k)), columns.map(k => b[k] ?? null)]);
+            }
+            projected.data.contextProjection = 'metric_window_receipt_v1';
+            content = JSON.stringify(projected);
+          }
+        }
+        const receipt = { toolCallId: call.id, receiptHash: canonicalReceiptHash(raw), content: typeof content === 'string' ? content : JSON.stringify(raw) };
+        // Admission belongs to the complete final request, not a byte cap.
+        result.receipts.push(receipt);
+      } catch { /* Malformed/unknown sources cannot become current evidence. */ }
+    }
+  }
+  return result;
 }
 const usageOf = (response: LLMResponse): BudgetUsage | null => {
   try {
@@ -999,6 +1063,8 @@ export class InvestigationExecutor {
         contextPolicy: {summaryMaxTokens: runtimeContext.summaryMaxTokens,
           ...(profile.id === 'system' ? {watermark: 1, target: 0.5}
             : profile.id === 'ops' ? {recentToolBatches: 1 as const, evidenceReferences: 'canonical' as const} : {})},
+        ...(profile.id === 'ops' ? { contextEvidence: (source: readonly Message[], summary) => investigationExecutionEvidence(source, state, binding,
+          initialMessages.length, summary) } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {

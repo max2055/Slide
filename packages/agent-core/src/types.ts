@@ -210,6 +210,13 @@ export interface AgentRunSpec {
   onToolEvent?: (event: import("./tool-stream.js").ToolLifecycleEvent) => Promise<void> | void;
   streamingLimits?: import('./runtime/streaming-coordinator.js').StreamingLimits;
   runtimeRunId?: string;
+  /** Trusted caller resolves raw atomic pairs against durable receipts for
+   * this request. Model summaries and tool-supplied provenance never grant it. */
+  contextEvidence?: (source: readonly Message[], summary?: import('./runtime/auto-compact.js').SummaryRecord) => {
+    runId: string; requestId: string;
+    receipts: Array<{ toolCallId: string; receiptHash: string; content: string }>;
+    omitted: string[];
+  };
   onRuntimeEvent?: (event: import("./runtime/events.js").RuntimeEvent) => void | Promise<void>;
   budgetLimits?: import("./runtime/contracts.js").RuntimeBudgetLimits;
   runTimeoutMs?: number;

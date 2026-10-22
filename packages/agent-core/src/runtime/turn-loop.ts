@@ -169,7 +169,7 @@ export class TurnLoop {
             ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
           ])];
         };
-        messagesForModel = manager.project(state.messages);
+        messagesForModel = manager.project(state.messages, [], manager.inputBudget, false);
         if (forceCompact || manager.shouldCompact(state.messages, requestSuffix())) {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
@@ -179,11 +179,19 @@ export class TurnLoop {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact, requestSuffix);
             state.usage = { ...recovery.state.usage };
-            messagesForModel = manager.project(state.messages);
+            messagesForModel = manager.project(state.messages, [], manager.inputBudget, false);
           }
         }
         forceCompact = false;
-        messagesForModel = [...messagesForModel, ...requestSuffix()];
+        const suffix = requestSuffix();
+        const baseTokens = manager.tokens([...manager.project(state.messages, suffix, manager.inputBudget, 'references'), ...suffix]);
+        const left = remainingBudget().tokens;
+        // Budget includes settled/delegated/unknown usage. Preserve the existing
+        // reduced-output path for indispensable context; optional receipts never
+        // spend the output allowance or force another summary.
+        const projectionLimit = Math.min(manager.inputBudget, left === undefined ? manager.inputBudget
+          : Math.max(baseTokens, left - manager.contextConfig.maxTokens));
+        messagesForModel = [...manager.project(state.messages, suffix, projectionLimit), ...suffix];
         manager.assertFits(messagesForModel);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');

@@ -4,6 +4,11 @@ import { BoundedWorkflowRuntime } from '../../apps/db-ops-api/src/workflows/boun
 import { MysqlWorkflowStore, type ClaimedJob, type JobExecutionContext } from '../../apps/db-ops-api/src/workflows/worker-runtime.js';
 import type { Pool } from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 
+const expectCollectionKeys = (keys: string[], job: ClaimedJob) => {
+  const resource = job.payload.resource as { type: string; id: number };
+  assert.deepEqual(keys, [`collection:${resource.type}:${resource.id}`, `read:${resource.type}:${resource.id}`]);
+};
+
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const deadlineWait = async (condition: () => boolean, ms = 2000) => {
   const end = Date.now() + ms;
@@ -14,7 +19,7 @@ const deadlineWait = async (condition: () => boolean, ms = 2000) => {
 /** Real queue/fencing/resource snapshots; handlers perform no external I/O. */
 export async function qualifyBoundedQueue(pool: Pool) {
   const store = new MysqlWorkflowStore(() => pool as any);
-  const runtime = (concurrency = 3, lease = 30) => new BoundedWorkflowRuntime(store, randomUUID(), concurrency, j => store.resourcesFor(j), lease);
+  const runtime = (concurrency = 3, lease = 30) => new BoundedWorkflowRuntime(store, randomUUID(), concurrency, (j, context) => store.resourcesFor(j, context), lease);
   const [alertRow] = await pool.execute<any>("INSERT INTO alerts (instance_id, alert_type, level, title, message) VALUES (NULL, 'performance', 'warning', 'queue fixture', 'fake handler')");
   const alertId = Number(alertRow.insertId);
   // No external instance connections. This source is only consumed by a fake handler.
@@ -34,6 +39,13 @@ export async function qualifyBoundedQueue(pool: Pool) {
     } else payload = { resource: { type: 'instance', id: resource }, revision: 1 };
     if (type === 'report.occurrence') assert.deepEqual(await store.resourcesFor({ id, type, payload, attempts: 1, maxAttempts: 5, fencingToken: 1 }), [`instance:${resource}`]);
     await store.enqueue({ id, type, schemaVersion: 1, payload, idempotencyKey: id, availableAt: new Date(Date.now() - 1000) });
+    if (type === 'metrics.collect') {
+      // Handlers are fixtures; identity and lock resolution use the production
+      // persisted schedule/job contract, including revision and live owner.
+      await pool.execute(`INSERT INTO metric_schedule (resource_key,revision,next_due_ms,states,job_id)
+        VALUES (?,1,?, '{}',?) ON DUPLICATE KEY UPDATE revision=1,job_id=VALUES(job_id)`,
+        [`instance:${resource}`, Date.now(), id]);
+    }
     return id;
   };
 
@@ -43,7 +55,9 @@ export async function qualifyBoundedQueue(pool: Pool) {
     const completed: string[] = []; let active = 0; let peak = 0;
     const activeResources = new Set<number>(); let overlaps = 0;
     const cpu = process.cpuUsage(); const memory = process.memoryUsage(); const start = performance.now();
-    const handler = async (j: ClaimedJob) => {
+    const handler = async (j: ClaimedJob, context: JobExecutionContext) => {
+      if (j.type === 'metrics.collect') expectCollectionKeys(await store.resourcesFor(j, context), j);
+
       starts[j.type] = Date.now();
       const resource = j.type === 'report.occurrence' ? 1 : sameResource ? 1 : j.type === 'notification.deliver' ? 2 : 3;
       if (activeResources.has(resource)) overlaps++;
@@ -90,7 +104,7 @@ export async function qualifyBoundedQueue(pool: Pool) {
   let active = 0; let peak = 0;
   try {
     for (let i = 0; i < 12; i++) {
-      for (const type of ['report.occurrence', 'notification.deliver', 'metrics.collect']) ids.push(await enqueue(type, type === 'report.occurrence' ? 1 : type === 'notification.deliver' ? 2 : 3));
+      for (const type of ['report.occurrence', 'notification.deliver', 'metrics.collect']) ids.push(await enqueue(type, type === 'report.occurrence' ? 1 : type === 'notification.deliver' ? 2 : 3000 + i));
       runs.push(worker.runOnce(async j => { peak = Math.max(peak, ++active); try { await sleep(60); completed.add(j.id); } finally { active--; } }));
       await sleep(100);
     }

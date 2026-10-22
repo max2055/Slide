@@ -327,6 +327,11 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
 
+  it('qualifies the real bounded queue fixture with durable collection schedules and execution context', async () => {
+    const { qualifyBoundedQueue } = await import(new URL('../../../../tests/qualification/assert-bounded-queue.js', import.meta.url).href);
+    await qualifyBoundedQueue(pool);
+  }, 90000);
+
   it('B11 durable read scope lets formal collection commit while the real HTTP SDK is awaiting its response', async () => {
     const { platformLogs } = await import('../platform/structured-log-evidence-adapter.js');
     const log = vi.spyOn(platformLogs, 'record');

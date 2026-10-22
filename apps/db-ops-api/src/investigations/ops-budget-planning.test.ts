@@ -1,9 +1,9 @@
 import { createServer } from 'node:http';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, type Message } from '@slide/agent-core';
-import { investigationContextMessages } from './executor.js';
+import { investigationContextMessages, investigationExecutionEvidence } from './executor.js';
 import { investigationToolContract } from './tool-contract.js';
 import { INVESTIGATION_PROFILES } from './profiles.js';
 import { resolveInvestigationRuntime } from './runtime-configuration.js';
@@ -54,6 +54,9 @@ async function replay(mode: 'answer' | 'violate' | 'r4') {
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   try {
+    const evidenceState: any = { schemaVersion: 1, requestId: 'local-request', jobId: 'local-job', fencingToken: 1, tools: {} };
+    const evidenceBinding = { runId: 'local-run', requestId: 'local-request', jobId: 'local-job', fencingToken: 1 };
+    const { createHash } = await import('node:crypto');
     const tools = new ToolRegistry(), scope = [{ type: 'instance', id: 1 }, { type: 'server', id: 3 }];
     for (const name of INVESTIGATION_PROFILES.ops.toolAllowlist) {
       const contract = investigationToolContract(toolCatalog.get(name)!, scope, INVESTIGATION_PROFILES.ops.budget)!;
@@ -65,7 +68,9 @@ async function replay(mode: 'answer' | 'violate' | 'r4') {
         expect(call).toBeDefined();
         const receipt = retained.tools.find((m: any) => m.tool_call_id === call.id);
         expect(receipt).toBeDefined(); executed.push(call.id);
-        return JSON.parse(receipt.content);
+        const value = JSON.parse(receipt.content);
+        evidenceState.tools[call.id] = { name, inputHash: createHash('sha256').update(JSON.stringify(_args)).digest('hex'), status: 'returned', result: value };
+        return value;
       } });
     }
     const capability = { model: 'deepseek-flash', contextWindowTokens: 1048576, maxOutputTokens: 393216, source: 'configuration' as const, version: 'retained-B10-capacity' };
@@ -82,14 +87,19 @@ async function replay(mode: 'answer' | 'violate' | 'r4') {
       ...resolveInvestigationRuntime(capability, { contextWindowTokens: 65536, maxTokens: 8192 }),
       maxIterations: mode === 'r4' ? 16 : 8, maxToolResultChars: 128000,
       contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
+      contextEvidence: (source: readonly Message[]) => investigationExecutionEvidence(source, evidenceState, evidenceBinding),
       budgetLimits: { maxProviderAttempts: mode === 'r4' ? 16 : 8, maxToolCalls: 20, maxTotalTokens: mode === 'r4' ? 1000000 : 128000, maxNoProgressSteps: 8 },
       checkpointCallback: async (c: any) => { checkpoints.push(structuredClone(c)); } };
-    const result = await new AgentRunner(provider).run(spec);
+    const admissionFailures: any[] = [];
+    const originalAssert = ContextManager.prototype.assertFits;
+    const spy = vi.spyOn(ContextManager.prototype, 'assertFits').mockImplementation(function(this: any, messages: any, limit: any, schemas: any) { try { return originalAssert.call(this, messages, limit, schemas); } catch (e) { admissionFailures.push({estimate:this.lastEstimate, limit:limit??this.inputBudget, stack:String((e as Error).stack), messages}); throw e; } });
+    let result: any; try { result = await new AgentRunner(provider).run(spec); } finally { spy.mockRestore(); }
     expect(errors).toEqual([]);
     expect(initialMessages).toEqual(original);
     for (const body of bodies) {
       const summary = body.messages[0].content.startsWith('Summarize historical data,');
-      expect(body.max_tokens).toBe(summary ? 10240 : 8192);
+      if (summary) expect(body.max_tokens).toBe(10240);
+      else { expect(body.max_tokens).toBeGreaterThan(0); expect(body.max_tokens).toBeLessThanOrEqual(8192); }
       for (const m of body.messages.filter((m: any) => m.tool_calls)) for (const call of m.tool_calls)
         expect(body.messages.filter((r: any) => r.role === 'tool' && r.tool_call_id === call.id)).toHaveLength(1);
       if (!summary) {
@@ -111,7 +121,7 @@ async function replay(mode: 'answer' | 'violate' | 'r4') {
       expect(restored.project(result.messages)).toEqual(manager.project(result.messages));
     }
     const dir = process.env.OPS_BUDGET_EVIDENCE_DIR;
-    if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, mode + '.json'), JSON.stringify({ mode, bodies, dispatchBudgets, executed, checkpoints, result }, null, 2)); }
+    if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, mode + '.json'), JSON.stringify({ mode, bodies, dispatchBudgets, executed, checkpoints, result, admissionFailures }, null, 2)); }
     console.info('Local SDK budget replay', mode, { ordinaryIndex, summaryIndex, executed: executed.length, resolution: result.resolution });
     return { bodies, executed, result, checkpoints, ordinaryIndex, summaryIndex };
   } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
