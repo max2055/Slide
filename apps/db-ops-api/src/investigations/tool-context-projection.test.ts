@@ -2,6 +2,22 @@ import {it} from 'vitest';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
+it('omits oversized top-level rows while retaining warnings and canonical receipt identity',async()=>{
+ const {investigationToolContextResult:project}=await import('./executor.js');
+ const {responseHash}=await import('@slide/agent-core');
+ const value={success:true,status:'warning',rows:Array(200).fill('bounded-row'),observedAt:'2026-10-22T03:00:00Z',
+  summary:'Source incomplete; unknown is not healthy',next_actions:['inspect source'],artifacts:{reference:'evidence:1'}};
+ const before=JSON.stringify(value),view=JSON.parse(String(project(value,'row-call','ops')));
+ assert.equal(view.rows,undefined);
+ assert.equal(view.summary,value.summary);assert.deepEqual(view.next_actions,value.next_actions);
+ assert.deepEqual(view.artifacts,value.artifacts);assert.equal(view.observedAt,value.observedAt);
+ assert.deepEqual(view.data,{contextReference:{toolCallId:'row-call',sha256:responseHash(value),bytes:Buffer.byteLength(before)},evidenceOmitted:true,requiresNarrowerRead:true});
+ assert.equal(JSON.stringify(value),before);
+ assert.deepEqual(JSON.parse(String(project({success:true,rows:['one']},'small','ops'))),{success:true,rows:['one']});
+ const failure={...value,success:false,status:'error'};assert.equal(project(failure,'failed','ops'),failure);
+ const denied={...value,policyDecision:{allow:false,reasonCode:'DENIED'}};assert.equal(project(denied,'denied','ops'),denied);
+ assert.deepEqual(JSON.parse(String(project(value,'system','system'))),value);
+});
 it('bounded tool context preserves durable evidence and full batches',async()=>{
 
 const mod=await import(new URL('./executor.js',import.meta.url).href);
