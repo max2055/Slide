@@ -1,6 +1,7 @@
 import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool } from 'mysql2/promise';
+import { MODEL_ANALYSIS_POLICY } from './model-analysis.js';
 import {
   AgentRunner,
   NoopHook,
@@ -670,7 +671,7 @@ export class InvestigationExecutor {
       const runtimeContext = resolveInvestigationRuntime(modelCapabilities, this.options.runtimeContext,
         state.runtimeContext ?? legacyContext);
       const modelPrompt = investigationPrompt(profile) + (profile.id === 'ops'
-        ? investigationToolPolicy(snapshot.resources, profile.budget) : '');
+        ? investigationToolPolicy(snapshot.resources, profile.budget) + MODEL_ANALYSIS_POLICY : '');
       await update(s => {
         s.runtimeContext = runtimeContext;
         const identity = analysisProviderIdentity(actual);

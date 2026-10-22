@@ -6,6 +6,7 @@ import { NoopHook } from '@slide/agent-core';
 import { investigationContextMessages } from './executor.js';
 import { investigationPrompt, INVESTIGATION_PROFILES } from './profiles.js';
 import { investigationToolContract, investigationToolPolicy } from './tool-contract.js';
+import { MODEL_ANALYSIS_POLICY } from './model-analysis.js';
 import { toolCatalog } from '../tools/catalog.js';
 import '../tools/ops/index.js';
 import '../tools/generated/slide-self-mgmt/resource_tools.js';
@@ -195,11 +196,15 @@ async function sdkReadableMetrics(states:string[], taskWindow?:number){
   const {RapidRefill}=await import(new URL('runtime/rapid-refill.js',core).href);
   const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
   const metricData=JSON.parse(retained.entries.find((m:any)=>m.name==='query_metrics'&&m.role==='tool').content).data;
-  const {raw,spec}=setup(retained), original=JSON.stringify(raw),bodies:any[]=[];
+  const {raw,spec}=setup(retained),bodies:any[]=[];
   if(taskWindow) {
+    // Historic 16k fixture checks above retain their original prompt. Task
+    // qualification includes the complete current production output policy.
+    raw[0].content += MODEL_ANALYSIS_POLICY;
     const {resolveInvestigationRuntime}=await import('./runtime-configuration.js');
     Object.assign(spec,resolveInvestigationRuntime({model:spec.model,contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'offline-capability'}, {contextWindowTokens:taskWindow,maxTokens:4096}));
   }
+  const original=JSON.stringify(raw);
   const summary={goal:['read observations'],constraints:['read only'],done:[],pending:['check source quality'],evidence:[],uncertain:['unknown is not healthy; never replay']};
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
@@ -272,7 +277,7 @@ it('preserves the rapid-refill stop for repeated narrow-read compactions instead
 it('sends six consecutive readable observations with the production planning predicate in the verified task window',async()=>{
   await sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],32768);
 });
-it('retains the 16k production-predicate failure rather than treating the configured window as a guard bypass',async()=>{
+it('refuses the current full analysis prompt at 16k instead of bypassing protected context admission',async()=>{
   await expect(sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],16000))
-    .rejects.toMatchObject({code:'CONTEXT_RAPID_REFILL'});
+    .rejects.toMatchObject({code:'CONTEXT_UNRECOVERABLE'});
 });

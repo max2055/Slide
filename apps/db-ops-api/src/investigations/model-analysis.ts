@@ -11,9 +11,9 @@ const schema = z.strictObject({ analysisVersion: z.literal(1), summary: text,
 });
 
 export const MODEL_ANALYSIS_POLICY = `
-先批量读取每个资源的默认观测，不要猜测或逐一枚举指标名。query_metrics 的 realtime 默认返回标准核心指标；discover 仅发现扩展，inventory 仅返回属性。已有缺口是证据，不反复查询同一缺口。完成必要检查后及时输出分析，保留预算用于最终回答。
-最终回答只输出 JSON（不要代码围栏）：{"analysisVersion":1,"summary":"含时间、数值、单位、质量与缺口的中文摘要","claims":[{"statement":"有依据的判断，明确适用范围","supportingToolCallIds":["实际已返回的工具调用ID"],"contradictingToolCallIds":[]}],"hypotheses":[{"statement":"尚待验证的假设及验证条件","supportingToolCallIds":[],"contradictingToolCallIds":[]}],"unresolvedQuestions":["未解决问题"],"recommendations":[{"action":"具体建议","priority":"medium"}]}。
-只引用当前执行实际已返回的工具调用 ID，不得编造 UUID、事实或验证状态。判断均作为推断、假设均为待验证保存；不得宣称已验证根因或业务恢复。没有证据的判断省略；unknown/临时失败/过期/真实零值分别解释。`;
+Batch default observations; query_metrics realtime defaults core, discover=extensions, inventory=attributes. Use returned metric IDs; do not repeat gaps. Finish within budget.
+Final JSON only: {"analysisVersion":1,"summary":"中文，含时间/数值/单位/质量/缺口","claims":[],"hypotheses":[],"unresolvedQuestions":[],"recommendations":[{"action":"具体建议","priority":"medium"}]}.
+claims/hypotheses items: {"statement":"中文判断/待验证假设","supportingToolCallIds":[],"contradictingToolCallIds":[]}. Cite returned call IDs only. Claims are inferences; hypotheses remain unverified. Never infer health from unknown.`;
 
 /** The model supplies text, never authority or database identities. References
  * resolve exclusively through available evidence from the terminal execution. */

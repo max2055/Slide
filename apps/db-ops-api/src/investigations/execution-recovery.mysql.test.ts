@@ -219,6 +219,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       toolError?: boolean;
       zeroSend?: boolean;
       overToolBudget?: boolean;
+      analysisAnswer?: boolean;
     } = {},
   ) {
     providerCalls = 0;
@@ -236,7 +237,12 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         providerCalls++;
         await options.beforeProvider?.();
         return {
-          content: providerCalls === 1 && options.toolCalls !== false ? null : '事实不足，根因待验证',
+          content: providerCalls === 1 && options.toolCalls !== false ? null : options.analysisAnswer ? JSON.stringify({
+            analysisVersion: 1, summary: '只读检查完成，根因未验证。',
+            claims: [{ statement: '现有观测不足以确认根因。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+            hypotheses: [{ statement: '采集缺口需要进一步验证。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+            unresolvedQuestions: ['核对缺失来源。'], recommendations: [{ action: '补齐只读采集证据。', priority: 'medium' }],
+          }) : '事实不足，根因待验证',
           finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
@@ -1147,6 +1153,19 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(saved.investigationExecution.provider).toBeNull();
     await execute(executor);
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  it('persists completed model analysis with exact execution evidence through SQL and replay', async () => {
+    const executor = fixture({ analysisAnswer: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('completed');
+    const saved = (await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0].result_json;
+    const evidence = await rows('SELECT id FROM investigation_evidence WHERE run_id=?', [binding.runId]);
+    expect(saved.claims[0]).toMatchObject({ kind: 'inference', supportingEvidenceIds: [evidence[0].id] });
+    expect(saved.hypotheses[0]).toMatchObject({ status: 'unknown', supportingEvidenceIds: [evidence[0].id] });
+    expect(saved.rootCauseVerification).toEqual({ status: 'unverified' });
+    await execute(executor);
+    expect(providerCalls).toBe(2); expect(toolCalls).toBe(1);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0].result_json).toEqual(saved);
   });
   it('Runtime refuses provider dispatch when the original receipt cannot fit the prompt', async () => {
     const admitted = await automatic(1);
