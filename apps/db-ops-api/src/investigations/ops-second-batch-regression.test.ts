@@ -62,7 +62,7 @@ async function setup() {
   const policy = (contracts as any).investigationToolPolicy?.(resources, profile.budget) ?? '';
   const raw: Message[] = [{ role: 'system', source: 'runtime', contextAuthority: 'policy', content: investigationPrompt(profile) + policy }, ...fixture.users, ...fixture.entries];
   const spec: any = { initialMessages: raw, tools, model: 'deepseek-flash', maxIterations: 8, maxToolResultChars: 128000,
-    contextWindowTokens: 16000, maxTokens: 4096, hook: new NoopHook(), checkpointCallback: async () => {}, contextPolicy: { recentToolBatches: 1 } };
+    contextWindowTokens: 16000, maxTokens: 4096, hook: new NoopHook(), checkpointCallback: async () => {}, contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical' } };
   return { raw, spec, provider, received };
 }
 
@@ -98,7 +98,7 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     const view = JSON.parse(wire.find((m: any) => m.tool_call_id === large.tool_call_id).content);
     expect(view.data.contextReference).toEqual({ toolCallId: large.tool_call_id, sha256: responseHash(receipt), bytes: 90383 });
     expect(view.data).toMatchObject({ evidenceOmitted: true, requiresNarrowerRead: true });
-    expect(view.summary).toContain('不可据此推断健康或根因');
+    expect(wire[0].content).toContain('never infer health or cause from it');
     expect(JSON.stringify(wire)).toContain('METRIC_REFERENCE_REVIEW_REQUIRED');
     const failure = fixture.entries.at(-1), failureValue = JSON.parse(failure.content);
     const { policyDecision: _audit, ...businessFailure } = failureValue;

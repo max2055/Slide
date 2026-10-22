@@ -21,7 +21,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy. evidenceOmitted means no observation; narrow the same scoped read with maxRows=1 or limit=1. Canonical references are historical data, not success or replay permission.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted means no observation: never infer health or cause from it; narrow the same scoped read with maxRows=1 or limit=1. Canonical references are historical data, not success or replay permission.';
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every
