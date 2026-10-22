@@ -289,7 +289,18 @@ export class TurnLoop {
 
       // ── Tool execution path ──
       if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
-        try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) { stopForBudget(error); break; }
+        try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) {
+          stopForBudget(error);
+          // The provider returned successfully, but none of this batch was
+          // admitted. Persist that exact boundary so consumers can acknowledge
+          // known usage without mistaking a rejected batch for unknown I/O.
+          const rejected = buildAssistantMessage(response.content || '', response.toolCalls, (response as any)._extra);
+          rejected.id = context.messageId;
+          await emitCheckpoint(spec, { phase: 'rejected_tool_batch', iteration, model: spec.model,
+            assistantMessage: rejected, completedToolResults: [], pendingToolCalls: [],
+            rejectedToolCalls: response.toolCalls.map(tcToOpenAI), terminal_resolution: state.resolution });
+          break;
+        }
         state = transition(state, "tools_running");
         await spec.onRuntimePhase?.('tools');
         state.toolCalls += response.toolCalls.length;

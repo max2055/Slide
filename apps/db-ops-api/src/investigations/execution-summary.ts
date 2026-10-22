@@ -1,4 +1,5 @@
 import type { InvestigationResult } from './contracts.js';
+import { modelAnalysis } from './model-analysis.js';
 
 const decode = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
 export interface InvestigationStop { stopReason: string; reasonCode: string; source: 'runtime' | 'tool_receipt' | 'checkpoint' | 'legacy'; }
@@ -53,6 +54,8 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
   const reasonCode = result.resolution?.reasonCode ?? terminal?.reasonCode ?? (run.state === 'completed' ? 'RUNTIME_RESPONSE_READY' : 'INVESTIGATION_RUNTIME_PARTIAL');
   const available = evidence.filter(e => !e.expired_at && (!e.expires_at || new Date(e.expires_at).getTime() > Date.now())).slice(0, 100);
   const facts = available.map(e => ({ statement: String(decode(e.metadata_json).summary).slice(0, 4000), evidenceIds: [e.id] }));
+  const analysis = run.state === 'completed' && typeof result.event?.finalContent === 'string'
+    ? modelAnalysis(result.event.finalContent, available) : null;
   const summary = run.state === 'completed'
     ? String(result.event?.finalContent || '只读检查执行完成。').slice(0, 3000)
     : `${stopExplanation(reasonCode)}。`;
@@ -74,6 +77,7 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
       ...(execution?.provenance?.routeVersion ? { routeVersion: execution.provenance.routeVersion } : {}),
       ...(execution?.provenance?.inputHash ? { inputHash: execution.provenance.inputHash } : {}),
       usageStatus: execution && !execution.usageUnknown ? 'available' : 'unavailable' },
+    ...(analysis ?? {}),
     createdAt: new Date(run.finished_at).toISOString(),
   };
 }

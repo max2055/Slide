@@ -1081,7 +1081,7 @@ export class InvestigationExecutor {
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
       }
-      if (['awaiting_tools', 'tools_completed', 'final_response'].includes(String(payload.phase))) {
+      if (['awaiting_tools', 'tools_completed', 'final_response', 'rejected_tool_batch'].includes(String(payload.phase))) {
         const result = decode(access.run.result_json),
           state: ExecutionState = result?.investigationExecution;
         if (

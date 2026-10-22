@@ -1,14 +1,15 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
+import { MODEL_ANALYSIS_POLICY } from './model-analysis.js';
 
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Read scoped database metadata and health summary.',
-  get_resource_observations: 'Read latest observations with time, source, quality, dimensions and gap reasons.',
+  get_resource_observations: 'Read latest observations with time, source, quality, dimensions and gap reasons. Omit metricIds for the default batch; use only IDs returned by tools.',
   get_resource_relations: 'Read current resource relations.',
   get_server_alerts: 'Read server alerts; activeOnly defaults true.',
   get_server_metrics: 'Read latest or bounded historical server metrics with freshness and gaps.',
   list_active_alerts: 'Read active database alerts; optional severity and since (ISO time).',
-  query_metrics: 'Core metrics; discover extensions then metric_ids; inventory attributes. Narrow: one metric_ids entry + series_index + paired UTC from/to (to exclusive), one bucket.',
+  query_metrics: 'Realtime without metric_ids returns canonical core metrics. Discover lists extension definitions; inventory returns attributes only. Select IDs from returned definitions. Narrow large results with one metric_ids entry + series_index + paired UTC from/to (to exclusive), one bucket.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
@@ -21,7 +22,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy. evidenceOmitted: no observation; never infer health or cause from it. Use schema parameters only. Canonical references never authorize replay.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted: no observation; never infer health or cause from it. Use schema parameters only. Canonical references never authorize replay.' + MODEL_ANALYSIS_POLICY;
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every

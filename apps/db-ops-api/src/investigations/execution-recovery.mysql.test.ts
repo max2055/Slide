@@ -218,6 +218,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       missingUsage?: boolean;
       toolError?: boolean;
       zeroSend?: boolean;
+      overToolBudget?: boolean;
     } = {},
   ) {
     providerCalls = 0;
@@ -239,7 +240,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
           finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
-              ? [{ id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
+              ? [...(options.overToolBudget ? Array.from({ length: 20 }, (_, i) => ({ id: `excess-${i}`, name: 'get_instance_summary', arguments: { instance_id: 101 } })) : []), { id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
                 ...(options.toolError ? [{ id: 'rejected-call', name: 'get_instance_summary', arguments: { instance_id: 101, range: '24h' } }] : [])]
               : [],
           hasToolCalls: providerCalls === 1 && options.toolCalls !== false,
@@ -1133,6 +1134,19 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(await rows('SELECT *, CAST(operation_id AS CHAR) AS operation_id FROM investigation_budget_ledger')).toEqual(
       allocations,
     );
+  });
+  it('settles a received response rejected by tool budget without execution or unknown replay', async () => {
+    const executor = fixture({ overToolBudget: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(result.error).toMatchObject({ reasonCode: 'MAX_TOOL_CALLS' });
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    const allocation = (await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0];
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    const saved = (await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]))[0].result_json;
+    expect(saved.investigationExecution.provider).toBeNull();
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
   });
   it('Runtime refuses provider dispatch when the original receipt cannot fit the prompt', async () => {
     const admitted = await automatic(1);

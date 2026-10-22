@@ -8,6 +8,29 @@ const run = { id: 'run', state: 'partial', finished_at: '2026-10-21T02:00:30.000
     terminal: { stopReason: 'tool_error', reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' } },
 } };
 describe('durable investigation execution summary', () => {
+  const analysis = { analysisVersion: 1, summary: '当前连接有观测，网络证据不足。',
+    claims: [{ statement: '当前观测不足以确定根因。', supportingToolCallIds: ['read-1'], contradictingToolCallIds: [] }],
+    hypotheses: [{ statement: '采集生命周期缺口可能导致网络指标不可用，尚待验证。', supportingToolCallIds: ['read-1'], contradictingToolCallIds: [] }],
+    unresolvedQuestions: ['核对采集生命周期来源。'], recommendations: [{ action: '补齐只读生命周期来源后复核。', priority: 'medium' }] };
+  const analysisEvidence = [{ id: 'e1', metadata_json: { source: 'tool:read-1', summary: '工具返回含 unknown。' } }];
+  const completedAnalysis = (value: unknown) => ({ ...run, state: 'completed', result_json: {
+    ...run.result_json, event: { finalContent: JSON.stringify(value) } } });
+  it('binds completed model analysis to this execution evidence without promoting root cause or recovery', () => {
+    const value = executionSummary(completedAnalysis(analysis), subject as any, analysisEvidence);
+    expect(value.summary).toContain(analysis.summary);
+    expect(value.claims).toEqual([{ statement: analysis.claims[0].statement, kind: 'inference', supportingEvidenceIds: ['e1'], contradictingEvidenceIds: [] }]);
+    expect(value.hypotheses).toEqual([{ statement: analysis.hypotheses[0].statement, status: 'unknown', supportingEvidenceIds: ['e1'], contradictingEvidenceIds: [] }]);
+    expect(value.rootCauseVerification).toEqual({ status: 'unverified' });
+    expect(value.problemStatus).toBe('unconfirmed');
+    expect(validateMachineResult(value, new Set(['e1'])).ok).toBe(true);
+  });
+  it.each(['unbound', 'expired', 'partial', 'extra-authority'])('does not publish structured analysis with %s evidence or authority', mode => {
+    const input = mode === 'extra-authority' ? { ...analysis, rootCauseVerification: { status: 'human_confirmed' } } : analysis;
+    const completed = completedAnalysis(input);
+    const value = executionSummary(mode === 'partial' ? { ...completed, state: 'partial' } : completed, subject as any,
+      mode === 'unbound' ? [] : mode === 'expired' ? [{ ...analysisEvidence[0], expired_at: new Date() }] : analysisEvidence);
+    expect(value.claims).toEqual([]); expect(value.hypotheses).toEqual([]);
+  });
   it('preserves the exact fatal tool receipt when Runtime omits resolution', () => {
     expect(investigationStop({ stopReason: 'tool_error', error: 'Error: Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }))
       .toEqual({ stopReason: 'tool_error', reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' });
