@@ -31,6 +31,23 @@ describe('durable investigation execution summary', () => {
       mode === 'unbound' ? [] : mode === 'expired' ? [{ ...analysisEvidence[0], expired_at: new Date() }] : analysisEvidence);
     expect(value.claims).toEqual([]); expect(value.hypotheses).toEqual([]);
   });
+  it.each(['extra-field', 'truncated', 'wrong-type', 'long', 'empty-basis', 'unbound'])('explicitly reports rejected final analysis: %s', mode => {
+    const value: any = structuredClone(analysis);
+    if (mode === 'extra-field') value.evidenceGaps = ['网络证据缺失'];
+    if (mode === 'wrong-type') value.claims = 'invalid';
+    if (mode === 'long') value.summary = 'x'.repeat(2001);
+    if (mode === 'empty-basis') value.claims[0].supportingToolCallIds = [];
+    if (mode === 'unbound') value.claims[0].supportingToolCallIds = ['another-run'];
+    const terminal = completedAnalysis(value);
+    if (mode === 'truncated') terminal.result_json.event.finalContent = '{"analysisVersion":1';
+    const published = executionSummary(terminal, subject as any, analysisEvidence);
+    expect(published.claims).toEqual([]); expect(published.hypotheses).toEqual([]);
+    expect(published.summary).toContain('模型最终输出未通过');
+    expect(published.summary).not.toContain('evidenceGaps');
+    expect(published.unresolvedQuestions.join()).toContain('未发布');
+    expect(published.facts).toHaveLength(1);
+    expect(terminal.result_json.event.finalContent).toBe(mode === 'truncated' ? '{"analysisVersion":1' : JSON.stringify(value));
+  });
   it('preserves the exact fatal tool receipt when Runtime omits resolution', () => {
     expect(investigationStop({ stopReason: 'tool_error', error: 'Error: Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }))
       .toEqual({ stopReason: 'tool_error', reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' });

@@ -199,6 +199,26 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
     await expect(bridge.messages(bounded, investigation.id)).rejects.toMatchObject({ statusCode: 404 });
   });
 
+  it.each(['mixed', 'server', 'instance'])('metric discovery keeps %s live resource ACL and frozen ceiling', async mode => {
+    const scoped = mode === 'mixed' ? investigation : (await bridge.create(owner, {
+      ...create(), resources: [mode === 'server' ? { type: 'server' as const, id: 201, role: 'primary' as const }
+        : { type: 'instance' as const, id: 101, role: 'primary' as const }],
+    })).investigation;
+    const frozen = await withConnection(async c => authorization.freeze(await authorization.authorize(c, owner, scoped, 'continue')));
+    const target = mode === 'instance' ? { type: 'instance' as const, id: 101 } : { type: 'server' as const, id: 201 };
+    await withConnection(async c => {
+      await expect(authorization.authorizeTool(c, owner, scoped, frozen, 'query_metrics', [target])).resolves.toHaveProperty('actor');
+      await expect(authorization.authorizeTool(c, owner, scoped, frozen, 'query_metrics', [])).rejects.toMatchObject({ statusCode: 403 });
+      for (const bad of [{ type: 'server' as const, id: 101 }, { type: 'instance' as const, id: 201 }, { type: 'instance' as const, id: 103 }])
+        await expect(authorization.authorizeTool(c, owner, scoped, frozen, 'query_metrics', [bad])).rejects.toMatchObject({ statusCode: 404 });
+    });
+    for (const permission of ['metric:view', mode === 'instance' ? 'instance:view' : 'servers:view']) {
+      await pool.execute('DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code=?', [roleId, permission]);
+      await expect(withConnection(c => authorization.authorizeTool(c, owner, scoped, frozen, 'query_metrics', [target]))).rejects.toHaveProperty('statusCode', permission === 'metric:view' ? 403 : 404);
+      await pool.execute('INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code=?', [roleId, permission]);
+    }
+  });
+
   it.each(['instance:view', 'servers:view', 'network_devices:view'])('live revoke of %s hides multi-resource content, count and watch authority', async code => {
     await pool.execute('DELETE rp FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ? AND p.code = ?', [roleId, code]);
     const result = await app.inject({ url: '/fixture/list', headers });

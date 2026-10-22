@@ -14,6 +14,7 @@ import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationExecutor } from './executor.js';
 import { InvestigationStreamStore, InvestigationWatchService, reduceInvestigationEvents, emptyInvestigationProjection, captureCanonicalDocument } from './stream.js';
+import { evidenceHash } from '../analysis/analysis-evidence.js';
 import { appendObservation } from './observation-db.js';
 import { InvestigationEvidenceStore } from './evidence-store.js';
 import { InvestigationResultStore } from './result-schema.js';
@@ -203,6 +204,22 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     expect((await evidence.get(owner,inv.id,saved[0].id,true)).raw).toMatchObject({ value:null });
     await expect(evidence.put(owner,binding,'capture',{...value,summary:'changed'})).rejects.toMatchObject({code:'IDEMPOTENCY_PAYLOAD_MISMATCH'});
   });
+  it.each([{ x: 1 }, [1, 'x'], 'Error: server arguments rejected', '{"looks":"like-json"}', '[1,2]', 'null', 'true', '42', '"quoted"', 42, true, null].map(raw => [raw]))('JSON evidence raw survives driver and normal HTTP without reinterpretation: %j', async raw => {
+    const saved = await evidence.put(owner, binding, 'raw-document', { ...input(), raw });
+    const app = Fastify();
+    await registerInvestigationRoutes(app, async request => { (request as any).user = owner; }, bridge, { stream, evidence, results });
+    try {
+      const response = await app.inject({ method: 'GET', url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().raw).toEqual(raw);
+      expect(response.json().contentHash).toBe(evidenceHash(raw));
+      const restarted = new InvestigationEvidenceStore(() => pool, authorization);
+      expect((await restarted.get(owner, inv.id, saved.id, true)).raw).toEqual(raw);
+      await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');
+      expect((await app.inject({ method: 'GET', url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` })).statusCode).toBe(404);
+    } finally { await app.close(); }
+  });
+
   it('raw expiry returns a tombstone, purges SQL, preserves result references and refuses new proof', async () => {
     const saved=await evidence.put(owner,binding,'expired',input());
     const r=await results.put(owner,binding,'first',0,result([saved.id]));
