@@ -2,9 +2,17 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
+node --test scripts/qualification/recovery-observation.test.mjs
 container="slide-report-recovery-$$-$RANDOM"
-cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
-trap cleanup EXIT INT TERM
+cleanup() {
+  result=$?
+  trap - EXIT INT TERM
+  node scripts/qualification/recovery-observation.mjs --cleanup "$container" || result=1
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 docker run --detach --rm --name "$container" --env MYSQL_ROOT_PASSWORD=qualification-test-password --publish 127.0.0.1::3306 mysql:8.4 >/dev/null
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 # Wait through the initialization server restart on the published connection.
@@ -21,5 +29,5 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then echo "isolated report MySQL unavailable" >&2; exit 1; fi
-REPORT_TEST_MYSQL_PORT="$port" REPORT_TEST_MYSQL_PASSWORD=qualification-test-password \
+node scripts/qualification/recovery-observation.mjs "$container" "$port" \
   pnpm --filter slide-api exec vitest run src/workflows/report-recovery.mysql.test.ts src/workflows/outbox-service.mysql.test.ts src/investigations/store.mysql.test.ts

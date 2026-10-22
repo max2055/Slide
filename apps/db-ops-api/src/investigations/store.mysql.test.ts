@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { recoveryObservation } from '../testing/recovery-observation.js';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,34 +23,41 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
   const input = (): InvestigationAdmission => ({ investigationId, actor: { kind: 'user', id: 1 },
     idempotencyKey: 'request:1', message: 'Investigate the latency', expectedVersion: 1 });
 
+  const observation = recoveryObservation(database);
   beforeAll(async () => {
-    const options = { host: '127.0.0.1', port, user: 'root',
-      password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? process.env.REPORT_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
-    admin = mysql.createPool(options);
-    await admin.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ ...options, database, connectionLimit: 10 });
-    await new MigrationRunner(pool).run();
-    await new MigrationRunner(pool).run();
-    await pool.execute("INSERT IGNORE INTO users (id, username, password_hash, email) VALUES (1, 'store-user', 'not-a-login-hash', 'store@example.invalid')");
-    // SQL-backed fixture authorizer exercises the mandatory transaction hook,
-    // not the still-pending T03 live actor/resource/Profile authorizer.
-    await pool.query(`CREATE TABLE test_operator_grants (
-      investigation_id CHAR(36) COMMENT 'Investigation', actor_kind VARCHAR(16) COMMENT 'Actor kind', actor_id BIGINT COMMENT 'Actor ID',
-      PRIMARY KEY(investigation_id, actor_kind, actor_id)
-    ) ENGINE=InnoDB COMMENT='Trusted test authority grants'`);
-    await pool.query(`CREATE TABLE test_scope_grants (actor_id INT COMMENT 'Actor', resource_type VARCHAR(30) COMMENT 'Resource type', resource_id INT COMMENT 'Resource ID', PRIMARY KEY(actor_id, resource_type, resource_id)) ENGINE=InnoDB COMMENT='Test live resource authority'`);
-    store = new MysqlInvestigationStore(() => pool, async (connection, actor, investigation, operation) => {
-      for (const resource of investigation.resources) {
-        const [scopes] = await connection.execute('SELECT actor_id FROM test_scope_grants WHERE actor_id = ? AND resource_type = ? AND resource_id = ? FOR SHARE',
-          [actor.id, resource.type, resource.id]) as [mysql.RowDataPacket[]];
-        if (!scopes.length) throw new InvestigationStoreError(operation === 'read' ? 'INVESTIGATION_NOT_FOUND' : 'INVESTIGATION_OPERATION_FORBIDDEN');
-      }
-      if (operation === 'create') return;
-      const [grants] = await connection.execute(
-        'SELECT actor_id FROM test_operator_grants WHERE investigation_id = ? AND actor_kind = ? AND actor_id = ? FOR SHARE',
-        [investigation.id, actor.kind, actor.id]) as [mysql.RowDataPacket[]];
-      if (!grants.length) throw new InvestigationStoreError(operation === 'read' ? 'INVESTIGATION_NOT_FOUND' : 'INVESTIGATION_OPERATION_FORBIDDEN');
-    });
+    let initialized = false;
+    try {
+      await observation.stage('before-all', async () => {
+        const options = { host: '127.0.0.1', port, user: 'root',
+          password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? process.env.REPORT_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
+        admin = await observation.stage('admin-pool', async () => observation.wrap(mysql.createPool(options)));
+        await observation.stage('connect-create-database', () => admin.query(`CREATE DATABASE ${database}`));
+        pool = await observation.stage('database-pool', async () => observation.wrap(mysql.createPool({ ...options, database, connectionLimit: 10 })));
+        await observation.stage('migration-1', () => new MigrationRunner(pool).run());
+        await observation.stage('migration-2', () => new MigrationRunner(pool).run());
+        await observation.stage('seed', () => pool.execute("INSERT IGNORE INTO users (id, username, password_hash, email) VALUES (1, 'store-user', 'not-a-login-hash', 'store@example.invalid')"));
+        // SQL-backed fixture authorizer exercises the mandatory transaction hook,
+        // not the still-pending T03 live actor/resource/Profile authorizer.
+        await observation.stage('operator-grant-ddl', () => pool.query(`CREATE TABLE test_operator_grants (
+          investigation_id CHAR(36) COMMENT 'Investigation', actor_kind VARCHAR(16) COMMENT 'Actor kind', actor_id BIGINT COMMENT 'Actor ID',
+          PRIMARY KEY(investigation_id, actor_kind, actor_id)
+        ) ENGINE=InnoDB COMMENT='Trusted test authority grants'`));
+        await observation.stage('scope-grant-ddl', () => pool.query(`CREATE TABLE test_scope_grants (actor_id INT COMMENT 'Actor', resource_type VARCHAR(30) COMMENT 'Resource type', resource_id INT COMMENT 'Resource ID', PRIMARY KEY(actor_id, resource_type, resource_id)) ENGINE=InnoDB COMMENT='Test live resource authority'`));
+        store = new MysqlInvestigationStore(() => pool, async (connection, actor, investigation, operation) => {
+          for (const resource of investigation.resources) {
+            const [scopes] = await connection.execute('SELECT actor_id FROM test_scope_grants WHERE actor_id = ? AND resource_type = ? AND resource_id = ? FOR SHARE',
+              [actor.id, resource.type, resource.id]) as [mysql.RowDataPacket[]];
+            if (!scopes.length) throw new InvestigationStoreError(operation === 'read' ? 'INVESTIGATION_NOT_FOUND' : 'INVESTIGATION_OPERATION_FORBIDDEN');
+          }
+          if (operation === 'create') return;
+          const [grants] = await connection.execute(
+            'SELECT actor_id FROM test_operator_grants WHERE investigation_id = ? AND actor_kind = ? AND actor_id = ? FOR SHARE',
+            [investigation.id, actor.kind, actor.id]) as [mysql.RowDataPacket[]];
+          if (!grants.length) throw new InvestigationStoreError(operation === 'read' ? 'INVESTIGATION_NOT_FOUND' : 'INVESTIGATION_OPERATION_FORBIDDEN');
+        });
+      });
+      initialized = true;
+    } finally { observation.finish(initialized); }
   });
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_admission_failure');
@@ -62,8 +70,11 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     }
   });
   afterAll(async () => {
-    await pool?.end();
-    if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
+    try { await observation.beforeCleanup(); }
+    finally {
+      await pool?.end();
+      if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
+    }
   });
   const all = async (table: string) => (await pool.query<mysql.RowDataPacket[]>(`SELECT * FROM ${table}`))[0];
 

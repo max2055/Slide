@@ -283,6 +283,14 @@ jobs:
         run: pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts
       - name: Report occurrence crashes and atomic notification outbox
         run: bash scripts/qualification/run-report-recovery.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovery-initialization-${{ github.sha }}
+          path: .qualification/report-recovery/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
       - name: Delegation ceilings and live grant revocation in isolated MySQL
         run: bash scripts/qualification/run-auth-boundary.sh
       - name: Analysis dispatch crashes, unknown billing windows and revoked authority
