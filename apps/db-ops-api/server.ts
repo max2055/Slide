@@ -5475,7 +5475,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   await startup.assertOwned();
   await startup.step(() => startMetricRetention(pool, workflowRegistry, job => workflowStore.enqueue(job)));
-  const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), job => workflowStore.resourcesFor(job));
+  const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), (job, context) => workflowStore.resourcesFor(job, context));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
   await startup.step(() => enqueueNotificationDispatch());

@@ -21,9 +21,19 @@ it('resource compatibility API retains exact encoded values, dimensions and actu
 it('old numeric observation DTO refuses lossy numbers and ambiguous dimensions without a fallback',async()=>{
  const {service,metric}=fixture({encoding:'uint64',value:'9007199254740993'});
  const observations=new FormalObservationService(service as any);
- expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:60000})).toMatchObject({quality:'unknown',value:null,reason:'precision_or_value_unavailable'});
+ expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:60000})).toMatchObject({quality:'unknown',value:null,reason:'precision_loss'});
  metric.series.push({...metric.series[0],dimensions:{mount:'/other'}});
  expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:60000})).toMatchObject({quality:'unknown',value:null,reason:'DIMENSIONS_REQUIRED'});
+});
+it('distinguishes missing values from unsafe numeric conversion and expired validity, with an explicit bounded latest window',async()=>{
+ const {service,metric}=fixture(null);
+ const observations=new FormalObservationService(service as any);
+ expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:120000})).toMatchObject({quality:'unknown',value:null,reason:'missing_observation'});
+ expect(service.query).toHaveBeenLastCalledWith(admin,{resource,metric_ids:['host.filesystem.used_bytes'],from:'2026-10-16T11:58:00.000Z',to:now.toISOString()});
+ metric.series[0].buckets[0].value={encoding:'float64',value:0};
+ expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:120000})).toMatchObject({quality:'good',value:0});
+ metric.series[0].buckets[0].observed_at='2026-10-16T11:57:00.000Z';
+ expect(await observations.latest(admin,resource,'host.filesystem.used_bytes',{now,validForMs:120000})).toMatchObject({quality:'unknown',value:null,reason:'stale_observation'});
 });
 it('history compatibility uses each bucket actual time, preserves stale unknown, and propagates formal-store failure',async()=>{
  const {service,metric}=fixture();

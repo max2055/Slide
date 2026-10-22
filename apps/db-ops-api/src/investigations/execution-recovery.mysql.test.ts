@@ -30,6 +30,7 @@ import { InvestigationAuthorization, provisionInvestigationServiceIdentity } fro
 import { MysqlInvestigationStore } from './store.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { MysqlWorkflowStore } from '../workflows/worker-runtime.js';
+import { BoundedWorkflowRuntime } from '../workflows/bounded-worker.js';
 import { AgentRunService, type AgentRun } from '../adapter/agent-run-service.js';
 import {
   CanonicalStore,
@@ -325,6 +326,83 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       await pool.query(`DELETE FROM ${table}`);
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
+
+  it('B11 durable read scope lets formal collection commit while the real HTTP SDK is awaiting its response', async () => {
+    const { platformLogs } = await import('../platform/structured-log-evidence-adapter.js');
+    const log = vi.spyOn(platformLogs, 'record');
+    const { createServer } = await import('node:http');
+    const { OpenAIProvider } = await import('@slide/agent-core');
+    const { createBuiltinRegistry } = await import('../metrics/packages/builtins.js');
+    const { MysqlScheduleStore } = await import('../metrics/scheduler/store.js');
+    const { MetricScheduler } = await import('../metrics/scheduler/service.js');
+    const { PolicyService } = await import('../metrics/policy/service.js');
+    const { MysqlPolicyStore } = await import('../metrics/policy/store.js');
+    const { admin: policyActor, pin, resource } = await import('../metrics/policy/test-support.js');
+    const queue = new MysqlWorkflowStore(() => pool as never), packages = createBuiltinRegistry();
+    const schedules = new MysqlScheduleStore(pool, packages);
+    let now = Date.now() - 20000, release!: () => void, entered!: () => void;
+    const waiting = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
+    let sends = 0;
+    const server = createServer(async (req, res) => {
+      for await (const _ of req) { /* consume actual SDK body */ }
+      sends++; entered(); await gate;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ id: 'local', choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({
+        analysisVersion: 1, summary: '离线持久化验证，未证明目标健康。', claims: [], hypotheses: [], unresolvedQuestions: ['真实模型语义未验收。'], recommendations: [],
+      }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 20 } }));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'local-readonly',
+      capabilities: { model: 'local-readonly', contextWindowTokens: 65536, maxOutputTokens: 16384, preferredOutputTokens: 4096, source: 'configuration', version: 'local-fixture' },
+      baseURL: `http://127.0.0.1:${(server.address() as any).port}/v1` });
+    const executor = new InvestigationExecutor({ pool: () => pool, authorization: new InvestigationAuthorization(contexts),
+      providerForPurpose: async () => actual, toolsForActor: () => new ToolRegistry(),
+      budget: { domain: 'test-investigation', policy, reserveCostMicros: 1000000 } });
+    const registry = new JobRegistry();
+    const policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
+      { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
+    await policies.changeBinding(policyActor, { type: 'instance', id: 101 }, { expected_revision: 0, package: pin }, true);
+    const scheduler = new MetricScheduler(schedules, packages, { resolve: async ref => ({ resource: resource(ref.id),
+      credential_ref: 'credential:local-fixture', evidence: {}, resolve: async () => ({ method: 'sql', pool: { query: async () => [[], []] } }) }) }, () => now,
+    async () => [{ dimensions: {}, fields: { Uptime: { encoding: 'float64', value: 100 }, Queries: { encoding: 'uint64', value: '200' } }, counter: { bits: '64', start_at: new Date(now - 100000).toISOString() } }]);
+    scheduler.register(registry);
+    const runtime = new BoundedWorkflowRuntime(queue, binding.workerId, 3, (j, ctx) => queue.resourcesFor(j, ctx));
+    await pool.query("UPDATE workflow_jobs SET state='queued',lease_owner=NULL,lease_expires_at=NULL WHERE id=?", [binding.jobId]);
+    const starts: any[] = [];
+    const handler = async (job: any, context: any) => {
+      starts.push({ id: job.id, type: job.type });
+      if (job.type === 'investigation.execute') { binding.fencingToken = job.fencingToken; await executor.execute({ investigationId: binding.investigationId, requestId: binding.requestId, job, context }); }
+      else await registry.execute(job, context);
+    };
+    const first = runtime.runOnce(handler);
+    let collectionTick: Promise<unknown> | undefined;
+    try {
+      await Promise.race([waiting, first.then(value => { throw Error('RUNTIME_RETURNED_BEFORE_SDK:' + value + ':' + JSON.stringify(starts)); }), new Promise((_, reject) => { const t = setTimeout(() => reject(Error('LOCAL_SDK_NOT_REACHED:' + JSON.stringify(starts))), 5000); t.unref(); })]);
+      await scheduler.tick(); now += 10000; await scheduler.tick();
+      collectionTick = runtime.runOnce(handler);
+      await Promise.race([collectionTick, new Promise((_, reject) => { const t = setTimeout(() => reject(Error('COLLECTION_BLOCKED_BY_MODEL_WAIT')), 1500); t.unref(); })]);
+      expect((await rows("SELECT state FROM workflow_jobs WHERE id=?", [binding.jobId]))[0].state).toBe('running');
+      expect(await rows("SELECT id FROM metric_schedule_events WHERE resource_key='instance:101' AND code='committed'")).toHaveLength(1);
+      expect(await rows("SELECT id FROM metric_observations WHERE stage='normalized'")).not.toHaveLength(0);
+      const phases = log.mock.calls.map(([event]) => event.eventType);
+      expect(phases).toContain('job.wait'); expect(phases).toContain('job.resource_wait');
+      expect(phases).toContain('collection.begun'); expect(phases).toContain('collection.committed');
+      const [record] = await rows('SELECT id,job_type AS type,payload,attempts,max_attempts AS maxAttempts,fencing_token AS fencingToken FROM workflow_jobs WHERE id=?', [binding.jobId]);
+      const claimed = { id: String(record.id), type: String(record.type), attempts: Number(record.attempts), maxAttempts: Number(record.maxAttempts),
+        fencingToken: Number(record.fencingToken), payload: typeof record.payload === 'string' ? JSON.parse(record.payload) : record.payload };
+      expect(await queue.resourcesFor({ ...claimed, fencingToken: claimed.fencingToken + 1 }, { workerId: binding.workerId })).toEqual(['*']);
+      expect(await queue.resourcesFor(claimed, { workerId: 'wrong-owner' })).toEqual(['*']);
+    } finally {
+      release(); await Promise.all([first, collectionTick]); await runtime.shutdown(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r()));
+      await retainLengthEvidence('b11-collection-during-http', { sends, starts, events: log.mock.calls.map(([event]) => event), jobs: await rows('SELECT * FROM workflow_jobs'), schedule: await rows('SELECT * FROM metric_schedule_events') });
+      log.mockRestore();
+    }
+    expect((await rows('SELECT state FROM agent_runs WHERE id=?', [binding.runId]))[0].state).toBe('completed');
+    expect(sends).toBe(1);
+    await expect(execute(executor)).rejects.toThrow('INVESTIGATION_FENCE_LOST');
+    expect(await queue.claim('after-completion', 30, { types: ['investigation.execute'], exclude: false })).toBeNull();
+    expect(sends).toBe(1);
+  }, 30000);
 
   it.each(['concurrent','source-http','service-http','failed-source-http','transport-unknown'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
     if (mode === 'service-http') {
