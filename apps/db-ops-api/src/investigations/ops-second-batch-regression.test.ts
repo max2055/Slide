@@ -69,6 +69,10 @@ async function setup() {
 describe('r2 second atomic Ops batch at the real model boundary', () => {
   it('compacts older history and sends the complete retained batch through the SDK without changing canonical evidence', async () => {
     const { raw, spec, provider, received } = await setup();
+    // Readable discovery now carries actual definitions/IDs instead of an empty
+    // reference. Qualify it in the already authorized task allocation; the
+    // original 16k fail-closed boundary remains covered below.
+    spec.contextWindowTokens = 65536;
     const before = JSON.stringify(raw), digest = sourceHash(raw);
     const manager = new ContextManager(spec, provider), split = manager.split(raw);
     const large = raw.find(m => m.name === 'query_metrics')!, receipt = JSON.parse(String(large.content));
@@ -97,7 +101,9 @@ describe('r2 second atomic Ops batch at the real model boundary', () => {
     for (const call of retainedAssistant.tool_calls!) expect(wire.filter((m: any) => m.tool_call_id === call.id)).toHaveLength(1);
     const view = JSON.parse(wire.find((m: any) => m.tool_call_id === large.tool_call_id).content);
     expect(view.data.contextReference).toEqual({ toolCallId: large.tool_call_id, sha256: responseHash(receipt), bytes: 90383 });
-    expect(view.data).toMatchObject({ evidenceOmitted: true, requiresNarrowerRead: true });
+    expect(view.data.evidenceOmitted).not.toBe(true);
+    expect(view.data.metric_ids).toEqual(receipt.data.definitions.map((d: any) => d.id));
+    expect(view.data.discovery.detail).toBe('index');
     expect(wire[0].content).toContain('never infer health or cause from it');
     expect(JSON.stringify(wire)).toContain('METRIC_REFERENCE_REVIEW_REQUIRED');
     const failure = fixture.entries.at(-1), failureValue = JSON.parse(failure.content);

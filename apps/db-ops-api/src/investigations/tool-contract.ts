@@ -2,13 +2,13 @@ import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
 const opsDescriptions: Record<string, string> = {
-  get_instance_summary: 'Read scoped database metadata and health summary.',
-  get_resource_observations: 'Read latest observations with time, source, quality, dimensions and gap reasons.',
-  get_resource_relations: 'Read current resource relations.',
-  get_server_alerts: 'Read server alerts; activeOnly defaults true.',
-  get_server_metrics: 'Read latest or bounded historical server metrics with freshness and gaps.',
-  list_active_alerts: 'Read active database alerts; optional severity and since (ISO time).',
-  query_metrics: 'Discover actual IDs first: index pages (discovery_offset/limit, default64, follow next_offset; restart if revision changes). Index omits full definition; discover with one metric_ids reads full definition, no paging. Then one metric_ids + series_index + paired UTC from/to (to exclusive), one bucket. inventory reads attributes. Never guess IDs or equate snapshot gauge with rate.',
+  get_instance_summary: 'Scoped database metadata/health.',
+  get_resource_observations: 'Latest observations: time/source/quality/dimensions/gaps.',
+  get_resource_relations: 'Resource relations.',
+  get_server_alerts: 'Server alerts; activeOnly=true.',
+  get_server_metrics: 'Server metrics: latest/history, freshness/gaps.',
+  list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
+  query_metrics: 'discover: index via discovery_offset/limit(default64); follow next_offset, restart if revision changes. One metric_ids: full definition. Read: one metric_ids+series_index+UTC from/to(exclusive), one bucket. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.

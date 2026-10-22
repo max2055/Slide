@@ -134,6 +134,9 @@ it('compacts and restores three completed batches through the real SDK using onl
   const {RapidRefill}=await import(new URL('runtime/rapid-refill.js',core).href);
   const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
   const {raw,spec}=setup(retained), before=JSON.stringify(raw), bodies:any[]=[];
+  // Current discovery schema adds protected request cost. Use the authorized
+  // task window for this three-batch recovery test; 16k stops remain covered.
+  spec.contextWindowTokens=32768;
   const summary={goal:['inspect instance1/server3'],constraints:['read only'],done:[],pending:['narrow reads'],evidence:[],uncertain:['coverage gaps; no replay']};
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
