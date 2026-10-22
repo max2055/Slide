@@ -1975,6 +1975,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const second = await child(undefined, false, true);
     expect(second.messages.find((m: any) => m.terminal)).toMatchObject({ terminal: 'partial', error: { reasonCode: 'OUTPUT_LIMIT' } });
     expect(second.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
+    const http = second.messages.find((m: any) => m.httpStatus);
+    expect(http).toMatchObject({ httpStatus: 200, derivedRunState: 'partial', latestResult: { result: { claims: [], hypotheses: [], execution: { reasonCode: 'OUTPUT_LIMIT' } } } });
     const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
     expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
     const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
@@ -1982,6 +1984,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const third = await child(undefined, false, true);
     expect(third.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
     expect(third.messages.find((m: any) => m.terminal)?.terminal).toBe('partial');
+    expect(third.messages.find((m: any) => m.httpStatus)).toEqual(http);
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
   }, 30000);

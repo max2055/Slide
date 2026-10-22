@@ -135,16 +135,44 @@ const executor = new InvestigationExecutor({
     },
   },
 });
+// For the length restart regression, bring up the normal authenticated HTTP
+// surface in the SAME disposable worker process. Every restart gets a fresh
+// pool/authorization/bridge/server, not an in-memory projection of the result.
+let app: import('fastify').FastifyInstance | undefined;
+let address: string | undefined;
+if (process.env.T04_CHILD_LENGTH) {
+  const { default: Fastify } = await import('fastify');
+  const { registerInvestigationRoutes } = await import('./routes.js');
+  const { createVerifyToken } = await import('../auth-middleware.js');
+  const { InvestigationSessionBridge } = await import('./session-bridge.js');
+  const { LegacyAnalysisBridge } = await import('./legacy-analysis-bridge.js');
+  const contexts = new ActorContextService(() => pool as never);
+  const bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts));
+  app = Fastify();
+  await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge,
+    bridge.observationServices(), new LegacyAnalysisBridge(() => pool, undefined, bridge));
+  address = await app.listen({ host: '127.0.0.1', port: 0 });
+}
 try {
   const result = await executor.execute({
     ...command,
     context: { ...command.context, signal: new AbortController().signal },
   });
   process.send?.({ terminal: result.state, error: result.error });
+  if (app && address) {
+    const { signAccessToken } = await import('../auth/actor-context.js');
+    const actor = await new ActorContextService(() => pool as never).loadActiveActor(result.actorId);
+    const response = await fetch(`${address}/api/investigations/${command.investigationId}`, {
+      headers: { authorization: `Bearer ${signAccessToken(actor, process.env.JWT_SECRET_KEY!)}` },
+    });
+    const body: any = await response.json();
+    process.send?.({ httpStatus: response.status, latestResult: body.latestResult, derivedRunState: body.derivedRunState });
+  }
 } catch (error) {
   process.send?.({ failure: error instanceof Error ? error.message : String(error) });
   process.exitCode = 1;
 } finally {
+  await app?.close();
   await pool.end();
   process.disconnect?.();
 }
