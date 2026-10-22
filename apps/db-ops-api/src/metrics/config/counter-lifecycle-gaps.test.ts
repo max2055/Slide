@@ -16,7 +16,7 @@ it('does not treat ordinary MySQL status reads as trusted counter snapshots',asy
 });
 it('preserves unknown capability with a precise production diagnostic, rather than unsupported or an invented epoch',async()=>{
  const release=builtinReleases().find(r=>r.package.id==='linux-host')!;
- const result=await runPackage(createBuiltinRegistry(),{package:release.package,credential_ref:'credential:fixture',overrides:{}},{resource:{type:'server',id:'3',attributes:{'os.family':{value:'linux',source:'fixture',observed_at:new Date().toISOString()}}},binding_id:'server:3',attempt_id:'fixture',config_revision:3,observed_at:new Date().toISOString(),collector_ids:release.package.collectors.filter(c=>c.implementation_ref==='builtin:linux.network.v1').map(c=>c.id),evidence:{},resolve:async()=>transport});
+ const result=await runPackage(createBuiltinRegistry(),{package:(({id,version,digest})=>({id,version,digest}))(release.package),credential_ref:'credential:fixture',overrides:{}},{resource:{type:'server',id:'3',attributes:{'os.family':{value:'linux',source:'fixture',observed_at:new Date().toISOString()}}},binding_id:'server:3',attempt_id:'fixture',config_revision:3,observed_at:new Date().toISOString(),collector_ids:release.package.collectors.filter(c=>c.implementation_ref==='builtin:linux.network.v1').map(c=>c.id),evidence:{},resolve:async()=>transport});
  expect(result.attempts[0].status).toBe('failed');expect(result.observations).toHaveLength(0);
  expect(result.capabilities[0]).toMatchObject({status:'unknown',basis:expect.arrayContaining([{kind:'method',evidence:'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE'}])});
 });

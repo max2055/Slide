@@ -56,7 +56,8 @@ export interface DecodedRow {
   accuracy?: Record<string, RawObservation['accuracy']>;
 }
 export class AdapterError extends Error {
-  constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error') { super(code); }
+  constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error',
+    readonly evidenceCode?: 'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE' | 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE') { super(code); }
 }
 export function classifyError(error: unknown): AdapterError['code'] {
   if (error instanceof AdapterError) return error.code;
@@ -92,6 +93,7 @@ function exactCounter(value: number | string): RawObservation['value'] {
 function hostCounter(evidence: DriverEvidence, kind: 'interfaces' | 'devices', identity: string): NonNullable<RawObservation['counter']> {
   const lifecycle = evidence.host_counter_epochs;
   const member = lifecycle?.[kind][identity];
+  if (kind === 'interfaces' && (!lifecycle || !member)) throw new AdapterError('parse_error', 'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE');
   if (!lifecycle || !member || !lifecycle.boot.epoch || !member.epoch
     || !Number.isFinite(Date.parse(lifecycle.boot.observed_at)) || !Number.isFinite(Date.parse(member.observed_at))) throw new AdapterError('parse_error');
   const bootAt = new Date(lifecycle.boot.observed_at).toISOString();

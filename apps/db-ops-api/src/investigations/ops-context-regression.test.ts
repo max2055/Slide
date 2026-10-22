@@ -105,7 +105,7 @@ describe('post-query-fix Ops second batch admission', () => {
     const view = provider.projectMessages(request);
     const liveCalls = retained.entries.filter((m: Message) => m.role === 'assistant').at(-1).tool_calls;
     for (const call of liveCalls) expect(view.filter(m => m.role === 'tool' && m.tool_call_id === call.id)).toHaveLength(1);
-    expect(view.find(m => m.role === 'assistant' && m.tool_calls?.[0].id === liveCalls[0].id)?._extra)
+    expect((view.find(m => m.role === 'assistant' && m.tool_calls?.[0].id === liveCalls[0].id) as any)?._extra)
       .toEqual(retained.entries.filter((m: Message) => m.role === 'assistant').at(-1)._extra);
     manager.assertFits(request);
     // The summary envelope needs positive planning headroom; no context or output cap changes.

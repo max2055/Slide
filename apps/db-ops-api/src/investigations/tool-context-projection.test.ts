@@ -72,3 +72,16 @@ it('post-execution failure projection preserves denial details and all business 
  assert.equal(investigationContextMessages(messages,'system'),messages);
  assert.deepEqual(investigationContextMessages(view,'ops'),view);
 });
+
+it('preserves non-display warnings, nonempty actions, unknown values and even atypical successful denials', async()=>{
+ const {investigationContextMessages}=await import('./executor.js');
+ const values=[
+  {success:true,status:'warning',summary:'A source is missing; this is not healthy',data:{value:null,quality:'unknown',reason:'source_error'},next_actions:['verify source'],artifacts:{reference:'evidence:1'}},
+  {success:true,status:'warning',policyDecision:{allow:false,reasonCode:'DENIED'},data:{padding:'x'.repeat(2000)}},
+  {success:false,status:'error',error:'uncertain; do not replay',data:{state:'unknown',padding:'x'.repeat(2000)}},
+ ];
+ const raw:any[]=values.map((v,i)=>({role:'tool',tool_call_id:`case${i}`,content:JSON.stringify(v)}));
+ const before=JSON.stringify(raw),view=investigationContextMessages(raw,'ops');
+ assert.deepEqual(view.map(m=>JSON.parse(String(m.content))),values);
+ assert.equal(JSON.stringify(raw),before);
+});

@@ -56,11 +56,17 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   if ((result as any).policyDecision?.allow === false) return result;
   if ((result as any).data?.contextReference && (result as any).data?.evidenceOmitted === true) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
-  // Successful data is authoritative evidence, generated UI prose and empty
-  // display envelopes are not. Keep all nonempty actions/artifacts and details.
+  // Generated completion/count labels duplicate structured data; other prose
+  // can contain evidence or a warning and must survive the projection.
   // Failures/denials never enter this branch. Complete receipts remain canonical.
   if (observation.data && typeof observation.data === 'object' && Object.keys(observation.data).length) {
-    delete observation.summary;
+    const summary = observation.summary;
+    const data = observation.data as Record<string, unknown>;
+    const redundant = typeof summary === 'string' && (
+      /^(?:get_instance_summary|get_resource_observations|get_resource_relations) 执行完成$/.test(summary)
+      || (Number.isSafeInteger(data.total) && (summary === `找到 ${data.total} 条活跃告警`
+        || summary === `服务器 #${(observation.details as any)?.server_id} 告警 ${data.total} 条`)));
+    if (redundant) delete observation.summary;
     if (Array.isArray(observation.next_actions) && !observation.next_actions.length) delete observation.next_actions;
     if (observation.artifacts && typeof observation.artifacts === 'object' && !Object.keys(observation.artifacts).length) delete observation.artifacts;
   }
