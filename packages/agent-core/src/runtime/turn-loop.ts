@@ -2,7 +2,7 @@ import { StreamBoundary } from './stream-boundary.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
+import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext, planRequestBudget } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
 import { ModelStep, TimeoutError } from "./model-step.js";
@@ -152,6 +152,7 @@ export class TurnLoop {
         tokens: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state)) : undefined,
       });
       const isAnswerOnly = () => { const left = remainingBudget(); return left.tools === 0 || (left.attempts !== undefined && left.attempts <= 1); };
+      let budgetAnswerOnly = false;
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
       try {
@@ -166,11 +167,41 @@ export class TurnLoop {
           const left = remainingBudget();
           return [...continuation.project([]), ...projectContextBlocks([
             runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
-            ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
+            ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() || budgetAnswerOnly ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
           ])];
         };
-        messagesForModel = manager.project(state.messages, [], manager.inputBudget, false);
-        if (forceCompact || manager.shouldCompact(state.messages, requestSuffix())) {
+        const projectRequest = (view: ContextManager) => {
+          const suffix = requestSuffix();
+          const baseTokens = view.tokens([...view.project(state.messages, suffix, view.inputBudget, 'references'), ...suffix]);
+          const left = remainingBudget().tokens;
+          const limit = Math.min(view.inputBudget, left === undefined ? view.inputBudget : Math.max(baseTokens, left - view.contextConfig.maxTokens));
+          const messages = [...view.project(state.messages, suffix, limit), ...suffix];
+          view.assertFits(messages);
+          return messages;
+        };
+        // A soft watermark must not buy a summary with the last answer attempt
+        // or an unaffordable full-window reservation. Prove the COMPLETE final
+        // request first, including protected history, evidence, suffix and output.
+        // Reactive overflow still requires governance; this is not a retry bypass.
+        let finalFits = false;
+        const tokensLeft = remainingBudget().tokens;
+        const compactNeeded = forceCompact || manager.shouldCompact(state.messages, requestSuffix());
+        if (!forceCompact && (isAnswerOnly() || compactNeeded && tokensLeft !== undefined && tokensLeft < manager.requestReservation())) {
+          const finalView = new ContextManager({ ...spec, tools: new ToolRegistry() }, this.getProvider());
+          finalView.summary = manager.summary;
+          budgetAnswerOnly = true;
+          try {
+            messagesForModel = projectRequest(finalView);
+            const plan = planRequestBudget(finalView, messagesForModel, recovery.state);
+            assertRequestBudget(spec, recovery.state, plan.reservation);
+            manager = finalView;
+            finalFits = true;
+          } catch (error) {
+            budgetAnswerOnly = false;
+            if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET', 'MAX_PROVIDER_ATTEMPTS'].includes(error.code)) throw error;
+          }
+        }
+        if (!finalFits && compactNeeded) {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
           const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
@@ -179,20 +210,13 @@ export class TurnLoop {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact, requestSuffix);
             state.usage = { ...recovery.state.usage };
-            messagesForModel = manager.project(state.messages, [], manager.inputBudget, false);
           }
         }
         forceCompact = false;
-        const suffix = requestSuffix();
-        const baseTokens = manager.tokens([...manager.project(state.messages, suffix, manager.inputBudget, 'references'), ...suffix]);
-        const left = remainingBudget().tokens;
         // Budget includes settled/delegated/unknown usage. Preserve the existing
         // reduced-output path for indispensable context; optional receipts never
         // spend the output allowance or force another summary.
-        const projectionLimit = Math.min(manager.inputBudget, left === undefined ? manager.inputBudget
-          : Math.max(baseTokens, left - manager.contextConfig.maxTokens));
-        messagesForModel = [...manager.project(state.messages, suffix, projectionLimit), ...suffix];
-        manager.assertFits(messagesForModel);
+        messagesForModel = projectRequest(manager);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
         state.usage = { ...recovery.state.usage };
@@ -221,27 +245,18 @@ export class TurnLoop {
       };
       currentContext = context;
       reminder = undefined;
-      let reservation = manager.requestReservation();
-      let requestSpec = spec;
+      let reservation: number;
+      let requestSpec: AgentRunSpec;
       // An explicitly bounded input or nearly spent execution allowance need
       // not buy an entire context window. With no unsettled usage, use the complete
       // conservative input estimate and an affordable output ceiling. The
       // original context cap remains in force; a late hook/schema change must
       // also fit this smaller envelope at the actual provider boundary.
-      if (spec.budgetLimits && recovery.state.unknownRequests === 0) {
-        const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state);
-        if (remaining < reservation || spec.contextBlockLimit !== undefined) {
-          const input = manager.tokens(messagesForModel);
-          const output = Math.min(manager.contextConfig.maxTokens, Math.min(remaining, reservation) - input);
-          if (Number.isSafeInteger(output) && output > 0) {
-            reservation = spec.contextBlockLimit === undefined ? remaining : input + output;
-            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, reservation - output) };
-          }
-        }
-      }
+      try { ({ reservation, spec: requestSpec } = planRequestBudget(manager, messagesForModel, recovery.state)); }
+      catch (error) { stopForBudget(error); break; }
       // Reserve the final ordinary attempt for an answer. Returned tool evidence
       // would require another model request; never execute such a stranded batch.
-      const answerOnly = isAnswerOnly();
+      const answerOnly = isAnswerOnly() || budgetAnswerOnly;
       if (answerOnly) requestSpec = { ...requestSpec, tools: new ToolRegistry() };
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);

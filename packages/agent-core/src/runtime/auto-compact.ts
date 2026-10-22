@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {responseHash, summaryRejection, type SummaryReceipt} from './summary-receipt.js';
-import { assertRequestBudget, assertTokenBudget } from './budget.js';
+import { assertRequestBudget, assertTokenBudget, planRequestBudget } from './budget.js';
+import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMProvider, Message } from '../types.js';
 import { ToolRegistry } from '../tool-registry.js';
 import { ContextManager, sourceHash, prepareMessages, historicalData } from './context-manager.js';
@@ -117,6 +118,7 @@ export async function autoCompact(
       + (summaryByteTarget < 1024 ? ' Use at most one brief phrase per array. Leave arrays empty when redundant with pinned goals, constraints or evidence references. Finish all six fields and closing braces before adding detail.' : '') },
     { role: 'user', content: 'Summarize the following historical data using the required JSON schema.' },
     ...historicalData('summary_source', projectProviderMessages(modelSource, { supportsVision: false, reasoning: 'omit' }), hash),
+    ...projectContextBlocks([runtimeBlock('runtime', currentTime())]),
   ];
   // This request is itself bounded; never send the overflowing original history as a summary prompt.
   const summarySpec: AgentRunSpec = { ...spec, tools: new ToolRegistry(), maxTokens,
@@ -126,7 +128,7 @@ export async function autoCompact(
   summaryManager.assertFits(messages);
   // Zero disables failure retries, not successful lifecycle compaction.
   if ((reactive || recovery.limits.context > 0) && recovery.state.counts.context >= recovery.limits.context) throw new RuntimeError('RECOVERY_LIMIT', 'Compaction failure budget exhausted');
-  const reservation = summaryManager.requestReservation();
+  const { reservation, spec: admittedSummarySpec } = planRequestBudget(summaryManager, messages, recovery.state, false);
   assertRequestBudget(spec, recovery.state, reservation);
   tracker.begin();
   try {
@@ -137,7 +139,7 @@ export async function autoCompact(
     if (spec.signal?.aborted) throw cancellationError(spec.signal);
     const context: AgentHookContext = { iteration: recovery.state.modelSteps, messages, response: null, usage: {}, toolCalls: [], toolResults: [], toolEvents: [], streamedContent: false, streamedReasoning: false, finalContent: null, stopReason: null, error: null };
     const identity = {id:randomUUID(), purpose:'summary' as const, sourceHash:hash};
-    const response = await new ModelStep(provider).request(summarySpec, messages, summaryHook, context, identity);
+    const response = await new ModelStep(provider).request(admittedSummarySpec, messages, summaryHook, context, identity);
     const receipt = { ...identity, responseHash:responseHash(response) };
     for (const key of ['prompt_tokens', 'completion_tokens', 'cached_tokens']) {
       const value = response.usage?.[key];

@@ -89,7 +89,8 @@ export class ContextManager {
   tokens(messages: Message[], tools?: unknown[]): number {
     return this.estimate(messages, tools).tokens;
   }
-  /** Unknown usage reserves the full admitted window, separately from measured usage. */
+  /** Default dispatch envelope. Planning may narrow a new request while all
+   * prior usage is settled; a lost response keeps its admitted envelope. */
   requestReservation(): number {
     // The model window already covers input + output. Do not add output twice.
     return this.contextConfig.contextWindowTokens;
