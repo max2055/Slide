@@ -10,9 +10,10 @@ const Args = z.strictObject({
   instance_id: z.number().int().positive().optional(), resourceType: z.enum(['instance', 'server', 'network_device']).optional(), resourceId: z.number().int().positive().optional(),
   mode: z.enum(['realtime', 'history', 'discover', 'inventory']).default('realtime'),
   metric_ids: z.array(z.string().regex(/^[a-z][a-z0-9_.]{0,127}$/)).min(1).max(32).optional(),
+  series_index: z.number().int().min(0).max(99).optional(),
   from: z.iso.datetime().optional(), to: z.iso.datetime().optional(),
   period: z.enum(['1h', '6h', '24h', '7d']).optional(), interval: z.enum(['1m', '5m', '15m', '1h']).optional(),
-});
+}).refine(a => a.series_index === undefined || (a.metric_ids?.length === 1 && ['realtime', 'history'].includes(a.mode)), 'Series selection requires one explicit metric');
 export function createQueryMetricsTool(service: MetricConsumerService = metricConsumerService, clock = () => new Date().toISOString()): AnyAgentTool {
   return {
     name: 'query_metrics', group: 'db_ops',
@@ -22,6 +23,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
       resourceType: { type: 'string', enum: ['instance', 'server', 'network_device'] }, resourceId: { type: 'number' },
       mode: { type: 'string', enum: ['realtime', 'history', 'discover', 'inventory'] },
       metric_ids: { type: 'array', items: { type: 'string' }, description: '明确 Canonical 或已发现的 Extension ID；不传默认产品核心指标' },
+      series_index: { type: 'integer', minimum: 0, maximum: 99, description: '仅选择一个明确指标的一条维度序列，0起始；响应保留真实dimensions和总序列数' },
       from: { type: 'string', description: 'UTC ISO 窗口起点，与 to 同时指定' }, to: { type: 'string', description: 'UTC ISO 窗口终点（不含）' },
       period: { type: 'string', enum: ['1h', '6h', '24h', '7d'] }, interval: { type: 'string', enum: ['1m', '5m', '15m', '1h'] },
     } },
@@ -49,10 +51,17 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         const from = args.from ?? (args.mode === 'history' ? new Date(Date.parse(to!) - hours * 3600000).toISOString() : undefined);
         const interval = args.interval ?? (args.mode === 'history' ? hours <= 1 ? '1m' : hours <= 6 ? '5m' : hours <= 24 ? '15m' : '1h' : undefined);
         const bucket_ms = interval ? { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 }[interval] : undefined;
-        const data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms });
+        let data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms });
+        let selection: { series_index: number; total_series: number } | undefined;
+        if (args.series_index !== undefined) {
+          const metric = data.metrics[0];
+          if (data.metrics.length !== 1 || !metric || args.series_index >= Math.max(1, metric.series.length)) throw new Error('SERIES_INDEX_UNAVAILABLE');
+          selection = { series_index: args.series_index, total_series: metric.series.length };
+          data = { ...data, metrics: [{ ...metric, series: metric.series.length ? [metric.series[args.series_index]] : [] }] };
+        }
         const complete = data.metrics.length > 0 && data.metrics.every(m => m.state === 'available' && m.series.length > 0
           && m.series.every(s => s.buckets.length > 0 && s.buckets.every(b => b.value !== null && b.quality.status === 'good' && b.freshness === 'fresh' && b.accuracy === 'exact')));
-        return { success: true, status: complete ? 'success' : 'warning', data: { ...data, migrations },
+        return { success: true, status: complete ? 'success' : 'warning', data: { ...data, migrations, ...(selection ? { selection } : {}) },
           summary: complete ? '已获取标准指标，请按定义解释数值' : '指标证据不完整或包含估算，不能据此判断无异常',
           next_actions: complete ? [] : ['检查 capability、attempt、coverage 和 freshness；不要将缺失值补零'] };
       } catch (e) {

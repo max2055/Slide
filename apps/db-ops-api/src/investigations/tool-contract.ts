@@ -8,7 +8,7 @@ const opsDescriptions: Record<string, string> = {
   get_server_alerts: 'Read server alerts; activeOnly defaults true.',
   get_server_metrics: 'Read latest or bounded historical server metrics with freshness and gaps.',
   list_active_alerts: 'Read active database alerts; optional severity and since (ISO time).',
-  query_metrics: 'Read canonical/core metrics by default, with definitions, units, coverage, quality and freshness. Use discover for extensions, then explicit metric_ids; inventory for attributes. from/to are paired UTC bounds, to exclusive. Missing is unknown.',
+  query_metrics: 'Core metrics; discover extensions then metric_ids; inventory attributes. Narrow: one metric_ids entry + series_index + paired UTC from/to (to exclusive), one bucket.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
@@ -21,7 +21,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy. evidenceOmitted means no observation: never infer health or cause from it; narrow the same scoped read with maxRows=1 or limit=1. Canonical references are historical data, not success or replay permission.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted: no observation; never infer health or cause from it. Use schema parameters only. Canonical references never authorize replay.';
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every

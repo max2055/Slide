@@ -48,14 +48,29 @@ const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).dige
  * Keep live Ops batches small enough to leave room for protected history.
  * This cap is a planning limit; ContextManager still enforces final admission.
  */
-export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string): unknown {
+export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string, toolName?: string): unknown {
   if (result === null || typeof result !== 'object' || (result as any).success !== true
     || (result as any).status === 'error') return result;
   const json = JSON.stringify(result);
   if (profile !== 'ops') return json;
   if ((result as any).policyDecision?.allow === false) return result;
-  if ((result as any).data?.contextReference && (result as any).data?.evidenceOmitted === true) return json;
+  if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
+    || (result as any).data?.contextProjection === 'single_metric_v1')) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
+  const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
+  const data = observation.data as Record<string, any> | undefined;
+  // Semantic selection is the bound, not a larger generic byte threshold.
+  // One metric/series/bucket (including null or no series) remains readable with
+  // its complete definition, capability, attempt, quality and audited sources.
+  // The default core profile's unrelated columns add no selected observations.
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && Array.isArray(data.metrics) && data.metrics.length === 1
+    && Array.isArray(data.metrics[0]?.series) && data.metrics[0].series.length <= 1
+    && data.metrics[0].series.every((s: any) => Array.isArray(s.buckets) && s.buckets.length <= 1)) {
+    const { columns: _columns, ...profile } = data.profile ?? {};
+    return JSON.stringify({ ...observation, data: { ...data, profile,
+      contextProjection: 'single_metric_v1', contextReference: reference } });
+  }
   // Generated completion/count labels duplicate structured data; other prose
   // can contain evidence or a warning and must survive the projection.
   // Failures/denials never enter this branch. Complete receipts remain canonical.
@@ -78,14 +93,26 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     // live model batch. All business fields and failure semantics stay exact.
     return compact;
   }
-  return JSON.stringify({ success: true, status: 'warning',
-    data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
-      evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
+  // Preserve warning/recovery metadata even when the observation payload is
+  // omitted. It must never turn into an apparently empty healthy response.
+  const { data: _data, ...metadata } = observation;
+  return JSON.stringify({ ...metadata, status: 'warning',
+    data: { contextReference: reference, evidenceOmitted: true, requiresNarrowerRead: true,
+      ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
+        ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}) } });
 }
 /** Ephemeral model view only. Durable facts and checkpoints retain full results. */
 export function investigationContextMessages(messages: Message[], profile: string): Message[] {
   if (profile !== 'ops') return messages;
+  // Provider normalization can omit the optional tool-message name. Resolve it
+  // from the adjacent assistant call group, never from an unrelated old ID.
+  const names = new Map<string, string>();
   return messages.map(message => {
+    if (message.role !== 'tool') {
+      names.clear();
+      for (const call of message.tool_calls ?? []) names.set(call.id, call.function.name);
+      return message;
+    }
     if (message.name === 'search_case_references') return message;
     if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
     let result: unknown;
@@ -98,7 +125,7 @@ export function investigationContextMessages(messages: Message[], profile: strin
       const { policyDecision: _audit, ...failure } = result as Record<string, unknown>;
       return { ...message, content: JSON.stringify(failure), messageParts: undefined };
     }
-    const content = investigationToolContextResult(result, message.tool_call_id, profile);
+    const content = investigationToolContextResult(result, message.tool_call_id, profile, message.name ?? names.get(message.tool_call_id));
     return typeof content === 'string' && content !== message.content
       ? { ...message, content, messageParts: undefined } : message;
   });

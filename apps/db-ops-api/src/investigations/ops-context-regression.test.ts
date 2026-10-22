@@ -1,3 +1,4 @@
+import {reviewedSqlCatalog} from '../metrics/database/reviewed-sql-catalog.js';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { OpenAIProvider, ToolRegistry, type Message } from '@slide/agent-core';
@@ -9,6 +10,8 @@ import { toolCatalog } from '../tools/catalog.js';
 import '../tools/ops/index.js';
 import '../tools/generated/slide-self-mgmt/resource_tools.js';
 import '../tools/generated/slide-self-mgmt/server_tools.js';
+import {createQueryMetricsTool} from '../tools/ops/query_metrics.js';
+import {admin} from '../metrics/policy/test-support.js';
 
 // Runtime internals are exercised through file URLs, as in the existing
 // projection tests; they are outside the API compiler's rootDir.
@@ -183,4 +186,80 @@ it('compacts and restores three completed batches through the real SDK using onl
     const changed=structuredClone(raw);changed[1].content='changed source';
     expect(()=>manager.project(changed)).toThrow('Summary source no longer matches history');
   } finally {await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
+});
+
+async function sdkReadableMetrics(states:string[]){
+  const {createServer}=await import('node:http');
+  const {autoCompact}=await import(new URL('runtime/auto-compact.js',core).href);
+  const {RecoveryPolicy}=await import(new URL('runtime/recovery-policy.js',core).href);
+  const {RapidRefill}=await import(new URL('runtime/rapid-refill.js',core).href);
+  const retained=JSON.parse(readFileSync(new URL('./fixtures/ops-post-query-fix-20261022.json',import.meta.url),'utf8'));
+  const metricData=JSON.parse(retained.entries.find((m:any)=>m.name==='query_metrics'&&m.role==='tool').content).data;
+  const {raw,spec}=setup(retained), original=JSON.stringify(raw),bodies:any[]=[];
+  const summary={goal:['read observations'],constraints:['read only'],done:[],pending:['check source quality'],evidence:[],uncertain:['unknown is not healthy; never replay']};
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(c);
+    const body=JSON.parse(Buffer.concat(chunks).toString());bodies.push(body);
+    const content=body.tools?.length?'offline only':JSON.stringify(summary);
+    res.setHeader('content-type',body.stream?'text/event-stream':'application/json');
+    const response={id:'local',choices:[{index:0,message:{role:'assistant',content},delta:{content},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:10}};
+    res.end(body.stream?'data: '+JSON.stringify(response)+'\n\ndata: [DONE]\n\n':JSON.stringify(response));
+  });
+  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try{
+    const actual=new OpenAIProvider({apiKey:'offline-unused',model:'deepseek-flash',baseURL:`http://127.0.0.1:${(server.address() as any).port}/v1`});
+    const p:any={getDefaultModel:()=>actual.getDefaultModel(),countPromptTokens:actual.countPromptTokens.bind(actual),
+      projectMessages:(m:Message[])=>investigationContextMessages(actual.projectMessages(m),'ops'),chat:actual.chat.bind(actual),chatStream:actual.chatStream.bind(actual)};
+    const manager=new ContextManager(spec,p),recovery=new RecoveryPolicy(),tracker=new RapidRefill(),saved:any[]=[];
+    const persist=async(record:any)=>{if(record)saved.push(structuredClone(record));};
+    const suffix=projectContextBlocks([runtimeBlock('runtime',currentTime(new Date('2026-10-22T01:05:34Z')))]);
+    await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
+    for(const state of states){
+      const metric=structuredClone(metricData.metrics[state==='capacity'?1:0]),bucket=metric.series[0].buckets[0];
+      if(state==='zero'){
+        // Constructed offline boundary; never attribute this zero to r4 uptime.
+        metric.definition=structuredClone((reviewedSqlCatalog[1] as any).definition);
+        metric.capability={status:'supported',basis:[{kind:'resource',evidence:'offline fixture'}]};metric.attempt=null;
+        bucket.metric={id:metric.definition.id,semantic_version:metric.definition.semantic_version};
+        bucket.unit='count';bucket.value={encoding:'uint64',value:'0'};bucket.sources=[];
+      }else if(state==='stale')bucket.freshness='stale';
+      else if(state==='unknown'||state==='temporary_failure'){
+        metric.state=state;bucket.value=null;bucket.quality={status:'unknown',reason:'source_error'};bucket.accuracy='unknown';bucket.coverage=0;bucket.freshness='unknown';
+        if(state==='temporary_failure')metric.attempt={...metric.attempt,status:'failed',error:'timeout'};
+      }
+      const data={...structuredClone(metricData),metrics:[metric]},tool=createQueryMetricsTool({query:async()=>data} as any);
+      const args={resourceType:'instance',resourceId:1,metric_ids:[metric.definition.id],from:data.window.from,to:data.window.to,series_index:0};
+      const receipt=await tool.handler(args,{actor:admin});expect(receipt.success).toBe(true);
+      const id=`narrow_${state}`;
+      const assistant:Message & {_extra:{reasoning_content:string}}={role:'assistant',content:'read the bounded metric',tool_calls:[{id,type:'function',function:{name:'query_metrics',arguments:JSON.stringify(args)}}],_extra:{reasoning_content:'Retain quality and sources before drawing any conclusion.'}};
+      raw.push(assistant,{role:'tool',name:'query_metrics',tool_call_id:id,content:JSON.stringify(receipt)});
+      tracker.completeBatch();
+      await autoCompact(manager,raw,p,recovery,tracker,persist,false,suffix);
+      const view=[...manager.project(raw),...suffix];manager.assertFits(view);
+      console.info('Offline readable metric admission',state,manager.tokens(view),'/',manager.inputBudget);
+      const restored=new ContextManager(spec,p);restored.summary=structuredClone(saved.at(-1));
+      expect(p.projectMessages([...restored.project(raw),...suffix])).toEqual(p.projectMessages(view));
+      await new ModelStep(p).request(spec,view,spec.hook,{} as any);
+      const wire=bodies.at(-1),result=JSON.parse(wire.messages.find((m:any)=>m.tool_call_id===id).content);
+      expect(result.data.metrics).toEqual([metric]);expect(result.data.evidenceOmitted).not.toBe(true);
+      expect(wire.messages.find((m:any)=>m.tool_calls?.[0]?.id===id).reasoning_content).toBe('Retain quality and sources before drawing any conclusion.');
+      expect(result.data.contextReference.sha256).toBe((await import('@slide/agent-core')).responseHash(receipt));
+      expect(result.summary).toBe(receipt.summary);expect(result.next_actions).toEqual(receipt.next_actions);
+      for(const m of wire.messages.filter((m:any)=>m.role==='assistant'&&m.tool_calls))for(const c of m.tool_calls)expect(wire.messages.filter((r:any)=>r.tool_call_id===c.id)).toHaveLength(1);
+    }
+    expect(JSON.stringify(raw.slice(0,retained.entries.length+retained.users.length+1))).toBe(original);
+    expect(raw.filter(m=>m.role==='tool')).toHaveLength(11+states.length);
+    expect(bodies.filter(b=>b.tools?.length)).toHaveLength(states.length);expect(saved).toHaveLength(1+states.length);
+  }finally{await new Promise<void>((r,j)=>server.close(e=>e?j(e):r()));}
+}
+
+it.each(['uptime','capacity','zero','unknown','temporary_failure','stale'])('sends the %s single-metric observation through the SDK after r4 and durable compaction',async state=>{
+  // Independent boundaries start from complete r4 canonical history.
+  await sdkReadableMetrics([state]);
+});
+it('preserves the rapid-refill stop for repeated narrow-read compactions instead of deleting history or relaxing admission',async()=>{
+  // This is a retained limit, not a six-read success claim. The original failed
+  // exploratory trace is delivered with the evidence. Core protection is unchanged.
+  await expect(sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale']))
+    .rejects.toMatchObject({code:'CONTEXT_RAPID_REFILL'});
 });
