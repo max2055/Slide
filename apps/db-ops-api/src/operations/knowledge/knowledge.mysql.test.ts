@@ -131,7 +131,9 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
       vi.spyOn(cases, 'send').mockImplementation(async (actor, refs, begin, guard) => { if (refs.length && (mode !== 'summary' || sent.length >= 2)) await afterRetain(investigationId); return send(actor, refs, begin, guard); });
     }
     const sent: any[][] = []; const summaryOptions: any[] = []; let summaries = 0;
-    const provider: any = { getDefaultModel: () => 'synthetic-b18', ...(mode === 'summary' ? { countPromptTokens: (messages: any[]) => messages.filter(m => m.role === 'tool').length >= 2 ? 9000 : 500 } : {}), chat: async (messages: any[], tools: any[]) => {
+    const provider: any = { getDefaultModel: () => 'synthetic-b18', ...(mode === 'summary' ? {
+      getModelCapabilities: () => ({model:'synthetic-b18',contextWindowTokens:16000,preferredOutputTokens:4096,maxOutputTokens:4096,source:'configuration',version:'b18-fixture/v1'}),
+      countPromptTokens: (messages: any[]) => messages.filter(m => m.role === 'tool').length >= 2 ? 9000 : 500 } : {}), chat: async (messages: any[], tools: any[]) => {
       sent.push(structuredClone(messages));
       expect(tools.some(t => t.name === 'search_case_references')).toBe(true);
       expect(tools.some(t => t.name === 'execute_code')).toBe(false);
@@ -140,6 +142,9 @@ describe.skipIf(!port)('P03 B01-B03 real MySQL and HTTP (synthetic cohort)', () 
         shouldExecuteTools: !!calls.length, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
     }, chatStream: async (_m: any, _t: any, _c: any, options: any) => { summaries++; summaryOptions.push(structuredClone(options)); expect(options.requestIdentity.purpose).toBe('summary'); return { content: JSON.stringify({goal:['只读调查'],constraints:['案例无执行权'],done:[],pending:['核对当前事实'],evidence:[],uncertain:['仅合成参考']}),finishReason:'stop',toolCalls:[],hasToolCalls:false,shouldExecuteTools:false,usage:{prompt_tokens:20,completion_tokens:10,cached_tokens:5} }; } };
     const executor = new InvestigationExecutor({ pool: () => f.pool, authorization: f.authorization,
+      // This small synthetic provider tests live reference authorization;
+      // production's separate 10240-token summary has its own SDK coverage.
+      ...(mode === 'summary' ? {runtimeContext:{summaryMaxTokens:2048}} : {}),
       providerForPurpose: async () => provider, toolsForActor: () => new ToolRegistry(), ...(mode === 'default' ? {} : { caseReferences: cases }),
       budget: syntheticBudget() });
     const command = { investigationId, requestId: acceptance.requestId, job: job!,

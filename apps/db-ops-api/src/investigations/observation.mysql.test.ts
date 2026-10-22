@@ -364,6 +364,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
   it.each(['normal', 'crash-after-guard', 'crash-after-returned-error'])('continues after per-call errors and retains only the eventual Run limit: %s', async mode => {
     let calls = 0, toolCalls = 0;
     const provider: LLMProvider = { getDefaultModel: () => 'controlled-guard-regression',
+      getModelCapabilities: () => ({model:'controlled-guard-regression',contextWindowTokens:32768,preferredOutputTokens:4096,maxOutputTokens:4096,source:'configuration',version:'guard-fixture/v1'}),
       chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
       chat: async () => { calls++; return { content: null, finishReason: 'tool_calls',
         toolCalls: [{ id: `guard-${calls}`, name: 'get_instance_summary', arguments: { instance_id: calls <= 6 ? 101 : 102 } }],
@@ -373,6 +374,9 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       execute: async () => { toolCalls++; return mode === 'crash-after-returned-error' && toolCalls === 1
         ? 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' : { success: true, summary: calls > 6 ? '后续检查成功' : '前序检查成功' }; } });
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
+      // Exercise the Run fuse independently of context compaction, including
+      // the additional durable error receipt on the recovery path.
+      runtimeContext: {contextWindowTokens:32768,summaryMaxTokens:2048},
       toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
     if (mode !== 'normal') {
       const control = new AbortController(), persist = (executor as any).persistCheckpoint.bind(executor);
