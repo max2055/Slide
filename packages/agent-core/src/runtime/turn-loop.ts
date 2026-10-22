@@ -549,7 +549,7 @@ export class TurnLoop {
         rejected.id = context.messageId;
         await emitCheckpoint(spec, { phase: 'rejected_final_response', iteration, model: spec.model,
           assistantMessage: rejected, completedToolResults: [], pendingToolCalls: [],
-          model_response_v1: { messageId: context.messageId, responseHash: responseHash(response),
+          model_response_v1: { messageId: context.messageId, sourceRequestId: context.sourceRequestId, inputHash: context.providerInputHash, responseHash: responseHash(response),
             status: 'rejected', reasonCode: 'OUTPUT_LIMIT' }, terminal_resolution: state.resolution });
         context.finalContent = state.finalContent;
         context.stopReason = state.stopReason;

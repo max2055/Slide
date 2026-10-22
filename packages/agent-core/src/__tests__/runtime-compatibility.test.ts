@@ -24,9 +24,12 @@ const scenarios = [
 // MAX-99 request-only time is covered by context-authority tests. Strip only
 // that new frame and reminder provenance when comparing the frozen legacy API.
 const copy = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => {
-  // S2 metadata has dedicated persistence/epoch assertions; legacy traces exclude it.
-  if (['messageParts', 'streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
+  // S2 and B9 request-hash metadata have dedicated persistence/identity assertions; legacy traces exclude them.
+  if (['messageParts', 'providerInputHash', 'streamAttempt', 'sourceRequestId', 'provisionalBytes', 'streamReset', 'checkpoint_id', 'stream_state_v1', 'context_estimate_v1', 'context_config_v1'].includes(key)) return undefined;
   if ((key === 'id' || key === 'messageId') && typeof item === 'string' && item.startsWith('model_')) return undefined;
+  // The admitted input includes request-only current time; verify the actual
+  // hash in B9 persistence tests and normalize only its nondeterministic value.
+  if (key === 'model_response_v1') return { ...item, inputHash: '<admitted-input-sha256>' };
   if (Array.isArray(item)) return item.filter(m => !(m?.source === 'runtime' && String(m.content).startsWith('Current Time:')));
   if (item?.source === 'runtime') { const { source: _source, ...rest } = item; return rest; }
   return item;

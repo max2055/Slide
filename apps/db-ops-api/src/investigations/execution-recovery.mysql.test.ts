@@ -222,6 +222,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       analysisAnswer?: boolean;
       finalContent?: string;
       outputLength?: boolean;
+      knownResponse?: any;
     } = {},
   ) {
     providerCalls = 0;
@@ -230,7 +231,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       getDefaultModel: () => 'readonly-fixture',
       getModelCapabilities: () => ({
         model: 'readonly-fixture',
-        contextWindowTokens: options.zeroSend ? 5121 : 32768,
+        contextWindowTokens: options.zeroSend ? 5121 : options.knownResponse ? 1048576 : 32768,
+        ...(options.knownResponse ? {maxOutputTokens: 393216} : {}),
         preferredOutputTokens: 4096,
         source: 'configuration',
         version: 'fixture/v1',
@@ -238,6 +240,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       chat: async () => {
         providerCalls++;
         await options.beforeProvider?.();
+        if (options.knownResponse) return structuredClone(options.knownResponse);
         return {
           content: providerCalls === 1 && options.toolCalls !== false ? null : options.finalContent ?? (options.analysisAnswer ? JSON.stringify({
             analysisVersion: 1, summary: '只读检查完成，根因未验证。',
@@ -276,6 +279,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     });
     return new InvestigationExecutor({
       pool: () => pool,
+      ...(options.knownResponse ? { runtimeContext: {contextWindowTokens: 65536, maxTokens: 8192, summaryMaxTokens: 10240} } : {}),
       authorization: new InvestigationAuthorization(contexts),
       providerForPurpose: async () => provider,
       toolsForActor: () => tools,
@@ -1160,13 +1164,13 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
     const original = b9.finalResponse.content;
     expect(() => JSON.parse(original)).toThrow();
-    const executor = fixture({ toolCalls: false, outputLength: true, finalContent: original });
+    const executor = fixture({ knownResponse: b9.finalResponse });
     const result = await execute(executor);
     expect(result.state).toBe('partial');
     expect(result.error).toMatchObject({ reasonCode: 'OUTPUT_LIMIT' });
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
     const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
-    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: b9.finalResponse.usage.prompt_tokens + b9.finalResponse.usage.completion_tokens });
     const [saved] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
     expect(saved.result_json.investigationExecution.provider).toBeNull();
     expect(saved.result_json.investigationExecution.lastProviderReceipt).toMatchObject({
@@ -1180,7 +1184,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
   });
-  it.each(['hash','message','content','sent','usage','request','source','summary','lease','fence','acl'])(
+  it.each(['hash','message','content','sent','usage','request','source','source-id','summary','lease','fence','acl'])(
     'length receipt refuses %s and retains unknown/no-replay protection', async fault => {
       const executor: any = fixture({ toolCalls: false, outputLength: true, finalContent: '{"analysisVersion":1' });
       const persist = executor.persistCheckpoint.bind(executor);
@@ -1190,6 +1194,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
           changed = true;
           if (fault === 'hash') payload.model_response_v1.responseHash = '0'.repeat(64);
           if (fault === 'message') payload.model_response_v1.messageId = 'model-other';
+          if (fault === 'source-id') payload.model_response_v1.sourceRequestId = randomUUID();
           if (fault === 'content') payload.assistantMessage.content = 'not the original';
           if (['sent','usage','request','source','summary'].includes(fault)) {
             const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
@@ -1197,7 +1202,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
             if (fault === 'sent') state.provider.status = 'sent';
             if (fault === 'usage') state.usageUnknown = true;
             if (fault === 'request') state.requestId = randomUUID();
-            if (fault === 'source') state.provider.inputHash = 'invalid';
+            if (fault === 'source') state.provider.inputHash = '0'.repeat(64);
             if (fault === 'summary') state.provider.purpose = 'summary';
             await pool.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(run.result_json), binding.runId]);
           }
@@ -1215,6 +1220,15 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       expect(run.result_json.investigationExecution.lastProviderReceipt).toBeUndefined();
       expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe(['lease','fence'].includes(fault) ? 'sent' : 'unknown');
     });
+  it('does not settle a length response with unknown actual usage', async () => {
+    const result = await execute(fixture({ toolCalls: false, outputLength: true, missingUsage: true, finalContent: '{"analysisVersion":1' }));
+    expect(result.error).toMatchObject({ reasonCode: 'INVESTIGATION_PROVIDER_UNKNOWN' });
+    expect(providerCalls).toBe(1);
+    const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(run.result_json.investigationExecution.provider.status).toBe('received');
+    expect(run.result_json.investigationExecution.lastProviderReceipt).toBeUndefined();
+    expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe('unknown');
+  });
   it('persists completed model analysis with exact execution evidence through SQL and replay', async () => {
     const executor = fixture({ analysisAnswer: true });
     const result = await execute(executor);

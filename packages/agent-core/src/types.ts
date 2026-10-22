@@ -156,6 +156,8 @@ export interface AgentHookContext {
   iteration: number;
   streamAttempt?: number;
   sourceRequestId?: string;
+  /** Hash of the admitted Provider messages/tools at the actual dispatch boundary. */
+  providerInputHash?: string;
   provisionalBytes?: { text: number; reasoning: number; tool: number };
   streamReset?: import('./runtime/stream-boundary.js').StreamReset;
   messages: Message[];

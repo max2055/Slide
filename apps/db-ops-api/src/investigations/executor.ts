@@ -255,7 +255,7 @@ interface ExecutionState {
   reservedTokens: number;
   usage: BudgetUsage;
   usageUnknown: boolean;
-  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
+  provider: { id: string; inputHash: string; messageId: string | null; sourceRequestId?: string; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
   lastSummaryReceipt?: unknown;
   lastProviderReceipt?: unknown;
   provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
@@ -748,6 +748,7 @@ export class InvestigationExecutor {
           ...(identity.routeVersion === 'unavailable' ? {} : { routeVersion: identity.routeVersion }) };
       });
       let modelMessageId: string | undefined;
+      let modelSourceRequestId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
         if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
@@ -760,7 +761,7 @@ export class InvestigationExecutor {
           receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           if (s.provenance && !s.provenance.inputHash) s.provenance.inputHash = hash(input);
-          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
+          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), ...(identity ? {} : {sourceRequestId: modelSourceRequestId}), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
         // turns. Only the Run's durable terminal receipt may release it.
@@ -962,6 +963,7 @@ export class InvestigationExecutor {
       const hook = new NoopHook();
       hook.beforeIteration = async (ctx) => {
         modelMessageId = ctx.messageId;
+        modelSourceRequestId = ctx.sourceRequestId;
       };
       const result = await new AgentRunner(provider).run({
         runtimeRunId: run.id,
@@ -1159,7 +1161,12 @@ export class InvestigationExecutor {
           // This transaction already proved the live actor, original request,
           // Run/session/turn and lease/fence. A hash-bound raw length receipt is
           // additionally required: a received flag alone never permits refund.
-          if (provider.purpose || provider.status !== 'received' || !provider.response || !usageOf(provider.response)
+          if (state.schemaVersion !== 1 || state.requestId !== binding.requestId || state.jobId !== binding.jobId
+            || state.fencingToken !== binding.fencingToken || !uuid.test(provider.id)
+            || !/^[a-f0-9]{64}$/.test(provider.inputHash) || receipt?.inputHash !== provider.inputHash
+            || !provider.sourceRequestId || receipt.sourceRequestId !== provider.sourceRequestId
+            || (payload.stream_state_v1 as any)?.sourceRequestId !== provider.sourceRequestId
+            || provider.purpose || provider.status !== 'received' || !provider.response || !usageOf(provider.response)
             || state.usageUnknown || !provider.messageId || receipt?.messageId !== provider.messageId
             || candidate?.id !== provider.messageId || candidate.role !== 'assistant'
             || candidate.content !== provider.response.content || candidate.tool_calls?.length || provider.response.toolCalls.length
@@ -1170,7 +1177,7 @@ export class InvestigationExecutor {
             || canonicalReceiptHash(provider.response) !== receipt.responseHash) throw Error('INVESTIGATION_PROVIDER_UNKNOWN');
           state.lastProviderReceipt = { ...provider, ...receipt, response: provider.response };
           state.provider = null;
-          await c.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(result), binding.runId]);
+          await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
       }
       if (['awaiting_tools', 'tools_completed', 'final_response', 'rejected_tool_batch'].includes(String(payload.phase))) {
