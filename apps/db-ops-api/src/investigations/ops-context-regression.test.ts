@@ -272,3 +272,7 @@ it('preserves the rapid-refill stop for repeated narrow-read compactions instead
 it('sends six consecutive readable observations with the production planning predicate in the verified task window',async()=>{
   await sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],32768);
 });
+it('retains the 16k production-predicate failure rather than treating the configured window as a guard bypass',async()=>{
+  await expect(sdkReadableMetrics(['uptime','capacity','zero','unknown','temporary_failure','stale'],16000))
+    .rejects.toMatchObject({code:'CONTEXT_RAPID_REFILL'});
+});
