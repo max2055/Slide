@@ -11,7 +11,7 @@ const toolReply = (): LLMResponse => ({ ...reply(), content: null, finishReason:
 
 function fixture(attempts = 0, compact = false) {
   const tools = new ToolRegistry(), execute = vi.fn(async () => 'evidence');
-  tools.register({ name: 'read', description: 'Read evidence', parameters: { type: 'object', properties: {} }, readOnly: true, execute });
+  tools.register({ name: 'read', description: 'Read evidence', parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute });
   const recovery = new RecoveryPolicy();
   recovery.state.providerAttempts = attempts;
   const raw: Message[] = [{ role: 'system', content: 'Read only.' }, { role: 'user', content: 'Inspect and report uncertainty.' }];
@@ -101,4 +101,28 @@ it('preserves input growth rejection after recomputing the suffix', async () => 
   expect(f.requests).toHaveLength(0);
   expect(f.saved.at(-1).context_summary_v1).toBeDefined();
   expect(() => new ContextManager(f.spec).assertFits(f.raw)).not.toThrow();
+});
+
+it('cannot spend an unsettled token reservation on the final answer', async () => {
+  const f = fixture(7);
+  const recovery = new RecoveryPolicy(f.spec.resumeCheckpoint!.runtime_state_v1);
+  recovery.state.unknownRequests = 1; recovery.state.reservedTokens = 127999;
+  f.spec.resumeCheckpoint = { runtime_state_v1: recovery.snapshot() };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(f.requests).toHaveLength(0);
+  expect(result.resolution).toMatchObject({ kind: 'partial', reasonCode: 'TOKEN_BUDGET' });
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 7, unknownRequests: 1, reservedTokens: 127999 });
+});
+
+it('keeps unknown final-answer usage reserved and cannot send again after restart', async () => {
+  const f = fixture(7), chat = vi.fn(async () => ({ ...toolReply(), usage: {} }));
+  f.provider.chat = chat;
+  const first = await new AgentRunner(f.provider).run(f.spec);
+  expect(first.resolution?.reasonCode).toBe('MAX_PROVIDER_ATTEMPTS');
+  expect(f.execute).not.toHaveBeenCalled();
+  expect(first.runtimeState).toMatchObject({ providerAttempts: 8, unknownRequests: 1, reservedTokens: 15000 });
+  const second = await new AgentRunner(f.provider).run({ ...f.spec, resumeCheckpoint: { runtime_state_v1: first.runtimeState } });
+  expect(second.resolution?.reasonCode).toBe('MAX_PROVIDER_ATTEMPTS');
+  expect(chat).toHaveBeenCalledTimes(1);
+  expect(second.runtimeState).toMatchObject({ providerAttempts: 8, unknownRequests: 1, reservedTokens: 15000 });
 });

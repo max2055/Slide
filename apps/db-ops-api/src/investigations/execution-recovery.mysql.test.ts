@@ -1171,6 +1171,42 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     await execute(executor);
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
   });
+  it.each(['answer', 'tools'] as const)('persists the final attempt %s through the actual executor and fresh recovery without a ninth send', async mode => {
+    const executor = fixture(), provider = await (executor as any).options.providerForPurpose('fault_diagnosis');
+    // Exercise attempt exhaustion independently of the default 16k context
+    // boundary; this verified fixture capacity does not change product limits.
+    (executor as any).options.runtimeContext = { contextWindowTokens: 32768, maxTokens: 4096, summaryMaxTokens: 2048 };
+    provider.chat = async (messages: any[], definitions: any[]) => {
+      providerCalls++;
+      const final = providerCalls === 8;
+      if (final) {
+        expect(definitions).toEqual([]);
+        expect(messages.some(m => String(m.content).includes('remainingProviderAttempts=1'))).toBe(true);
+      }
+      const answer = final && mode === 'answer';
+      return { content: answer ? JSON.stringify({ analysisVersion: 1, summary: '只读证据不足，根因未验证。',
+        claims: [{ statement: '已取得只读检查回执。', supportingToolCallIds: ['budget-read-1'], contradictingToolCallIds: [] }],
+        hypotheses: [], unresolvedQuestions: ['仍缺充分观测。'], recommendations: [] }) : null,
+        finishReason: answer ? 'stop' : 'tool_calls', toolCalls: answer ? [] : [{ id: `budget-read-${providerCalls}`, name: 'get_instance_summary', arguments: { instance_id: providerCalls % 2 ? 101 : 103 } }],
+        hasToolCalls: !answer, shouldExecuteTools: !answer, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
+    };
+    const result = await execute(executor);
+    expect(result.state).toBe(mode === 'answer' ? 'completed' : 'partial');
+    if (mode === 'tools') expect(result.error).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
+    expect(providerCalls).toBe(8); expect(toolCalls).toBe(7);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 240 });
+    const evidence = await rows('SELECT id FROM investigation_evidence WHERE run_id=?', [binding.runId]);
+    expect(evidence).toHaveLength(7);
+    const [saved] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(saved.result_json.claims).toHaveLength(mode === 'answer' ? 1 : 0);
+    await retainLengthEvidence('budget-final-' + mode, { result, allocation, evidence });
+    const restarted = fixture();
+    await execute(restarted);
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(saved);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+  });
   it('settles a metered length terminal through core checkpoint, durable result and a fresh executor without replay', async () => {
     const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
     const original = b9.finalResponse.content;

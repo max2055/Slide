@@ -409,7 +409,12 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     const provider: LLMProvider = { getDefaultModel: () => 'controlled-guard-regression',
       getModelCapabilities: () => ({model:'controlled-guard-regression',contextWindowTokens:32768,preferredOutputTokens:4096,maxOutputTokens:4096,source:'configuration',version:'guard-fixture/v1'}),
       chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
-      chat: async () => { calls++; return { content: null, finishReason: 'tool_calls',
+      chat: async (messages, definitions) => { calls++;
+        if (calls === 8) {
+          expect(definitions).toEqual([]);
+          expect(messages.some(m => String(m.content).includes('remainingProviderAttempts=1'))).toBe(true);
+        }
+        return { content: null, finishReason: 'tool_calls',
         toolCalls: [{ id: `guard-${calls}`, name: 'get_instance_summary', arguments: { instance_id: calls <= 6 ? 101 : 102 } }],
         hasToolCalls: true, shouldExecuteTools: true, usage: { prompt_tokens: 20, completion_tokens: 10 } }; } };
     const tools = new ToolRegistry(); tools.register({ name: 'get_instance_summary', description: 'Controlled read',
@@ -441,14 +446,14 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     }
     const terminal = await executor.execute(completionCommand());
     expect(terminal.state).toBe('partial');
-    expect(terminal.error).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    expect(terminal.error).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
     const saved = (await results.list(owner, inv.id)).items[0].result;
-    expect(saved.execution).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    expect(saved.execution).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
     expect(saved.summary).toContain('运行限制');
     expect(saved.facts.map(f => f.statement).join()).not.toContain('执行已停止');
     expect(saved.facts.map(f => f.statement).join()).toContain('后续检查成功');
-    expect(saved.facts).toHaveLength(8);
-    expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 8 : 7);
+    expect(saved.facts).toHaveLength(7);
+    expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 7 : 6);
     await executor.execute(completionCommand()); expect(calls).toBe(8);
   });
   it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {
