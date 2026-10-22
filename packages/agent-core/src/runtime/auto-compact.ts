@@ -61,10 +61,10 @@ export async function autoCompact(
   manager: ContextManager, raw: Message[], provider: LLMProvider, recovery: RecoveryPolicy, tracker: RapidRefill,
   persist: (record?: SummaryRecord, compactState?: ReturnType<RapidRefill['snapshot']>, receipt?: SummaryReceipt) => Promise<void>,
   reactive = false,
-  requestSuffix: Message[] = [],
+  requestSuffix: Message[] | (() => Message[]) = [],
 ): Promise<void> {
   const spec = manager.spec;
-  const requestView = (messages: Message[]) => [...messages, ...requestSuffix];
+  const requestView = (messages: Message[]) => [...messages, ...(typeof requestSuffix === 'function' ? requestSuffix() : requestSuffix)];
   if (spec.signal?.aborted) throw cancellationError(spec.signal);
   if (!spec.checkpointCallback) throw new RuntimeError('SUMMARY_PERSISTENCE_REQUIRED', 'Compaction requires durable checkpoint persistence');
   const { end, pins, retained } = manager.split(raw);

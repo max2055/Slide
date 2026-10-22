@@ -146,9 +146,12 @@ export class TurnLoop {
         stopForBudget(new RuntimeError('NO_PROGRESS', 'No material progress within the progress budget')); break;
       }
       state = transition(state, "model_running");
-      const remainingToolCalls = spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxToolCalls - recovery.state.toolCalls - (recovery.state.delegated?.toolCalls ?? 0)) : undefined;
-      const remainingProviderAttempts = spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxProviderAttempts - recovery.state.providerAttempts - (recovery.state.delegated?.providerAttempts ?? 0)) : undefined;
-      const answerOnly = remainingToolCalls === 0;
+      const remainingBudget = () => ({
+        tools: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxToolCalls - recovery.state.toolCalls - (recovery.state.delegated?.toolCalls ?? 0)) : undefined,
+        attempts: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxProviderAttempts - recovery.state.providerAttempts - (recovery.state.delegated?.providerAttempts ?? 0)) : undefined,
+        tokens: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state)) : undefined,
+      });
+      const isAnswerOnly = () => { const left = remainingBudget(); return left.tools === 0 || (left.attempts !== undefined && left.attempts <= 1); };
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
       try {
@@ -156,14 +159,18 @@ export class TurnLoop {
           manager = new ContextManager({ ...spec, checkpointCallback: saveCheckpoint }, this.getProvider());
           if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
-        // Capture one request-only suffix for planning, compaction validation
-        // and dispatch. It must not enter durable facts or summary source hashes.
-        const requestSuffix = [...continuation.project([]), ...projectContextBlocks([
-          runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
-          ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${remainingToolCalls}; remainingProviderAttempts=${remainingProviderAttempts}. ${answerOnly ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; finish before the budget is exhausted.'}`)] : []),
-        ])];
+        // Summary requests consume the same allowance as ordinary requests.
+        // Rebuild this request-only view after settlement/persistence as well as
+        // for planning; never put its clock or budget into canonical source hashes.
+        const requestSuffix = () => {
+          const left = remainingBudget();
+          return [...continuation.project([]), ...projectContextBlocks([
+            runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
+            ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
+          ])];
+        };
         messagesForModel = manager.project(state.messages);
-        if (forceCompact || manager.shouldCompact(state.messages, requestSuffix)) {
+        if (forceCompact || manager.shouldCompact(state.messages, requestSuffix())) {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
           const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
@@ -176,11 +183,12 @@ export class TurnLoop {
           }
         }
         forceCompact = false;
-        messagesForModel = [...messagesForModel, ...requestSuffix];
+        messagesForModel = [...messagesForModel, ...requestSuffix()];
         manager.assertFits(messagesForModel);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
         state.usage = { ...recovery.state.usage };
+        if (error.code === 'MAX_PROVIDER_ATTEMPTS' || error.code === 'TOKEN_BUDGET') { stopForBudget(error); break; }
         state.runtimeError = error;
         state.stopReason = error.code === 'MODEL_REQUEST_TIMEOUT' || error.code === 'MODEL_IDLE_TIMEOUT' ? 'timed_out' : 'error'; state.error = error.message;
         state.finalContent = safeContent + continuation.content;
@@ -223,8 +231,9 @@ export class TurnLoop {
           }
         }
       }
-      // With no tool allowance left, offer an answer request. Original request,
-      // usage and tool guards remain; a provider that still emits tools is refused.
+      // Reserve the final ordinary attempt for an answer. Returned tool evidence
+      // would require another model request; never execute such a stranded batch.
+      const answerOnly = isAnswerOnly();
       if (answerOnly) requestSpec = { ...requestSpec, tools: new ToolRegistry() };
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
@@ -298,7 +307,10 @@ export class TurnLoop {
 
       // ── Tool execution path ──
       if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
-        try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) {
+        try {
+          assertToolBudget(spec, recovery.state, response.toolCalls.length);
+          if (answerOnly) throw new RuntimeError('MAX_PROVIDER_ATTEMPTS', 'Final answer request cannot admit another tool batch');
+        } catch (error) {
           stopForBudget(error);
           // The provider returned successfully, but none of this batch was
           // admitted. Persist that exact boundary so consumers can acknowledge
