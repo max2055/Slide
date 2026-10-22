@@ -170,10 +170,11 @@ export class TurnLoop {
             ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() || budgetAnswerOnly ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
           ])];
         };
-        const projectRequest = (view: ContextManager) => {
+        const projectRequest = (view: ContextManager, keepTokens = 0) => {
           const suffix = requestSuffix();
           const baseTokens = view.tokens([...view.project(state.messages, suffix, view.inputBudget, 'references'), ...suffix]);
-          const left = remainingBudget().tokens;
+          const balance = remainingBudget().tokens;
+          const left = balance === undefined ? undefined : Math.max(0, balance - keepTokens);
           const limit = Math.min(view.inputBudget, left === undefined ? view.inputBudget : Math.max(baseTokens, left - view.contextConfig.maxTokens));
           const messages = [...view.project(state.messages, suffix, limit), ...suffix];
           view.assertFits(messages);
@@ -217,6 +218,51 @@ export class TurnLoop {
         // reduced-output path for indispensable context; optional receipts never
         // spend the output allowance or force another summary.
         messagesForModel = projectRequest(manager);
+        // A tool-bearing reply requires another ordinary request to interpret
+        // its receipts. Do not spend a currently reachable answer on optional
+        // reads when its complete input cannot also leave room for even the
+        // CURRENT protected answer and positive output on both requests.
+        // Future receipts may grow further; this necessary capacity check is
+        // not a promise that arbitrary tool/model output will fit.
+        // Cover the transition where an ordinary request still reserves a full
+        // window, leaving less than an answer's output allowance. Larger balances
+        // retain normal planning; below a window the settled reduced-envelope
+        // planner already applies. Do not reserve two full requests every turn.
+        if (spec.budgetLimits && !budgetAnswerOnly && !isAnswerOnly()
+          && remainingBudget().tokens! >= manager.requestReservation()
+          && remainingBudget().tokens! < manager.requestReservation() + manager.contextConfig.maxTokens
+          && recovery.state.unknownRequests === 0 && recovery.state.reservedTokens === 0) {
+          const answerView = new ContextManager({ ...spec, tools: new ToolRegistry() }, this.getProvider());
+          answerView.summary = manager.summary;
+          budgetAnswerOnly = true;
+          try {
+            const suffix = requestSuffix();
+            const protectedAnswer = [...answerView.project(state.messages, suffix, answerView.inputBudget, 'references'), ...suffix];
+            const protectedInput = answerView.tokens(protectedAnswer);
+            const futureMinimum = protectedInput + 1;
+            const balance = remainingBudget().tokens!;
+            // Optional whole observations may yield capacity first. Their
+            // IDs/hash/valuesProvided=false stay in the protected index.
+            budgetAnswerOnly = false;
+            const ordinary = projectRequest(manager, futureMinimum);
+            // This is a feasibility floor, not a reservation or measured usage.
+            // Do not assume a future summary will shrink the protected input.
+            // Actual output and future receipts remain independently bounded
+            // and can still make the subsequent request unaffordable.
+            const ordinaryMinimum = manager.tokens(ordinary) + 1;
+            if (ordinaryMinimum + futureMinimum > balance) {
+              budgetAnswerOnly = true;
+              const answer = projectRequest(answerView);
+              const plan = planRequestBudget(answerView, answer, recovery.state);
+              assertRequestBudget(spec, recovery.state, plan.reservation);
+              manager = answerView;
+              messagesForModel = answer;
+            } else messagesForModel = ordinary;
+          } catch (error) {
+            budgetAnswerOnly = false;
+            if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET', 'MAX_PROVIDER_ATTEMPTS'].includes(error.code)) throw error;
+          }
+        }
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
         state.usage = { ...recovery.state.usage };
