@@ -64,7 +64,7 @@ async function finalRequest(violate = false) {
     expect(bodies).toHaveLength(1);
     expect(bodies[0].tools ?? []).toEqual([]);
     expect(bodies[0].messages[0].content).toBe(fixture.wire.messages[0].content);
-    expect(bodies[0].messages.some((m: any) => m.tool_call_id === raw.at(-1)!.tool_call_id && m.content.includes('inventory'))).toBe(true);
+    expect(bodies[0].messages.some((m: any) => m.tool_call_id === raw.at(-1)!.tool_call_id && m.content.includes('resource_configuration'))).toBe(true);
     expect(bodies[0].messages.some((m: any) => m.content?.includes('remainingProviderAttempts=1'))).toBe(true);
     expect(bodies[0].messages.some((m: any) => m.content?.includes(JSON.stringify(record.summary)))).toBe(true);
     for (const m of bodies[0].messages) for (const call of m.tool_calls ?? []) expect(bodies[0].messages.filter((r: any) => r.tool_call_id === call.id)).toHaveLength(1);

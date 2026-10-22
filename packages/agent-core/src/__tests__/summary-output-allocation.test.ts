@@ -66,7 +66,7 @@ it.each(['output','window','unknown','fallback','budget'])('rejects insufficient
   if(kind==='unknown')f.provider.getModelCapabilities=()=>undefined;
   if(kind==='fallback')f.provider.getModelCapabilities=model=>({...original(model)!,source:'conservative-fallback'});
   if(kind==='window')f.spec.contextWindowTokens=12000;
-  if(kind==='budget')f.spec.budgetLimits={maxTotalTokens:65535,maxProviderAttempts:6,maxToolCalls:8,maxNoProgressSteps:6};
+  if(kind==='budget')f.spec.budgetLimits={maxTotalTokens:10240,maxProviderAttempts:6,maxToolCalls:8,maxNoProgressSteps:6};
   await expect(f.run()).rejects.toBeDefined();expect(f.bodies).toHaveLength(0);
   expect(f.recovery.state.providerAttempts).toBe(0);expect(f.recovery.state.unknownRequests).toBe(0);
   expect(f.manager.summary).toBeUndefined();
@@ -86,4 +86,37 @@ it.each(['length','invalid-json'])('continues to reject %s despite larger output
   expect(f.bodies).toHaveLength(1);expect(f.bodies[0].max_tokens).toBe(10240);
   expect(f.receipts[0].receipt.status).toBe('rejected');expect(f.manager.summary).toBeUndefined();
   expect(f.recovery.state.unknownRequests).toBe(0);
+});
+
+
+it('admits a complete 10240 summary within actual remaining tokens and settles its narrower envelope', async () => {
+  const f = fixture();
+  f.spec.budgetLimits = { maxTotalTokens: 30000, maxProviderAttempts: 6, maxToolCalls: 8, maxNoProgressSteps: 6 };
+  await f.run();
+  expect(f.bodies).toHaveLength(1); expect(f.bodies[0].max_tokens).toBe(10240);
+  expect(f.reservations.some(n => n > 10240 && n <= 30000)).toBe(true);
+  expect(f.recovery.state).toMatchObject({ providerAttempts: 1, unknownRequests: 0, reservedTokens: 0 });
+  expect(f.manager.summary).toBeDefined();
+});
+
+it.each(['unknown', 'inflight', 'delegated', 'lost'])('preserves %s allocation during summary planning and recovery', async kind => {
+  const f = fixture();
+  f.spec.budgetLimits = { maxTotalTokens: 30000, maxProviderAttempts: 6, maxToolCalls: 8, maxNoProgressSteps: 6 };
+  if (kind === 'unknown') { f.recovery.state.unknownRequests = 1; f.recovery.state.reservedTokens = 100; }
+  if (kind === 'inflight') f.recovery.state.reservedTokens = 100;
+  if (kind === 'delegated') f.recovery.state.delegated = { modelSteps: 1, providerAttempts: 1, toolCalls: 1, tokens: 25000 };
+  if (kind === 'lost') f.loseResponse();
+  const before = structuredClone(f.recovery.state);
+  await expect(f.run()).rejects.toBeDefined();
+  if (kind === 'lost') {
+    expect(f.bodies).toHaveLength(1);
+    expect(f.recovery.state.unknownRequests).toBe(1);
+    expect(f.recovery.state.reservedTokens).toBeGreaterThan(10240);
+    const reserved = f.recovery.state.reservedTokens;
+    await expect(f.run()).rejects.toBeDefined();
+    expect(f.bodies).toHaveLength(1); expect(f.recovery.state.reservedTokens).toBe(reserved);
+  } else {
+    expect(f.bodies).toHaveLength(0);
+    expect(f.recovery.state).toEqual(before);
+  }
 });

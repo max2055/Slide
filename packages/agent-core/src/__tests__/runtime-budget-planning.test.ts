@@ -86,6 +86,9 @@ it('accounts for persisted delegated allowances and subsequent summary consumpti
 
 it.each([false, true])('does not dispatch when zero ordinary attempts remain (summary consumes last=%s)', async compact => {
   const f = fixture(compact ? 7 : 8, compact);
+  // This summary is indispensable: the full answer request exceeds the hard
+  // input cap. A merely optional watermark summary no longer buys the last send.
+  if (compact) f.raw[2].reasoning_content = 'protected reasoning '.repeat(250);
   const result = await new AgentRunner(f.provider).run(f.spec);
   expect(f.requests).toHaveLength(0);
   expect(f.execute).not.toHaveBeenCalled();
@@ -136,4 +139,40 @@ it('preserves the last attempt for a complete admissible answer before optional 
   expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toEqual([]);
   expect(f.requests[0].messages.some(m => String(m.content).includes('historical record'))).toBe(true);
   expect(result.runtimeState?.providerAttempts).toBe(8);
+});
+
+it('uses the complete answer request when optional compaction would spend an unaffordable window', async () => {
+  const f = fixture(4, true), summaries = vi.fn(async () => reply(JSON.stringify(summary)));
+  f.spec.budgetLimits!.maxTotalTokens = 14000; f.provider.chatStream = summaries;
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed'); expect(summaries).not.toHaveBeenCalled();
+  expect(f.requests[0].tools).toEqual([]);
+  expect(hint(f.requests[0].messages)).toContain('Give the final answer');
+});
+
+it.each([0, 1])('does not dispatch an unaffordable complete request with %s tokens left', async tokens => {
+  const f = fixture(7, true);
+  f.spec.budgetLimits!.maxTotalTokens = 14000;
+  const recovery = new RecoveryPolicy(f.spec.resumeCheckpoint!.runtime_state_v1);
+  recovery.state.usage = { prompt_tokens: 14000 - tokens, completion_tokens: 0 };
+  f.spec.resumeCheckpoint = { runtime_state_v1: recovery.snapshot() };
+  f.provider.chatStream = vi.fn(async () => reply(JSON.stringify(summary)));
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.resolution).toMatchObject({ kind: 'partial', reasonCode: 'TOKEN_BUDGET' });
+  expect(f.requests).toHaveLength(0); expect(f.provider.chatStream).not.toHaveBeenCalled();
+  expect(result.runtimeState).toMatchObject({ providerAttempts: 7, unknownRequests: 0, reservedTokens: 0 });
+});
+
+it('rejects late hook growth outside the narrower final envelope at the actual provider boundary', async () => {
+  const f = fixture(7, true);
+  f.spec.budgetLimits!.maxTotalTokens = 14000;
+  f.spec.hook.beforeIteration = async ctx => { ctx.messages.push({ role: 'user', content: 'late input'.repeat(10) }); };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(f.requests).toHaveLength(0);
+  expect(result.resolution?.reasonCode).toBe('CONTEXT_UNRECOVERABLE');
+  expect(result.runtimeState!.unknownRequests).toBe(1);
+  const reserved = result.runtimeState!.reservedTokens;
+  expect(reserved).toBeGreaterThan(0); expect(reserved).toBeLessThanOrEqual(14000);
+  const resumed = await new AgentRunner(f.provider).run({ ...f.spec, resumeCheckpoint: { runtime_state_v1: result.runtimeState } });
+  expect(f.requests).toHaveLength(0); expect(resumed.runtimeState?.reservedTokens).toBe(reserved);
 });
