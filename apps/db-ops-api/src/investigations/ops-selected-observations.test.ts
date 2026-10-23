@@ -1,10 +1,14 @@
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { describe, expect, it } from 'vitest';
-import { OpenAIProvider, responseHash, type Message } from '@slide/agent-core';
+import { describe, expect, it, vi } from 'vitest';
+import { AgentRunner, NoopHook, ToolRegistry, OpenAIProvider, responseHash, type Message } from '@slide/agent-core';
 import { investigationContextMessages, investigationExecutionEvidence } from './executor.js';
 import { createQueryMetricsTool } from '../tools/ops/query_metrics.js';
 import { admin } from '../metrics/policy/test-support.js';
+import { modelAnalysis } from './model-analysis.js';
+const core = new URL('../../../../packages/agent-core/src/', import.meta.url);
+const { sourceHash } = await import(new URL('runtime/context-manager.js', core).href);
+const { RecoveryPolicy } = await import(new URL('runtime/recovery-policy.js', core).href);
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-observation-b15-20261023.json', import.meta.url), 'utf8'));
 const calls = fixture.entries.flatMap((e: any) => e.tool_calls ?? []);
@@ -88,6 +92,7 @@ describe('explicit observation selection, retained B15 receipts', () => {
     expect(view.data.observations).toBeUndefined();
     expect(view.data.contextReference.sha256).toBe(responseHash(raw));
     if (!['oversize', 'exceeded-limit'].includes(kind)) expect(view.data.metricRead?.returnedMetricIds).toBeUndefined();
+    if (kind === 'wrong-resource') expect(view.data.metricRead).toBeUndefined();
   });
   it('never projects failed or denied receipts as successful evidence', () => {
     for (const raw of [{ ...original(serverCall), success: false, status: 'error', errorCode: 'UNKNOWN' },
@@ -141,4 +146,79 @@ describe('explicit observation selection, retained B15 receipts', () => {
       if (out) { mkdirSync(out, { recursive: true }); writeFileSync(out + '/selected-sdk.json', JSON.stringify({ scope: 'Local HTTP SDK, scripted response; not product model', bodies }, null, 2)); }
     } finally { await new Promise<void>(r => receiver.close(() => r())); }
   });
+  it('retains the complete B15 history and both accepted sources through the low-balance final SDK admission', async () => {
+    const raw: Message[] = structuredClone([...fixture.reconstructed.initialMessages, ...fixture.reconstructed.history]);
+    const execution = fixture.run.result_json.investigationExecution, receipt = execution.lastSummaryReceipt;
+    expect(sourceHash(raw.slice(0, fixture.reconstructed.summaryEnd))).toBe(receipt.sourceHash);
+    expect(raw.slice(0, fixture.reconstructed.summaryEnd + 1).some((_m, i) => sourceHash(raw.slice(0, i)) === fixture.summaryBindings.records[0].sourceHash)).toBe(true);
+    const binding = { runId: fixture.run.id, requestId: execution.requestId, jobId: execution.jobId, fencingToken: execution.fencingToken };
+    const record = { schemaVersion: 1 as const, sourceStart: 0, sourceEnd: fixture.reconstructed.summaryEnd, sourceHash: receipt.sourceHash,
+      summary: JSON.parse(receipt.response.content), provenance: 'legacy/unknown', generation: 2,
+      originalSourceIds: raw.slice(0, fixture.reconstructed.summaryEnd).flatMap(m => m.id ? [m.id] : []),
+      previousSummary: { generation: 1, sourceHash: fixture.summaryBindings.records[0].sourceHash,
+        summaryHash: sourceHash([{ role: 'tool', content: JSON.stringify(JSON.parse(fixture.responses[3].content)) }]) } };
+    const tools = new ToolRegistry(), execute = vi.fn(async () => { throw Error('NO_NEW_TOOL'); });
+    for (const t of fixture.wires[4].tools) tools.register({ ...t.function, readOnly: true, execute });
+    const recovery = new RecoveryPolicy();
+    const usage = fixture.responses.slice(0, 6).reduce((s: any, r: any) => ({ prompt_tokens: s.prompt_tokens + r.usage.prompt_tokens,
+      completion_tokens: s.completion_tokens + r.usage.completion_tokens, cached_tokens: s.cached_tokens + (r.usage.cached_tokens ?? 0) }), { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 });
+    expect(128000 - usage.prompt_tokens - usage.completion_tokens).toBe(60000);
+    Object.assign(recovery.state, { providerAttempts: 6, toolCalls: 14, modelSteps: 4, usage });
+    const answer = { analysisVersion: 1, summary: '本地脚本验证，不代表自主诊断。', claims: [], hypotheses: [], unresolvedQuestions: ['原始缺口仍待补查'], recommendations: [] };
+    const bodies: any[] = [], checkpoints: any[] = [];
+    const receiver = createServer(async (req, res) => {
+      const chunks: Buffer[] = []; for await (const c of req) chunks.push(c);
+      const body = JSON.parse(Buffer.concat(chunks).toString()); bodies.push(body);
+      const message = { role: 'assistant', content: JSON.stringify(answer) };
+      const value = { choices: [{ message, delta: message, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
+      res.setHeader('content-type', body.stream ? 'text/event-stream' : 'application/json');
+      res.end(body.stream ? 'data: ' + JSON.stringify(value) + '\n\ndata: [DONE]\n\n' : JSON.stringify(value));
+    });
+    await new Promise<void>(r => receiver.listen(0, '127.0.0.1', r));
+    try {
+      const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'deepseek-flash', baseURL: `http://127.0.0.1:${(receiver.address() as any).port}/v1`,
+        capabilities: { model: 'deepseek-flash', contextWindowTokens: 1048576, maxOutputTokens: 393216, source: 'configuration', version: 'retained-B15' } });
+      const provider = { getDefaultModel: actual.getDefaultModel.bind(actual), getModelCapabilities: actual.getModelCapabilities.bind(actual),
+        countPromptTokens: actual.countPromptTokens.bind(actual), projectMessages: (m: Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'),
+        chat: actual.chat.bind(actual), chatStream: actual.chatStream.bind(actual) };
+      const result = await new AgentRunner(provider).run({ initialMessages: raw, runtimeRunId: binding.runId, tools, model: 'deepseek-flash', hook: new NoopHook(),
+        contextWindowTokens: 65536, maxTokens: 8192, maxIterations: 8, maxToolResultChars: 128000,
+        contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
+        contextEvidence: (source, summary) => investigationExecutionEvidence(source, execution, binding, 2, summary),
+        budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
+        resumeCheckpoint: { context_summary_v1: record, runtime_state_v1: recovery.snapshot(), context_state_v1: { schemaVersion: 1, compactCount: 2, successfulCompacts: 2, toolBatchesSinceCompact: 1, rapidRefills: 0 } },
+        checkpointCallback: async c => { checkpoints.push(structuredClone(c)); } });
+      const out = process.env.OPS_SELECTED_EVIDENCE_DIR;
+      if (out) { mkdirSync(out, { recursive: true }); writeFileSync(out + '/b15-final-sdk.json', JSON.stringify({ scope: 'Original sourceHash verified; offline loopback scripted final, not active DB checkpoint resume or autonomous analysis', bodies, checkpoints, result }, null, 2)); }
+      expect(bodies).toHaveLength(1); expect(bodies[0].tools ?? []).toEqual([]); expect(bodies[0].max_tokens).toBeLessThanOrEqual(8192);
+      expect(bodies[0].messages[0].content).toBe(raw[0].content);
+      expect(bodies[0].messages.some((m: any) => m.content?.includes(JSON.stringify(record.summary)))).toBe(true);
+      expect(execute).not.toHaveBeenCalled(); expect(result.stopReason).toBe('completed'); expect(modelAnalysis(result.finalContent!, [])).not.toBeNull();
+      expect(result.runtimeState).toMatchObject({ providerAttempts: 7, toolCalls: 14, unknownRequests: 0, reservedTokens: 0 });
+      for (const m of bodies[0].messages) for (const c of m.tool_calls ?? []) expect(bodies[0].messages.filter((r: any) => r.tool_call_id === c.id)).toHaveLength(1);
+      const compare = (id: string, observation: any) => {
+        const source = original(calls.find((c: any) => c.id === id));
+        if (observation.data?.evidenceOmitted) { expect(observation.data.observations).toBeUndefined(); return; }
+        if (observation.data?.observations) expect(observation.data.observations).toEqual(source.data.observations);
+        for (const metric of observation.data?.metrics ?? []) {
+          const copy = structuredClone(metric);
+          for (const series of copy.series) {
+            series.buckets = series.buckets.map((b: any) => ({ ...series.bucketDefaults, ...(series.bucketColumns
+              ? Object.fromEntries(series.bucketColumns.flatMap((key: string, i: number) => b[0][i] ? [[key, b[1][i]]] : [])) : b) }));
+            delete series.bucketDefaults; delete series.bucketColumns;
+          }
+          expect(copy).toEqual(source.data.metrics.find((m: any) => m.definition.id === copy.definition.id));
+        }
+      };
+      for (const message of bodies[0].messages) if (message.role === 'tool') {
+        const observation = JSON.parse(message.content.slice(message.content.indexOf('{')));
+        if (observation.canonicalSource && Array.isArray(observation.receipts)) for (const r of observation.receipts) {
+          expect(r.receiptHash).toBe(responseHash(execution.tools[r.toolCallId].result));
+          if (r.valuesProvided) compare(r.toolCallId, r.observation);
+          else { expect(r.reason).toBe('INPUT_BUDGET'); expect(r.observation).toBeUndefined(); }
+        }
+        else if (calls.some((c: any) => c.id === message.tool_call_id)) compare(message.tool_call_id, observation);
+      }
+    } finally { await new Promise<void>(r => receiver.close(() => r())); }
+  }, 30000);
 });

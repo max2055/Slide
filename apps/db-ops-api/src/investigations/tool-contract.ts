@@ -3,12 +3,12 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Scoped database metadata/health.',
-  get_resource_observations: 'Legacy snapshots: select explicit metricIds (<=32) and limit for a complete bounded page; unselected pages readable <=4. All fields/gaps retained if it fits, otherwise whole page omitted. Returned IDs can be selected directly in query_metrics; use discover+one ID for definition and history for units/window/dimensions, not guessed aliases.',
+  get_resource_observations: 'Legacy snapshots: select metricIds<=32 + limit for complete bounded pages (unselected<=4). query_metrics: returned ID + history; discover+ID for semantics.',
   get_resource_relations: 'Resource relations.',
   get_server_alerts: 'Server alerts; activeOnly=true.',
   get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
   list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
-  query_metrics: 'For EACH database/server: discover (discovery_limit=8), select IDs by meaning/unit/kind; follow next_offset, restart on revision change. discover+one metric_ids: definition. Read exactly one metric_ids; select series_index for multiple dimension series. UTC from/to(exclusive) preserves the requested window. One series with up to 60 minute buckets is readable; metric_window_v1 bucketDefaults apply to every bucket (local fields override), all values/quality/time/sources remain explicit. Follow total_series and cover the full requested window. inventory: attributes.',
+  query_metrics: 'Select one returned/discovered metric_ids per resource. discover(discovery_limit=8): index, next_offset, restart on revision change; discover+ID: definition/unit/kind. history: UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Inspect dimensions/total_series before selecting one series_index; cover all series/windows, pair metrics by full dimensions. metric_window_v1 bucketDefaults apply per bucket; local fields override, values/quality/time/sources stay explicit. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
@@ -21,7 +21,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy. evidenceOmitted/valuesProvided=false: no original values in THIS projection; never infer health or cause. An outer valuesProvided=true can carry an omitted projection: inspect its evidenceOmitted flag. Earlier original reads, current original values, summary planning memory and hash-only references are distinct; current omission does not mean the entire run never read values. Summaries cannot supply missing original values for calculations. Use schema parameters only. Canonical references never authorize replay.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted: no CURRENT values (outer valuesProvided may be true); never infer health or cause from it. Prior reads differ; summaries/hashes are not originals. Schema only; references never authorize replay.';
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every

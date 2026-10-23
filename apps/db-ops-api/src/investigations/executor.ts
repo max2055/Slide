@@ -73,13 +73,18 @@ function metricReadGuidance(result: any, toolName?: string, args?: Record<string
   const type = ref?.type ?? args?.resourceType ?? (toolName === 'get_server_metrics' ? 'server' : undefined);
   const id = ref?.id ?? args?.resourceId ?? args?.serverId ?? result.details?.server_id;
   if (!['instance', 'server', 'network_device'].includes(type) || !Number.isSafeInteger(id) || id <= 0) return undefined;
+  if (args?.resourceType !== undefined && args.resourceType !== type
+    || args?.resourceId !== undefined && args.resourceId !== id
+    || args?.serverId !== undefined && args.serverId !== id) return undefined;
   const selected = toolName === 'get_resource_observations' && selectedObservationPage(result, args);
   const returnedMetricIds = selected ? [...new Set<string>(result.data.observations.map((row: any) => row.metricId))] : [];
   const resource = { resourceType: type, resourceId: id };
   return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
     ...(returnedMetricIds.length ? { returnedMetricIds,
       history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m' } } } : {}),
-    instructions: 'Choose exactly one returnedMetricIds (returned ID, not proof of capability), or discover/page to select an ID. For its definition use discover + metric_ids:[id]; no need to rediscover the catalog first. For history set metric_ids:[id], UTC from/to (exclusive), interval:1m, at most 1h/60 buckets. First inspect this metric without series_index to learn dimensions/total_series; if multiple series, select one series_index and cover remaining series/windows. Match filesystem metrics by complete dimensions, never by series_index across metrics. Legacy snapshots lack full definition/unit/capability and cannot substitute for semantic history; missing/failure is not zero.' };
+    instructions: returnedMetricIds.length
+      ? 'Choose one returnedMetricIds (not proof of capability); discover+metric_ids:[id] gives its definition without catalog rediscovery. history: metric_ids:[id], UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Omit series_index first to inspect dimensions/total_series; then select one series and cover all series/windows. Pair filesystem metrics by full dimensions, not series_index. Legacy snapshots lack full semantics; failure is not zero.'
+      : 'Read one discovered metric_ids; UTC from/to, interval:1m, <=1h/60 buckets. Inspect dimensions, select one series_index, cover all series/windows. Legacy scalars lack full semantics.' };
 }
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
@@ -186,7 +191,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   // below instead of bypassing the oversized-payload projection.
   if (Array.isArray(metadata.rows)) delete metadata.rows;
   return JSON.stringify({ ...metadata, status: 'warning',
-    data: { contextReference: reference, evidenceOmitted: true, valuesProvided: false, requiresNarrowerRead: true,
+    data: { contextReference: reference, evidenceOmitted: true, ...(selectedObservations ? { valuesProvided: false } : {}), requiresNarrowerRead: true,
       ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
         ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}),
       ...(metricRead ? { metricRead } : {}) } });
