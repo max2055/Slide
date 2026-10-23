@@ -36,15 +36,24 @@ describe('explicit observation selection, retained B15 receipts', () => {
     const view = project(), route = view.data.metricRead;
     const ids = original(serverCall).data.observations.map((r: any) => r.metricId);
     expect(route.returnedMetricIds).toEqual(ids);
-    expect(route.history.arguments).toEqual({ resourceType: 'server', resourceId: 3, mode: 'history', interval: '1m' });
+    expect(route.history.arguments).toEqual({ resourceType: 'server', resourceId: 3, mode: 'history', interval: '1m', series_index: 0 });
     let query: any;
     const handler = createQueryMetricsTool({ query: async (_actor: any, args: any) => {
-      query = args; return { metrics: [], window: { from: args.from, to: args.to } };
+      query = args; return { metrics: [{ state: 'available', definition: { id: args.metric_ids[0] },
+        series: [{ dimensions: { device: 'disk-a', mountpoint: '/' }, buckets: [] },
+          { dimensions: { device: 'disk-b', mountpoint: '/data' }, buckets: [] }] }], window: { from: args.from, to: args.to } };
     } } as any);
     const from = '2026-10-23T01:00:00Z', to = '2026-10-23T02:00:00Z';
     const result: any = await handler.handler({ ...route.history.arguments, metric_ids: [route.returnedMetricIds[0]], from, to }, { actor: admin } as any);
     expect(result.success).toBe(true);
     expect(query).toMatchObject({ resource: { type: 'server', id: 3 }, metric_ids: [ids[0]], from, to, bucket_ms: 60000 });
+    expect(result.data.selection).toEqual({ series_index: 0, total_series: 2 });
+    expect(result.data.metrics[0].series).toHaveLength(1);
+    expect(result.data.metrics[0].series[0].dimensions).toEqual({ device: 'disk-a', mountpoint: '/' });
+    const next: any = await handler.handler({ ...route.history.arguments, metric_ids: [ids[0]], from, to, series_index: 1 }, { actor: admin } as any);
+    expect(next.data.selection).toEqual({ series_index: 1, total_series: 2 });
+    expect(next.data.metrics[0].series[0].dimensions).toEqual({ device: 'disk-b', mountpoint: '/data' });
+    expect(route.instructions).not.toContain('Omit series_index first');
     expect(route.instructions).toContain('60');
     expect(route.instructions).toContain('dimensions');
     expect(route.instructions).toContain('series_index');
