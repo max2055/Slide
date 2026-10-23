@@ -2,7 +2,7 @@ import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
 /** Reuse the runtime request clock; no separate clock or argument rewriting. */
-export const METRIC_HISTORY_TIME_GUIDANCE = 'history: UTC ISO from/to; to(exclusive) <= latest Current Time ISO instant. For a requested duration, from = to - requested duration. Never round up to the next minute/hour/day. Z means UTC, not the displayed local timezone. You may omit both only when the runtime default maxWindowMs matches the requested duration; otherwise supply both.';
+const METRIC_HISTORY_TIME_GUIDANCE = 'history: from/to; to(exclusive) <= latest Current Time ISO instant; from = to - requested duration. Never round up (minute/hour/day). Z=UTC, not local time. Only omit both for the requested default maxWindowMs window; otherwise supply both.';
 
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Scoped database metadata/health.',
