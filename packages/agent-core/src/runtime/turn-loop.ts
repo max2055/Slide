@@ -217,25 +217,29 @@ export class TurnLoop {
         // Budget includes settled/delegated/unknown usage. Preserve the existing
         // reduced-output path for indispensable context; optional receipts never
         // spend the output allowance or force another summary.
-        messagesForModel = projectRequest(manager);
         // A tool-bearing reply requires another ordinary request to interpret
         // its receipts. Do not spend a currently reachable answer on optional
         // reads when its complete input cannot also leave room for even the
         // CURRENT protected answer and positive output on both requests.
         // Future receipts may grow further; this necessary capacity check is
         // not a promise that arbitrary tool/model output will fit.
-        // Cover the transition where an ordinary request still reserves a full
-        // window, leaving less than an answer's output allowance. Larger balances
-        // retain normal planning; below a window the settled reduced-envelope
-        // planner already applies. Do not reserve two full requests every turn.
+        // Include settled balances below one window: narrowing a reservation
+        // proves only this request, not capacity to interpret its next receipts.
+        // Larger balances retain normal planning; do not reserve two full
+        // windows every turn.
+        let jointMessages: Message[] | undefined;
         if (spec.budgetLimits && !budgetAnswerOnly && !isAnswerOnly()
-          && remainingBudget().tokens! >= manager.requestReservation()
           && remainingBudget().tokens! < manager.requestReservation() + manager.contextConfig.maxTokens
           && recovery.state.unknownRequests === 0 && recovery.state.reservedTokens === 0) {
           const answerView = new ContextManager({ ...spec, tools: new ToolRegistry() }, this.getProvider());
           answerView.summary = manager.summary;
           budgetAnswerOnly = true;
           try {
+            // First prove the currently reachable complete answer, including
+            // optional whole receipts that fit, before testing another read.
+            const answer = projectRequest(answerView);
+            const plan = planRequestBudget(answerView, answer, recovery.state);
+            assertRequestBudget(spec, recovery.state, plan.reservation);
             const suffix = requestSuffix();
             const protectedAnswer = [...answerView.project(state.messages, suffix, answerView.inputBudget, 'references'), ...suffix];
             const protectedInput = answerView.tokens(protectedAnswer);
@@ -244,25 +248,29 @@ export class TurnLoop {
             // Optional whole observations may yield capacity first. Their
             // IDs/hash/valuesProvided=false stay in the protected index.
             budgetAnswerOnly = false;
-            const ordinary = projectRequest(manager, futureMinimum);
+            let ordinary: Message[] | undefined;
+            try { ordinary = projectRequest(manager, futureMinimum); }
+            catch (error) {
+              if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET'].includes(error.code)) throw error;
+            }
             // This is a feasibility floor, not a reservation or measured usage.
             // Do not assume a future summary will shrink the protected input.
             // Actual output and future receipts remain independently bounded
             // and can still make the subsequent request unaffordable.
-            const ordinaryMinimum = manager.tokens(ordinary) + 1;
+            const ordinaryMinimum = ordinary ? manager.tokens(ordinary) + 1 : Infinity;
             if (ordinaryMinimum + futureMinimum > balance) {
               budgetAnswerOnly = true;
-              const answer = projectRequest(answerView);
-              const plan = planRequestBudget(answerView, answer, recovery.state);
-              assertRequestBudget(spec, recovery.state, plan.reservation);
               manager = answerView;
-              messagesForModel = answer;
-            } else messagesForModel = ordinary;
+              jointMessages = answer;
+            } else jointMessages = ordinary!;
           } catch (error) {
             budgetAnswerOnly = false;
             if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET', 'MAX_PROVIDER_ATTEMPTS'].includes(error.code)) throw error;
           }
         }
+        // Reproject the chosen view with the final budget suffix; after a
+        // failed answer proof, ordinary context governance still fails closed.
+        messagesForModel = jointMessages ?? projectRequest(manager);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
         state.usage = { ...recovery.state.usage };

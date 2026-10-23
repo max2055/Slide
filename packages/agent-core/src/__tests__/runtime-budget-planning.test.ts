@@ -176,3 +176,53 @@ it('rejects late hook growth outside the narrower final envelope at the actual p
   const resumed = await new AgentRunner(f.provider).run({ ...f.spec, resumeCheckpoint: { runtime_state_v1: result.runtimeState } });
   expect(f.requests).toHaveLength(0); expect(resumed.runtimeState?.reservedTokens).toBe(reserved);
 });
+
+it.each([14000, 14999, 15000, 15499])('protects a complete answer at settled balance %s across the request-window boundary', async balance => {
+  const f = fixture(4);
+  f.raw[1].content = 'protected request '.repeat(470);
+  const state = new RecoveryPolicy(f.spec.resumeCheckpoint!.runtime_state_v1);
+  state.state.usage = { prompt_tokens: 128000 - balance - 1000, completion_tokens: 0 };
+  state.state.delegated = { tokens: 1000, modelSteps: 0, providerAttempts: 0, toolCalls: 0 };
+  f.spec.resumeCheckpoint = { runtime_state_v1: state.snapshot() };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toEqual([]);
+  expect(f.requests[0].messages.some(m => m.content === f.raw[1].content)).toBe(true);
+  expect(hint(f.requests[0].messages)).toContain('remainingTotalTokens=' + balance);
+  expect(f.requests[0].admitted.reservedTokens).toBeLessThanOrEqual(balance);
+  expect(result.runtimeState?.delegated?.tokens).toBe(1000);
+});
+
+it.each([14000, 14999, 15000, 15500, 19000])('keeps affordable reads with %s settled tokens instead of ending them solely because of a window threshold', async balance => {
+  const f = fixture(4);
+  f.spec.budgetLimits!.maxTotalTokens = balance;
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toHaveLength(1);
+  expect(hint(f.requests[0].messages)).not.toContain('Give the final answer');
+});
+
+it.each(['unknown', 'inflight'])('never narrows an unsettled %s envelope to buy a below-window answer', async kind => {
+  const f = fixture(4);
+  const state = new RecoveryPolicy(f.spec.resumeCheckpoint!.runtime_state_v1);
+  state.state.unknownRequests = kind === 'unknown' ? 1 : 0;
+  state.state.reservedTokens = kind === 'inflight' ? 1000 : 0;
+  state.state.usage = { prompt_tokens: 128000 - 14000 - state.state.reservedTokens, completion_tokens: 0 };
+  f.spec.resumeCheckpoint = { runtime_state_v1: state.snapshot() };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(f.requests).toHaveLength(0);
+  expect(result.resolution?.reasonCode).toBe('TOKEN_BUDGET');
+  expect(result.runtimeState?.reservedTokens).toBe(state.state.reservedTokens);
+  expect(result.runtimeState?.unknownRequests).toBe(state.state.unknownRequests);
+});
+
+it('uses a complete reachable answer when tool schemas alone prevent another read from fitting', async () => {
+  const f = fixture(4);
+  f.raw[1].content = 'protected request '.repeat(350);
+  f.spec.budgetLimits!.maxTotalTokens = 14000;
+  f.spec.tools.register({ name: 'large_read', description: 'schema detail '.repeat(650), parameters: { type: 'object', properties: {} }, execute: f.execute });
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed'); expect(f.execute).not.toHaveBeenCalled();
+  expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toEqual([]);
+  expect(f.requests[0].messages.some(m => m.content === f.raw[1].content)).toBe(true);
+});
