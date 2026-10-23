@@ -47,6 +47,23 @@ import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+/** Selection is a data bound, not authority. Execution still checks ACL/fence.
+ * A returned page must agree with the actual resource and every selected ID;
+ * null/unknown and repeated dimensions are records too, never filtered out.
+ */
+function selectedObservationPage(result: any, args?: Record<string, any>): boolean {
+  const ids = args?.metricIds, rows = result.data?.observations, ref = result.data?.resource;
+  return Array.isArray(ids) && ids.length > 0 && ids.length <= 32
+    && ids.every(id => typeof id === 'string' && /^[a-z][a-z0-9_.]{0,127}$/.test(id))
+    && new Set(ids).size === ids.length
+    && ['instance', 'server', 'network_device'].includes(args?.resourceType)
+    && Number.isSafeInteger(args?.resourceId) && args!.resourceId > 0
+    && ref?.type === args?.resourceType && ref?.id === args?.resourceId
+    && Number.isSafeInteger(args?.limit ?? 100) && (args?.limit ?? 100) >= 1 && (args?.limit ?? 100) <= 100
+    && Array.isArray(rows) && rows.length <= (args?.limit ?? 100)
+    && rows.every(row => row && typeof row === 'object' && ids.includes(row.metricId)
+      && row.resource?.type === ref.type && row.resource?.id === ref.id);
+}
 /** A selection route, never an observation or permission to replay a receipt.
  * Resolve the resource from the current call/receipt, not a guessed metric alias.
  */
@@ -56,8 +73,13 @@ function metricReadGuidance(result: any, toolName?: string, args?: Record<string
   const type = ref?.type ?? args?.resourceType ?? (toolName === 'get_server_metrics' ? 'server' : undefined);
   const id = ref?.id ?? args?.resourceId ?? args?.serverId ?? result.details?.server_id;
   if (!['instance', 'server', 'network_device'].includes(type) || !Number.isSafeInteger(id) || id <= 0) return undefined;
-  return { discover: { tool: 'query_metrics', arguments: { resourceType: type, resourceId: id, mode: 'discover', discovery_limit: 8 } },
-    instructions: 'Read one discovered metric_ids with series_index and UTC from/to (one bucket <=60s); cover remaining series/buckets within the requested window. Legacy scalars lack full semantics.' };
+  const selected = toolName === 'get_resource_observations' && selectedObservationPage(result, args);
+  const returnedMetricIds = selected ? [...new Set<string>(result.data.observations.map((row: any) => row.metricId))] : [];
+  const resource = { resourceType: type, resourceId: id };
+  return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
+    ...(returnedMetricIds.length ? { returnedMetricIds,
+      history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m' } } } : {}),
+    instructions: 'Choose exactly one returnedMetricIds (returned ID, not proof of capability), or discover/page to select an ID. For its definition use discover + metric_ids:[id]; no need to rediscover the catalog first. For history set metric_ids:[id], UTC from/to (exclusive), interval:1m, at most 1h/60 buckets. First inspect this metric without series_index to learn dimensions/total_series; if multiple series, select one series_index and cover remaining series/windows. Match filesystem metrics by complete dimensions, never by series_index across metrics. Legacy snapshots lack full definition/unit/capability and cannot substitute for semantic history; missing/failure is not zero.' };
 }
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
@@ -137,8 +159,10 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   // the byte ceiling only rejects opaque oversized records, never truncates them.
   // These pages have no full metric definition/capability: route to discovery
   // rather than relabelling a legacy scalar as a semantic observation.
+  const selectedObservations = toolName === 'get_resource_observations' && args?.metricIds !== undefined;
   const boundedObservations = toolName === 'get_resource_observations'
-    && Array.isArray(data?.observations) && data.observations.length <= 4;
+    && (selectedObservations ? selectedObservationPage(result, args)
+      : Array.isArray(data?.observations) && data.observations.length <= 4);
   const boundedServerMetrics = toolName === 'get_server_metrics'
     && Array.isArray(data?.latest) && data.latest.length <= 1
     && Array.isArray(data?.history) && data.history.length <= 1;
@@ -147,7 +171,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
       contextProjection: boundedObservations ? 'bounded_observations_v1' : 'bounded_server_metrics_v1',
       contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
   }
-  if (Buffer.byteLength(compact) <= 512) {
+  if (!selectedObservations && Buffer.byteLength(compact) <= 512) {
     // executeToolWithPolicy appends this runtime audit envelope to every
     // receipt. It is not observation data or model authority. Keep it in
     // canonical facts/SQL, but do not repeat actor/request ACL metadata in the
@@ -162,7 +186,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   // below instead of bypassing the oversized-payload projection.
   if (Array.isArray(metadata.rows)) delete metadata.rows;
   return JSON.stringify({ ...metadata, status: 'warning',
-    data: { contextReference: reference, evidenceOmitted: true, requiresNarrowerRead: true,
+    data: { contextReference: reference, evidenceOmitted: true, valuesProvided: false, requiresNarrowerRead: true,
       ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
         ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}),
       ...(metricRead ? { metricRead } : {}) } });

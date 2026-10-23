@@ -91,7 +91,10 @@ describe('explicit observation selection, retained B15 receipts', () => {
   });
   it('never projects failed or denied receipts as successful evidence', () => {
     for (const raw of [{ ...original(serverCall), success: false, status: 'error', errorCode: 'UNKNOWN' },
-      { ...original(serverCall), policyDecision: { allow: false, reasonCode: 'DENIED' } }]) expect(project(serverCall, raw)).toEqual(raw);
+      { ...original(serverCall), policyDecision: { allow: false, reasonCode: 'DENIED' } }]) {
+      const { policyDecision, ...failure } = raw;
+      expect(project(serverCall, raw)).toEqual(policyDecision.allow ? failure : raw);
+    }
   });
   it('keeps all original wire/response/usage and distinguishes current omission from earlier numerical evidence', () => {
     expect(fixture.entries).toHaveLength(18); expect(fixture.wires).toHaveLength(7); expect(fixture.responses).toHaveLength(7);

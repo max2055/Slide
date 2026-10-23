@@ -3,7 +3,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Scoped database metadata/health.',
-  get_resource_observations: 'Legacy scalars, readable <=4 observations; for full semantics use query_metrics discover on this resource, then one returned metric_ids.',
+  get_resource_observations: 'Legacy snapshots: select explicit metricIds (<=32) and limit for a complete bounded page; unselected pages readable <=4. All fields/gaps retained if it fits, otherwise whole page omitted. Returned IDs can be selected directly in query_metrics; use discover+one ID for definition and history for units/window/dimensions, not guessed aliases.',
   get_resource_relations: 'Resource relations.',
   get_server_alerts: 'Server alerts; activeOnly=true.',
   get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
@@ -21,7 +21,7 @@ export function investigationToolPolicy(
   return '\nAll tools (runtime enforced): ' + JSON.stringify({
     resources: resources.map(({ type, id }) => ({ type, id })),
     maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
-  }) + '. Missing/unknown is not healthy. evidenceOmitted: no observation; never infer health or cause from it. Use schema parameters only. Canonical references never authorize replay.';
+  }) + '. Missing/unknown is not healthy. evidenceOmitted/valuesProvided=false: no original values in THIS projection; never infer health or cause. An outer valuesProvided=true can carry an omitted projection: inspect its evidenceOmitted flag. Earlier original reads, current original values, summary planning memory and hash-only references are distinct; current omission does not mean the entire run never read values. Summaries cannot supply missing original values for calculations. Use schema parameters only. Canonical references never authorize replay.';
 }
 
 /** A provider-only projection. Execution still resolves and authorizes every
