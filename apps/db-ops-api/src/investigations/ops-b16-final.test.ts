@@ -75,3 +75,73 @@ it.each([false, true])('admits the complete B16 final through loopback SDK with 
     if (out) { mkdirSync(out, { recursive: true }); writeFileSync(`${out}/b16-final-${violate}.json`, JSON.stringify({ scope: 'Full retained B16 source, local SDK scripted final; no product call, not autonomous analysis or live collector', bodies, result, saved }, null, 2)); }
   } finally { await new Promise<void>(r => receiver.close(() => r())); }
 }, 30000);
+
+// Replay observed wall-clock intervals without assigning the uninstrumented
+// received→SDK gap to production or CLI. The 20ms phase costs below are an
+// explicit local experiment, not measurements of the B16 database/ACL stages.
+it('uses the full B16 chain and observed latency intervals to finish before optional reads consume the deadline', async () => {
+  const events = f.events, sdks = events.filter((e: any) => e.event === 'sdk_request');
+  const sent = events.filter((e: any) => e.event === 'send');
+  const received = events.filter((e: any) => e.event === 'received');
+  const start = execution.deadlineAt - 120000;
+  let now = start, requestIndex = 0, previousReturn = start;
+  const controller = new AbortController(), phases: any[] = [], bodies: any[] = [], saved: any[] = [];
+  const tick = (phase: string, ms: number) => { now += ms; phases.push({ phase, ms, at: now }); if (now >= execution.deadlineAt) controller.abort(new Error('RUN_DEADLINE deadline')); };
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  let pending: any;
+  const answer = { analysisVersion: 1, summary: '本地脚本收尾：当前证据边界保留，不能把省略当作无值。', claims: [], hypotheses: [], unresolvedQuestions: ['完整诊断仍需真实业务验收。'], recommendations: [] };
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = []; for await (const c of req) chunks.push(c); const body = JSON.parse(Buffer.concat(chunks).toString()); bodies.push(body);
+    const index = requestIndex++, isSummary = sent[index]?.purpose === 'summary';
+    const final = !isSummary && !(body.tools?.length);
+    const original = final ? f.responses[6] : f.responses[index];
+    const delay = Date.parse(received[final ? 6 : index].at) - Date.parse(sdks[final ? 6 : index].at);
+    tick(final ? 'final_provider_observed' : isSummary ? 'summary_provider_observed' : 'ordinary_provider_observed', delay);
+    pending = final ? { ...original, content: JSON.stringify(answer), toolCalls: [], shouldExecuteTools: false, hasToolCalls: false, finishReason: 'stop' } : original;
+    const message = { role: 'assistant', content: pending.content, ...(pending.toolCalls.length ? { tool_calls: pending.toolCalls.map((c: any) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) } : {}), ...(pending._extra ?? {}) };
+    const value = { choices: [{ ...(body.stream ? { delta: message } : { message }), finish_reason: pending.finishReason }], usage: pending.usage };
+    res.setHeader('content-type', body.stream ? 'text/event-stream' : 'application/json');
+    res.end(body.stream ? 'data: ' + JSON.stringify(value) + '\n\ndata: [DONE]\n\n' : JSON.stringify(value));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  try {
+    const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'deepseek-flash', baseURL: `http://127.0.0.1:${(server.address() as any).port}/v1`, capabilities: { model: 'deepseek-flash', contextWindowTokens: 1048576, maxOutputTokens: 393216, source: 'configuration', version: 'retained-B16' } });
+    const state = structuredClone(execution); state.usageUnknown = false; delete state.lastSummaryReceipt;
+    let summaryResponse: any;
+    const admission = () => {
+      const index = requestIndex;
+      const originalGap = Date.parse(sdks[index].at) - (index ? Date.parse(received[index - 1].at) : start);
+      // Production phases already charged after the last local provider reply
+      // are part of, not additional to, the observed aggregate interval.
+      tick('unallocated_observed_gap_including_CLI', Math.max(0, originalGap - (now - previousReturn)));
+    };
+    const provider = { getDefaultModel: actual.getDefaultModel.bind(actual), getModelCapabilities: actual.getModelCapabilities.bind(actual), countPromptTokens: actual.countPromptTokens.bind(actual), projectMessages: (m: Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'),
+      chat: async (...args: Parameters<typeof actual.chat>) => { admission(); const r = await actual.chat(...args); previousReturn = now; return r; },
+      chatStream: async (...args: Parameters<typeof actual.chatStream>) => { admission(); const r = await actual.chatStream(...args); previousReturn = now; summaryResponse = r; return r; } };
+    const tools = new ToolRegistry(), executed: string[] = [];
+    for (const t of f.wires[0].tools) tools.register({ ...t.function, readOnly: true, concurrencySafe: true, exclusive: false, execute: async (_a: any, ctx: any) => {
+      const call = f.history.flatMap((m: any) => m.tool_calls ?? []).find((c: any) => c.function.name === t.function.name && responseHash(JSON.parse(c.function.arguments)) === responseHash(_a) && !executed.includes(c.id));
+      if (!call) throw Error('UNEXPECTED_SCRIPTED_TOOL');
+      executed.push(call.id); tick('local_tool_phase', 20); return structuredClone(state.tools[call.id].result);
+    } });
+    const hook = new NoopHook(); hook.beforeIteration = async () => tick('local_admission_hook', 20); hook.afterIteration = async () => tick('local_after_hook', 20);
+    const result = await new AgentRunner(provider).run({ initialMessages: structuredClone(f.initialMessages), tools, model: 'deepseek-flash', hook, maxIterations: 8, maxTokens: 8192, contextWindowTokens: 65536, maxToolResultChars: 128000, concurrentTools: false, runTimeoutMs: 120000, signal: controller.signal,
+      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
+      contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
+      contextEvidence: (source, summary) => investigationExecutionEvidence(source, state, binding, f.initialMessages.length, summary),
+      checkpointCallback: async c => {
+        tick('local_checkpoint_' + (c.phase ?? 'counters'), 20);
+        if ((c.context_request_v1 as any)?.status === 'accepted') state.lastSummaryReceipt = { ...c.context_request_v1 as any, response: summaryResponse };
+        saved.push(structuredClone(c));
+      } });
+    if (process.env.OPS_B16_EVIDENCE_DIR) writeFileSync(process.env.OPS_B16_EVIDENCE_DIR + '/b16-time-debug.json', JSON.stringify({phases,bodies: bodies.map(b=>({tools:b.tools?.length,stream:b.stream,max:b.max_tokens})),result,executed,saved},null,2));
+    expect(result.stopReason).toBe('completed'); expect(now).toBeLessThan(execution.deadlineAt);
+    expect(bodies.at(-1).tools ?? []).toEqual([]); expect(bodies.at(-1).max_tokens).toBe(8192);
+    expect(bodies.length).toBeLessThan(7);
+    expect(executed).toHaveLength(14); // Fourth original batch is optional at the measured boundary.
+    expect(saved.at(-1).runtime_state_v1.timing.cycleMs).toBeGreaterThan(20000);
+    expect(modelAnalysis(result.finalContent!, [])).not.toBeNull();
+    const out = process.env.OPS_B16_EVIDENCE_DIR;
+    if (out) { mkdirSync(out, { recursive: true }); writeFileSync(out + '/b16-full-time-chain.json', JSON.stringify({ scope: 'Controlled SDK response scripts and phase clock; observed gaps include CLI, local phase costs synthetic; not real diagnosis or an attribution of B16 persistence latency', bodies, phases, result, deadline: execution.deadlineAt, finishedAt: now, executed, saved }, null, 2)); }
+  } finally { clock.mockRestore(); await new Promise<void>(r => server.close(() => r())); }
+}, 30000);

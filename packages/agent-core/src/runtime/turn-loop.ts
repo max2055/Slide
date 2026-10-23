@@ -146,7 +146,7 @@ export class TurnLoop {
       // Measure the whole preceding cycle. This includes authority/admission,
       // tool work, summaries and durable checkpoints, rather than attributing
       // the received-to-send gap to either the Provider or the database.
-      if (cycleStarted !== undefined) {
+      if (cycleStarted !== undefined && recovery.state.deadlineAt !== undefined) {
         const elapsed = Math.max(0, Date.now() - cycleStarted);
         recovery.state.timing = {
           cycleMs: Math.max(recovery.state.timing?.cycleMs ?? 0, elapsed),
