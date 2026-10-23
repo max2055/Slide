@@ -139,8 +139,21 @@ export class TurnLoop {
       state.finalContent = safeContent + continuation.content;
       state.resolution = { kind: 'partial', reasonCode: error.code, retryable: false, safePartialContent: state.finalContent };
     };
+    let cycleStarted: number | undefined;
+    let providerElapsed = 0;
     for (let iteration = recovery.state.modelSteps; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
+      // Measure the whole preceding cycle. This includes authority/admission,
+      // tool work, summaries and durable checkpoints, rather than attributing
+      // the received-to-send gap to either the Provider or the database.
+      if (cycleStarted !== undefined) {
+        const elapsed = Math.max(0, Date.now() - cycleStarted);
+        recovery.state.timing = {
+          cycleMs: Math.max(recovery.state.timing?.cycleMs ?? 0, elapsed),
+          providerMs: Math.max(recovery.state.timing?.providerMs ?? 0, providerElapsed),
+        };
+      }
+      cycleStarted = Date.now(); providerElapsed = 0;
       if (recovery.state.modelSteps + (recovery.state.delegated?.modelSteps ?? 0) >= spec.maxIterations) break;
       if (spec.budgetLimits && (recovery.state.noProgressSteps ?? 0) >= spec.budgetLimits.maxNoProgressSteps) {
         stopForBudget(new RuntimeError('NO_PROGRESS', 'No material progress within the progress budget')); break;
@@ -151,7 +164,13 @@ export class TurnLoop {
         attempts: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxProviderAttempts - recovery.state.providerAttempts - (recovery.state.delegated?.providerAttempts ?? 0)) : undefined,
         tokens: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state)) : undefined,
       });
-      const isAnswerOnly = () => { const left = remainingBudget(); return left.tools === 0 || (left.attempts !== undefined && left.attempts <= 1); };
+      const timeToClose = () => recovery.state.deadlineAt !== undefined && !!recovery.state.timing?.cycleMs
+        && recovery.state.deadlineAt - Date.now() <= 2 * recovery.state.timing.cycleMs;
+      // Another optional read/summary requires a subsequent complete answer
+      // cycle. Use this run's observed high-water duration, never a fixed number
+      // of seconds or a new timeout. Future latency can still exceed it; all
+      // hard cancellation and commit checks continue to apply.
+      const isAnswerOnly = () => { const left = remainingBudget(); return timeToClose() || left.tools === 0 || (left.attempts !== undefined && left.attempts <= 1); };
       let budgetAnswerOnly = false;
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
@@ -332,6 +351,7 @@ export class TurnLoop {
 
       // ── Request LLM ──
       let response: LLMResponse;
+      const providerStarted = Date.now();
       try {
         response = await new ModelStep(this.getProvider()).request(requestSpec, messagesForModel, hook, context);
       } catch (e: unknown) {
@@ -350,6 +370,7 @@ export class TurnLoop {
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
+      providerElapsed = Math.max(0, Date.now() - providerStarted);
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
       const rawUsage = usageDict(response.usage);
       context.response = response;

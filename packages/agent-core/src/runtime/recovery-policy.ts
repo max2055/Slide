@@ -13,6 +13,8 @@ export interface RecoverySnapshot {
   usage: Record<string, number>;
   delegated?: { modelSteps: number; providerAttempts: number; toolCalls: number; tokens: number };
   deadlineAt?: number;
+  /** Measured complete cycles, including admission, summaries and persistence. Not a latency guarantee. */
+  timing?: { cycleMs: number; providerMs: number };
   noProgressSteps?: number;
   progressEvidence?: string[];
   progressCandidate?: string;
@@ -71,13 +73,14 @@ export function validateRecoverySnapshot(value: unknown): RecoverySnapshot {
     s.total !== Object.values(s.counts).reduce((a, b) => a + b, 0) || s.providerAttempts < s.modelSteps ||
     !Object.values(s.usage).every(number)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid runtime recovery checkpoint');
   if (s.delegated && ![s.delegated.modelSteps, s.delegated.providerAttempts, s.delegated.toolCalls, s.delegated.tokens].every(number)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid delegated allowance');
+  if (s.timing && (!number(s.timing.cycleMs) || !number(s.timing.providerMs) || s.timing.providerMs > s.timing.cycleMs)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid runtime timing');
   if (s.deadlineAt !== undefined && !number(s.deadlineAt)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid persisted deadline');
   if (s.noProgressSteps !== undefined && !number(s.noProgressSteps)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress counter');
   if (s.progressRunId !== undefined && (typeof s.progressRunId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressRunId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress run ID');
   if (s.progressKeyId !== undefined && (typeof s.progressKeyId !== 'string' || !/^[a-f0-9-]{36}$/.test(s.progressKeyId))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress key ID');
   if (s.progressEvidence !== undefined && (!Array.isArray(s.progressEvidence) || s.progressEvidence.length > 256 || !s.progressEvidence.every(h => /^[a-f0-9]{64}$/.test(h)))) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid progress evidence');
   if (s.progressCandidate !== undefined && !/^[a-f0-9]{64}$/.test(s.progressCandidate)) throw new RuntimeError('INVALID_CHECKPOINT', 'Invalid candidate progress fingerprint');
-  return { ...(s.delegated ? { delegated: { modelSteps: s.delegated.modelSteps, providerAttempts: s.delegated.providerAttempts, toolCalls: s.delegated.toolCalls, tokens: s.delegated.tokens } } : {}), ...(s.deadlineAt !== undefined ? { deadlineAt: s.deadlineAt } : {}),
+  return { ...(s.timing ? { timing: { cycleMs: s.timing.cycleMs, providerMs: s.timing.providerMs } } : {}), ...(s.delegated ? { delegated: { modelSteps: s.delegated.modelSteps, providerAttempts: s.delegated.providerAttempts, toolCalls: s.delegated.toolCalls, tokens: s.delegated.tokens } } : {}), ...(s.deadlineAt !== undefined ? { deadlineAt: s.deadlineAt } : {}),
     ...(s.noProgressSteps !== undefined ? { noProgressSteps: s.noProgressSteps } : {}),
     ...(s.progressRunId ? { progressRunId: s.progressRunId } : {}),
     ...(s.progressKeyId ? { progressKeyId: s.progressKeyId } : {}),
