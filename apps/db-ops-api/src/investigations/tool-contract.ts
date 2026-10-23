@@ -1,6 +1,9 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 
+/** Reuse the runtime request clock; no separate clock or argument rewriting. */
+export const METRIC_HISTORY_TIME_GUIDANCE = 'history: UTC ISO from/to; to(exclusive) <= latest Current Time ISO instant. For a requested duration, from = to - requested duration. Never round up to the next minute/hour/day. Z means UTC, not the displayed local timezone. You may omit both only when the runtime default maxWindowMs matches the requested duration; otherwise supply both.';
+
 const opsDescriptions: Record<string, string> = {
   get_instance_summary: 'Scoped database metadata/health.',
   get_resource_observations: 'Legacy snapshots: select metricIds<=32 + limit for complete bounded pages (unselected<=4). query_metrics: returned ID + history; discover+ID for semantics.',
@@ -8,7 +11,7 @@ const opsDescriptions: Record<string, string> = {
   get_server_alerts: 'Server alerts; activeOnly=true.',
   get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
   list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
-  query_metrics: 'Select one returned/discovered metric_ids per resource. discover(discovery_limit=8): index, next_offset, restart on revision change; discover+ID: definition/unit/kind. history: UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Start series_index:0, then follow dimensions/selection.total_series; pair metrics by full dimensions, cover all series/windows. metric_window_v1 bucketDefaults apply per bucket; local fields override, values/quality/time/sources stay explicit. inventory: attributes.',
+  query_metrics: 'Select one returned/discovered metric_ids per resource. discover(discovery_limit=8): index, next_offset, restart on revision change; discover+ID: definition/unit/kind. ' + METRIC_HISTORY_TIME_GUIDANCE + ' interval:1m, <=1h/60 buckets. Start series_index:0, then follow dimensions/selection.total_series; pair metrics by full dimensions, cover all series/windows. metric_window_v1 bucketDefaults apply per bucket; local fields override, values/quality/time/sources stay explicit. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.

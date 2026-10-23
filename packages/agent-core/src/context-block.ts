@@ -51,5 +51,5 @@ export function runtimeBlock(kind: 'runtime' | 'reminder', value: string): Conte
 
 export function currentTime(now = new Date()): string {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return `Current Time: ${now.toISOString()} (${tz})`;
+  return `Current Time: ${now.toISOString()} (UTC; local timezone: ${tz})`;
 }

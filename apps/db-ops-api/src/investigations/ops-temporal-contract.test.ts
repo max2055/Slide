@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, currentTime, type Message } from '@slide/agent-core';
+import { AgentRunner, NoopHook, OpenAIProvider, ToolRegistry, currentTime, responseHash, type Message } from '@slide/agent-core';
 import { boundedInvestigationArguments, investigationContextMessages, investigationExecutionEvidence, investigationToolContextResult } from './executor.js';
 import { investigationToolContract, investigationToolPolicy } from './tool-contract.js';
 import { toolCatalog } from '../tools/catalog.js';
@@ -38,7 +38,7 @@ describe('history time contract and unchanged execution guard', () => {
     const projected = JSON.parse(investigationToolContextResult(receipt, 'local-page', 'ops', 'get_resource_observations', args) as string);
     assertTimeContract(projected.data.metricRead.instructions);
     expect(projected.data.observations).toEqual(receipt.data.observations);
-    expect(projected.data.contextReference.sha256).toBe(sha(receipt));
+    expect(projected.data.contextReference.sha256).toBe(responseHash(receipt));
   });
   it('labels the existing ISO clock as UTC independently of the display timezone', () => {
     vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ timeZone: 'Asia/Shanghai' } as any);
