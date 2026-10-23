@@ -220,7 +220,7 @@ it('uses a complete reachable answer when tool schemas alone prevent another rea
   const f = fixture(4);
   f.raw[1].content = 'protected request '.repeat(350);
   f.spec.budgetLimits!.maxTotalTokens = 14000;
-  f.spec.tools.register({ name: 'large_read', description: 'schema detail '.repeat(650), parameters: { type: 'object', properties: {} }, execute: f.execute });
+  f.spec.tools.register({ name: 'large_read', description: 'schema detail '.repeat(650), parameters: { type: 'object', properties: {} }, readOnly: true, concurrencySafe: true, exclusive: false, execute: f.execute });
   const result = await new AgentRunner(f.provider).run(f.spec);
   expect(result.stopReason).toBe('completed'); expect(f.execute).not.toHaveBeenCalled();
   expect(f.requests).toHaveLength(1); expect(f.requests[0].tools).toEqual([]);

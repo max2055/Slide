@@ -14,7 +14,12 @@ import '../tools/generated/slide-self-mgmt/resource_tools.js';
 import '../tools/generated/slide-self-mgmt/server_tools.js';
 
 const retained = JSON.parse(readFileSync(new URL('./fixtures/ops-execution-b11-20261022.json', import.meta.url), 'utf8'));
-it('B11 legal discovery/read chain carries current receipts through accepted summaries into local HTTP SDK strict citations', async () => {
+// The product allowance stays 128000. The larger allowance is only a local
+// compatibility case proving that affordable reads keep the original chain.
+it.each([
+  { tokens: 128000, ordinaryCount: 5, toolCount: 18, requestCount: 7 },
+  { tokens: 196608, ordinaryCount: 6, toolCount: 20, requestCount: 8 },
+])('B11 carries current receipts through accepted summaries and strict citations with $tokens tokens', async ({ tokens, ordinaryCount, toolCount, requestCount }) => {
   const bodies: any[] = [], checkpoints: any[] = [], executed: string[] = [], coverage: any[] = [];
   const ordinary = retained.responses.filter((r: any) => r.toolCalls.length), summaries = [retained.responses[3], retained.responses[5]];
   let step = 0, summaryStep = 0, currentCall = '', lastSummaryResponse: any;
@@ -76,16 +81,18 @@ it('B11 legal discovery/read chain carries current receipts through accepted sum
       concurrentTools: false, contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
       contextEvidence: (source, summary) => investigationExecutionEvidence(source, state, binding, initialMessages.length, summary),
       onToolEvent: e => { if (e.phase === 'running' && !e.progress) currentCall = e.toolCallId; },
-      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
+      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: tokens, maxNoProgressSteps: 8 },
       checkpointCallback: async c => {
         checkpoints.push(structuredClone(c));
         if ((c.context_request_v1 as any)?.status === 'accepted') state.lastSummaryReceipt = { ...(c.context_request_v1 as any), response: lastSummaryResponse };
       },
     });
     const dir = process.env.OPS_CURRENT_EVIDENCE_DIR;
-    if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(dir + '/b11-local-sdk.json', JSON.stringify({ bodies, checkpoints, executed, coverage, result }, null, 2)); }
-    expect(result.stopReason).toBe('completed'); expect(step).toBe(6); expect(summaryStep).toBe(2); expect(bodies).toHaveLength(8);
-    expect(executed).toHaveLength(20); expect(cited).toBeDefined(); expect(coverage.every(r => r.valuesProvided || r.reason === 'INPUT_BUDGET')).toBe(true);
+    if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(dir + '/b11-local-sdk-' + tokens + '.json', JSON.stringify({ bodies, checkpoints, executed, coverage, result }, null, 2)); }
+    expect(result.stopReason).toBe('completed'); expect(step).toBe(ordinaryCount); expect(summaryStep).toBe(2); expect(bodies).toHaveLength(requestCount);
+    expect(bodies.at(-1).tools ?? []).toEqual([]);
+    if (tokens === 128000) expect(bodies.at(-1).messages.some((m: any) => String(m.content).includes('remainingTotalTokens=56761'))).toBe(true);
+    expect(executed).toHaveLength(toolCount); expect(cited).toBeDefined(); expect(coverage.every(r => r.valuesProvided || r.reason === 'INPUT_BUDGET')).toBe(true);
     const evidence = executed.map((id, i) => ({ id: String(i), metadata_json: { source: 'tool:' + id } }));
     expect(modelAnalysis(result.finalContent!, evidence)?.claims).toHaveLength(1);
     expect(modelAnalysis(result.finalContent!.replace(cited!, 'unknown-call'), evidence)).toBeNull();
