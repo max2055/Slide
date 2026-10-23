@@ -81,10 +81,10 @@ function metricReadGuidance(result: any, toolName?: string, args?: Record<string
   const resource = { resourceType: type, resourceId: id };
   return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
     ...(returnedMetricIds.length ? { returnedMetricIds,
-      history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m' } } } : {}),
+      history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m', series_index: 0 } } } : {}),
     instructions: returnedMetricIds.length
-      ? 'Choose one returnedMetricIds (not proof of capability); discover+metric_ids:[id] gives its definition without catalog rediscovery. history: metric_ids:[id], UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Omit series_index first to inspect dimensions/total_series; then select one series and cover all series/windows. Pair filesystem metrics by full dimensions, not series_index. Legacy snapshots lack full semantics; failure is not zero.'
-      : 'Read one discovered metric_ids; UTC from/to, interval:1m, <=1h/60 buckets. Inspect dimensions, select one series_index, cover all series/windows. Legacy scalars lack full semantics.' };
+      ? 'Choose one returnedMetricIds (not proof of capability); discover+metric_ids:[id] gives its definition without catalog rediscovery. history: metric_ids:[id], UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Start series_index:0 for unknown dimensions; returned dimensions/selection.total_series guide remaining series/windows. Pair filesystem metrics by full dimensions, not series_index. Legacy snapshots lack full semantics; failure is not zero.'
+      : 'Read one discovered metric_ids; UTC from/to, interval:1m, <=1h/60 buckets. Start series_index:0; inspect dimensions/selection.total_series to cover all series/windows. Legacy scalars lack full semantics.' };
 }
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
