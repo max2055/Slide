@@ -1,3 +1,4 @@
+import { freezeExecutionAllocation, taskExecutionConfiguration, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { assertContinuationDeadline } from './continuation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
@@ -48,9 +49,13 @@ export class InvestigationSessionBridge {
   private readonly budgetDomain: string;
   private readonly reserveCostMicros: number;
   private readonly maxExecutionTokens?: number;
+  private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
+  private readonly budgetPolicy: BudgetPolicy;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
-    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number } = investigationBudgetConfiguration()) {
+    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number; taskExecution?: TaskExecutionConfiguration } = investigationBudgetConfiguration()) {
+    this.budgetPolicy = Object.freeze(structuredClone(cancellationBudget.policy));
+    this.taskExecution = cancellationBudget.taskExecution && taskExecutionConfiguration(cancellationBudget.taskExecution, cancellationBudget.domain, this.budgetPolicy);
     this.chat = new ChatDatabaseService(poolProvider, authorization);
     this.budgetDomain = cancellationBudget.domain;
     this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
@@ -178,15 +183,22 @@ export class InvestigationSessionBridge {
     const executionSubject = { kind: executionActor.principalKind ?? 'user', id: executionActor.userId };
     const [rows] = await connection.execute('SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [acceptance.requestId]) as [RowDataPacket[], unknown];
     const snapshot = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
+    const executionAllocation = this.taskExecution && freezeExecutionAllocation(this.taskExecution, {
+      requestId: acceptance.requestId, investigationId: investigation.id, profile, domain: this.budgetDomain,
+      mode: executionSubject.kind === 'service' ? 'automatic' : 'manual',
+    }, this.budgetPolicy);
     await connection.execute('UPDATE investigation_requests SET actor_kind = ?, actor_id = ?, request_snapshot = ? WHERE id = ?',
       [executionSubject.kind, executionSubject.id, JSON.stringify({ ...snapshot, actor: executionSubject, authority,
+        ...(executionAllocation ? { executionAllocation } : {}),
         ...(frozen ? { continuationOperator: { kind: actor.principalKind ?? 'user', id: actor.userId } } : {}) }), acceptance.requestId]);
     await this.chat.appendInvestigationMessage(executionActor, acceptance.investigationId, acceptance.version, acceptance.requestId,
       { messageId: randomUUID(), role: 'user', content: command.message }, connection);
     if (frozen) {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
       const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
-        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: this.maxExecutionTokens ?? profile.budget.maxTokens,
+        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? this.maxExecutionTokens ?? profile.budget.maxTokens,
+        ...(executionAllocation ? { executionAllocation } : {}),
         reserveCostMicros: this.reserveCostMicros });
       if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');
     }

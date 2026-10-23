@@ -95,14 +95,17 @@ export class InvestigationStreamStore extends InvestigationObservationDatabase {
     const requests = await observationRows(c, 'SELECT * FROM investigation_requests WHERE investigation_id = ? ORDER BY created_at, id', [id]);
     for (const request of requests) await captureObservation(c, id, `request:${request.id}`, { type: 'request.accepted', requestId: request.id,
       occurredAt: at(request.created_at), payload: { jobId: request.job_id, version: Number(request.accepted_version) } });
-    const rows = await observationRows(c, `SELECT ar.*, ir.id AS request_id FROM agent_runs ar JOIN investigation_requests ir
+    // Keep large runtime checkpoints out of the filesort tuple. Only terminal
+    // classification needs resolution; SQL order and live ACL stay unchanged.
+    const rows = await observationRows(c, `SELECT ar.id, ar.state, ar.created_at, ar.finished_at,
+      JSON_EXTRACT(ar.result_json, '$.resolution') AS resolution_json, ir.id AS request_id FROM agent_runs ar JOIN investigation_requests ir
       ON ir.investigation_id = ? AND ar.session_id = ? AND ar.message_id = ir.message_id
       AND ar.actor_id = ir.actor_id AND ar.idempotency_key = CONCAT('investigation:', ir.id) ORDER BY ir.accepted_version, ar.created_at, ar.id`, [id, investigation.sessionId]);
     const runs: InvestigationSnapshot['runs'] = [];
     for (const run of rows) {
       await captureObservation(c, id, `run:${run.id}:started`, { type: 'run.started', requestId: run.request_id, runId: run.id, occurredAt: at(run.created_at), payload: {} });
-      const unknown = run.state === 'partial' && (/UNKNOWN/.test(decode(run.result_json)?.resolution?.reasonCode ?? '')
-        || decode(run.result_json)?.resolution?.kind === 'outcome_unknown');
+      const unknown = run.state === 'partial' && (/UNKNOWN/.test(decode(run.resolution_json)?.reasonCode ?? '')
+        || decode(run.resolution_json)?.kind === 'outcome_unknown');
       const state = unknown ? 'partial' : run.state;
       const resolution = unknown ? 'outcome_unknown' as const : 'known' as const;
       runs.push({ requestId: run.request_id, runId: run.id, state, resolution });
