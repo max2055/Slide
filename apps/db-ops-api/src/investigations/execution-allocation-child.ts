@@ -7,6 +7,7 @@ import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { LegacyAnalysisBridge } from './legacy-analysis-bridge.js';
 import { registerInvestigationRoutes } from './routes.js';
+import { taskExecutionConfiguration } from './execution-allocation.js';
 import { InvestigationExecutor } from './executor.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../workflows/worker-runtime.js';
 import { createInvestigationWorkflowHandler } from './workflow-handler.js';
@@ -17,11 +18,12 @@ process.once('message', async (input: any) => {
     if (process.env.FROZEN_ALLOCATION_MYSQL !== '1' || !process.send
       || !/^inv_allocation_\d+_[a-f0-9]+$/.test(input.database)
       || !Number.isSafeInteger(input.port) || input.port < 1024 || input.port > 65535
-      || !/^qualification[.]max222[.][a-f0-9-]+$/.test(input.domain)) throw Error('ISOLATED_CHILD_ONLY');
+      || !(/^(qualification[.]max222[.][a-f0-9-]+|task[.]max222[.][a-f0-9-]+[.][a-f0-9-]+)$/.test(input.domain))) throw Error('ISOLATED_CHILD_ONLY');
     pool = mysql.createPool({ host:'127.0.0.1',port:input.port,user:'root',password:'',database:input.database,timezone:'Z',connectionLimit:6 });
     const contexts = new ActorContextService(()=>pool as never), authorization = new InvestigationAuthorization(contexts);
     const budget={domain:input.domain,policy:{...investigationBudgetConfiguration().policy,maxAutomaticTokensPerDay:1200000,maxTotalTokensPerDay:1200000},
-      reserveCostMicros:1000000,maxExecutionTokens:128000};
+      reserveCostMicros:1000000,maxExecutionTokens:128000,taskExecution:input.taskExecution};
+    if(input.taskExecution) taskExecutionConfiguration(input.taskExecution,input.domain,budget.policy);
     const bridge=new InvestigationSessionBridge(()=>pool!,authorization,budget);
     app=Fastify();
     await registerInvestigationRoutes(app,createVerifyToken(input.secret,contexts),bridge,bridge.observationServices(),new LegacyAnalysisBridge(()=>pool!,authorization,bridge));

@@ -1,4 +1,4 @@
-import { readExecutionAllocation, type FrozenExecutionAllocation } from './execution-allocation.js';
+import { taskExecutionConfiguration, readExecutionAllocation, type FrozenExecutionAllocation, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
@@ -120,18 +120,21 @@ function record(row: RowDataPacket): BudgetReservation {
 
 export class MysqlInvestigationBudgetLedger {
   private readonly policy: BudgetPolicy;
+  private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
   constructor(private readonly poolProvider: () => Pool | null, policy: BudgetPolicy,
     // Trusted deployment allocation ceiling; authority Profile/hash stays fixed.
     // A stored receipt retains its original reserveTokens across configuration changes.
-    private readonly executionTokenLimit?: number) {
+    private readonly executionTokenLimit?: number,
+    taskExecution?: Readonly<TaskExecutionConfiguration>) {
     if (executionTokenLimit !== undefined && (!integer(executionTokenLimit, 1) || executionTokenLimit > 1_000_000)) throw invalid();
     this.policy = Object.freeze(policySnapshot(policy));
+    this.taskExecution = taskExecution && taskExecutionConfiguration(taskExecution, taskExecution.authority?.domain ?? 'qualification.max222.ledger', this.policy);
   }
   private input(value: BudgetReservationInput): BudgetReservationInput {
     const allocation = value.executionAllocation && readExecutionAllocation(value.executionAllocation, {
       requestId: value.requestId, investigationId: value.executionAllocation.investigationId,
       domain: value.domain, mode: value.mode, profile: value.profile,
-    }, this.policy);
+    }, this.policy, this.taskExecution);
     if (allocation && value.reserveTokens !== allocation.configuration.maxTotalTokens) throw invalid();
     return reservationInput({ ...value, ...(allocation ? { executionAllocation: allocation } : {}) },
       allocation?.configuration.maxTotalTokens ?? this.executionTokenLimit);
@@ -197,14 +200,14 @@ export class MysqlInvestigationBudgetLedger {
    * No model dispatch or nested transaction; caller persists suppressions. */
   async reserveInTransaction(connection: TransactionConnection, value: BudgetReservationInput): Promise<BudgetAdmission> {
     const input = this.input(value);
-    const [request] = await select(connection, 'SELECT investigation_id, request_snapshot FROM investigation_requests WHERE id = ? FOR SHARE', [input.requestId]);
+    const [request] = await select(connection, 'SELECT investigation_id, request_snapshot, execution_domain FROM investigation_requests WHERE id = ? FOR SHARE', [input.requestId]);
     if (!request) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
     const snapshot = json<{ executionAllocation?: FrozenExecutionAllocation; profileId?: string; profileVersion?: number; authority?: { profileHash?: string };
       context?: { subject?: { component?: string } } }>(request.request_snapshot);
     if (snapshot.profileId !== input.profile.id || snapshot.profileVersion !== input.profile.version
       || snapshot.authority?.profileHash !== investigationProfileHash(input.profile)) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
     const allocation = readExecutionAllocation(snapshot.executionAllocation, { requestId: input.requestId,
-      investigationId: request.investigation_id, domain: input.domain, mode: input.mode, profile: input.profile }, this.policy);
+      investigationId: request.investigation_id, domain: input.domain, executionDomain: request.execution_domain?.toString() ?? null, mode: input.mode, profile: input.profile }, this.policy, this.taskExecution);
     if (!isDeepStrictEqual(allocation, input.executionAllocation)) throw new BudgetLedgerError('BUDGET_CONFLICT');
     const resources = await select(connection, `SELECT resource_type, resource_id FROM investigation_resources
       WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [request.investigation_id]);

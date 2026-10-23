@@ -501,7 +501,7 @@ export class InvestigationExecutor {
     if (options.budget.taskExecution) taskExecutionConfiguration(options.budget.taskExecution, options.budget.domain, options.budget.policy);
     // Copy trusted configuration before any asynchronous execution or caller mutation.
     this.options = { ...options, budget: structuredClone(options.budget) };
-    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens);
+    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens, this.options.budget.taskExecution);
     this.cases = options.caseReferences ?? InvestigationCaseReferences.create(options.pool);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
@@ -673,8 +673,8 @@ export class InvestigationExecutor {
           }
           const requestSnapshot = decode(current.request.request_snapshot);
           const allocation = readExecutionAllocation(requestSnapshot?.executionAllocation, { requestId,
-            investigationId, profile, domain: this.options.budget.domain,
-            mode: actor.principalKind === 'service' ? 'automatic' : 'manual' }, this.options.budget.policy);
+            investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
+            mode: actor.principalKind === 'service' ? 'automatic' : 'manual' }, this.options.budget.policy, this.options.budget.taskExecution);
           const receipt = requestSnapshot?.budgetReceipt;
           const mode = actor.principalKind === 'service' ? 'automatic' : 'manual';
           let reservation: BudgetReservation;
@@ -724,9 +724,9 @@ export class InvestigationExecutor {
         });
       }
       const frozenAllocation = readExecutionAllocation(decode(access.request.request_snapshot)?.executionAllocation, {
-        requestId, investigationId, profile, domain: this.options.budget.domain,
+        requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: access.request.execution_domain?.toString() ?? null,
         mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
-      }, this.options.budget.policy);
+      }, this.options.budget.policy, this.options.budget.taskExecution);
       if (allocationHash(frozenAllocation ?? null) !== allocationHash(state.executionAllocation ?? null)
         || frozenAllocation && (state.allocationRunId !== run.id || state.reservedTokens !== frozenAllocation.configuration.maxTotalTokens))
         throw new Error('INVESTIGATION_ALLOCATION_INVALID');
@@ -753,9 +753,9 @@ export class InvestigationExecutor {
       const readReceipt = async (c: InvestigationConnection) => {
         const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
         const currentAllocation = readExecutionAllocation(decode(current.request.request_snapshot)?.executionAllocation, {
-          requestId, investigationId, profile, domain: this.options.budget.domain,
+          requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
           mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
-        }, this.options.budget.policy);
+        }, this.options.budget.policy, this.options.budget.taskExecution);
         const currentState = decode(current.run.result_json)?.investigationExecution;
         if (allocationHash(currentAllocation ?? null) !== allocationHash(frozenAllocation ?? null)
           || allocationHash(currentState?.executionAllocation ?? null) !== allocationHash(frozenAllocation ?? null)

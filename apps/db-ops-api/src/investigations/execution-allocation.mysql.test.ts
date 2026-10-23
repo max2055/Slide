@@ -8,7 +8,7 @@ import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import Fastify from 'fastify';
 import { ToolRegistry, OpenAIProvider, estimateWithProvider, type LLMProvider } from '@slide/agent-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { MigrationRunner } from '../migrations/runner.js';
+import { MigrationRunner, loadMigrations, splitSqlStatements } from '../migrations/runner.js';
 import { ActorContextService, signAccessToken } from '../auth/actor-context.js';
 import { createVerifyToken } from '../auth-middleware.js';
 import { InvestigationAuthorization } from './authorization.js';
@@ -20,7 +20,7 @@ import { MysqlWorkflowStore, WorkerRuntime } from '../workflows/worker-runtime.j
 import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { INVESTIGATION_PROFILES } from './profiles.js';
-import { MAX222_OFFLINE_EXECUTION } from './execution-allocation.js';
+import { MAX222_OFFLINE_EXECUTION, allocationHash, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { planned, batches, toolReply, syntheticAnalysisFromWire, sha, bytes } from './execution-allocation.fixture.js';
 
 // Opt-in integration gate. The runner owns a fresh container and schema; it
@@ -30,22 +30,28 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
   const container = `slide-frozen-${process.pid}-${randomUUID()}`;
   const secret = randomUUID();
   const policy = {...investigationBudgetConfiguration().policy, maxAutomaticTokensPerDay:1200000, maxTotalTokensPerDay:1200000};
-  const budget = {domain:`qualification.max222.${randomUUID()}`,policy,reserveCostMicros:1000000,
-    prices:{input:1,cachedInput:1,output:1}, taskExecution:MAX222_OFFLINE_EXECUTION};
+  const formal = process.env.FORMAL_ALLOCATION_MYSQL === '1';
+  const ownerRunId=randomUUID(), gateId=randomUUID();
+  const domain=formal ? `task.max222.${ownerRunId}.${gateId}` : `qualification.max222.${randomUUID()}`;
+  const taskExecution:TaskExecutionConfiguration=formal ? {...MAX222_OFFLINE_EXECUTION,id:'MAX-222/task-v1',authority:{
+    taskId:'01a15ece-1c94-76b9-b2c0-91b83981e9ba',ownerRunId,gateId,domain,sourceHash:sha(bytes),
+  }} : MAX222_OFFLINE_EXECUTION;
+  const budget = {domain,policy,reserveCostMicros:1000000,
+    prices:{input:1,cachedInput:1,output:1}, taskExecution};
   let admin:Pool, pool:Pool, contexts:ActorContextService, authorization:InvestigationAuthorization;
   let app:ReturnType<typeof Fastify>, baseURL:string, token:string, mysqlPort:number;
   const rows = async(sql:string, params:any[]=[]) => (await pool.query<RowDataPacket[]>(sql,params))[0];
   const decode=(v:any)=>typeof v==='string'?JSON.parse(v):v;
   const save=(name:string,v:unknown)=>{ const dir=process.env.FROZEN_ALLOCATION_EVIDENCE_DIR; if(dir){mkdirSync(dir,{recursive:true});writeFileSync(join(dir,name+'.json'),JSON.stringify(v,null,2)+'\n');} };
-  const ledger=()=>new MysqlInvestigationBudgetLedger(()=>pool,policy);
+  const ledger=()=>new MysqlInvestigationBudgetLedger(()=>pool,policy,undefined,taskExecution);
   const startAPI=async()=>{
     const bridge=new InvestigationSessionBridge(()=>pool,authorization,budget);
     app=Fastify(); await registerInvestigationRoutes(app,createVerifyToken(secret,contexts),bridge,bridge.observationServices(),new LegacyAnalysisBridge(()=>pool,authorization,bridge));
     baseURL=await app.listen({host:'127.0.0.1',port:0});
   };
-  const http=async(path:string,body?:unknown)=>{
+  const http=async(path:string,body?:unknown,key=randomUUID())=>{
     const response=await fetch(baseURL+'/api/investigations'+path,{method:body?'POST':'GET',
-      headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json','idempotency-key':randomUUID()}: {})},
+      headers:{authorization:`Bearer ${token}`,...(body?{'content-type':'application/json','idempotency-key':key}: {})},
       ...(body?{body:JSON.stringify(body)}:{})});
     return {status:response.status,body:await response.json() as any};
   };
@@ -99,7 +105,7 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     const accepted=await admit();expect(accepted.status).toBe(202);
     const {requestId,id}=accepted.body;
     const request=decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[requestId]))[0].request_snapshot);
-    expect(request.executionAllocation.configuration).toEqual(MAX222_OFFLINE_EXECUTION);
+    expect(request.executionAllocation.configuration).toEqual(taskExecution);
     const wires:any[]=[],responses:any[]=[],executed:string[]=[],estimates:number[]=[];
     let nextInput=0;
     let oracle:ReturnType<typeof syntheticAnalysisFromWire>|undefined, error:unknown;
@@ -181,7 +187,7 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
         child.on('message',(m:any)=>{messages.push(m);if(m.point==='ready')resolve(m);if(m.point==='error')reject(Error(m.message));});
         child.once('error',reject);
       });
-      child.send({database,port:mysqlPort,domain:budget.domain,secret});
+      child.send({database,port:mysqlPort,domain:budget.domain,secret,taskExecution});
       try{
         const info=await ready;expect(info.sends).toBe(0);expect(info.handlers).toBe(0);expect(info.runId).toBe(result.run.id);
         baseURL=info.url;
@@ -196,20 +202,80 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     save('joint-success',{scope:'synthetic responses/usage, actual JWT HTTP SDK Worker SQL; NOT autonomous model/live collectors',accepted,wires,responses,estimates,executed,fsAudit:audit,tables,published,before,recoveryProcesses,summaryRequests:0,restarts:2,newSendsOnRecovery:0});
   },60000);
 
-  it.each(['hash','request','domain','configuration'])('rejects corrupted admission %s durably before SDK and handlers',async(kind)=>{
+  it.each(['hash','request','domain','configuration',...(formal?['source','gate','owner','startup','missing','missing-startup','binding']:[])])('rejects corrupted admission %s durably before SDK and handlers',async(kind)=>{
     const accepted=await admit();expect(accepted.status).toBe(202);
     const req=(await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[accepted.body.requestId]))[0];
     const snapshot=decode(req.request_snapshot);
+    if(kind==='missing'||kind==='missing-startup')delete snapshot.executionAllocation;
     if(kind==='hash')snapshot.executionAllocation.hash='0'.repeat(64);
     if(kind==='request')snapshot.executionAllocation.requestId=randomUUID();
     if(kind==='domain')snapshot.executionAllocation.domain='investigation-v1';
     if(kind==='configuration')snapshot.executionAllocation.configuration.maxToolCalls=37;
+    if(['source','gate','owner'].includes(kind)) {
+      const key=kind==='source'?'sourceHash':kind==='gate'?'gateId':'ownerRunId';
+      snapshot.executionAllocation.configuration.authority[key]=kind==='source'?'b'.repeat(64):randomUUID();
+      const {hash:_,...payload}=snapshot.executionAllocation;snapshot.executionAllocation.hash=allocationHash(payload);
+    }
     await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?',[JSON.stringify(snapshot),accepted.body.requestId]);
+    if(kind==='binding')await pool.query('UPDATE investigation_requests SET execution_domain=NULL WHERE id=?',[accepted.body.requestId]);
     let sends=0;const provider:LLMProvider={getDefaultModel:()=> 'fixture',chat:async()=>{sends++;throw Error('SHOULD_NOT_SEND');},chatStream:async()=>{sends++;throw Error('SHOULD_NOT_SEND');}};
-    const {run}=await execute(provider,new ToolRegistry());expect(run.state).toBe('failed');expect(sends).toBe(0);
+    const {run}=await execute(provider,new ToolRegistry(),kind==='startup'||kind==='missing-startup'?{budget:investigationBudgetConfiguration()}:{});expect(run.state).toBe('failed');expect(sends).toBe(0);
     expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+    if(kind==='missing'||kind==='missing-startup')expect(await rows('SELECT * FROM agent_canonical_facts')).toHaveLength(0);
     save('rejected-'+kind,{run,sends,ledgerRows:0});
   });
+  if(formal) {
+    it('backfills an intact predecessor gate and leaves legacy rows/unknown reservations unchanged',async()=>{
+      const accepted=await admit();expect(accepted.status).toBe(202);
+      const before=await rows('SELECT * FROM investigation_requests');
+      await pool.query('UPDATE investigation_requests SET execution_domain=NULL WHERE id=?',[accepted.body.requestId]);
+      const migration=(await loadMigrations()).find(m=>m.id==='132_investigation_execution_domain_backfill.sql')!;
+      for(const sql of splitSqlStatements(migration.sql))await pool.query(sql);
+      expect(await rows('SELECT * FROM investigation_requests')).toEqual(before);
+      const second=await admit();expect(second.status).toBe(403);
+      expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+      save('migration-backfill',{migration: migration.id,checksum:migration.checksum,requests:before.length,secondStatus:second.status});
+    });
+    it.each(['missing','corrupt'])('keeps a consumed gate closed after %s JSON identity and rolls back all second-request writes',async(kind)=>{
+      const accepted=await admit();expect(accepted.status).toBe(202);
+      const requestId=accepted.body.requestId;
+      const req=(await rows('SELECT request_snapshot,execution_domain FROM investigation_requests WHERE id=?',[requestId]))[0];
+      expect(req.execution_domain.toString()).toBe(domain);
+      const snapshot=decode(req.request_snapshot);
+      if(kind==='missing')delete snapshot.executionAllocation;else snapshot.executionAllocation.hash='0'.repeat(64);
+      await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?',[JSON.stringify(snapshot),requestId]);
+      const tables=['investigations','investigation_requests','investigation_admission_keys','investigation_create_keys','chat_sessions','chat_messages','workflow_jobs','outbox_events'];
+      const before=Object.fromEntries(await Promise.all(tables.map(async t=>[t,await rows(`SELECT * FROM ${t}`)])));
+      const second=await admit();expect(second.status).toBe(403);
+      for(const table of tables)expect(await rows(`SELECT * FROM ${table}`)).toEqual(before[table]);
+      save('gate-closed-'+kind,{second,before,gate:domain});
+    });
+    it('serializes concurrent new requests on one gate and retains an idempotent read without duplicating messages/jobs',async()=>{
+      const body={title:'SYNTHETIC gate race',goal:'合成并发准入',profileId:'ops',resourceRefs:[{type:'instance',id:1,role:'primary'}],subject:{kind:'resource',resource:{type:'instance',id:1}}};
+      const keys=[randomUUID(),randomUUID()];
+      const results=await Promise.all(keys.map(key=>http('',body,key)));
+      expect(results.map(r=>r.status).sort()).toEqual([202,403]);
+      const winner=results.findIndex(r=>r.status===202),accepted=results[winner];
+      const before={requests:await rows('SELECT * FROM investigation_requests'),messages:await rows('SELECT * FROM chat_messages'),jobs:await rows('SELECT * FROM workflow_jobs')};
+      const replay=await http('',body,keys[winner]);expect(replay.status).toBe(202);expect(replay.body).toEqual(accepted.body);
+      expect(await rows('SELECT * FROM investigation_requests')).toEqual(before.requests);
+      expect(await rows('SELECT * FROM chat_messages')).toEqual(before.messages);
+      expect(await rows('SELECT * FROM workflow_jobs')).toEqual(before.jobs);
+      const snapshot=decode(before.requests[0].request_snapshot);delete snapshot.executionAllocation;
+      await pool.query('UPDATE investigation_requests SET request_snapshot=? WHERE id=?',[JSON.stringify(snapshot),accepted.body.requestId]);
+      const invalidReplay=await http('',body,keys[winner]);expect(invalidReplay.status).toBe(403);
+      expect(await rows('SELECT id FROM investigation_requests')).toHaveLength(1);
+      save('gate-concurrent-idempotent',{results,replay,invalidReplay,before});
+    });
+    it('refuses a legacy ledger fallback when the independent gate remains and both startup/allocation are absent',async()=>{
+      const accepted=await admit();expect(accepted.status).toBe(202);
+      await pool.query("UPDATE investigation_requests SET request_snapshot=JSON_REMOVE(request_snapshot,'$.executionAllocation') WHERE id=?",[accepted.body.requestId]);
+      const defaults=investigationBudgetConfiguration();
+      const legacy=new MysqlInvestigationBudgetLedger(()=>pool,defaults.policy);
+      await expect(legacy.reserveExecution({requestId:accepted.body.requestId,domain:defaults.domain,mode:'manual',profile:INVESTIGATION_PROFILES.ops,reserveTokens:32000,reserveCostMicros:1})).rejects.toThrow('INVESTIGATION_ALLOCATION_INVALID');
+      expect(await rows('SELECT * FROM investigation_budget_ledger')).toHaveLength(0);
+    });
+  }
   it('rejects 37 tools atomically, executing no prefix of the batch',async()=>{
     const accepted=await admit();expect(accepted.status).toBe(202);
     let sends=0,handlers=0;
@@ -254,7 +320,14 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     expect(admission.accepted).toBe(true);if(admission.accepted === false)throw Error(admission.reason);
     await ledger().markSent(admission.reservation.id);await ledger().settle(admission.reservation.id,null);
     const prior=await rows('SELECT * FROM investigation_budget_ledger');
-    const b=await admit();const bs=decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[b.body.requestId]))[0].request_snapshot);
+    const b=await admit();
+    if(formal) {
+      expect(b.status).toBe(403);
+      expect(await rows('SELECT * FROM investigation_budget_ledger')).toEqual(prior);
+      expect(await rows('SELECT id FROM investigation_requests')).toHaveLength(1);
+      save('gate-single-request',{secondStatus:b.status,prior,requests:1});return;
+    }
+    const bs=decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[b.body.requestId]))[0].request_snapshot);
     const blocked=await ledger().reserveExecution({requestId:b.body.requestId,domain:budget.domain,mode:'manual',profile:INVESTIGATION_PROFILES.ops,reserveTokens:1200000,reserveCostMicros:1000000,
       prices:budget.prices,executionAllocation:bs.executionAllocation});
     expect(blocked).toEqual({accepted:false,reason:'TOTAL_DAILY_TOKENS'});
