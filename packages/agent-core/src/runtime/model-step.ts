@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } from '../types.js';
 import { ContextManager, normalizeToolGroups } from './context-manager.js';
@@ -66,6 +67,7 @@ export class ModelStep {
         const normalized = normalizeToolGroups(hasTime ? messages : [...messages, ...projectContextBlocks([runtimeBlock('runtime', currentTime())])]);
         const projection = this.provider.projectMessages?.(normalized, spec.model) ?? normalized;
         new ContextManager(spec, this.provider).assertFits(projection, undefined, definitions);
+        context.providerInputHash = createHash('sha256').update(JSON.stringify([projection, definitions])).digest('hex');
         return hook.wantsStreaming() ? this.provider.chatStream(projection, definitions, {
           // Idle is semantic provider output, not transport heartbeats/metadata.
           // Content, thinking and tool fragments below own the deadline.

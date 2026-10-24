@@ -13,7 +13,9 @@
  * 工具参数 Schema 属性定义
  */
 export interface ToolParameterProperty {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
+  minimum?: number;
+  maximum?: number;
   description?: string;
   enum?: string[];
   default?: unknown;

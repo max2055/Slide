@@ -30,6 +30,7 @@ import { InvestigationAuthorization, provisionInvestigationServiceIdentity } fro
 import { MysqlInvestigationStore } from './store.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { MysqlWorkflowStore } from '../workflows/worker-runtime.js';
+import { BoundedWorkflowRuntime } from '../workflows/bounded-worker.js';
 import { AgentRunService, type AgentRun } from '../adapter/agent-run-service.js';
 import {
   CanonicalStore,
@@ -48,6 +49,17 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     service: ActorContext;
   let serviceId: number, roleId: number, binding: InvestigationExecutionBinding, sessionId: string, turnId: string;
   const rows = async (sql: string, values: unknown[] = []) => (await pool.query<RowDataPacket[]>(sql, values))[0];
+  async function retainLengthEvidence(name: string, extra: Record<string, unknown> = {}) {
+    const dir = process.env.T04_LENGTH_EVIDENCE_DIR;
+    if (!dir) return;
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await mkdir(dir, { recursive: true });
+    const tables: Record<string, unknown> = {};
+    for (const table of ['investigation_requests','agent_runs','chat_sessions','agent_canonical_facts','investigation_budget_ledger','investigation_results'])
+      tables[table] = await rows(`SELECT * FROM ${table}`);
+    await writeFile(join(dir, name + '.json'), JSON.stringify({ kind: 'disposable real MySQL; retained B9/local fixture responses, zero product calls', binding, tables, ...extra }, null, 2) + '\n');
+  }
   const tx = async <T>(work: (c: InvestigationConnection) => Promise<T>, lostAck = false): Promise<T> => {
     const c = await pool.getConnection();
     try {
@@ -217,7 +229,16 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       toolCalls?: boolean;
       missingUsage?: boolean;
       toolError?: boolean;
+      /** The live actor's registry no longer offers the tool, after the write-ahead record. */
+      liveToolsRejected?: boolean;
+      /** The original read-only handler is entered, then throws. */
+      toolThrows?: boolean;
       zeroSend?: boolean;
+      overToolBudget?: boolean;
+      analysisAnswer?: boolean;
+      finalContent?: string;
+      outputLength?: boolean;
+      knownResponse?: any;
     } = {},
   ) {
     providerCalls = 0;
@@ -226,7 +247,8 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       getDefaultModel: () => 'readonly-fixture',
       getModelCapabilities: () => ({
         model: 'readonly-fixture',
-        contextWindowTokens: options.zeroSend ? 5121 : 32768,
+        contextWindowTokens: options.zeroSend ? 5121 : options.knownResponse ? 1048576 : 32768,
+        ...(options.knownResponse ? {maxOutputTokens: 393216} : {}),
         preferredOutputTokens: 4096,
         source: 'configuration',
         version: 'fixture/v1',
@@ -234,12 +256,18 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       chat: async () => {
         providerCalls++;
         await options.beforeProvider?.();
+        if (options.knownResponse) return structuredClone(options.knownResponse);
         return {
-          content: providerCalls === 1 && options.toolCalls !== false ? null : '事实不足，根因待验证',
-          finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : 'stop',
+          content: providerCalls === 1 && options.toolCalls !== false ? null : options.finalContent ?? (options.analysisAnswer ? JSON.stringify({
+            analysisVersion: 1, summary: '只读检查完成，根因未验证。',
+            claims: [{ statement: '现有观测不足以确认根因。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+            hypotheses: [{ statement: '采集缺口需要进一步验证。', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+            unresolvedQuestions: ['核对缺失来源。'], recommendations: [{ action: '补齐只读采集证据。', priority: 'medium' }],
+          }) : '事实不足，根因待验证'),
+          finishReason: providerCalls === 1 && options.toolCalls !== false ? 'tool_calls' : options.outputLength ? 'length' : 'stop',
           toolCalls:
             providerCalls === 1 && options.toolCalls !== false
-              ? [{ id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
+              ? [...(options.overToolBudget ? Array.from({ length: 20 }, (_, i) => ({ id: `excess-${i}`, name: 'get_instance_summary', arguments: { instance_id: 101 } })) : []), { id: 'summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } },
                 ...(options.toolError ? [{ id: 'rejected-call', name: 'get_instance_summary', arguments: { instance_id: 101, range: '24h' } }] : [])]
               : [],
           hasToolCalls: providerCalls === 1 && options.toolCalls !== false,
@@ -262,14 +290,18 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       execute: async () => {
         toolCalls++;
         await options.beforeTool?.();
+        if (options.toolThrows) throw new Error('HANDLER_FAILED');
         return { success: true, rows: [{ health: 'unknown' }], password: 'must-redact' };
       },
     });
+    // The first registry is the executor's frozen one; later ones belong to the live actor of each call.
+    let registries = 0;
     return new InvestigationExecutor({
       pool: () => pool,
+      ...(options.knownResponse ? { runtimeContext: {contextWindowTokens: 65536, maxTokens: 8192, summaryMaxTokens: 10240} } : {}),
       authorization: new InvestigationAuthorization(contexts),
       providerForPurpose: async () => provider,
-      toolsForActor: () => tools,
+      toolsForActor: () => (options.liveToolsRejected && registries++ > 0 ? new ToolRegistry() : tools),
       budget: {
         domain: 'test-investigation',
         policy,
@@ -301,6 +333,88 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       await pool.query(`DELETE FROM ${table}`);
   });
   const ledger = () => new MysqlInvestigationBudgetLedger(() => pool, policy);
+
+  it('qualifies the real bounded queue fixture with durable collection schedules and execution context', async () => {
+    const { qualifyBoundedQueue } = await import(new URL('../../../../tests/qualification/assert-bounded-queue.js', import.meta.url).href);
+    await qualifyBoundedQueue(pool);
+  }, 90000);
+
+  it('B11 durable read scope lets formal collection commit while the real HTTP SDK is awaiting its response', async () => {
+    const { platformLogs } = await import('../platform/structured-log-evidence-adapter.js');
+    const log = vi.spyOn(platformLogs, 'record');
+    const { createServer } = await import('node:http');
+    const { OpenAIProvider } = await import('@slide/agent-core');
+    const { createBuiltinRegistry } = await import('../metrics/packages/builtins.js');
+    const { MysqlScheduleStore } = await import('../metrics/scheduler/store.js');
+    const { MetricScheduler } = await import('../metrics/scheduler/service.js');
+    const { PolicyService } = await import('../metrics/policy/service.js');
+    const { MysqlPolicyStore } = await import('../metrics/policy/store.js');
+    const { admin: policyActor, pin, resource } = await import('../metrics/policy/test-support.js');
+    const queue = new MysqlWorkflowStore(() => pool as never), packages = createBuiltinRegistry();
+    const schedules = new MysqlScheduleStore(pool, packages);
+    let now = Date.now() - 20000, release!: () => void, entered!: () => void;
+    const waiting = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
+    let sends = 0;
+    const server = createServer(async (req, res) => {
+      for await (const _ of req) { /* consume actual SDK body */ }
+      sends++; entered(); await gate;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ id: 'local', choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({
+        analysisVersion: 1, summary: '离线持久化验证，未证明目标健康。', claims: [], hypotheses: [], unresolvedQuestions: ['真实模型语义未验收。'], recommendations: [],
+      }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 20 } }));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+    const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'local-readonly',
+      capabilities: { model: 'local-readonly', contextWindowTokens: 65536, maxOutputTokens: 16384, preferredOutputTokens: 4096, source: 'configuration', version: 'local-fixture' },
+      baseURL: `http://127.0.0.1:${(server.address() as any).port}/v1` });
+    const executor = new InvestigationExecutor({ pool: () => pool, authorization: new InvestigationAuthorization(contexts),
+      providerForPurpose: async () => actual, toolsForActor: () => new ToolRegistry(),
+      budget: { domain: 'test-investigation', policy, reserveCostMicros: 1000000 } });
+    const registry = new JobRegistry();
+    const policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
+      { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
+    await policies.changeBinding(policyActor, { type: 'instance', id: 101 }, { expected_revision: 0, package: pin }, true);
+    const scheduler = new MetricScheduler(schedules, packages, { resolve: async ref => ({ resource: resource(ref.id),
+      credential_ref: 'credential:local-fixture', evidence: {}, resolve: async () => ({ method: 'sql', pool: { query: async () => [[], []] } }) }) }, () => now,
+    async () => [{ dimensions: {}, fields: { Uptime: { encoding: 'float64', value: 100 }, Queries: { encoding: 'uint64', value: '200' } }, counter: { bits: '64', start_at: new Date(now - 100000).toISOString() } }]);
+    scheduler.register(registry);
+    const runtime = new BoundedWorkflowRuntime(queue, binding.workerId, 3, (j, ctx) => queue.resourcesFor(j, ctx));
+    await pool.query("UPDATE workflow_jobs SET state='queued',lease_owner=NULL,lease_expires_at=NULL WHERE id=?", [binding.jobId]);
+    const starts: any[] = [];
+    const handler = async (job: any, context: any) => {
+      starts.push({ id: job.id, type: job.type });
+      if (job.type === 'investigation.execute') { binding.fencingToken = job.fencingToken; await executor.execute({ investigationId: binding.investigationId, requestId: binding.requestId, job, context }); }
+      else await registry.execute(job, context);
+    };
+    const first = runtime.runOnce(handler);
+    let collectionTick: Promise<unknown> | undefined;
+    try {
+      await Promise.race([waiting, first.then(value => { throw Error('RUNTIME_RETURNED_BEFORE_SDK:' + value + ':' + JSON.stringify(starts)); }), new Promise((_, reject) => { const t = setTimeout(() => reject(Error('LOCAL_SDK_NOT_REACHED:' + JSON.stringify(starts))), 5000); t.unref(); })]);
+      await scheduler.tick(); now += 10000; await scheduler.tick();
+      collectionTick = runtime.runOnce(handler);
+      await Promise.race([collectionTick, new Promise((_, reject) => { const t = setTimeout(() => reject(Error('COLLECTION_BLOCKED_BY_MODEL_WAIT')), 1500); t.unref(); })]);
+      expect((await rows("SELECT state FROM workflow_jobs WHERE id=?", [binding.jobId]))[0].state).toBe('running');
+      expect(await rows("SELECT id FROM metric_schedule_events WHERE resource_key='instance:101' AND code='committed'")).toHaveLength(1);
+      expect(await rows("SELECT id FROM metric_observations WHERE stage='normalized'")).not.toHaveLength(0);
+      const phases = log.mock.calls.map(([event]) => event.eventType);
+      expect(phases).toContain('job.wait'); expect(phases).toContain('job.resource_wait');
+      expect(phases).toContain('collection.begun'); expect(phases).toContain('collection.committed');
+      const [record] = await rows('SELECT id,job_type AS type,payload,attempts,max_attempts AS maxAttempts,fencing_token AS fencingToken FROM workflow_jobs WHERE id=?', [binding.jobId]);
+      const claimed = { id: String(record.id), type: String(record.type), attempts: Number(record.attempts), maxAttempts: Number(record.maxAttempts),
+        fencingToken: Number(record.fencingToken), payload: typeof record.payload === 'string' ? JSON.parse(record.payload) : record.payload };
+      expect(await queue.resourcesFor({ ...claimed, fencingToken: claimed.fencingToken + 1 }, { workerId: binding.workerId })).toEqual(['*']);
+      expect(await queue.resourcesFor(claimed, { workerId: 'wrong-owner' })).toEqual(['*']);
+    } finally {
+      release(); await Promise.all([first, collectionTick]); await runtime.shutdown(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r()));
+      await retainLengthEvidence('b11-collection-during-http', { sends, starts, events: log.mock.calls.map(([event]) => event), jobs: await rows('SELECT * FROM workflow_jobs'), schedule: await rows('SELECT * FROM metric_schedule_events') });
+      log.mockRestore();
+    }
+    expect((await rows('SELECT state FROM agent_runs WHERE id=?', [binding.runId]))[0].state).toBe('completed');
+    expect(sends).toBe(1);
+    await expect(execute(executor)).rejects.toThrow('INVESTIGATION_FENCE_LOST');
+    expect(await queue.claim('after-completion', 30, { types: ['investigation.execute'], exclude: false })).toBeNull();
+    expect(sends).toBe(1);
+  }, 30000);
 
   it.each(['concurrent','source-http','service-http','failed-source-http','transport-unknown'])('explicit HTTP continuation preserves known partial, rejects unknown and consumes predecessor once: %s', async mode => {
     if (mode === 'service-http') {
@@ -1134,6 +1248,182 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       allocations,
     );
   });
+  it('settles a received response rejected by tool budget without execution or unknown replay', async () => {
+    const executor = fixture({ overToolBudget: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(result.error).toMatchObject({ reasonCode: 'MAX_TOOL_CALLS' });
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    const allocation = (await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0];
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    const saved = (await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]))[0].result_json;
+    expect(saved.investigationExecution.provider).toBeNull();
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  const savedTools = async () => Object.values((await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]))[0]
+    .result_json.investigationExecution.tools ?? {}) as { status: string }[];
+  it('a rejection before the original handler is entered leaves no running tool and keeps the metered usage settled', async () => {
+    const executor = fixture({ liveToolsRejected: true });
+    const result = await execute(executor);
+    expect(result.state).not.toBe('completed');
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    expect(await savedTools()).not.toContainEqual(expect.objectContaining({ status: 'running' }));
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  it('a handler that was entered and failed stays running: the whole execution is unknown and never replayed', async () => {
+    const executor = fixture({ toolThrows: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(1);
+    expect(await savedTools()).toContainEqual(expect.objectContaining({ status: 'running' }));
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toMatchObject({ state: 'unknown', charged_tokens: 32000 });
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(1);
+  });
+  it.each(['answer', 'tools'] as const)('persists the final attempt %s through the actual executor and fresh recovery without a ninth send', async mode => {
+    const executor = fixture(), provider = await (executor as any).options.providerForPurpose('fault_diagnosis');
+    // Exercise attempt exhaustion independently of the default 16k context
+    // boundary; this verified fixture capacity does not change product limits.
+    (executor as any).options.runtimeContext = { contextWindowTokens: 32768, maxTokens: 4096, summaryMaxTokens: 2048 };
+    provider.chat = async (messages: any[], definitions: any[]) => {
+      providerCalls++;
+      const final = providerCalls === 8;
+      if (final) {
+        expect(definitions).toEqual([]);
+        expect(messages.some(m => String(m.content).includes('remainingProviderAttempts=1'))).toBe(true);
+      }
+      const answer = final && mode === 'answer';
+      return { content: answer ? JSON.stringify({ analysisVersion: 1, summary: '只读证据不足，根因未验证。',
+        claims: [{ statement: '已取得只读检查回执。', supportingToolCallIds: ['budget-read-1'], contradictingToolCallIds: [] }],
+        hypotheses: [], unresolvedQuestions: ['仍缺充分观测。'], recommendations: [] }) : null,
+        finishReason: answer ? 'stop' : 'tool_calls', toolCalls: answer ? [] : [{ id: `budget-read-${providerCalls}`, name: 'get_instance_summary', arguments: { instance_id: providerCalls % 2 ? 101 : 103 } }],
+        hasToolCalls: !answer, shouldExecuteTools: !answer, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
+    };
+    const result = await execute(executor);
+    expect(result.state).toBe(mode === 'answer' ? 'completed' : 'partial');
+    if (mode === 'tools') expect(result.error).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
+    expect(providerCalls).toBe(8); expect(toolCalls).toBe(7);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 240 });
+    const evidence = await rows('SELECT id FROM investigation_evidence WHERE run_id=?', [binding.runId]);
+    expect(evidence).toHaveLength(7);
+    const [saved] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(saved.result_json.claims).toHaveLength(mode === 'answer' ? 1 : 0);
+    await retainLengthEvidence('budget-final-' + mode, { result, allocation, evidence });
+    const restarted = fixture();
+    await execute(restarted);
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(saved);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+  });
+  it('settles a metered length terminal through core checkpoint, durable result and a fresh executor without replay', async () => {
+    const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
+    const original = b9.finalResponse.content;
+    expect(() => JSON.parse(original)).toThrow();
+    const executor = fixture({ knownResponse: b9.finalResponse });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(result.error).toMatchObject({ reasonCode: 'OUTPUT_LIMIT' });
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: b9.finalResponse.usage.prompt_tokens + b9.finalResponse.usage.completion_tokens });
+    const [saved] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(saved.result_json.investigationExecution.provider).toBeNull();
+    expect(saved.result_json.investigationExecution.lastProviderReceipt).toMatchObject({
+      status: 'rejected', reasonCode: 'OUTPUT_LIMIT', response: { content: original, finishReason: 'length' },
+    });
+    const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
+    await retainLengthEvidence('exact-b9-length', { originalResponse: b9.finalResponse });
+    const restarted = fixture(); // fresh executor, dependencies and provider; SQL/checkpoint survives
+    await execute(restarted);
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+  });
+  it.each(['hash','message','content','sent','usage','request','source','source-id','summary','lease','fence','acl'])(
+    'length receipt refuses %s and retains unknown/no-replay protection', async fault => {
+      const executor: any = fixture({ toolCalls: false, outputLength: true, finalContent: '{"analysisVersion":1' });
+      const persist = executor.persistCheckpoint.bind(executor);
+      let changed = false;
+      executor.persistCheckpoint = async (actor: any, bound: any, payload: any, stop: any) => {
+        if (!changed && payload.phase === 'rejected_final_response') {
+          changed = true;
+          if (fault === 'hash') payload.model_response_v1.responseHash = '0'.repeat(64);
+          if (fault === 'message') payload.model_response_v1.messageId = 'model-other';
+          if (fault === 'source-id') payload.model_response_v1.sourceRequestId = randomUUID();
+          if (fault === 'content') payload.assistantMessage.content = 'not the original';
+          if (['sent','usage','request','source','summary'].includes(fault)) {
+            const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+            const state = run.result_json.investigationExecution;
+            if (fault === 'sent') state.provider.status = 'sent';
+            if (fault === 'usage') state.usageUnknown = true;
+            if (fault === 'request') state.requestId = randomUUID();
+            if (fault === 'source') state.provider.inputHash = '0'.repeat(64);
+            if (fault === 'summary') state.provider.purpose = 'summary';
+            await pool.query('UPDATE agent_runs SET result_json=? WHERE id=?', [JSON.stringify(run.result_json), binding.runId]);
+          }
+          if (fault === 'lease') await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+          if (fault === 'fence') await pool.query('UPDATE workflow_jobs SET fencing_token=fencing_token+1 WHERE id=?', [binding.jobId]);
+          if (fault === 'acl') await pool.query('DELETE FROM instance_permissions WHERE user_id=? AND instance_id=103', [owner.userId]);
+        }
+        return persist(actor, bound, payload, stop);
+      };
+      if (['lease','fence'].includes(fault)) await expect(execute(executor)).rejects.toThrow('INVESTIGATION_FENCE_LOST');
+      else await execute(executor);
+      expect(changed).toBe(true); expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+      const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+      expect(run.result_json.investigationExecution.provider).not.toBeNull();
+      expect(run.result_json.investigationExecution.lastProviderReceipt).toBeUndefined();
+      expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe(['lease','fence'].includes(fault) ? 'sent' : 'unknown');
+    });
+  it('does not settle a length response with unknown actual usage', async () => {
+    const result = await execute(fixture({ toolCalls: false, outputLength: true, missingUsage: true, finalContent: '{"analysisVersion":1' }));
+    expect(result.error).toMatchObject({ reasonCode: 'INVESTIGATION_PROVIDER_UNKNOWN' });
+    expect(providerCalls).toBe(1);
+    const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(run.result_json.investigationExecution.provider.status).toBe('received');
+    expect(run.result_json.investigationExecution.lastProviderReceipt).toBeUndefined();
+    expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe('unknown');
+  });
+  it('persists completed model analysis with exact execution evidence through SQL and replay', async () => {
+    const executor = fixture({ analysisAnswer: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('completed');
+    const saved = (await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0].result_json;
+    const evidence = await rows('SELECT id FROM investigation_evidence WHERE run_id=?', [binding.runId]);
+    expect(saved.claims[0]).toMatchObject({ kind: 'inference', supportingEvidenceIds: [evidence[0].id] });
+    expect(saved.hypotheses[0]).toMatchObject({ status: 'unknown', supportingEvidenceIds: [evidence[0].id] });
+    expect(saved.rootCauseVerification).toEqual({ status: 'unverified' });
+    await execute(executor);
+    expect(providerCalls).toBe(2); expect(toolCalls).toBe(1);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0].result_json).toEqual(saved);
+  });
+  it.each(['extra-field', 'truncated', 'unknown-reference', 'empty-basis', 'wrong-type', 'oversized'])('persists explicit rejected analysis %s without publishing assertions or replay', async mode => {
+    const answer: any = { analysisVersion: 1, summary: '候选判断', claims: [{ statement: '待核验', supportingToolCallIds: ['summary-call'], contradictingToolCallIds: [] }],
+      hypotheses: [], unresolvedQuestions: ['证据缺口'], recommendations: [] };
+    if (mode === 'extra-field') answer.evidenceGaps = ['未获网络数据'];
+    if (mode === 'unknown-reference') answer.claims[0].supportingToolCallIds = ['outside-execution'];
+    if (mode === 'empty-basis') answer.claims[0].supportingToolCallIds = [];
+    if (mode === 'wrong-type') answer.unresolvedQuestions = {};
+    if (mode === 'oversized') answer.summary = 'x'.repeat(2001);
+    const original = mode === 'truncated' ? '{"analysisVersion":1' : JSON.stringify(answer);
+    const executor = fixture({ finalContent: original });
+    expect((await execute(executor)).state).toBe('completed');
+    const [stored] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(stored.result_json.claims).toEqual([]); expect(stored.result_json.hypotheses).toEqual([]);
+    expect(stored.result_json.summary).toContain('模型最终输出未通过');
+    expect(stored.result_json.unresolvedQuestions.join()).toContain('未发布');
+    expect(stored.result_json.facts).toHaveLength(1);
+    const [run] = await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(run.result_json.event.finalContent).toBe(original);
+    await execute(fixture());
+    expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(stored);
+  });
   it('Runtime refuses provider dispatch when the original receipt cannot fit the prompt', async () => {
     const admitted = await automatic(1);
     const result = await execute(fixture());
@@ -1788,13 +2078,14 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     },
     context: { workerId: binding.workerId, fencingToken: binding.fencingToken },
   });
-  async function child(crash?: string, allowFailure = false) {
+  async function child(crash?: string, allowFailure = false, outputLength = false) {
     const worker = fork(fileURLToPath(new URL('./execution-recovery-child.ts', import.meta.url)), [], {
       execArgv: ['--import', import.meta.resolve('tsx')],
       silent: true,
       env: {
         ...process.env,
         T04_CHILD_DATABASE: database,
+        T04_CHILD_LENGTH: outputLength ? '1' : '',
         T04_CHILD_COMMAND: JSON.stringify(childCommand()),
         ...(crash ? { T04_CHILD_CRASH: crash } : { T04_CHILD_CRASH: '' }),
       },
@@ -1830,6 +2121,35 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     );
     return result;
   }
+  it('SIGKILL after committed length acknowledgement resumes terminal and survives two complete worker restarts without sends', async () => {
+    const first = await child('length-checkpoint', false, true);
+    expect(first.signal).toBe('SIGKILL');
+    const [saved] = await rows('SELECT result_json,state FROM agent_runs WHERE id=?', [binding.runId]);
+    expect(saved.state).toBe('running');
+    expect(saved.result_json.investigationExecution.provider).toBeNull();
+    expect(saved.result_json.investigationExecution.lastProviderReceipt.reasonCode).toBe('OUTPUT_LIMIT');
+    expect((await rows('SELECT state FROM investigation_budget_ledger'))[0].state).toBe('sent');
+    await retainLengthEvidence('length-checkpoint-before-restart', { first });
+    await pool.query('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?', [binding.jobId]);
+    const next = await new MysqlWorkflowStore(() => pool as never).claim('length-recovery', 60, { types: ['investigation.execute'], exclude: false });
+    binding = { ...binding, workerId: 'length-recovery', fencingToken: next!.fencingToken };
+    const second = await child(undefined, false, true);
+    expect(second.messages.find((m: any) => m.terminal)).toMatchObject({ terminal: 'partial', error: { reasonCode: 'OUTPUT_LIMIT' } });
+    expect(second.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
+    const http = second.messages.find((m: any) => m.httpStatus);
+    expect(http).toMatchObject({ httpStatus: 200, derivedRunState: 'partial', latestResult: { result: { claims: [], hypotheses: [], execution: { reasonCode: 'OUTPUT_LIMIT' } } } });
+    const [published] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
+    expect(published.result_json.claims).toEqual([]); expect(published.result_json.hypotheses).toEqual([]);
+    const [allocation] = await rows('SELECT state,charged_tokens FROM investigation_budget_ledger');
+    expect(allocation).toMatchObject({ state: 'settled', charged_tokens: 60 });
+    const third = await child(undefined, false, true);
+    expect(third.messages.some((m: any) => m.providerCall || m.toolCall)).toBe(false);
+    expect(third.messages.find((m: any) => m.terminal)?.terminal).toBe('partial');
+    expect(third.messages.find((m: any) => m.httpStatus)).toEqual(http);
+    expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(published);
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+    await retainLengthEvidence('length-http-worker-restarts', { first, second, third });
+  }, 30000);
   it.each(
     ['manual', 'automatic'].flatMap((lane) =>
       ['provider-before', 'provider-intent', 'provider-after'].map((point) => [lane, point]),

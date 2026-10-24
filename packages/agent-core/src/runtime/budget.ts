@@ -1,10 +1,31 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AgentRunSpec } from '../types.js';
+import type { AgentRunSpec, Message } from '../types.js';
+import type { ContextManager } from './context-manager.js';
 import type { RecoverySnapshot } from './recovery-policy.js';
 import { RuntimeError } from './recovery-policy.js';
 
 export function consumedTokens(state: RecoverySnapshot): number {
   return (state.usage.prompt_tokens ?? 0) + (state.usage.completion_tokens ?? 0) + state.reservedTokens + (state.delegated?.tokens ?? 0);
+}
+/** Narrow only a NEW request envelope, never an unsettled or child allocation.
+ * Count the complete provider projection/schema; ModelStep independently checks
+ * the same input ceiling after hooks, normalization and provider projection. */
+export function planRequestBudget(manager: ContextManager, messages: Message[], state: RecoverySnapshot, reduceOutput = true) {
+  const spec = manager.spec;
+  let reservation = manager.requestReservation();
+  if (spec.budgetLimits && state.unknownRequests === 0 && state.reservedTokens === 0) {
+    const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(state);
+    if (remaining < reservation || spec.contextBlockLimit !== undefined) {
+      const input = manager.tokens(messages);
+      const output = reduceOutput ? Math.min(manager.contextConfig.maxTokens, Math.min(remaining, reservation) - input) : manager.contextConfig.maxTokens;
+      if (!Number.isSafeInteger(output) || output <= 0 || input + output > remaining) {
+        throw new RuntimeError('TOKEN_BUDGET', 'Token budget cannot cover the complete request and output');
+      }
+      reservation = input + output;
+      return { reservation, spec: { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, input) } };
+    }
+  }
+  return { reservation, spec };
 }
 export function assertRequestBudget(spec: AgentRunSpec, state: RecoverySnapshot, reservation: number): void {
   const limits = spec.budgetLimits;

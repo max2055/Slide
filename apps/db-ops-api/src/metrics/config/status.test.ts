@@ -49,4 +49,30 @@ describe('independent resource configuration facts',()=>{
     delete inventory.attributes['db.version'];
     expect((await reader.recommendations(admin,ref)).packages.some(p=>p.recommended)).toBe(false);
   });
+  it('reports an exact applied custom binding without repeating activation, while retaining formal gaps',async()=>{
+    const s=setup();
+    const custom=s.registry.list().find(r=>r.package.id==='mysql-custom-existing-scalars')!.package;
+    const customPin={id:custom.id,version:custom.version,digest:custom.digest};
+    await s.policy.changeBinding(admin,ref,{expected_revision:0,package:customPin},true);
+    const legacy={kind:'custom_sql' as const,source_id:'connections',source_digest:'reviewed-source',state:'reviewed' as const,
+      package:customPin,code:'CUSTOM_SQL_ACTIVATION_REQUIRED',actions:['POST resource activate']};
+    const reader=new MetricConfigurationReader(s.policy,s.registry,{inventory:testResources.inventory,evidence:async()=>evidence,
+      migration:async()=>[legacy]},async()=>[],()=>at);
+    expect((await reader.status(admin,ref)).legacy_configuration![0].code).toBe('CUSTOM_SQL_ACTIVATION_REQUIRED');
+    s.store.bindings.get('instance:1')!.application={status:'applied',applied_revision:1,reported_at:at,error_code:null};
+    const applied=await reader.status(admin,ref);
+    expect(applied.legacy_configuration![0]).toMatchObject({state:'reviewed',code:'CUSTOM_SQL_BINDING_APPLIED',package:customPin});
+    expect(applied.formal_visibility).toMatchObject({state:'pending',freshness:'unknown'});
+    expect(applied.blockers).toContain('AWAITING_SAMPLE');
+    expect(legacy.code).toBe('CUSTOM_SQL_ACTIVATION_REQUIRED');
+    // A new revision or pin never inherits the previous activation.
+    s.store.bindings.get('instance:1')!.application.applied_revision=2;
+    expect((await reader.status(admin,ref)).legacy_configuration![0].code).toBe('CUSTOM_SQL_ACTIVATION_REQUIRED');
+    s.store.bindings.get('instance:1')!.application.applied_revision=1;
+    legacy.package={...customPin,digest:'0'.repeat(64)};
+    expect((await reader.status(admin,ref)).legacy_configuration![0].code).toBe('CUSTOM_SQL_ACTIVATION_REQUIRED');
+    legacy.state='blocked' as any;
+    legacy.package=customPin;
+    expect((await reader.status(admin,ref)).legacy_configuration![0].state).toBe('blocked');
+  });
 });

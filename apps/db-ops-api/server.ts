@@ -1,6 +1,7 @@
 import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
+import {investigationRuntimeConfiguration} from './src/investigations/runtime-configuration.js';
 import { InvestigationExecutor } from './src/investigations/executor.js';
 import { createSystemComposition, type SystemComposition } from './src/investigations/system-composition.js';
 import { registerSystemEventRoutes, SystemEventReader } from './src/investigations/system-event-routes.js';
@@ -19,6 +20,7 @@ import { capacityInstanceIds } from './src/capacity-scope.js';
  * Slide - Database Operations API Server
  */
 import 'dotenv/config';
+import { reportAttachmentDisposition } from './src/report-download.js';
 import { randomUUID } from 'node:crypto';
 import { createFatalProcessHandler } from './src/security/fatal-process.js';
 import { installConsoleRedaction } from './src/security/log-redaction.js';
@@ -3055,11 +3057,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const exportFormat = format || report.format;
         const content = await reportExporter.export(report, exportFormat);
         const mimeType = reportExporter.getFormatMimeType(exportFormat);
-        const fileName = `${report.name.replace(/[^a-zA-Z0-9]/g, '_')}.${reportExporter.getExtension(exportFormat)}`;
 
         reply
           .header('Content-Type', mimeType)
-          .header('Content-Disposition', `attachment; filename="${fileName}"`)
+          .header('Content-Disposition', reportAttachmentDisposition(report.name, reportExporter.getExtension(exportFormat), Number(id)))
           .send(content);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -5458,6 +5459,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     pool: () => dbConnection.getPool(), providerForPurpose: createLLMProvider, toolsForActor: createActorBoundToolRegistry,
     systemToolsForInvestigation: systemComposition.toolsForInvestigation,
     budget: investigationBudgetConfiguration(),
+    runtimeContext: investigationRuntimeConfiguration(),
   }));
   registerWorkflowHandlers(workflowRegistry, {
     ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),
@@ -5473,7 +5475,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
   await startup.assertOwned();
   await startup.step(() => startMetricRetention(pool, workflowRegistry, job => workflowStore.enqueue(job)));
-  const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), job => workflowStore.resourcesFor(job));
+  const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), (job, context) => workflowStore.resourcesFor(job, context));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
   await startup.step(() => enqueueNotificationDispatch());

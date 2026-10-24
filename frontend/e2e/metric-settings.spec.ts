@@ -1,9 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics/config/registry.js';
 import { canonicalDefinitions } from '../../apps/db-ops-api/src/metrics/packages/builtins.js';
+import { reviewedSqlCatalog } from '../../apps/db-ops-api/src/metrics/database/reviewed-sql-catalog.js';
+import { writeFileSync } from 'node:fs';
 
 // Use the production immutable releases, including derived outputs and multiple versions.
-const packages = createConfigurationRegistry().list();
+const packages = createConfigurationRegistry(reviewedSqlCatalog).list();
 const templateCount = new Set(packages.map(p => p.package.id)).size;
 const catalog = { packages, metrics: [...new Map([...canonicalDefinitions, ...packages.flatMap(p => p.extensions)]
   .map(m => [`${m.id}@${m.semantic_version}`, m])).values()] };
@@ -42,7 +44,7 @@ const noOverflow = async (page: Page) => {
   }
 };
 
-for (const width of [1440, 1280, 375]) for (const theme of ['light', 'dark']) {
+for (const width of [1440, 1280, 768, 375]) for (const theme of ['light', 'dark']) {
   test(`catalog and package layout ${width}px ${theme}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     await setup(page, theme);
@@ -64,6 +66,19 @@ for (const width of [1440, 1280, 375]) for (const theme of ['light', 'dark']) {
     await expect(entries(page).filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
     await expect(entries(page).filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();
     await noOverflow(page);
+    const region = page.getByRole('region', { name: '采集模板目录' });
+    expect(await region.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    writeFileSync(info.outputPath('package-layout.json'), JSON.stringify({
+      source: 'controlled HTTP responses with production immutable catalog and real application shell',
+      at: new Date().toISOString(), width, theme,
+      layout: await region.evaluate(el => ({ width: el.clientWidth, scrollWidth: el.scrollWidth,
+        tableWidth: el.querySelector('app-data-table')!.getBoundingClientRect().width })),
+    }, null, 2));
+    for (const row of await entries(page).all()) {
+      const button = row.getByRole('button', { name: '查看模板', exact: true });
+      const box = (await button.boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
     await page.screenshot({ path: info.outputPath('packages.png'), fullPage: true });
     await entries(page).filter({ hasText: 'MySQL 基础采集' }).first().getByRole('button', { name: '查看模板' }).click();
     const mysql = detail(page);
@@ -136,13 +151,13 @@ test('unknown IDs remain distinguishable and metric count deduplicates derived o
   await go(page, 'packages');
   await expect(entries(page)).toHaveCount(2);
   for (const row of await entries(page).all()) await row.getByText('模板标识', { exact: true }).click();
-  await expect(entries(page).first().getByText('vendor-one', { exact: true })).toBeVisible();
-  await expect(entries(page).last().getByText('vendor-two', { exact: true })).toBeVisible();
+  await expect(entries(page).first().getByText('vendor-one', { exact: true }).first()).toBeVisible();
+  await expect(entries(page).last().getByText('vendor-two', { exact: true }).first()).toBeVisible();
   await entries(page).first().getByRole('button', { name: '查看模板' }).click();
   await expect(detail(page)).toContainText('2 项指标');
   await entryExpandMetrics(page);
-  await expect(page.getByText('vendor-one.value', { exact: true })).toBeVisible();
-  await expect(page.getByText('vendor-one.rate', { exact: true })).toBeVisible();
+  await expect(detail(page).getByText('vendor-one.value', { exact: true })).toBeVisible();
+  await expect(detail(page).getByText('vendor-one.rate', { exact: true })).toBeVisible();
   await expect(detail(page).getByText('未提供权限说明', { exact: true })).toBeVisible();
 });
 

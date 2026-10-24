@@ -1,6 +1,9 @@
-import {acknowledgeSummary, responseHash as canonicalReceiptHash} from '@slide/agent-core';
+import { allocationHash, readExecutionAllocation, taskExecutionConfiguration, type FrozenExecutionAllocation, type TaskExecutionConfiguration } from './execution-allocation.js';
+import {acknowledgeSummary, summaryRejection, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
+import { metricDiscoveryPage } from '../metrics/consumers/discovery.js';
 import type { Pool } from 'mysql2/promise';
+import { MODEL_ANALYSIS_POLICY } from './model-analysis.js';
 import {
   AgentRunner,
   NoopHook,
@@ -23,6 +26,7 @@ import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtim
 import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
+import {resolveInvestigationRuntime} from './runtime-configuration.js';
 import { InvestigationCaseReferences } from './case-references.js';
 import {
   MysqlInvestigationBudgetLedger,
@@ -36,7 +40,7 @@ import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { resolveToolResourceFromArgs } from '../tools/resource-resolver.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 import { redactSensitiveData } from '../security/sensitive-data.js';
-import { investigationToolContract } from './tool-contract.js';
+import { investigationToolContract, investigationToolPolicy } from './tool-contract.js';
 import { systemInvestigationHistory } from './system-tools.js';
 import { investigationStop, type InvestigationStop } from './execution-summary.js';
 import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
@@ -44,29 +48,243 @@ import { analysisProviderIdentity } from '../analysis/analysis-execution.js';
 const decode = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+/** Selection is a data bound, not authority. Execution still checks ACL/fence.
+ * A returned page must agree with the actual resource and every selected ID;
+ * null/unknown and repeated dimensions are records too, never filtered out.
+ */
+function selectedObservationPage(result: any, args?: Record<string, any>): boolean {
+  const ids = args?.metricIds, rows = result.data?.observations, ref = result.data?.resource;
+  return Array.isArray(ids) && ids.length > 0 && ids.length <= 32
+    && ids.every(id => typeof id === 'string' && /^[a-z][a-z0-9_.]{0,127}$/.test(id))
+    && new Set(ids).size === ids.length
+    && ['instance', 'server', 'network_device'].includes(args?.resourceType)
+    && Number.isSafeInteger(args?.resourceId) && args!.resourceId > 0
+    && ref?.type === args?.resourceType && ref?.id === args?.resourceId
+    && Number.isSafeInteger(args?.limit ?? 100) && (args?.limit ?? 100) >= 1 && (args?.limit ?? 100) <= 100
+    && Array.isArray(rows) && rows.length <= (args?.limit ?? 100)
+    && rows.every(row => row && typeof row === 'object' && ids.includes(row.metricId)
+      && row.resource?.type === ref.type && row.resource?.id === ref.id);
+}
+/** A selection route, never an observation or permission to replay a receipt.
+ * Resolve the resource from the current call/receipt, not a guessed metric alias.
+ */
+function metricReadGuidance(result: any, toolName?: string, args?: Record<string, any>) {
+  if (!['query_metrics', 'get_resource_observations', 'get_server_metrics'].includes(toolName ?? '')) return undefined;
+  const ref = result.data?.resource;
+  const type = ref?.type ?? args?.resourceType ?? (toolName === 'get_server_metrics' ? 'server' : undefined);
+  const id = ref?.id ?? args?.resourceId ?? args?.serverId ?? result.details?.server_id;
+  if (!['instance', 'server', 'network_device'].includes(type) || !Number.isSafeInteger(id) || id <= 0) return undefined;
+  if (args?.resourceType !== undefined && args.resourceType !== type
+    || args?.resourceId !== undefined && args.resourceId !== id
+    || args?.serverId !== undefined && args.serverId !== id) return undefined;
+  const selected = toolName === 'get_resource_observations' && selectedObservationPage(result, args);
+  const returnedMetricIds = selected ? [...new Set<string>(result.data.observations.map((row: any) => row.metricId))]
+    : toolName === 'query_metrics' && Array.isArray(result.data?.metrics)
+      ? result.data.metrics.map((m: any) => m.definition?.id).filter((id: unknown) => typeof id === 'string') : [];
+  const resource = { resourceType: type, resourceId: id };
+  const filesystemIds = ['host.filesystem.used_bytes', 'host.filesystem.size_bytes'];
+  const other = returnedMetricIds.length === 1 && filesystemIds.includes(returnedMetricIds[0])
+    ? filesystemIds.find(id => id !== returnedMetricIds[0]) : undefined;
+  const window = result.data?.window;
+  // The product profile supplies the related ID, not a guessed alias or proof
+  // of collection capability. Use the SAME bounded window, never array order.
+  const pairedRead = other && result.data?.profile?.columns?.some((c: any) => c.metric?.id === other)
+    && Date.parse(window?.to) > Date.parse(window?.from) && Date.parse(window.to) - Date.parse(window.from) <= 3600000
+    ? { tool: 'query_metrics', arguments: { ...resource, mode: 'history', metric_ids: [other],
+      from: window.from, to: window.to, interval: '1m' } } : undefined;
+  return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
+    ...(pairedRead ? { pairedRead, ...(result.data?.selection ? { completeRead: { tool: 'query_metrics', arguments: { ...pairedRead.arguments, metric_ids: returnedMetricIds } } } : {}), pairing: 'Read completeRead (if selected) and pairedRead before conclusions. Match unique full mount/device/fs_type, window, observed_at and unit, never array index. Missing/duplicate peers, null, failures or zero capacity are gaps, not a healthy percentage. This route does not assert capability.' } : {}),
+    ...(returnedMetricIds.length ? { returnedMetricIds,
+      history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m', series_index: 0 } } } : {}),
+    instructions: returnedMetricIds.length
+      ? 'Choose one returnedMetricIds (not proof of capability); discover+metric_ids:[id] gives its definition without catalog rediscovery. history: metric_ids:[id], UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Follow query_metrics history time contract. Start series_index:0 for unknown dimensions; returned dimensions/selection.total_series guide remaining series/windows. Pair filesystem metrics by full dimensions, not series_index. Legacy snapshots lack full semantics; failure is not zero.'
+      : 'Read one discovered metric_ids; UTC from/to, interval:1m, <=1h/60 buckets. Follow query_metrics history time contract. Start series_index:0; inspect dimensions/selection.total_series to cover all series/windows. Legacy scalars lack full semantics.' };
+}
+/** Directory only: indices identify THIS receipt/window, not stable identities
+ * across metrics. Keep duplicate dimensions as separate entries. A page never
+ * authorizes another resource or silently discards a series from numeric data.
+ */
+function metricSeriesSelection(data: any, args?: Record<string, any>) {
+  if (data?.contract_version !== '1.0.0' || data.metrics?.length !== 1) return undefined;
+  const metric = data.metrics[0], ref = data.resource, window = data.window;
+  if (!Array.isArray(metric?.series) || !metric.series.length
+    || !['instance', 'server', 'network_device'].includes(ref?.type) || !Number.isSafeInteger(ref?.id) || ref.id <= 0
+    || typeof metric.definition?.id !== 'string' || !/^[a-z][a-z0-9_.]{0,127}$/.test(metric.definition.id)
+    || args?.resourceType !== undefined && args.resourceType !== ref.type
+    || args?.resourceId !== undefined && args.resourceId !== ref.id
+    || !(Date.parse(window?.to) > Date.parse(window?.from)) || Date.parse(window.to) - Date.parse(window.from) > 3600000) return undefined;
+  const start = data.selection?.series_index ?? 0, total = data.selection?.total_series ?? metric.series.length;
+  if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(total) || total < start + metric.series.length || total > 100) return undefined;
+  const entries = metric.series.slice(0, 16).map((s: any, i: number) => ({ series_index: start + i, dimensions: s.dimensions }));
+  if (Buffer.byteLength(JSON.stringify(entries)) > 8192) return undefined;
+  return { total_series: total, entries, directoryComplete: start === 0 && entries.length === total,
+    read: { tool: 'query_metrics', arguments: { resourceType: ref.type, resourceId: ref.id,
+      mode: 'history', metric_ids: [metric.definition.id], from: window.from, to: window.to, interval: '1m', series_index: start } },
+    instructions: 'Directory contains no values. Read each required index for this metric/window; indices may change across metrics/windows. Pair by full dimensions and observation time/unit. A missing or duplicate peer remains unresolved.' };
+}
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
  * This cap is a planning limit; ContextManager still enforces final admission.
  */
-export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string): unknown {
+export function investigationToolContextResult(result: unknown, toolCallId: string, profile: string, toolName?: string, args?: Record<string, any>): unknown {
   if (result === null || typeof result !== 'object' || (result as any).success !== true
     || (result as any).status === 'error') return result;
   const json = JSON.stringify(result);
-  if (profile !== 'ops' || Buffer.byteLength(json) <= 1024) return json;
-  return JSON.stringify({ success: true, status: 'warning',
-    summary: '完整工具结果已持久化；本上下文仅含证据引用，未包含观测值，不可据此推断健康或根因。请使用相同资源和时间范围，以 maxRows=1 或 limit=1 缩小只读查询。',
-    data: { contextReference: { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) },
-      evidenceOmitted: true, requiresNarrowerRead: true }, next_actions: [] });
+  if (profile !== 'ops') return json;
+  if ((result as any).policyDecision?.allow === false) return result;
+  if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
+    || ['single_metric_v1', 'metric_window_v1', 'metric_series_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
+  const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
+  const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
+  const data = observation.data as Record<string, any> | undefined;
+  const metricRead = metricReadGuidance(result, toolName, args);
+  if (toolName === 'query_metrics' && Array.isArray(data?.definitions)) {
+    // Old durable discovery includes the whole policy/plan. Keep its hash but
+    // expose a legal first page. New receipts already contain the bounded page.
+    const { columns: _columns, ...profile } = data.profile ?? {};
+    const page = data.discovery ? { definitions: data.definitions, metric_ids: data.metric_ids, discovery: data.discovery }
+      : metricDiscoveryPage(data.definitions);
+    return JSON.stringify({ ...observation, data: { resource: data.resource, profile,
+      configuration_revision: data.configuration_revision ?? data.effective?.published_revision ?? null,
+      ...page, contextProjection: 'metric_discovery_v1', contextReference: reference } });
+  }
+  // Semantic selection is the bound, not a larger generic byte threshold.
+  // One metric/series/bucket (including null or no series) remains readable with
+  // its complete definition, capability, attempt, quality and audited sources.
+  // The default core profile's unrelated columns add no selected observations.
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && Array.isArray(data.metrics) && data.metrics.length === 1
+    && Array.isArray(data.metrics[0]?.series) && data.metrics[0].series.length <= 1
+    && data.metrics[0].series.every((s: any) => Array.isArray(s.buckets) && s.buckets.length <= 1)) {
+    const { columns: _columns, ...profile } = data.profile ?? {};
+    return JSON.stringify({ ...observation, data: { ...data, profile,
+      contextProjection: 'single_metric_v1', contextReference: reference, ...(metricRead?.pairedRead ? { metricRead,
+        seriesSelection: metricSeriesSelection(data, args) } : {}) } });
+  }
+  // A dimensioned metric is not inherently oversized. Preserve the complete
+  // semantic page under THREE independent bounds; never select/merge healthy
+  // rows, omit nulls or cap just the first N series. Final assertFits still owns
+  // admission of the full request, including schemas, reasoning and suffixes.
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && data.metrics?.length === 1 && Array.isArray(data.metrics[0]?.series)) {
+    const series = data.metrics[0].series, duration = Date.parse(data.window?.to) - Date.parse(data.window?.from);
+    if (series.length > 1 && series.length <= 16 && duration > 0 && duration <= 3600000
+      && series.every((s: any) => Array.isArray(s.buckets) && s.buckets.length <= 60
+        && s.buckets.every((b: any) => Date.parse(b.window?.to) > Date.parse(b.window?.from)
+          && Date.parse(b.window.to) - Date.parse(b.window.from) <= 60000))
+      && series.reduce((n: number, s: any) => n + s.buckets.length, 0) <= 60) {
+      const { columns: _columns, ...profile } = data.profile ?? {};
+      const view = JSON.stringify({ ...observation, data: { ...data, profile,
+        contextProjection: 'metric_series_v1', contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
+      if (Buffer.byteLength(view) <= 16384) return view;
+    }
+  }
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && Array.isArray(data.metrics) && data.metrics.length === 1
+    && Array.isArray(data.metrics[0]?.series) && data.metrics[0].series.length === 1) {
+    const series = data.metrics[0].series[0], buckets = series.buckets;
+    const duration = Date.parse(data.window?.to) - Date.parse(data.window?.from);
+    if (duration > 0 && duration <= 3600000 && Array.isArray(buckets) && buckets.length > 1 && buckets.length <= 60
+      && buckets.every((b: any) => Date.parse(b.window?.to) > Date.parse(b.window?.from)
+        && Date.parse(b.window.to) - Date.parse(b.window.from) <= 60000)) {
+      const defaults: Record<string, unknown> = {};
+      // Values, times, quality, coverage and sources stay explicit per bucket.
+      // Hoist only schema/series metadata repeated identically in every row.
+      for (const key of ['contract_version', 'metric', 'unit', 'dimensions'])
+        if (Object.hasOwn(buckets[0], key) && buckets.every((b: any) => Object.hasOwn(b, key)
+          && canonicalReceiptHash(b[key]) === canonicalReceiptHash(buckets[0][key]))) defaults[key] = buckets[0][key];
+      const { columns: _columns, ...profile } = data.profile ?? {};
+      return JSON.stringify({ ...observation, data: { ...data, profile,
+        metrics: [{ ...data.metrics[0], series: [{ ...series, bucketDefaults: defaults,
+          buckets: buckets.map((b: any) => Object.fromEntries(Object.entries(b).filter(([k]) => !Object.hasOwn(defaults, k)))) }] }],
+        contextProjection: 'metric_window_v1', contextReference: reference, ...(metricRead?.pairedRead ? { metricRead,
+          seriesSelection: metricSeriesSelection(data, args) } : {}) } });
+    }
+  }
+  // Generated completion/count labels duplicate structured data; other prose
+  // can contain evidence or a warning and must survive the projection.
+  // Failures/denials never enter this branch. Complete receipts remain canonical.
+  if (observation.data && typeof observation.data === 'object' && Object.keys(observation.data).length) {
+    const summary = observation.summary;
+    const data = observation.data as Record<string, unknown>;
+    const redundant = typeof summary === 'string' && (
+      /^(?:get_instance_summary|get_resource_observations|get_resource_relations) 执行完成$/.test(summary)
+      || (Number.isSafeInteger(data.total) && (summary === `找到 ${data.total} 条活跃告警`
+        || summary === `服务器 #${(observation.details as any)?.server_id} 告警 ${data.total} 条`)));
+    if (redundant) delete observation.summary;
+    if (Array.isArray(observation.next_actions) && !observation.next_actions.length) delete observation.next_actions;
+    if (observation.artifacts && typeof observation.artifacts === 'object' && !Object.keys(observation.artifacts).length) delete observation.artifacts;
+  }
+  const compact = JSON.stringify(observation);
+  // Row/series selection bounds the legacy page. Preserve every business field;
+  // the byte ceiling only rejects opaque oversized records, never truncates them.
+  // These pages have no full metric definition/capability: route to discovery
+  // rather than relabelling a legacy scalar as a semantic observation.
+  const selectedObservations = toolName === 'get_resource_observations' && args?.metricIds !== undefined;
+  const boundedObservations = toolName === 'get_resource_observations'
+    && (selectedObservations ? selectedObservationPage(result, args)
+      : Array.isArray(data?.observations) && data.observations.length <= 4);
+  const boundedServerMetrics = toolName === 'get_server_metrics'
+    && Array.isArray(data?.latest) && data.latest.length <= 1
+    && Array.isArray(data?.history) && data.history.length <= 1;
+  if ((boundedObservations || boundedServerMetrics) && Buffer.byteLength(compact) <= 16384) {
+    return JSON.stringify({ ...observation, data: { ...data,
+      contextProjection: boundedObservations ? 'bounded_observations_v1' : 'bounded_server_metrics_v1',
+      contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
+  }
+  if (!selectedObservations && Buffer.byteLength(compact) <= 512) {
+    // executeToolWithPolicy appends this runtime audit envelope to every
+    // receipt. It is not observation data or model authority. Keep it in
+    // canonical facts/SQL, but do not repeat actor/request ACL metadata in the
+    // live model batch. All business fields and failure semantics stay exact.
+    return compact;
+  }
+  // Preserve warning/recovery metadata even when the observation payload is
+  // omitted. It must never turn into an apparently empty healthy response.
+  const { data: _data, ...metadata } = observation;
+  // Some handlers return row payloads at the receipt root. They are evidence,
+  // not warning/recovery metadata; keep them in the canonical receipt referenced
+  // below instead of bypassing the oversized-payload projection.
+  if (Array.isArray(metadata.rows)) delete metadata.rows;
+  return JSON.stringify({ ...metadata, status: 'warning',
+    data: { contextReference: reference, evidenceOmitted: true, ...(selectedObservations ? { valuesProvided: false } : {}), requiresNarrowerRead: true,
+      ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
+        ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}),
+      ...(toolName === 'query_metrics' && metricSeriesSelection(data, args) ? { seriesSelection: metricSeriesSelection(data, args) } : {}),
+      ...(metricRead ? { metricRead } : {}) } });
 }
 /** Ephemeral model view only. Durable facts and checkpoints retain full results. */
 export function investigationContextMessages(messages: Message[], profile: string): Message[] {
   if (profile !== 'ops') return messages;
+  // Provider normalization can omit the optional tool-message name. Resolve it
+  // from the adjacent assistant call group, never from an unrelated old ID.
+  const calls = new Map<string, { name: string; args?: Record<string, any> }>();
   return messages.map(message => {
+    if (message.role !== 'tool') {
+      calls.clear();
+      for (const call of message.tool_calls ?? []) {
+        let args: Record<string, any> | undefined;
+        try { args = JSON.parse(call.function.arguments); } catch { /* Invalid arguments grant no resource hint. */ }
+        calls.set(call.id, { name: call.function.name, args });
+      }
+      return message;
+    }
     if (message.name === 'search_case_references') return message;
     if (message.role !== 'tool' || !message.tool_call_id || typeof message.content !== 'string') return message;
     let result: unknown;
     try { result = JSON.parse(message.content); } catch { return message; }
-    const content = investigationToolContextResult(result, message.tool_call_id, profile);
+    const call = calls.get(message.tool_call_id), name = message.name ?? call?.name;
+    // A handler can fail after policy allowed execution. Keep the complete
+    // business failure in the model view, without repeating an ALLOW audit
+    // envelope. This runs after ToolExecutor; failure object semantics and
+    // durable receipts stay untouched. A policy denial is never stripped.
+    if ((result as any)?.success === false && (result as any)?.policyDecision?.allow === true) {
+      const { policyDecision: _audit, ...failure } = result as Record<string, unknown>;
+      const metricRead = ['METRIC_NAME_INVALID', 'GET_METRICS_FAILED'].includes(String(failure.errorCode))
+        ? metricReadGuidance(result, name, call?.args) : undefined;
+      return { ...message, content: JSON.stringify({ ...failure, ...(metricRead ? { metricRead } : {}) }), messageParts: undefined };
+    }
+    const content = investigationToolContextResult(result, message.tool_call_id, profile, name, call?.args);
     return typeof content === 'string' && content !== message.content
       ? { ...message, content, messageParts: undefined } : message;
   });
@@ -99,9 +317,10 @@ export interface InvestigationExecutorOptions extends InvestigationRuntimeDepend
   caseReferences?: InvestigationCaseReferences;
   /** Trusted server-side test configuration; never taken from workflow payloads. */
   contextInputLimit?: number;
+  runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeConfiguration;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
-  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number };
+  budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number; taskExecution?: TaskExecutionConfiguration };
 }
 export function investigationContextLimits(providerWindow: number | undefined, inputLimit?: number) {
   if (inputLimit !== undefined && (!Number.isSafeInteger(inputLimit) || inputLimit < 1 || inputLimit > 100_000)) {
@@ -120,13 +339,81 @@ interface ExecutionState {
   deadlineAt: number;
   reservationId: string;
   reservedTokens: number;
+  executionAllocation?: FrozenExecutionAllocation;
+  allocationRunId?: string;
   usage: BudgetUsage;
   usageUnknown: boolean;
-  provider: { id: string; inputHash: string; messageId: string | null; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
+  provider: { id: string; inputHash: string; messageId: string | null; sourceRequestId?: string; status: 'sent' | 'received'; purpose?:'summary'; sourceHash?:string; response?: LLMResponse } | null;
   lastSummaryReceipt?: unknown;
+  lastProviderReceipt?: unknown;
   provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
+  runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeContext;
   terminal?: InvestigationStop;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
+}
+/** Derived view of durable current-request receipts, never of a model summary.
+ * Raw message IDs need not exist in the in-memory Runtime; do not manufacture
+ * them or rewrite legacy provenance. Caller refreshes state under live ACL/fence.
+ */
+export function investigationExecutionEvidence(source: readonly Message[], state: ExecutionState,
+  binding: Pick<InvestigationExecutionBinding, 'runId' | 'requestId' | 'jobId' | 'fencingToken'>, historyLength = 0, summary?: { sourceHash: string; summary: unknown }) {
+  const view: NonNullable<import('@slide/agent-core').AgentRunSpec['contextEvidence']> = () => ({ runId: binding.runId,
+    requestId: binding.requestId, receipts: [], omitted: [] });
+  const result = view(source);
+  if (state?.schemaVersion !== 1 || state.requestId !== binding.requestId || state.jobId !== binding.jobId
+    || state.fencingToken !== binding.fencingToken) return result;
+  if (summary) {
+    const receipt = state.lastSummaryReceipt as any;
+    const sourceHash = createHash('sha256').update(JSON.stringify(source.map(({ messageParts: _parts, ...fact }) => fact))).digest('hex');
+    if (state.usageUnknown || receipt?.status !== 'accepted' || receipt.purpose !== 'summary'
+      || receipt.sourceHash !== sourceHash || summary.sourceHash !== sourceHash || !receipt.response
+      || receipt.responseHash !== canonicalReceiptHash(receipt.response) || summaryRejection(receipt.response)
+      || canonicalReceiptHash(summary.summary) !== canonicalReceiptHash(JSON.parse(receipt.response.content))) return result;
+  }
+  for (let i = 0; i < source.length; i++) {
+    const assistant = source[i];
+    if (assistant.role !== 'assistant' || assistant.source && assistant.source !== 'fact'
+      || assistant.runId && assistant.runId !== binding.runId
+      || i < historyLength && assistant.runId !== binding.runId) continue;
+    const returned = new Map<string, Message>();
+    for (let j = i + 1; source[j]?.role === 'tool'; j++) {
+      const tool = source[j];
+      if (tool.tool_call_id) returned.set(tool.tool_call_id, tool);
+    }
+    for (const call of assistant.tool_calls ?? []) {
+      const durable = state.tools[call.id], tool = returned.get(call.id);
+      if (!durable || durable.status !== 'returned' || durable.name !== call.function.name || !tool
+        || tool.source && tool.source !== 'fact' || tool.runId && tool.runId !== binding.runId
+        || tool.name && tool.name !== durable.name || typeof tool.content !== 'string') continue;
+      try {
+        const args = JSON.parse(call.function.arguments), raw = JSON.parse(tool.content);
+        if (hash(args) !== durable.inputHash || canonicalReceiptHash(raw) !== canonicalReceiptHash(durable.result)) continue;
+        let content = investigationToolContextResult(raw, call.id, 'ops', durable.name, args);
+        if (typeof content === 'string') {
+          const projected = JSON.parse(content);
+          if (projected.data?.contextProjection === 'metric_window_v1') {
+            for (const metric of projected.data.metrics) for (const series of metric.series) {
+              for (const key of Object.keys(series.buckets[0])) if (!['value','window','observed_at'].includes(key)
+                && series.buckets.every((b: any) => Object.hasOwn(b, key) && canonicalReceiptHash(b[key]) === canonicalReceiptHash(series.buckets[0][key]))) {
+                series.bucketDefaults[key] = series.buckets[0][key];
+                series.buckets = series.buckets.map((b: any) => Object.fromEntries(Object.entries(b).filter(([k]) => k !== key)));
+              }
+              const columns = [...new Set<string>(series.buckets.flatMap((b: object) => Object.keys(b)))];
+              // Missing keys remain distinct from null via an explicit mask.
+              series.bucketColumns = columns;
+              series.buckets = series.buckets.map((b: Record<string, unknown>) => [columns.map(k => Object.hasOwn(b, k)), columns.map(k => b[k] ?? null)]);
+            }
+            projected.data.contextProjection = 'metric_window_receipt_v1';
+            content = JSON.stringify(projected);
+          }
+        }
+        const receipt = { toolCallId: call.id, receiptHash: canonicalReceiptHash(raw), content: typeof content === 'string' ? content : JSON.stringify(raw) };
+        // Admission belongs to the complete final request, not a byte cap.
+        result.receipts.push(receipt);
+      } catch { /* Malformed/unknown sources cannot become current evidence. */ }
+    }
+  }
+  return result;
 }
 const usageOf = (response: LLMResponse): BudgetUsage | null => {
   try {
@@ -267,7 +554,10 @@ export class InvestigationExecutor {
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
     this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
-    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens);
+    if (options.budget.taskExecution) taskExecutionConfiguration(options.budget.taskExecution, options.budget.domain, options.budget.policy);
+    // Copy trusted configuration before any asynchronous execution or caller mutation.
+    this.options = { ...options, budget: structuredClone(options.budget) };
+    this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens, this.options.budget.taskExecution);
     this.cases = options.caseReferences ?? InvestigationCaseReferences.create(options.pool);
   }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
@@ -437,7 +727,11 @@ export class InvestigationExecutor {
               throw new Error('INVESTIGATION_EXECUTION_ALREADY_RUNNING');
             return persisted;
           }
-          const receipt = decode(current.request.request_snapshot)?.budgetReceipt;
+          const requestSnapshot = decode(current.request.request_snapshot);
+          const allocation = readExecutionAllocation(requestSnapshot?.executionAllocation, { requestId,
+            investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
+            mode: actor.principalKind === 'service' ? 'automatic' : 'manual' }, this.options.budget.policy, this.options.budget.taskExecution);
+          const receipt = requestSnapshot?.budgetReceipt;
           const mode = actor.principalKind === 'service' ? 'automatic' : 'manual';
           let reservation: BudgetReservation;
           if (mode === 'automatic' || receipt) {
@@ -452,7 +746,8 @@ export class InvestigationExecutor {
               domain: this.options.budget.domain,
               mode,
               profile,
-              reserveTokens: this.options.budget.maxExecutionTokens ?? profile.budget.maxTokens,
+              reserveTokens: allocation?.configuration.maxTotalTokens ?? this.options.budget.maxExecutionTokens ?? profile.budget.maxTokens,
+              ...(allocation ? { executionAllocation: allocation } : {}),
               reserveCostMicros: this.options.budget.reserveCostMicros,
               prices: this.options.budget.prices,
             });
@@ -470,6 +765,7 @@ export class InvestigationExecutor {
             deadlineAt: Date.now() + profile.budget.deadlineMs,
             reservationId: reservation.id,
             reservedTokens: reservation.reservedTokens,
+            ...(allocation ? { executionAllocation: allocation, allocationRunId: run.id } : {}),
             usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
             usageUnknown: false,
             provider: null,
@@ -483,6 +779,15 @@ export class InvestigationExecutor {
           return initial;
         });
       }
+      const frozenAllocation = readExecutionAllocation(decode(access.request.request_snapshot)?.executionAllocation, {
+        requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: access.request.execution_domain?.toString() ?? null,
+        mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
+      }, this.options.budget.policy, this.options.budget.taskExecution);
+      if (allocationHash(frozenAllocation ?? null) !== allocationHash(state.executionAllocation ?? null)
+        || frozenAllocation && (state.allocationRunId !== run.id || state.reservedTokens !== frozenAllocation.configuration.maxTotalTokens))
+        throw new Error('INVESTIGATION_ALLOCATION_INVALID');
+      const executionBudget = frozenAllocation ? { ...profile.budget, maxToolCalls: frozenAllocation.configuration.maxToolCalls,
+        maxProviderAttempts: frozenAllocation.configuration.maxProviderAttempts, deadlineMs: frozenAllocation.configuration.deadlineMs } : profile.budget;
       if (state.schemaVersion !== 1 || state.requestId !== requestId || state.jobId !== job.id)
         throw new Error('INVESTIGATION_CHECKPOINT_INVALID');
       const update = async (work: (s: ExecutionState, c: InvestigationConnection) => void | Promise<void>) =>
@@ -502,6 +807,15 @@ export class InvestigationExecutor {
         s.fencingToken = context.fencingToken;
       });
       const readReceipt = async (c: InvestigationConnection) => {
+        const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
+        const currentAllocation = readExecutionAllocation(decode(current.request.request_snapshot)?.executionAllocation, {
+          requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
+          mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
+        }, this.options.budget.policy, this.options.budget.taskExecution);
+        const currentState = decode(current.run.result_json)?.investigationExecution;
+        if (allocationHash(currentAllocation ?? null) !== allocationHash(frozenAllocation ?? null)
+          || allocationHash(currentState?.executionAllocation ?? null) !== allocationHash(frozenAllocation ?? null)
+          || frozenAllocation && currentState?.allocationRunId !== run.id) throw new Error('INVESTIGATION_ALLOCATION_INVALID');
         const reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
           domain: this.options.budget.domain,
           mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
@@ -595,14 +909,27 @@ export class InvestigationExecutor {
       if (Date.now() >= state.deadlineAt) throw new Error('INVESTIGATION_DEADLINE');
       const actual = await runtime.providerForPurpose(profile.modelScene);
       const model = actual.getDefaultModel();
+      const modelCapabilities = actual.getModelCapabilities?.();
+      // The task deployment can choose a smaller allocation within verified
+      // provider capacity. Once persisted, an in-flight run keeps its allocation.
+      const legacyContext = this.options.contextInputLimit === undefined ? undefined
+        : {...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
+          maxTokens: Math.min(4096, modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096)};
+      const runtimeContext = resolveInvestigationRuntime(modelCapabilities, this.options.runtimeContext,
+        frozenAllocation ? { contextWindowTokens: frozenAllocation.configuration.contextWindowTokens,
+          maxTokens: frozenAllocation.configuration.maxTokens, summaryMaxTokens: frozenAllocation.configuration.summaryMaxTokens }
+          : state.runtimeContext ?? legacyContext);
+      const modelPrompt = investigationPrompt(profile) + (profile.id === 'ops'
+        ? investigationToolPolicy(snapshot.resources, executionBudget) + MODEL_ANALYSIS_POLICY : '');
       await update(s => {
+        s.runtimeContext = runtimeContext;
         const identity = analysisProviderIdentity(actual);
-        s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(investigationPrompt(profile)).digest('hex')}`,
+        s.provenance = { modelVersion: model, promptVersion: `${profile.id}@${profile.version}/prompt:${profile.prompt.version}/sha256:${createHash('sha256').update(modelPrompt).digest('hex')}`,
           ...(identity.providerId === undefined ? {} : { providerId: identity.providerId }),
           ...(identity.routeVersion === 'unavailable' ? {} : { routeVersion: identity.routeVersion }) };
       });
-      const modelCapabilities = actual.getModelCapabilities?.();
       let modelMessageId: string | undefined;
+      let modelSourceRequestId: string | undefined;
       const dispatch = async (send: () => Promise<LLMResponse>, input: unknown, identity?: any): Promise<LLMResponse> => {
         control.signal.throwIfAborted();
         if (state.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
@@ -615,7 +942,7 @@ export class InvestigationExecutor {
           receipt = await readReceipt(c);
           if (s.provider) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           if (s.provenance && !s.provenance.inputHash) s.provenance.inputHash = hash(input);
-          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
+          s.provider = { ...(identity ? {purpose:'summary' as const, sourceHash:identity.sourceHash}:{}), id, inputHash: hash(input), ...(identity ? {} : {sourceRequestId: modelSourceRequestId}), messageId: identity ? null : modelMessageId ?? null, status: 'sent' };
         });
         // The entire execution allocation stays sent through all subsequent
         // turns. Only the Run's durable terminal receipt may release it.
@@ -667,7 +994,7 @@ export class InvestigationExecutor {
         await update((s) => {
           if (s.provider?.id !== id) throw new Error('INVESTIGATION_PROVIDER_UNKNOWN');
           s.provider.status = 'received';
-          if(identity) s.provider.response = structuredClone(response);
+          if (identity || response.finishReason === 'length') s.provider.response = structuredClone(response);
           if (!usage) s.usageUnknown = true;
           else {
             s.usage.inputTokens += usage.inputTokens;
@@ -735,12 +1062,14 @@ export class InvestigationExecutor {
           execute: async (value, toolContext) => {
             const toolId = currentToolId;
             if (!toolId) throw new Error('INVESTIGATION_TOOL_BINDING_INVALID');
+            let wrote = false, started = false;
             try {
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
               const { args, targets } = boundedInvestigationArguments(name, value, profile.budget, Date.now());
               const live = await this.transaction(async (c) => {
                 await this.canonical.lockInvestigationExecution(c, actor, binding);
+                await readReceipt(c);
                 return this.authorization.authorizeTool(
                   c,
                   actor,
@@ -763,11 +1092,13 @@ export class InvestigationExecutor {
               await update((s) => {
                 s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
               });
+              wrote = true;
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
               const liveTool = scopedRegistry(live.actor).get(name);
               if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
                 throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
+              started = true;
               const result = boundedResult(
                 await liveTool.execute(args, { ...toolContext, signal: toolContext?.signal ?? control.signal }),
                 profile.budget.maxRows,
@@ -786,6 +1117,12 @@ export class InvestigationExecutor {
               });
               return contextToolResult(result, toolId);
             } catch (error) {
+              // Only this wrapper knows the original handler was never entered, so only here may it withdraw its
+              // own write-ahead record; reliable model usage then stays known. Once the handler started, a throw,
+              // timeout or abort leaves the record running and the whole execution unknown. If the withdrawal
+              // cannot be persisted the record also stays running (fail closed).
+              if (wrote && !started)
+                await update((s) => { if (s.tools[toolId]?.status === 'running') delete s.tools[toolId]; }).catch(() => undefined);
               // failOnToolError is enabled: an actual thrown tool exception is
               // fatal. Returned Error text and Core's repeat guard are not.
               fatalToolFailure ??= { toolCallId: toolId, stop: { ...investigationStop({ stopReason: 'tool_error',
@@ -810,32 +1147,32 @@ export class InvestigationExecutor {
           role: 'system',
           source: 'runtime',
           contextAuthority: 'policy',
-          content: investigationPrompt(profile),
+          content: modelPrompt,
         },
         ...(profile.id === 'system' ? systemInvestigationHistory(messages) : messages),
       ];
       const hook = new NoopHook();
       hook.beforeIteration = async (ctx) => {
         modelMessageId = ctx.messageId;
+        modelSourceRequestId = ctx.sourceRequestId;
       };
       const result = await new AgentRunner(provider).run({
         runtimeRunId: run.id,
         initialMessages,
         tools,
         model,
-        ...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
-        maxIterations: profile.budget.maxProviderAttempts,
+        ...runtimeContext,
+        maxIterations: executionBudget.maxProviderAttempts,
         // Context admission must reserve the same configured output ceiling
         // as dispatch, including qualification-only reductions. Keep the
         // configured context and execution-token ceilings unchanged.
-        maxTokens: Math.min(4096, state.reservedTokens,
-          modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096),
+        maxTokens: Math.min(runtimeContext.maxTokens, state.reservedTokens),
         maxToolResultChars: profile.budget.maxBytes,
         budgetLimits: {
-          maxToolCalls: profile.budget.maxToolCalls,
-          maxProviderAttempts: profile.budget.maxProviderAttempts,
+          maxToolCalls: executionBudget.maxToolCalls,
+          maxProviderAttempts: executionBudget.maxProviderAttempts,
           maxTotalTokens: state.reservedTokens,
-          maxNoProgressSteps: profile.budget.maxProviderAttempts,
+          maxNoProgressSteps: executionBudget.maxProviderAttempts,
         },
         runTimeoutMs: Math.max(1, state.deadlineAt - Date.now()),
         toolTimeoutMs: 10_000,
@@ -850,8 +1187,11 @@ export class InvestigationExecutor {
         recoveryLimits: { total: 0, empty: 0, continuation: 0, stream: 0, repetition: 0, context: 0 },
         // System uses deterministic history references; do not attempt an
         // unbudgeted summary at the soft watermark. The hard context cap stays.
-        ...(profile.id === 'system' ? { contextPolicy: { watermark: 1, target: 0.5 } }
-          : profile.id === 'ops' ? { contextPolicy: { recentToolBatches: 1 as const } } : {}),
+        contextPolicy: {summaryMaxTokens: runtimeContext.summaryMaxTokens,
+          ...(profile.id === 'system' ? {watermark: 1, target: 0.5}
+            : profile.id === 'ops' ? {recentToolBatches: 1 as const, evidenceReferences: 'canonical' as const} : {})},
+        ...(profile.id === 'ops' ? { contextEvidence: (source: readonly Message[], summary) => investigationExecutionEvidence(source, state, binding,
+          initialMessages.length, summary) } : {}),
         onProviderRequest: observe,
         onToolExecution: observe,
         onToolEvent: async (e) => {
@@ -1006,7 +1346,34 @@ export class InvestigationExecutor {
           await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
         }
       }
-      if (['awaiting_tools', 'tools_completed', 'final_response'].includes(String(payload.phase))) {
+      if (payload.phase === 'rejected_final_response') {
+        const result = decode(access.run.result_json), state: ExecutionState = result?.investigationExecution;
+        const provider = state?.provider, receipt = payload.model_response_v1 as any;
+        const candidate = payload.assistantMessage as Message | undefined;
+        if (provider) {
+          // This transaction already proved the live actor, original request,
+          // Run/session/turn and lease/fence. A hash-bound raw length receipt is
+          // additionally required: a received flag alone never permits refund.
+          if (state.schemaVersion !== 1 || state.requestId !== binding.requestId || state.jobId !== binding.jobId
+            || state.fencingToken !== binding.fencingToken || !uuid.test(provider.id)
+            || !/^[a-f0-9]{64}$/.test(provider.inputHash) || receipt?.inputHash !== provider.inputHash
+            || !provider.sourceRequestId || receipt.sourceRequestId !== provider.sourceRequestId
+            || (payload.stream_state_v1 as any)?.sourceRequestId !== provider.sourceRequestId
+            || provider.purpose || provider.status !== 'received' || !provider.response || !usageOf(provider.response)
+            || state.usageUnknown || !provider.messageId || receipt?.messageId !== provider.messageId
+            || candidate?.id !== provider.messageId || candidate.role !== 'assistant'
+            || candidate.content !== provider.response.content || candidate.tool_calls?.length || provider.response.toolCalls.length
+            || provider.response.error || provider.response.errorKind || provider.response.finishReason !== 'length'
+            || receipt.status !== 'rejected' || receipt.reasonCode !== 'OUTPUT_LIMIT'
+            || (payload.terminal_resolution as any)?.kind !== 'partial'
+            || (payload.terminal_resolution as any)?.reasonCode !== 'OUTPUT_LIMIT'
+            || canonicalReceiptHash(provider.response) !== receipt.responseHash) throw Error('INVESTIGATION_PROVIDER_UNKNOWN');
+          state.lastProviderReceipt = { ...provider, ...receipt, response: provider.response };
+          state.provider = null;
+          await c.query('UPDATE agent_runs SET result_json = ? WHERE id = ?', [JSON.stringify(result), binding.runId]);
+        }
+      }
+      if (['awaiting_tools', 'tools_completed', 'final_response', 'rejected_tool_batch'].includes(String(payload.phase))) {
         const result = decode(access.run.result_json),
           state: ExecutionState = result?.investigationExecution;
         if (

@@ -20,7 +20,7 @@ export class BoundedWorkflowRuntime {
   private readonly active = new Set<string[]>();
   private readonly waiting: Array<{ keys: string[]; signal: AbortSignal; enter: () => void }> = [];
   constructor(store: WorkflowStore, workerId: string, concurrency: number,
-    private readonly resourcesFor: (job: ClaimedJob) => Promise<string[]>, leaseSeconds = 30) {
+    private readonly resourcesFor: (job: ClaimedJob, context: JobExecutionContext) => Promise<string[]>, leaseSeconds = 30) {
     if (concurrency !== 1 && concurrency !== 3) throw new Error('WORKFLOW_CONCURRENCY_INVALID');
     const lanes: Array<{ name: string; filter?: ClaimFilter }> = concurrency === 1 ? [{ name: 'serial' }] : [
       { name: 'general', filter: { types: [...notificationTypes, ...collectionTypes], exclude: true } },
@@ -37,7 +37,7 @@ export class BoundedWorkflowRuntime {
   async runOnce(handler: (job: ClaimedJob, context: JobExecutionContext) => Promise<void>) {
     const results = await Promise.all(this.workers.map(worker => worker.runOnce(async (job, context) => {
       const start = performance.now();
-      const resources = await this.resourcesFor(job);
+      const resources = await this.resourcesFor(job, context);
       const release = await this.acquire([`job:${job.id}`, ...(resources.length ? resources : ['*'])], context.signal);
       try {
         context.signal.throwIfAborted();
@@ -55,7 +55,9 @@ export class BoundedWorkflowRuntime {
   private pump() {
     while (this.waiting.length) {
       const next = this.waiting[0];
-      if ([...this.active].some(keys => keys.includes('*') || next.keys.includes('*') || keys.some(k => next.keys.includes(k)))) return;
+      if ([...this.active].some(keys => keys.some(a => next.keys.some(b =>
+        a === '*' || b === '*' || (a === b && !a.startsWith('read:'))
+        || (a.startsWith('read:') && a.slice(5) === b) || (b.startsWith('read:') && b.slice(5) === a))))) return;
       this.waiting.shift();
       this.active.add(next.keys);
       next.enter();

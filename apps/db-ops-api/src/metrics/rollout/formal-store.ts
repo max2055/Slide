@@ -5,8 +5,14 @@ import { MysqlMetricStorage, seriesHash, type Series } from '../storage.js';
 
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
 const sqlTime = (at: string) => new Date(at).toISOString().slice(0, 23).replace('T', ' ');
+// Publication keys are utf8mb4; observation keys are ascii_bin. Convert only the
+// publication side to keep observation PRIMARY lookups. Byte equality also rejects
+// lossy conversion, case folding and trailing-space aliases of evidence identities.
 const formal = `FROM metric_publications p
-  JOIN metric_observations o ON o.id = p.observation_id AND o.series_hash = p.series_hash
+  JOIN metric_observations o ON o.id = CONVERT(p.observation_id USING ascii) COLLATE ascii_bin
+    AND o.series_hash = CONVERT(p.series_hash USING ascii) COLLATE ascii_bin
+    AND CAST(o.id AS BINARY) = CAST(p.observation_id AS BINARY)
+    AND CAST(o.series_hash AS BINARY) = CAST(p.series_hash AS BINARY)
   JOIN metric_rollout r ON r.series_hash = p.series_hash
   WHERE r.read_mode = 'semantic' AND r.applied_revision = r.published_revision
   AND r.source = 'semantic' AND p.generation = r.generation

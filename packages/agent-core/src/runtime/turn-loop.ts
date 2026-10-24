@@ -2,12 +2,13 @@ import { StreamBoundary } from './stream-boundary.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext } from './budget.js';
+import { consumedTokens, assertRequestBudget, assertTokenBudget, assertToolBudget, withBudgetContext, planRequestBudget } from './budget.js';
 import type { AgentHookContext, AgentRunResult, AgentRunSpec, LLMResponse, Message, ToolCallRequest } from "../types.js";
 
 import { ModelStep, TimeoutError } from "./model-step.js";
 import { ToolExecutor, executeTools } from "./tool-executor.js";
 import { emitCheckpoint } from "./checkpoint.js";
+import { responseHash } from "./summary-receipt.js";
 import { createTurnState, transition } from "./turn-state.js";
 import { ContextManager, ensureNonemptyToolResult } from './context-manager.js';
 import { autoCompact, validateSummaryRecord } from './auto-compact.js';
@@ -16,6 +17,7 @@ import { AnomalyGuard } from "./anomaly-guard.js";
 import { CompletionSupervisor } from "./supervisor.js";
 import { RecoveryPolicy, RuntimeError, runtimeError, cancellationError, backoff } from './recovery-policy.js';
 import { OutputContinuation } from './output-continuation.js';
+import { ToolRegistry } from '../tool-registry.js';
 // Process-local key never enters a checkpoint. After restart establish a fresh
 // comparison baseline without crediting the first unverifiable result as progress.
 const progressKey = randomBytes(32);
@@ -137,13 +139,39 @@ export class TurnLoop {
       state.finalContent = safeContent + continuation.content;
       state.resolution = { kind: 'partial', reasonCode: error.code, retryable: false, safePartialContent: state.finalContent };
     };
+    let cycleStarted: number | undefined;
+    let providerElapsed = 0;
     for (let iteration = recovery.state.modelSteps; iteration < spec.maxIterations; iteration++) {
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
+      // Measure the whole preceding cycle. This includes authority/admission,
+      // tool work, summaries and durable checkpoints, rather than attributing
+      // the received-to-send gap to either the Provider or the database.
+      if (cycleStarted !== undefined && recovery.state.deadlineAt !== undefined) {
+        const elapsed = Math.max(0, Date.now() - cycleStarted);
+        recovery.state.timing = {
+          cycleMs: Math.max(recovery.state.timing?.cycleMs ?? 0, elapsed),
+          providerMs: Math.max(recovery.state.timing?.providerMs ?? 0, providerElapsed),
+        };
+      }
+      cycleStarted = Date.now(); providerElapsed = 0;
       if (recovery.state.modelSteps + (recovery.state.delegated?.modelSteps ?? 0) >= spec.maxIterations) break;
       if (spec.budgetLimits && (recovery.state.noProgressSteps ?? 0) >= spec.budgetLimits.maxNoProgressSteps) {
         stopForBudget(new RuntimeError('NO_PROGRESS', 'No material progress within the progress budget')); break;
       }
       state = transition(state, "model_running");
+      const remainingBudget = () => ({
+        tools: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxToolCalls - recovery.state.toolCalls - (recovery.state.delegated?.toolCalls ?? 0)) : undefined,
+        attempts: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxProviderAttempts - recovery.state.providerAttempts - (recovery.state.delegated?.providerAttempts ?? 0)) : undefined,
+        tokens: spec.budgetLimits ? Math.max(0, spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state)) : undefined,
+      });
+      const timeToClose = () => recovery.state.deadlineAt !== undefined && !!recovery.state.timing?.cycleMs
+        && recovery.state.deadlineAt - Date.now() <= 2 * recovery.state.timing.cycleMs;
+      // Another optional read/summary requires a subsequent complete answer
+      // cycle. Use this run's observed high-water duration, never a fixed number
+      // of seconds or a new timeout. Future latency can still exceed it; all
+      // hard cancellation and commit checks continue to apply.
+      const isAnswerOnly = () => { const left = remainingBudget(); return timeToClose() || left.tools === 0 || (left.attempts !== undefined && left.attempts <= 1); };
+      let budgetAnswerOnly = false;
       // Governance must succeed before reserving or dispatching an ordinary request.
       let messagesForModel: Message[];
       try {
@@ -151,20 +179,49 @@ export class TurnLoop {
           manager = new ContextManager({ ...spec, checkpointCallback: saveCheckpoint }, this.getProvider());
           if (spec.resumeCheckpoint?.context_summary_v1) manager.summary = validateSummaryRecord(spec.resumeCheckpoint.context_summary_v1);
         }
-        // Capture one request-only suffix for planning, compaction validation
-        // and dispatch. It must not enter durable facts or summary source hashes.
-        const requestSuffix = [...continuation.project([]), ...projectContextBlocks([
-          runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
-        ])];
-        messagesForModel = manager.project(state.messages);
-        const inputTokens = manager.tokens([...messagesForModel, ...requestSuffix]);
-        const aboveWatermark = inputTokens > manager.inputBudget * manager.watermark;
-        // A valid current request can grow into two irreducible recent batches.
-        // Use the same next-batch planning reserve as autoCompact while older
-        // history can still be summarized. This is not a future-output bound.
-        const growthPressure = !!saveCheckpoint && spec.tools.getDefinitions().length > 0
-          && inputTokens + manager.contextConfig.maxTokens > manager.inputBudget;
-        if (forceCompact || aboveWatermark || growthPressure) {
+        // Summary requests consume the same allowance as ordinary requests.
+        // Rebuild this request-only view after settlement/persistence as well as
+        // for planning; never put its clock or budget into canonical source hashes.
+        const requestSuffix = () => {
+          const left = remainingBudget();
+          return [...continuation.project([]), ...projectContextBlocks([
+            runtimeBlock('runtime', currentTime()), ...(reminder ? [runtimeBlock('reminder', reminder)] : []),
+            ...(spec.budgetLimits ? [runtimeBlock('runtime', `Execution budget: remainingToolCalls=${left.tools}; remainingProviderAttempts=${left.attempts}; remainingTotalTokens=${left.tokens} (includes this request; summaries also consume attempts and tokens). ${isAnswerOnly() || budgetAnswerOnly ? 'No tools available for this request. Give the final answer from returned evidence, preserving uncertainty.' : 'Batch necessary reads; reserve capacity for summaries and the final answer.'}`)] : []),
+          ])];
+        };
+        const projectRequest = (view: ContextManager, keepTokens = 0) => {
+          const suffix = requestSuffix();
+          const baseTokens = view.tokens([...view.project(state.messages, suffix, view.inputBudget, 'references'), ...suffix]);
+          const balance = remainingBudget().tokens;
+          const left = balance === undefined ? undefined : Math.max(0, balance - keepTokens);
+          const limit = Math.min(view.inputBudget, left === undefined ? view.inputBudget : Math.max(baseTokens, left - view.contextConfig.maxTokens));
+          const messages = [...view.project(state.messages, suffix, limit), ...suffix];
+          view.assertFits(messages);
+          return messages;
+        };
+        // A soft watermark must not buy a summary with the last answer attempt
+        // or an unaffordable full-window reservation. Prove the COMPLETE final
+        // request first, including protected history, evidence, suffix and output.
+        // Reactive overflow still requires governance; this is not a retry bypass.
+        let finalFits = false;
+        const tokensLeft = remainingBudget().tokens;
+        const compactNeeded = forceCompact || manager.shouldCompact(state.messages, requestSuffix());
+        if (!forceCompact && (isAnswerOnly() || compactNeeded && tokensLeft !== undefined && tokensLeft < manager.requestReservation())) {
+          const finalView = new ContextManager({ ...spec, tools: new ToolRegistry() }, this.getProvider());
+          finalView.summary = manager.summary;
+          budgetAnswerOnly = true;
+          try {
+            messagesForModel = projectRequest(finalView);
+            const plan = planRequestBudget(finalView, messagesForModel, recovery.state);
+            assertRequestBudget(spec, recovery.state, plan.reservation);
+            manager = finalView;
+            finalFits = true;
+          } catch (error) {
+            budgetAnswerOnly = false;
+            if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET', 'MAX_PROVIDER_ATTEMPTS'].includes(error.code)) throw error;
+          }
+        }
+        if (!finalFits && compactNeeded) {
           const split = manager.split(state.messages);
           const previousEnd = manager.summary?.sourceEnd ?? 0;
           const hasOlderHistory = state.messages.slice(previousEnd, split.end).some(m => m.role === 'assistant' || m.role === 'tool');
@@ -173,15 +230,70 @@ export class TurnLoop {
               await emitCheckpoint(spec, { ...(receipt ? {context_request_v1:receipt} : {}), ...(record ? { context_summary_v1: record } : {}), ...(compactState ? { context_state_v1: compactState } : {}) });
             }, forceCompact, requestSuffix);
             state.usage = { ...recovery.state.usage };
-            messagesForModel = manager.project(state.messages);
           }
         }
         forceCompact = false;
-        messagesForModel = [...messagesForModel, ...requestSuffix];
-        manager.assertFits(messagesForModel);
+        // Budget includes settled/delegated/unknown usage. Preserve the existing
+        // reduced-output path for indispensable context; optional receipts never
+        // spend the output allowance or force another summary.
+        // A tool-bearing reply requires another ordinary request to interpret
+        // its receipts. Do not spend a currently reachable answer on optional
+        // reads when its complete input cannot also leave room for even the
+        // CURRENT protected answer and positive output on both requests.
+        // Future receipts may grow further; this necessary capacity check is
+        // not a promise that arbitrary tool/model output will fit.
+        // Include settled balances below one window: narrowing a reservation
+        // proves only this request, not capacity to interpret its next receipts.
+        // Larger balances retain normal planning; do not reserve two full
+        // windows every turn.
+        let jointMessages: Message[] | undefined;
+        if (spec.budgetLimits && !budgetAnswerOnly && !isAnswerOnly()
+          && remainingBudget().tokens! < manager.requestReservation() + manager.contextConfig.maxTokens
+          && recovery.state.unknownRequests === 0 && recovery.state.reservedTokens === 0) {
+          const answerView = new ContextManager({ ...spec, tools: new ToolRegistry() }, this.getProvider());
+          answerView.summary = manager.summary;
+          budgetAnswerOnly = true;
+          try {
+            // First prove the currently reachable complete answer, including
+            // optional whole receipts that fit, before testing another read.
+            const answer = projectRequest(answerView);
+            const plan = planRequestBudget(answerView, answer, recovery.state);
+            assertRequestBudget(spec, recovery.state, plan.reservation);
+            const suffix = requestSuffix();
+            const protectedAnswer = [...answerView.project(state.messages, suffix, answerView.inputBudget, 'references'), ...suffix];
+            const protectedInput = answerView.tokens(protectedAnswer);
+            const futureMinimum = protectedInput + 1;
+            const balance = remainingBudget().tokens!;
+            // Optional whole observations may yield capacity first. Their
+            // IDs/hash/valuesProvided=false stay in the protected index.
+            budgetAnswerOnly = false;
+            let ordinary: Message[] | undefined;
+            try { ordinary = projectRequest(manager, futureMinimum); }
+            catch (error) {
+              if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET'].includes(error.code)) throw error;
+            }
+            // This is a feasibility floor, not a reservation or measured usage.
+            // Do not assume a future summary will shrink the protected input.
+            // Actual output and future receipts remain independently bounded
+            // and can still make the subsequent request unaffordable.
+            const ordinaryMinimum = ordinary ? manager.tokens(ordinary) + 1 : Infinity;
+            if (ordinaryMinimum + futureMinimum > balance) {
+              budgetAnswerOnly = true;
+              manager = answerView;
+              jointMessages = answer;
+            } else jointMessages = ordinary!;
+          } catch (error) {
+            budgetAnswerOnly = false;
+            if (!(error instanceof RuntimeError) || !['CONTEXT_UNRECOVERABLE', 'TOKEN_BUDGET', 'MAX_PROVIDER_ATTEMPTS'].includes(error.code)) throw error;
+          }
+        }
+        // Reproject the chosen view with the final budget suffix; after a
+        // failed answer proof, ordinary context governance still fails closed.
+        messagesForModel = jointMessages ?? projectRequest(manager);
       } catch (cause) {
         const error = cause instanceof RuntimeError ? cause : new RuntimeError('CONTEXT_GOVERNANCE_ERROR', 'Context governance failed');
         state.usage = { ...recovery.state.usage };
+        if (error.code === 'MAX_PROVIDER_ATTEMPTS' || error.code === 'TOKEN_BUDGET') { stopForBudget(error); break; }
         state.runtimeError = error;
         state.stopReason = error.code === 'MODEL_REQUEST_TIMEOUT' || error.code === 'MODEL_IDLE_TIMEOUT' ? 'timed_out' : 'error'; state.error = error.message;
         state.finalContent = safeContent + continuation.content;
@@ -206,24 +318,19 @@ export class TurnLoop {
       };
       currentContext = context;
       reminder = undefined;
-      let reservation = manager.requestReservation();
-      let requestSpec = spec;
+      let reservation: number;
+      let requestSpec: AgentRunSpec;
       // An explicitly bounded input or nearly spent execution allowance need
       // not buy an entire context window. With no unsettled usage, use the complete
       // conservative input estimate and an affordable output ceiling. The
       // original context cap remains in force; a late hook/schema change must
       // also fit this smaller envelope at the actual provider boundary.
-      if (spec.budgetLimits && recovery.state.unknownRequests === 0) {
-        const remaining = spec.budgetLimits.maxTotalTokens - consumedTokens(recovery.state);
-        if (remaining < reservation || spec.contextBlockLimit !== undefined) {
-          const input = manager.tokens(messagesForModel);
-          const output = Math.min(manager.contextConfig.maxTokens, Math.min(remaining, reservation) - input);
-          if (Number.isSafeInteger(output) && output > 0) {
-            reservation = spec.contextBlockLimit === undefined ? remaining : input + output;
-            requestSpec = { ...spec, maxTokens: output, contextBlockLimit: Math.min(manager.inputBudget, reservation - output) };
-          }
-        }
-      }
+      try { ({ reservation, spec: requestSpec } = planRequestBudget(manager, messagesForModel, recovery.state)); }
+      catch (error) { stopForBudget(error); break; }
+      // Reserve the final ordinary attempt for an answer. Returned tool evidence
+      // would require another model request; never execute such a stranded batch.
+      const answerOnly = isAnswerOnly() || budgetAnswerOnly;
+      if (answerOnly) requestSpec = { ...requestSpec, tools: new ToolRegistry() };
       try { assertRequestBudget(spec, recovery.state, reservation); } catch (error) { stopForBudget(error); break; }
       boundary.begin(context);
       if (spec.budgetLimits) recovery.state.noProgressSteps = (recovery.state.noProgressSteps ?? 0) + 1;
@@ -244,6 +351,7 @@ export class TurnLoop {
 
       // ── Request LLM ──
       let response: LLMResponse;
+      const providerStarted = Date.now();
       try {
         response = await new ModelStep(this.getProvider()).request(requestSpec, messagesForModel, hook, context);
       } catch (e: unknown) {
@@ -262,6 +370,7 @@ export class TurnLoop {
         };
         if (!isTimeout) console.error("[AgentRunner] LLM request failed:", errMsg);
       }
+      providerElapsed = Math.max(0, Date.now() - providerStarted);
       if (spec.signal?.aborted) { state.stopReason = 'cancelled'; state.error = 'Cancelled'; break; }
       const rawUsage = usageDict(response.usage);
       context.response = response;
@@ -296,7 +405,21 @@ export class TurnLoop {
 
       // ── Tool execution path ──
       if (!response.error && !response.errorKind && response.finishReason !== 'error' && response.finishReason !== 'length' && response.shouldExecuteTools && response.toolCalls.length > 0) {
-        try { assertToolBudget(spec, recovery.state, response.toolCalls.length); } catch (error) { stopForBudget(error); break; }
+        try {
+          assertToolBudget(spec, recovery.state, response.toolCalls.length);
+          if (answerOnly) throw new RuntimeError('MAX_PROVIDER_ATTEMPTS', 'Final answer request cannot admit another tool batch');
+        } catch (error) {
+          stopForBudget(error);
+          // The provider returned successfully, but none of this batch was
+          // admitted. Persist that exact boundary so consumers can acknowledge
+          // known usage without mistaking a rejected batch for unknown I/O.
+          const rejected = buildAssistantMessage(response.content || '', response.toolCalls, (response as any)._extra);
+          rejected.id = context.messageId;
+          await emitCheckpoint(spec, { phase: 'rejected_tool_batch', iteration, model: spec.model,
+            assistantMessage: rejected, completedToolResults: [], pendingToolCalls: [],
+            rejectedToolCalls: response.toolCalls.map(tcToOpenAI), terminal_resolution: state.resolution });
+          break;
+        }
         state = transition(state, "tools_running");
         await spec.onRuntimePhase?.('tools');
         state.toolCalls += response.toolCalls.length;
@@ -530,7 +653,14 @@ export class TurnLoop {
         state.runtimeError = new RuntimeError('OUTPUT_LIMIT', 'Output continuation limit reached');
         state.resolution = { kind: 'partial', reasonCode: 'OUTPUT_LIMIT', retryable: false, safePartialContent: safeContent + continuation.content };
         appendFinalMessage(state.messages, continuation.content);
-        await persistCounters();
+        // A metered but rejected answer is still a known provider response.
+        // Persist the raw candidate identity/hash, never promote it to final.
+        const rejected = buildAssistantMessage(response.content ?? '', response.toolCalls, (response as any)._extra);
+        rejected.id = context.messageId;
+        await emitCheckpoint(spec, { phase: 'rejected_final_response', iteration, model: spec.model,
+          assistantMessage: rejected, completedToolResults: [], pendingToolCalls: [],
+          model_response_v1: { messageId: context.messageId, sourceRequestId: context.sourceRequestId, inputHash: context.providerInputHash, responseHash: responseHash(response),
+            status: 'rejected', reasonCode: 'OUTPUT_LIMIT' }, terminal_resolution: state.resolution });
         context.finalContent = state.finalContent;
         context.stopReason = state.stopReason;
         await hook.afterIteration(context);

@@ -1,5 +1,6 @@
 import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import { publishSystemFailure } from '../platform/system-failure-publisher.js';
+import { resolveInvestigationProfile, investigationProfileHash } from '../investigations/profiles.js';
 
 export type WorkflowState = 'queued' | 'running' | 'retry' | 'completed' | 'dead_letter' | 'cancelled';
 export interface ClaimedJob { id: string; type: string; payload: Record<string, unknown>; attempts: number; maxAttempts: number; fencingToken: number; queueWaitMs?: number; }
@@ -121,7 +122,32 @@ export class MysqlWorkflowStore implements WorkflowStore {
       ...(row.queueWaitMs !== undefined ? { queueWaitMs: Number(row.queueWaitMs) } : {}) } : null;
   }
   /** Unknown/global handlers deliberately exclude every other resource. Never trust an added instanceId. */
-  async resourcesFor(job: ClaimedJob): Promise<string[]> {
+  async resourcesFor(job: ClaimedJob, context?: Pick<JobExecutionContext, 'workerId'>): Promise<string[]> {
+    if (job.type === 'investigation.execute') {
+      if (!context) return ['*'];
+      const [requests] = await this.pool().execute<Array<any>>(`SELECT q.request_snapshot AS snapshot,
+        q.investigation_id AS investigationId, q.id AS requestId,
+        i.profile_id AS profileId, i.profile_version AS profileVersion
+        FROM investigation_requests q JOIN investigations i ON BINARY i.id=BINARY q.investigation_id
+        JOIN workflow_jobs j ON BINARY j.id=BINARY q.job_id
+        WHERE j.id=? AND j.job_type='investigation.execute' AND j.state='running'
+        AND j.fencing_token=? AND j.lease_owner=? AND j.lease_expires_at>NOW(3)
+        AND q.id=? AND q.investigation_id=? AND BINARY i.active_request_id=BINARY q.id AND q.cancel_requested_at IS NULL
+        AND BINARY JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.requestId'))=BINARY q.id
+        AND BINARY JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.investigationId'))=BINARY i.id`,
+      [job.id, job.fencingToken, context.workerId, job.payload.requestId, job.payload.investigationId]);
+      if (requests.length !== 1) return ['*'];
+      try {
+        const row = requests[0], s = typeof row.snapshot === 'string' ? JSON.parse(row.snapshot) : row.snapshot;
+        const profile = resolveInvestigationProfile(s.profileId, s.profileVersion);
+        if (s.id !== row.investigationId || row.requestId !== job.payload.requestId
+          || s.profileId !== row.profileId || s.profileVersion !== Number(row.profileVersion)
+          || !profile.readonly || s.authority?.profileHash !== investigationProfileHash(profile)
+          || !Array.isArray(s.resources) || s.resources.length > 100
+          || s.resources.some((r: any) => !['instance','server','network_device'].includes(r.type) || !Number.isSafeInteger(r.id) || r.id <= 0)) return ['*'];
+        return [`investigation:${row.investigationId}`, ...s.resources.map((r: any) => `read:${r.type}:${r.id}`)];
+      } catch { return ['*']; }
+    }
     let rows: Array<{ instanceId: number | null; type?: string }> = [];
     if (job.type === 'report.occurrence') {
       [rows] = await this.pool().execute<typeof rows>(`SELECT JSON_UNQUOTE(JSON_EXTRACT(config_snapshot, '$.instance_id')) AS instanceId,
@@ -134,9 +160,21 @@ export class MysqlWorkflowStore implements WorkflowStore {
       [rows] = await this.pool().execute<typeof rows>(`SELECT instance_id AS instanceId FROM ${alert ? 'alerts' : 'reports'} WHERE id = ?`,
         [alert ? job.payload.alertId : job.payload.reportId]);
     } else if (job.type === 'metrics.collect') {
-      // The collector validates this exact resource against its durable schedule before any I/O.
       const resource = job.payload.resource as { type?: string; id?: number } | undefined;
-      if (resource?.type === 'instance' && Number.isSafeInteger(resource.id) && resource.id! > 0) return [`instance:${resource.id}`];
+      if (!context || !resource || !['instance','server','network_device'].includes(resource.type ?? '')
+        || !Number.isSafeInteger(resource.id) || resource.id! <= 0 || !Number.isSafeInteger(job.payload.revision)) return ['*'];
+      const key = `${resource.type}:${resource.id}`;
+      const [schedules] = await this.pool().execute<Array<{ resourceKey: string; revision: number }>>(`SELECT s.resource_key AS resourceKey, s.revision
+        FROM metric_schedule s JOIN workflow_jobs j ON BINARY j.id=BINARY s.job_id
+        WHERE j.id=? AND j.job_type='metrics.collect' AND j.state='running'
+        AND j.fencing_token=? AND j.lease_owner=? AND j.lease_expires_at>NOW(3)
+        AND s.resource_key=? AND s.revision=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.resource.type'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.resource.id'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.revision'))=s.revision`,
+      [job.id, job.fencingToken, context.workerId, key, job.payload.revision, resource.type, String(resource.id)]);
+      return schedules.length === 1 && schedules[0].resourceKey === key && Number(schedules[0].revision) === job.payload.revision
+        ? [`collection:${key}`, `read:${key}`] : ['*'];
     }
     const id = Number(rows[0]?.instanceId);
     return Number.isSafeInteger(id) && id > 0 ? [`instance:${id}`] : ['*'];

@@ -84,6 +84,7 @@ it("summary responses require durable matched disposition", async () => {
       hook: new NoopHook(),
       contextWindowTokens: 15000,
       maxTokens: 500,
+      contextPolicy: {summaryMaxTokens: 500},
       checkpointCallback: async () => {},
     };
     const manager = new ContextManager(spec, provider);

@@ -28,6 +28,7 @@ const spec: AgentRunSpec = {
   hook: new NoopHook(),
   contextWindowTokens: 16000,
   maxTokens: 4096,
+  contextPolicy: {summaryMaxTokens: 2048},
 };
 it('synthetic reference identities stay bounded and distinct without repeating their tool category',()=>{
   const key='a'.repeat(64);const value={evidence:['call-original'],uncertain:['do not replay']};
@@ -227,8 +228,23 @@ it('durable one-batch retention can advance across repeated tools without replay
   const p:any={getDefaultModel:()=>actual.getDefaultModel(),projectMessages:actual.projectMessages.bind(actual),countPromptTokens:actual.countPromptTokens.bind(actual),
     chatStream:async()=>{summaries++;return reply(JSON.stringify({goal:['Inspect server 3'],constraints:['Read only'],done:[],pending:[],evidence:[],uncertain:[]}));},
     chat:async()=>++ordinary<=3?reply(null,[{id:`batch-${ordinary}`,name:'read_only',arguments:{}}]):reply('Evidence collected; root cause remains unverified.')};
-  const result=await new (await import('../runner.js')).AgentRunner(p).run({...spec,initialMessages:raw,tools,maxIterations:6,contextPolicy:{recentToolBatches:1},checkpointCallback:async(c)=>{saved.push(structuredClone(c));}});
+  const result=await new (await import('../runner.js')).AgentRunner(p).run({...spec,initialMessages:raw,tools,maxIterations:6,contextPolicy:{recentToolBatches:1,summaryMaxTokens:2048},checkpointCallback:async(c)=>{saved.push(structuredClone(c));}});
   expect(result.error).toBeNull();expect(result.stopReason).toBe('completed');expect(executions).toBe(3);expect(ordinary).toBe(4);expect(summaries).toBeGreaterThanOrEqual(2);
   expect(saved.some(c=>c.context_summary_v1?.sourceEnd>raw.length)).toBe(true);expect(raw).toEqual(before);
   for(const id of ['prior','batch-1','batch-2','batch-3'])expect(JSON.stringify(result.messages)).toContain(id);
+});
+
+it('canonical evidence pins require persistence and retain recorded/uncertain IDs without copying payloads', () => {
+  const raw: Message[] = [...structuredClone(messages), {role:'assistant',content:'next',tool_calls:[
+    {id:'pending',type:'function',function:{name:'read_only',arguments:'{"id":3}'}}]}];
+  const policy = {recentToolBatches:1 as const,evidenceReferences:'canonical' as const};
+  expect(() => new ContextManager({...spec,contextPolicy:policy},provider)).toThrow('Invalid context');
+  const s = {...spec,checkpointCallback:async()=>{},contextPolicy:policy};
+  const manager=new ContextManager(s,provider), before=JSON.stringify(raw);
+  const pins=manager.pins(raw,raw.length), payload=String(pins.find(m=>m.role==='tool')?.content);
+  expect(payload).toContain('canonicalSource');
+  expect(payload).toContain('call-1'); expect(payload).toContain('pending');
+  expect(payload).toContain('uncertain_do_not_replay');
+  expect(payload).not.toContain('"arguments"');
+  expect(JSON.stringify(raw)).toBe(before);
 });

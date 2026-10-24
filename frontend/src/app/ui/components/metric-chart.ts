@@ -14,6 +14,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import * as echarts from "echarts";
 import type { EChartsOption, EChartsType } from "echarts";
+import { formatMetricTime, isMetricTimestamp } from './metric-time.js';
 
 export interface MetricSeries {
   name: string;
@@ -65,6 +66,7 @@ export class MetricChart extends LitElement {
       color: var(--muted);
       font-size: 13px;
     }
+    .chart-timezone { margin:0; padding:var(--space-sm) var(--space-md); color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
     :host([compact]) .chart-header {
       padding: 8px 12px;
     }
@@ -312,11 +314,13 @@ export class MetricChart extends LitElement {
             color: muted,
             fontSize: 11,
             interval: 'auto',
-            rotate: this.timeData.length > 20 ? 30 : 0,
+            rotate: 0,
+            hideOverlap: true,
             formatter: (val: string) => {
-              // Show only time portion if present
-              const parts = val.split(" ");
-              return parts.length > 1 ? parts[1] : parts[0];
+              const first = this.timeData[0], last = this.timeData.at(-1)!;
+              const spansDays = isMetricTimestamp(first) && isMetricTimestamp(last)
+                && new Date(first).toLocaleDateString() !== new Date(last).toLocaleDateString();
+              return formatMetricTime(val, spansDays);
             },
           },
           splitLine: { show: false },
@@ -353,6 +357,7 @@ export class MetricChart extends LitElement {
       <div class="chart-header">
         <span class="chart-title">${this.title}</span>
       </div>
+      ${this.timeData.some(isMetricTimestamp) ? html`<p class="chart-timezone">本地时间（${Intl.DateTimeFormat().resolvedOptions().timeZone}）；悬停查看完整原始时间及其时区。</p>` : ''}
       <div
         class="chart-container"
         style="height: ${this.height}"

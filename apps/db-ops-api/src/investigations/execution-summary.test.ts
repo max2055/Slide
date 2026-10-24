@@ -8,6 +8,46 @@ const run = { id: 'run', state: 'partial', finished_at: '2026-10-21T02:00:30.000
     terminal: { stopReason: 'tool_error', reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' } },
 } };
 describe('durable investigation execution summary', () => {
+  const analysis = { analysisVersion: 1, summary: '当前连接有观测，网络证据不足。',
+    claims: [{ statement: '当前观测不足以确定根因。', supportingToolCallIds: ['read-1'], contradictingToolCallIds: [] }],
+    hypotheses: [{ statement: '采集生命周期缺口可能导致网络指标不可用，尚待验证。', supportingToolCallIds: ['read-1'], contradictingToolCallIds: [] }],
+    unresolvedQuestions: ['核对采集生命周期来源。'], recommendations: [{ action: '补齐只读生命周期来源后复核。', priority: 'medium' }] };
+  const analysisEvidence = [{ id: 'e1', metadata_json: { source: 'tool:read-1', summary: '工具返回含 unknown。' } }];
+  const completedAnalysis = (value: unknown) => ({ ...run, state: 'completed', result_json: {
+    ...run.result_json, event: { finalContent: JSON.stringify(value) } } });
+  it('binds completed model analysis to this execution evidence without promoting root cause or recovery', () => {
+    const value = executionSummary(completedAnalysis(analysis), subject as any, analysisEvidence);
+    expect(value.summary).toContain(analysis.summary);
+    expect(value.claims).toEqual([{ statement: analysis.claims[0].statement, kind: 'inference', supportingEvidenceIds: ['e1'], contradictingEvidenceIds: [] }]);
+    expect(value.hypotheses).toEqual([{ statement: analysis.hypotheses[0].statement, status: 'unknown', supportingEvidenceIds: ['e1'], contradictingEvidenceIds: [] }]);
+    expect(value.rootCauseVerification).toEqual({ status: 'unverified' });
+    expect(value.problemStatus).toBe('unconfirmed');
+    expect(validateMachineResult(value, new Set(['e1'])).ok).toBe(true);
+  });
+  it.each(['unbound', 'expired', 'partial', 'extra-authority'])('does not publish structured analysis with %s evidence or authority', mode => {
+    const input = mode === 'extra-authority' ? { ...analysis, rootCauseVerification: { status: 'human_confirmed' } } : analysis;
+    const completed = completedAnalysis(input);
+    const value = executionSummary(mode === 'partial' ? { ...completed, state: 'partial' } : completed, subject as any,
+      mode === 'unbound' ? [] : mode === 'expired' ? [{ ...analysisEvidence[0], expired_at: new Date() }] : analysisEvidence);
+    expect(value.claims).toEqual([]); expect(value.hypotheses).toEqual([]);
+  });
+  it.each(['extra-field', 'truncated', 'wrong-type', 'long', 'empty-basis', 'unbound'])('explicitly reports rejected final analysis: %s', mode => {
+    const value: any = structuredClone(analysis);
+    if (mode === 'extra-field') value.evidenceGaps = ['网络证据缺失'];
+    if (mode === 'wrong-type') value.claims = 'invalid';
+    if (mode === 'long') value.summary = 'x'.repeat(2001);
+    if (mode === 'empty-basis') value.claims[0].supportingToolCallIds = [];
+    if (mode === 'unbound') value.claims[0].supportingToolCallIds = ['another-run'];
+    const terminal = completedAnalysis(value);
+    if (mode === 'truncated') terminal.result_json.event.finalContent = '{"analysisVersion":1';
+    const published = executionSummary(terminal, subject as any, analysisEvidence);
+    expect(published.claims).toEqual([]); expect(published.hypotheses).toEqual([]);
+    expect(published.summary).toContain('模型最终输出未通过');
+    expect(published.summary).not.toContain('evidenceGaps');
+    expect(published.unresolvedQuestions.join()).toContain('未发布');
+    expect(published.facts).toHaveLength(1);
+    expect(terminal.result_json.event.finalContent).toBe(mode === 'truncated' ? '{"analysisVersion":1' : JSON.stringify(value));
+  });
   it('preserves the exact fatal tool receipt when Runtime omits resolution', () => {
     expect(investigationStop({ stopReason: 'tool_error', error: 'Error: Error: INVESTIGATION_TOOL_WINDOW_LIMIT' }))
       .toEqual({ stopReason: 'tool_error', reasonCode: 'INVESTIGATION_TOOL_WINDOW_LIMIT', source: 'tool_receipt' });
@@ -52,7 +92,7 @@ describe('durable investigation execution summary', () => {
     const expired = executionSummary(run, subject as any, [{ id:'old', expired_at: new Date(), metadata_json:{summary:'expired'} }]);
     expect(expired.facts).toEqual([]);
     const completed = executionSummary({ ...run, state: 'completed', result_json: { event: { finalContent: '已检查，仍需验证。' } } }, subject as any, []);
-    expect(completed.summary).toContain('已检查，仍需验证'); expect(completed.provenance.modelVersion).toBe('unavailable');
+    expect(completed.summary).toContain('模型最终输出未通过'); expect(completed.provenance.modelVersion).toBe('unavailable');
     expect(completed.problemStatus).toBe('unconfirmed');
   });
 });

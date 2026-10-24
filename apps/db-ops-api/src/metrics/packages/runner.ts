@@ -91,6 +91,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       collector_id: collector.id, config_revision: execution.config_revision, started_at: at, status: 'running', error: null, observation_ids: [] };
     validateAttempt(attempt);
     let error: CollectionAttempt['error'] = null;
+    let evidenceCode: AdapterError['evidenceCode'];
     let outputs: Computation[] = [];
     let rawOutputs: RawObservation[] = [];
     const fieldCapabilities = new Map<string, Array<'supported' | 'unsupported' | 'unknown'>>();
@@ -139,6 +140,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       } catch (failure) {
         // Known transport errors retain their category. Validation failures are parse failures.
         error = failure instanceof AdapterError ? failure.code : 'parse_error';
+        evidenceCode = failure instanceof AdapterError ? failure.evidenceCode : undefined;
         outputs = [];
         rawOutputs = [];
       }
@@ -156,6 +158,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       if (mappingError === 'timeout' && previous && Date.parse(previous.evaluated_at) <= Date.parse(at) && Date.parse(previous.valid_until) > Date.parse(at)) {
         result.capabilities.push(CapabilitySchema.parse(previous));
       } else result.capabilities.push(capability(mapping.metric, collector.method, fieldStatus ?? (mappingError ? 'unknown' : 'supported'), [...basis,
+        ...(mappingError && evidenceCode ? [{ kind: 'method' as const, evidence: evidenceCode }] : []),
         { kind: mappingError === 'permission_denied' || !mappingError ? 'permission' : 'method', evidence: mappingError ?? fieldStatus ?? 'fixed_read_succeeded' }]));
     }
   }

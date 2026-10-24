@@ -9,11 +9,13 @@ import { WebSocket } from 'ws';
 import { ToolRegistry, type LLMProvider } from '@slide/agent-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../migrations/runner.js';
+import { createVerifyToken } from '../auth-middleware.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationExecutor } from './executor.js';
 import { InvestigationStreamStore, InvestigationWatchService, reduceInvestigationEvents, emptyInvestigationProjection, captureCanonicalDocument } from './stream.js';
+import { evidenceHash } from '../analysis/analysis-evidence.js';
 import { appendObservation } from './observation-db.js';
 import { InvestigationEvidenceStore } from './evidence-store.js';
 import { InvestigationResultStore } from './result-schema.js';
@@ -203,6 +205,47 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     expect((await evidence.get(owner,inv.id,saved[0].id,true)).raw).toMatchObject({ value:null });
     await expect(evidence.put(owner,binding,'capture',{...value,summary:'changed'})).rejects.toMatchObject({code:'IDEMPOTENCY_PAYLOAD_MISMATCH'});
   });
+  it.each([{ x: 1 }, [1, 'x'], 'Error: server arguments rejected', '{"looks":"like-json"}', '[1,2]', 'null', 'true', '42', '"quoted"', 42, true, null].map(raw => [raw]))('JSON evidence raw survives driver and normal HTTP without reinterpretation: %j', async raw => {
+    const saved = await evidence.put(owner, binding, 'raw-document', { ...input(), raw });
+    const app = Fastify();
+    const headers = { authorization: `Bearer ${signAccessToken(owner, process.env.JWT_SECRET_KEY!)}` };
+    await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge, { stream, evidence, results });
+    try {
+      const response = await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().raw).toEqual(raw);
+      expect(response.json().contentHash).toBe(evidenceHash(raw));
+      const restarted = new InvestigationEvidenceStore(() => pool, authorization);
+      expect((await restarted.get(owner, inv.id, saved.id, true)).raw).toEqual(raw);
+      await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');
+      expect((await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` })).statusCode).toBe(404);
+    } finally { await app.close(); }
+  });
+
+  it('does not swallow malformed legacy storage documents; MySQL JSON rejects corrupt writes', async () => {
+    const saved = await evidence.put(owner, binding, 'malformed-document', { ...input(), raw: { valid: true } });
+    await expect(pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', ['{"broken":', saved.id])).rejects.toHaveProperty('code', 'ER_INVALID_JSON_TEXT');
+    // Only this disposable test schema: emulate a damaged historical text
+    // column. The production reader must still fail closed, never return text.
+    await pool.query('ALTER TABLE investigation_evidence MODIFY raw_json LONGTEXT NULL');
+    const app = Fastify();
+    const headers = { authorization: `Bearer ${signAccessToken(owner, process.env.JWT_SECRET_KEY!)}` };
+    await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge, { stream, evidence, results });
+    try {
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', ['{"broken":', saved.id]);
+      const response = await app.inject({ method: 'GET', headers, url: `/api/investigations/${inv.id}/evidence/${saved.id}?raw=true` });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).not.toHaveProperty('raw');
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', [JSON.stringify('stored scalar'), saved.id]);
+      expect((await evidence.get(owner, inv.id, saved.id, true)).raw).toBe('stored scalar');
+      await pool.query('UPDATE investigation_evidence SET raw_json=? WHERE id=?', [JSON.stringify({ restored: true }), saved.id]);
+      expect((await evidence.get(owner, inv.id, saved.id, true)).raw).toEqual({ restored: true });
+    } finally {
+      await app.close(); await pool.query('DELETE FROM investigation_evidence WHERE id=?', [saved.id]);
+      await pool.query('ALTER TABLE investigation_evidence MODIFY raw_json JSON NULL');
+    }
+  });
+
   it('raw expiry returns a tombstone, purges SQL, preserves result references and refuses new proof', async () => {
     const saved=await evidence.put(owner,binding,'expired',input());
     const r=await results.put(owner,binding,'first',0,result([saved.id]));
@@ -364,8 +407,14 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
   it.each(['normal', 'crash-after-guard', 'crash-after-returned-error'])('continues after per-call errors and retains only the eventual Run limit: %s', async mode => {
     let calls = 0, toolCalls = 0;
     const provider: LLMProvider = { getDefaultModel: () => 'controlled-guard-regression',
+      getModelCapabilities: () => ({model:'controlled-guard-regression',contextWindowTokens:32768,preferredOutputTokens:4096,maxOutputTokens:4096,source:'configuration',version:'guard-fixture/v1'}),
       chatStream: async () => { throw Error('NO_EXTERNAL_MODEL'); },
-      chat: async () => { calls++; return { content: null, finishReason: 'tool_calls',
+      chat: async (messages, definitions) => { calls++;
+        if (calls === 8) {
+          expect(definitions).toEqual([]);
+          expect(messages.some(m => String(m.content).includes('remainingProviderAttempts=1'))).toBe(true);
+        }
+        return { content: null, finishReason: 'tool_calls',
         toolCalls: [{ id: `guard-${calls}`, name: 'get_instance_summary', arguments: { instance_id: calls <= 6 ? 101 : 102 } }],
         hasToolCalls: true, shouldExecuteTools: true, usage: { prompt_tokens: 20, completion_tokens: 10 } }; } };
     const tools = new ToolRegistry(); tools.register({ name: 'get_instance_summary', description: 'Controlled read',
@@ -373,6 +422,9 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       execute: async () => { toolCalls++; return mode === 'crash-after-returned-error' && toolCalls === 1
         ? 'Error: INVESTIGATION_TOOL_WINDOW_LIMIT' : { success: true, summary: calls > 6 ? '后续检查成功' : '前序检查成功' }; } });
     const executor = new InvestigationExecutor({ pool: () => pool, authorization, providerForPurpose: async () => provider,
+      // Exercise the Run fuse independently of context compaction, including
+      // the additional durable error receipt on the recovery path.
+      runtimeContext: {contextWindowTokens:32768,summaryMaxTokens:2048},
       toolsForActor: () => tools, budget: { domain: 't05-controlled-fixture', policy: investigationBudgetConfiguration().policy, reserveCostMicros: 1000000 } });
     if (mode !== 'normal') {
       const control = new AbortController(), persist = (executor as any).persistCheckpoint.bind(executor);
@@ -394,14 +446,14 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     }
     const terminal = await executor.execute(completionCommand());
     expect(terminal.state).toBe('partial');
-    expect(terminal.error).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    expect(terminal.error).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
     const saved = (await results.list(owner, inv.id)).items[0].result;
-    expect(saved.execution).toMatchObject({ reasonCode: 'MAX_MODEL_STEPS' });
+    expect(saved.execution).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
     expect(saved.summary).toContain('运行限制');
     expect(saved.facts.map(f => f.statement).join()).not.toContain('执行已停止');
     expect(saved.facts.map(f => f.statement).join()).toContain('后续检查成功');
-    expect(saved.facts).toHaveLength(8);
-    expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 8 : 7);
+    expect(saved.facts).toHaveLength(7);
+    expect(calls).toBe(8); expect(toolCalls).toBe(mode === 'crash-after-returned-error' ? 7 : 6);
     await executor.execute(completionCommand()); expect(calls).toBe(8);
   });
   it('original Run consumes a controlled Provider/tool through the real executor and persists evidence and V2 summary', async () => {

@@ -34,6 +34,11 @@ export async function collectDatabase(id: string, transport: Transport, evidence
   }
   catch (error) { throw new AdapterError(classifyError(error)); }
   if (!Array.isArray(response)) throw new AdapterError('parse_error');
+  // Ordinary SHOW GLOBAL STATUS has values but no authoritative startup/reset
+  // identity. Uptime/collection clocks cannot supply it, including after FLUSH.
+  if (read.engine === 'mysql' && read.fields.some(f => f.definition.kind === 'counter') && !counter) {
+    throw new AdapterError('parse_error', 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE');
+  }
   if (read.shape === 'replication') {
     if (response.length > 100) throw new AdapterError('parse_error');
     const channels = new Set<string>();

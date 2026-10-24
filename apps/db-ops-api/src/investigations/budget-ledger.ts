@@ -1,3 +1,4 @@
+import { taskExecutionConfiguration, readExecutionAllocation, type FrozenExecutionAllocation, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
@@ -30,6 +31,7 @@ export interface BudgetReservationInput {
   mode: 'automatic' | 'manual';
   profile: Readonly<InvestigationProfile>;
   reserveTokens: number;
+  executionAllocation?: FrozenExecutionAllocation;
   reserveCostMicros: number;
   prices?: BudgetPrices;
 }
@@ -107,7 +109,7 @@ function reservationInput(input: BudgetReservationInput, executionTokenLimit?: n
   }
   return { requestId: input.requestId, operationId: input.operationId, domain: input.domain, mode: input.mode,
     profile: structuredClone(input.profile), reserveTokens: input.reserveTokens, reserveCostMicros: input.reserveCostMicros,
-    ...(prices ? { prices } : {}) };
+    ...(prices ? { prices } : {}), ...(input.executionAllocation ? { executionAllocation: input.executionAllocation } : {}) };
 }
 function record(row: RowDataPacket): BudgetReservation {
   return { id: row.id, requestId: row.request_id, operationId: row.operation_id.toString(), domain: row.domain_key.toString(), state: row.state,
@@ -118,12 +120,24 @@ function record(row: RowDataPacket): BudgetReservation {
 
 export class MysqlInvestigationBudgetLedger {
   private readonly policy: BudgetPolicy;
+  private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
   constructor(private readonly poolProvider: () => Pool | null, policy: BudgetPolicy,
     // Trusted deployment allocation ceiling; authority Profile/hash stays fixed.
     // A stored receipt retains its original reserveTokens across configuration changes.
-    private readonly executionTokenLimit?: number) {
+    private readonly executionTokenLimit?: number,
+    taskExecution?: Readonly<TaskExecutionConfiguration>) {
     if (executionTokenLimit !== undefined && (!integer(executionTokenLimit, 1) || executionTokenLimit > 1_000_000)) throw invalid();
     this.policy = Object.freeze(policySnapshot(policy));
+    this.taskExecution = taskExecution && taskExecutionConfiguration(taskExecution, taskExecution.authority?.domain ?? 'qualification.max222.ledger', this.policy);
+  }
+  private input(value: BudgetReservationInput): BudgetReservationInput {
+    const allocation = value.executionAllocation && readExecutionAllocation(value.executionAllocation, {
+      requestId: value.requestId, investigationId: value.executionAllocation.investigationId,
+      domain: value.domain, mode: value.mode, profile: value.profile,
+    }, this.policy, this.taskExecution);
+    if (allocation && value.reserveTokens !== allocation.configuration.maxTotalTokens) throw invalid();
+    return reservationInput({ ...value, ...(allocation ? { executionAllocation: allocation } : {}) },
+      allocation?.configuration.maxTotalTokens ?? this.executionTokenLimit);
   }
   /** Trusted ingress may retain the stable domain lock/configuration across an
    * admission savepoint rollback. This creates no allocation and charges nothing. */
@@ -136,14 +150,15 @@ export class MysqlInvestigationBudgetLedger {
    * lease and Runtime limits remain the consumer's responsibility. */
   async reserveExecutionInTransaction(connection: TransactionConnection,
     value: Omit<BudgetReservationInput, 'operationId'>): Promise<BudgetAdmission> {
-    const input = reservationInput({ ...value, operationId: `request:${value.requestId}` }, this.executionTokenLimit);
+    const input = this.input({ ...value, operationId: `request:${value.requestId}` });
     await select(connection, 'SELECT id FROM investigation_requests WHERE id = ? FOR UPDATE', [input.requestId]);
     const result = await this.reserveInTransaction(connection, input);
     if (!result.accepted) return result;
     const [request] = await select(connection, 'SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [input.requestId]);
     const snapshot = json<Record<string, unknown>>(request.request_snapshot);
     const receipt = { schemaVersion: 1, requestId: input.requestId, reservationId: result.reservation.id,
-      operationId: input.operationId, domain: input.domain, mode: input.mode, commandHash: hash(input) };
+      operationId: input.operationId, domain: input.domain, mode: input.mode, commandHash: hash(input),
+      ...(input.executionAllocation ? { executionAllocationHash: input.executionAllocation.hash } : {}) };
     if (snapshot.budgetReceipt) {
       const previous = snapshot.budgetReceipt as typeof receipt;
       if (Object.keys(previous).length !== Object.keys(receipt).length
@@ -154,7 +169,7 @@ export class MysqlInvestigationBudgetLedger {
     return result;
   }
   reserveExecution(value: Omit<BudgetReservationInput, 'operationId'>): Promise<BudgetAdmission> {
-    const input = reservationInput({ ...value, operationId: `request:${value.requestId}` }, this.executionTokenLimit);
+    const input = this.input({ ...value, operationId: `request:${value.requestId}` });
     return this.transaction(connection => this.reserveExecutionInTransaction(connection, input));
   }
   /** Executor reads the durable ingress allocation, validates the independently
@@ -184,13 +199,16 @@ export class MysqlInvestigationBudgetLedger {
   /** Compose after request/authority locks in the existing store transaction.
    * No model dispatch or nested transaction; caller persists suppressions. */
   async reserveInTransaction(connection: TransactionConnection, value: BudgetReservationInput): Promise<BudgetAdmission> {
-    const input = reservationInput(value, this.executionTokenLimit);
-    const [request] = await select(connection, 'SELECT investigation_id, request_snapshot FROM investigation_requests WHERE id = ? FOR SHARE', [input.requestId]);
+    const input = this.input(value);
+    const [request] = await select(connection, 'SELECT investigation_id, request_snapshot, execution_domain FROM investigation_requests WHERE id = ? FOR SHARE', [input.requestId]);
     if (!request) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
-    const snapshot = json<{ profileId?: string; profileVersion?: number; authority?: { profileHash?: string };
+    const snapshot = json<{ executionAllocation?: FrozenExecutionAllocation; profileId?: string; profileVersion?: number; authority?: { profileHash?: string };
       context?: { subject?: { component?: string } } }>(request.request_snapshot);
     if (snapshot.profileId !== input.profile.id || snapshot.profileVersion !== input.profile.version
       || snapshot.authority?.profileHash !== investigationProfileHash(input.profile)) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
+    const allocation = readExecutionAllocation(snapshot.executionAllocation, { requestId: input.requestId,
+      investigationId: request.investigation_id, domain: input.domain, executionDomain: request.execution_domain?.toString() ?? null, mode: input.mode, profile: input.profile }, this.policy, this.taskExecution);
+    if (!isDeepStrictEqual(allocation, input.executionAllocation)) throw new BudgetLedgerError('BUDGET_CONFLICT');
     const resources = await select(connection, `SELECT resource_type, resource_id FROM investigation_resources
       WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [request.investigation_id]);
     if ((input.profile.id === 'ops' && !resources.length) || (input.profile.id === 'system' && resources.length)) throw new BudgetLedgerError('BUDGET_REQUEST_INVALID');
@@ -209,7 +227,7 @@ export class MysqlInvestigationBudgetLedger {
     const refuse = (reason: BudgetSuppression): BudgetAdmission => ({ accepted: false, reason });
     if (previous.some(row => ['reserved', 'sent', 'unknown'].includes(row.state))) return refuse('REQUEST_ACTIVE');
     if (previous.length >= input.profile.budget.maxProviderAttempts) return refuse('REQUEST_ATTEMPT_LIMIT');
-    if (previous.reduce((sum, row) => sum + BigInt(row.charged_tokens), 0n) + BigInt(input.reserveTokens) > BigInt(this.executionTokenLimit ?? input.profile.budget.maxTokens)) return refuse('REQUEST_TOKEN_LIMIT');
+    if (previous.reduce((sum, row) => sum + BigInt(row.charged_tokens), 0n) + BigInt(input.reserveTokens) > BigInt(input.executionAllocation?.configuration.maxTotalTokens ?? this.executionTokenLimit ?? input.profile.budget.maxTokens)) return refuse('REQUEST_TOKEN_LIMIT');
     const [time] = await select(connection, "SELECT DATE_FORMAT(UTC_TIMESTAMP(3), '%Y-%m-%d') AS day, DATE_FORMAT(UTC_TIMESTAMP(3), '%Y-%m-%d %H:00:00') AS hour");
     // Domain lock serializes every mutation. FOR UPDATE is a current read, even
     // when this caller already established an earlier REPEATABLE READ snapshot.
@@ -246,7 +264,7 @@ export class MysqlInvestigationBudgetLedger {
   }
   async reserve(input: BudgetReservationInput): Promise<BudgetAdmission> {
     // Validate/copy synchronously before transaction acquisition.
-    const copy = reservationInput(input, this.executionTokenLimit);
+    const copy = this.input(input);
     return this.transaction(connection => this.reserveInTransaction(connection, copy));
   }
   /** Commit intent BEFORE any external call. Restart never automatically replays sent. */

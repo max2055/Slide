@@ -1,4 +1,5 @@
 import { SourceSnapshotCapture } from '../rollout/source-shadow.js';
+import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { z } from 'zod';
 import type { Resource } from '../../contracts/metrics/index.js';
@@ -67,6 +68,7 @@ export class MetricScheduler {
         signal.throwIfAborted();
         const snapshot = await this.store.begin(ref, revision, job, executionContext, this.clock(), access.resource);
         if (!snapshot) return;
+        platformLogs.record({ component: 'metrics', eventType: 'collection.begun', status: 'ok', correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
         const { plan, published } = snapshot;
         const settings = published.resolved.settings;
         const check = async () => {
@@ -105,6 +107,7 @@ export class MetricScheduler {
         result.source_validation = capture.compare(ref, String(access.resource.attributes['db.engine']?.value ?? ''),
           result.observations.map(o=>o.observation), this.packages.catalog(published.binding.package), this.packages.get(published.binding.package).package.collectors);
         const committed = await this.store.commit(snapshot, result, job, executionContext, this.clock());
+        platformLogs.record({ component: 'metrics', eventType: 'collection.committed', status: committed ? 'ok' : 'unknown', correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
         await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
       } catch (error) {
         // Never store remote errors, credentials or SQL. Abort cannot retract an already issued request.

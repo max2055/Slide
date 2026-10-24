@@ -8,11 +8,11 @@ import { authorizeDatabaseTarget } from '../../security/database-target-policy.j
 import { AdapterError, type Transport } from '../packages/adapters.js';
 import { bindDatabaseDriver } from '../database/collector.js';
 import { postgresCounterTransport } from './postgres-counter.js';
+import { mysqlCounterTransport, type MysqlCounterDiscovery } from './mysql-counter.js';
 
 /** Fixed package reads only. Dedicated sessions prevent trial timeouts changing a shared session. */
-export function trialDatabaseTransport(connection: DatabaseConnection): Transport {
-  const bind = connection.db_type === 'postgresql' ? postgresCounterTransport : bindDatabaseDriver;
-  return bind((sql, timeout) => instanceAccessLifecycle.track(connection.id, async () => {
+export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCounters?: MysqlCounterDiscovery): Transport {
+  const execute = (sql: string, timeout: number) => instanceAccessLifecycle.track(connection.id, async () => {
     await instanceAccessLifecycle.assertAvailable(connection.id);
     if (connection.db_type === 'oracle' && connection.oraclePool) {
       const client = await connection.oraclePool.getConnection();
@@ -56,5 +56,8 @@ export function trialDatabaseTransport(connection: DatabaseConnection): Transpor
       finally { await close(); }
     }
     throw new AdapterError('connection_error');
-  }));
+  });
+  if (connection.db_type === 'postgresql') return postgresCounterTransport(execute);
+  if (connection.db_type === 'mysql' && mysqlCounters) return mysqlCounterTransport(execute, mysqlCounters);
+  return bindDatabaseDriver(execute);
 }

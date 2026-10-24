@@ -156,6 +156,8 @@ export interface AgentHookContext {
   iteration: number;
   streamAttempt?: number;
   sourceRequestId?: string;
+  /** Hash of the admitted Provider messages/tools at the actual dispatch boundary. */
+  providerInputHash?: string;
   provisionalBytes?: { text: number; reasoning: number; tool: number };
   streamReset?: import('./runtime/stream-boundary.js').StreamReset;
   messages: Message[];
@@ -208,6 +210,13 @@ export interface AgentRunSpec {
   onToolEvent?: (event: import("./tool-stream.js").ToolLifecycleEvent) => Promise<void> | void;
   streamingLimits?: import('./runtime/streaming-coordinator.js').StreamingLimits;
   runtimeRunId?: string;
+  /** Trusted caller resolves raw atomic pairs against durable receipts for
+   * this request. Model summaries and tool-supplied provenance never grant it. */
+  contextEvidence?: (source: readonly Message[], summary?: import('./runtime/auto-compact.js').SummaryRecord) => {
+    runId: string; requestId: string;
+    receipts: Array<{ toolCallId: string; receiptHash: string; content: string }>;
+    omitted: string[];
+  };
   onRuntimeEvent?: (event: import("./runtime/events.js").RuntimeEvent) => void | Promise<void>;
   budgetLimits?: import("./runtime/contracts.js").RuntimeBudgetLimits;
   runTimeoutMs?: number;
@@ -234,7 +243,9 @@ export interface AgentRunSpec {
   loopGuardThreshold?: number;
   workspace?: string;
   sessionKey?: string;
-  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number; recentToolBatches?: 1 | 2 };
+  contextPolicy?: { watermark?: number; target?: number; summaryMaxTokens?: number; recentToolBatches?: 1 | 2;
+    /** Persisted canonical history owns old arguments/results; pins carry source hash and call IDs. */
+    evidenceReferences?: 'full' | 'canonical' };
   /** Caller-owned facts. Never derive authorization from model summaries. */
   contextPins?: { goal?: string; constraints?: string[]; pending?: string[]; evidence?: string[]; uncertain?: string[] };
   contextWindowTokens?: number;

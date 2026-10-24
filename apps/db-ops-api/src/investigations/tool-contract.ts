@@ -1,5 +1,32 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
+import { coreProfiles } from '../metrics/consumers/service.js';
+
+/** Reuse the runtime request clock; no separate clock or argument rewriting. */
+const METRIC_HISTORY_TIME_GUIDANCE = 'history: from/to; to(exclusive) <= latest Current Time ISO instant; from = to - requested duration. Never round up (minute/hour/day). Z=UTC, not local time. Only omit both for the requested default maxWindowMs window; otherwise supply both.';
+
+const opsDescriptions: Record<string, string> = {
+  get_instance_summary: 'Scoped database metadata/health.',
+  get_resource_observations: 'Legacy snapshots: select metricIds<=32 + limit for complete bounded pages (unselected<=4). query_metrics: returned ID + history; discover+ID for semantics.',
+  get_resource_relations: 'Resource relations.',
+  get_server_alerts: 'Server alerts; activeOnly=true.',
+  get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
+  list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
+  query_metrics: 'One advertised core/returned/discovered metric_ids/call. discover(discovery_limit=8): definitions only; next_offset, restart on revision change; discover+ID: semantics. ' + METRIC_HISTORY_TIME_GUIDANCE + ' interval:1m, <=1h/60 buckets. FS: omit series_index; selected pages give metricRead.completeRead/pairedRead. Others start series_index:0; follow dimensions/selection.total_series. Pair full dimensions/all series/windows. metric_window_v1: bucketDefaults apply per bucket; local fields override; values/quality/time/sources explicit. inventory: attributes.',
+};
+
+/** Shared model policy belongs once in the request, not in every schema.
+ * Correlated resource enums stay in each schema; execution rechecks live ACLs.
+ */
+export function investigationToolPolicy(
+  resources: readonly { type: string; id: number }[],
+  budget: { maxWindowMs: number; maxRows: number },
+): string {
+  return '\nAll tools (runtime enforced): ' + JSON.stringify({
+    resources: resources.map(({ type, id }) => ({ type, id })),
+    maxWindowMs: budget.maxWindowMs, maxRows: budget.maxRows,
+  }) + '. Missing/unknown is not healthy. evidenceOmitted: no CURRENT values (outer valuesProvided may be true); never infer health or cause from it. Prior reads differ; summaries/hashes are not originals. Schema only; references never authorize replay.';
+}
 
 /** A provider-only projection. Execution still resolves and authorizes every
  * argument against the live actor and the immutable request ceiling. */
@@ -11,7 +38,8 @@ export function investigationToolContract(tool: ToolSchema,
   if (tool.name === 'search_case_references') return resources.length ? { ...tool,
     description: `${tool.description} 仅搜索完整范围均包含在本调查 ${JSON.stringify(resources)} 内的案例；参考不授予任何执行权限。` } : null;
   const cross = ['query_metrics', 'get_resource_observations', 'get_resource_relations'].includes(tool.name);
-  const candidates = cross && security?.resource === 'none' ? resources : resources.filter(r => r.type === security?.resource);
+  const candidates = cross && security?.resource === 'none' ? resources : resources.filter(r =>
+    security?.resourceTypes ? security.resourceTypes.some(type => type === r.type) : r.type === security?.resource);
   if (!candidates.length) return null;
   if (cross) {
     // Correlated alternatives prevent the model from pairing another type's ID.
@@ -33,6 +61,15 @@ export function investigationToolContract(tool: ToolSchema,
   }
   for (const key of ['limit', 'maxRows']) if (p[key])
     p[key] = { ...p[key], type: 'integer', minimum: 1, maximum: Math.min(100, budget.maxRows) };
+  if (tool.name === 'query_metrics') p.metric_ids = { ...p.metric_ids, minItems: 1, maxItems: 1 };
   parameters.required = [...required];
-  return { name: tool.name, parameters, description: `${tool.description} 本调查只允许 ${JSON.stringify(candidates)}；历史窗口最多 ${budget.maxWindowMs}ms，缺失或 unknown 不代表健康。` };
+  if (opsDescriptions[tool.name]) {
+    // Scope/limits are now executable schema constraints plus shared policy.
+    // Legacy property prose can even contradict these constraints ("all instances").
+    for (const property of Object.values(p)) delete property.description;
+  }
+  const core = tool.name === 'query_metrics' ? ' Core IDs (definitions, not capability): ' + JSON.stringify(Object.fromEntries(
+    candidates.filter(r => r.type in coreProfiles).map(r => [r.type, coreProfiles[r.type as keyof typeof coreProfiles].map(m => m.id)]),
+  )) : '';
+  return { name: tool.name, parameters, description: (opsDescriptions[tool.name] ?? tool.description) + core };
 }

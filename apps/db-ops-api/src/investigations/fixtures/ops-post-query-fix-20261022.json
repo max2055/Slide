@@ -1,0 +1,1125 @@
+{
+  "provenance": {
+    "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+    "candidateSha": "1f42054cb3e8fe8103f6be047bf321a9c96113b5",
+    "source": "retained canonical SQL; offline reconstruction, no original third send"
+  },
+  "users": [
+    {
+      "id": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "role": "user",
+      "content": "只读调查 instance:1 与 server:3 在观察窗口内的数据库容量、连接与慢查询，以及服务器 CPU、内存、文件系统和网络覆盖。调用现有授权只读工具获取真实事实，逐条引用证据及时间；区分真零值、unknown、unsupported、过期和失败。仅判断现有证据能支持的结论与缺口，不执行写操作或恢复。"
+    }
+  ],
+  "entries": [
+    {
+      "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7",
+      "role": "assistant",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "_extra": {
+        "reasoning_content": "Let me start by gathering evidence. I'll make independent calls in parallel.\n\nLet me call get_instance_summary, get_resource_observations for instance 1 and server 3, get_resource_relations, query_metrics, etc.\n\nStart with a batch of independent calls."
+      },
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "我将并行获取两个资源的基础摘要、观测与关系，再按需下钻指标。",
+      "tool_calls": [
+        {
+          "id": "call_00_YT298x2nK4gASZEG6wVe9095",
+          "type": "function",
+          "function": {
+            "name": "get_instance_summary",
+            "arguments": "{\"instance_id\":1}"
+          }
+        },
+        {
+          "id": "call_01_lBwtImfqQSWj4KCTBeTS9621",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_02_U1LHySfregnXcw2Clpq76562",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_03_OAL7oqULN2PjvfQTdb4p4904",
+          "type": "function",
+          "function": {
+            "name": "get_resource_relations",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+          }
+        },
+        {
+          "id": "call_04_0gZBObKDYXOW2yITOUx09712",
+          "type": "function",
+          "function": {
+            "name": "get_resource_relations",
+            "arguments": "{\"resourceType\":\"server\",\"resourceId\":3}"
+          }
+        }
+      ],
+      "messageParts": {
+        "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7",
+        "role": "assistant",
+        "parts": [
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/0",
+            "text": "我将并行获取两个资源的基础摘要、观测与关系，再按需下钻指标。",
+            "type": "text",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/1",
+            "text": "Let me start by gathering evidence. I'll make independent calls in parallel.\n\nLet me call get_instance_summary, get_resource_observations for instance 1 and server 3, get_resource_relations, query_metrics, etc.\n\nStart with a batch of independent calls.",
+            "type": "reasoning",
+            "format": "reasoning_content",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/2",
+            "call": {
+              "id": "call_00_YT298x2nK4gASZEG6wVe9095",
+              "type": "function",
+              "function": {
+                "name": "get_instance_summary",
+                "arguments": "{\"instance_id\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/3",
+            "call": {
+              "id": "call_01_lBwtImfqQSWj4KCTBeTS9621",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/4",
+            "call": {
+              "id": "call_02_U1LHySfregnXcw2Clpq76562",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/5",
+            "call": {
+              "id": "call_03_OAL7oqULN2PjvfQTdb4p4904",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          },
+          {
+            "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7/part/6",
+            "call": {
+              "id": "call_04_0gZBObKDYXOW2yITOUx09712",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7",
+          "role": "assistant",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "_extra": {
+            "reasoning_content": "Let me start by gathering evidence. I'll make independent calls in parallel.\n\nLet me call get_instance_summary, get_resource_observations for instance 1 and server 3, get_resource_relations, query_metrics, etc.\n\nStart with a batch of independent calls."
+          },
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "我将并行获取两个资源的基础摘要、观测与关系，再按需下钻指标。",
+          "tool_calls": [
+            {
+              "id": "call_00_YT298x2nK4gASZEG6wVe9095",
+              "type": "function",
+              "function": {
+                "name": "get_instance_summary",
+                "arguments": "{\"instance_id\":1}"
+              }
+            },
+            {
+              "id": "call_01_lBwtImfqQSWj4KCTBeTS9621",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_02_U1LHySfregnXcw2Clpq76562",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_03_OAL7oqULN2PjvfQTdb4p4904",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1}"
+              }
+            },
+            {
+              "id": "call_04_0gZBObKDYXOW2yITOUx09712",
+              "type": "function",
+              "function": {
+                "name": "get_resource_relations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3}"
+              }
+            }
+          ],
+          "reasoning_content": "Let me start by gathering evidence. I'll make independent calls in parallel.\n\nLet me call get_instance_summary, get_resource_observations for instance 1 and server 3, get_resource_relations, query_metrics, etc.\n\nStart with a batch of independent calls."
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+        },
+        "version": 1,
+        "projectionMessageId": "model_2e3f737b-8b3b-4d37-b89e-41574507acf7"
+      },
+      "reasoning_content": "Let me start by gathering evidence. I'll make independent calls in parallel.\n\nLet me call get_instance_summary, get_resource_observations for instance 1 and server 3, get_resource_relations, query_metrics, etc.\n\nStart with a batch of independent calls."
+    },
+    {
+      "id": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e",
+      "name": "get_instance_summary",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e/part/0",
+            "name": "get_instance_summary",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e"
+            },
+            "generation": "ended",
+            "toolCallId": "call_00_YT298x2nK4gASZEG6wVe9095",
+            "sourceMessageId": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e",
+          "name": "get_instance_summary",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"count\":1,\"instances\":[{\"id\":1,\"name\":\"mysql3306\",\"db_type\":\"mysql\",\"status\":\"active\",\"host\":\"localhost\",\"port\":3306,\"health_score\":100,\"health_status\":\"healthy\"}]},\"summary\":\"get_instance_summary 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_instance_summary\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_00_YT298x2nK4gASZEG6wVe9095"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_fed567c0dfabbbc4014c81393167c6beae132d2021405f23981f080eb255380e"
+      },
+      "tool_call_id": "call_00_YT298x2nK4gASZEG6wVe9095"
+    },
+    {
+      "id": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":23,\"observedAt\":\"2026-10-22T01:05:02.376Z\",\"validUntil\":\"2026-10-22T01:10:02.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":23,\"observedAt\":\"2026-10-22T01:05:02.376Z\",\"validUntil\":\"2026-10-22T01:10:02.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d"
+            },
+            "generation": "ended",
+            "toolCallId": "call_01_lBwtImfqQSWj4KCTBeTS9621",
+            "sourceMessageId": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"memory_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"disk_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"connections\",\"value\":23,\"observedAt\":\"2026-10-22T01:05:02.376Z\",\"validUntil\":\"2026-10-22T01:10:02.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"qps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"dimensions\":{},\"reason\":\"precision_or_value_unavailable\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"tps\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"},{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"slow_queries\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_01_lBwtImfqQSWj4KCTBeTS9621"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_e2dada758b855a382e15eda19fd66c67a5886a918fc267c2ce55f569ac19a72d"
+      },
+      "tool_call_id": "call_01_lBwtImfqQSWj4KCTBeTS9621"
+    },
+    {
+      "id": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":68.03,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.04,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":504143.89,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":288,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":68.03,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.04,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":504143.89,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":288,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b"
+            },
+            "generation": "ended",
+            "toolCallId": "call_02_U1LHySfregnXcw2Clpq76562",
+            "sourceMessageId": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"memory_usage\",\"value\":68.03,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"load_1min\",\"value\":0.04,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"uptime\",\"value\":504143.89,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}},{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"process_count\",\"value\":288,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_02_U1LHySfregnXcw2Clpq76562"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_7db6e15073aeea30bc232a8d9f6c278ac32d9e89da8c0289abc17d7ae513375b"
+      },
+      "tool_call_id": "call_02_U1LHySfregnXcw2Clpq76562"
+    },
+    {
+      "id": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf",
+      "name": "get_resource_relations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf/part/0",
+            "name": "get_resource_relations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf"
+            },
+            "generation": "ended",
+            "toolCallId": "call_03_OAL7oqULN2PjvfQTdb4p4904",
+            "sourceMessageId": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf",
+          "name": "get_resource_relations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_03_OAL7oqULN2PjvfQTdb4p4904"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_3ab4ceaa3cf88da063cde6c40b44c226bb31e548deb87e1ec66dea2cbd5308bf"
+      },
+      "tool_call_id": "call_03_OAL7oqULN2PjvfQTdb4p4904"
+    },
+    {
+      "id": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50",
+      "name": "get_resource_relations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50/part/0",
+            "name": "get_resource_relations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50"
+            },
+            "generation": "ended",
+            "toolCallId": "call_04_0gZBObKDYXOW2yITOUx09712",
+            "sourceMessageId": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50",
+          "name": "get_resource_relations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"relations\":[]},\"status\":\"success\",\"summary\":\"get_resource_relations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_relations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_04_0gZBObKDYXOW2yITOUx09712"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_00c3cf76002468ce5a72f6ea5829fa88b105336f9082d0847e6af0138448bb50"
+      },
+      "tool_call_id": "call_04_0gZBObKDYXOW2yITOUx09712"
+    },
+    {
+      "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a",
+      "role": "assistant",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "_extra": {
+        "reasoning_content": "The observations returned contextReference with omitted values — need narrower read with limit=1. Let me do that, plus alerts and metrics.\n\nLet me batch: get_resource_observations instance 1 limit=1, server 3 limit=1, list_active_alerts, get_server_alerts server 3, query_metrics instance 1 discover? Also query_metrics realtime core.\n\nNote relations empty for both — that's a fact (no relation recorded; unknown/lack of relation evidence).\n\nLet me now call:\n1. get_resource_observations instance 1, limit 1\n2. get_resource_observations server 3, limit 1\n3. list_active_alerts (limit 100)\n4. get_server_alerts serverId 3, activeOnly true, limit 100\n5. query_metrics instance 1 mode realtime\n6. get_server_metrics serverId 3 (latest)\n\nCareful: observations with limit=1 may only give one metric. But instructions say use same resource and time range with limit=1. I'll request specific metricIds to narrow. But I don't know metric ids. Maybe use limit=1 first to see structure.\n\nLet's do the batch."
+      },
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "观测结果因体积被省略，需按提示收窄读取；同时并行拉取告警与指标。",
+      "tool_calls": [
+        {
+          "id": "call_00_IASmnNuV3H3ZL8Z5W58D6589",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":1}"
+          }
+        },
+        {
+          "id": "call_01_KAqehygtAPAWIfTOzebW1477",
+          "type": "function",
+          "function": {
+            "name": "get_resource_observations",
+            "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":1}"
+          }
+        },
+        {
+          "id": "call_02_Ljauw2o0LeN2srO6kTk16771",
+          "type": "function",
+          "function": {
+            "name": "list_active_alerts",
+            "arguments": "{\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_03_VnQheVeI0PPG0w0Nvbx22752",
+          "type": "function",
+          "function": {
+            "name": "get_server_alerts",
+            "arguments": "{\"serverId\":3,\"activeOnly\":true,\"limit\":100}"
+          }
+        },
+        {
+          "id": "call_04_iynWenyRkVDOO2PB3k4Y1247",
+          "type": "function",
+          "function": {
+            "name": "query_metrics",
+            "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"mode\":\"realtime\"}"
+          }
+        },
+        {
+          "id": "call_05_7CAPdSXv7qbxF3DpoowL4093",
+          "type": "function",
+          "function": {
+            "name": "get_server_metrics",
+            "arguments": "{\"serverId\":3}"
+          }
+        }
+      ],
+      "messageParts": {
+        "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a",
+        "role": "assistant",
+        "parts": [
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/0",
+            "text": "观测结果因体积被省略，需按提示收窄读取；同时并行拉取告警与指标。",
+            "type": "text",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/1",
+            "text": "The observations returned contextReference with omitted values — need narrower read with limit=1. Let me do that, plus alerts and metrics.\n\nLet me batch: get_resource_observations instance 1 limit=1, server 3 limit=1, list_active_alerts, get_server_alerts server 3, query_metrics instance 1 discover? Also query_metrics realtime core.\n\nNote relations empty for both — that's a fact (no relation recorded; unknown/lack of relation evidence).\n\nLet me now call:\n1. get_resource_observations instance 1, limit 1\n2. get_resource_observations server 3, limit 1\n3. list_active_alerts (limit 100)\n4. get_server_alerts serverId 3, activeOnly true, limit 100\n5. query_metrics instance 1 mode realtime\n6. get_server_metrics serverId 3 (latest)\n\nCareful: observations with limit=1 may only give one metric. But instructions say use same resource and time range with limit=1. I'll request specific metricIds to narrow. But I don't know metric ids. Maybe use limit=1 first to see structure.\n\nLet's do the batch.",
+            "type": "reasoning",
+            "format": "reasoning_content",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/2",
+            "call": {
+              "id": "call_00_IASmnNuV3H3ZL8Z5W58D6589",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/3",
+            "call": {
+              "id": "call_01_KAqehygtAPAWIfTOzebW1477",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":1}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/4",
+            "call": {
+              "id": "call_02_Ljauw2o0LeN2srO6kTk16771",
+              "type": "function",
+              "function": {
+                "name": "list_active_alerts",
+                "arguments": "{\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/5",
+            "call": {
+              "id": "call_03_VnQheVeI0PPG0w0Nvbx22752",
+              "type": "function",
+              "function": {
+                "name": "get_server_alerts",
+                "arguments": "{\"serverId\":3,\"activeOnly\":true,\"limit\":100}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/6",
+            "call": {
+              "id": "call_04_iynWenyRkVDOO2PB3k4Y1247",
+              "type": "function",
+              "function": {
+                "name": "query_metrics",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"mode\":\"realtime\"}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          },
+          {
+            "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a/part/7",
+            "call": {
+              "id": "call_05_7CAPdSXv7qbxF3DpoowL4093",
+              "type": "function",
+              "function": {
+                "name": "get_server_metrics",
+                "arguments": "{\"serverId\":3}"
+              }
+            },
+            "type": "tool_call",
+            "source": "fact",
+            "status": "completed",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+            },
+            "generation": "ended",
+            "sourceMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "model_c9ecdca3-d288-4001-82af-1100ebccd52a",
+          "role": "assistant",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "_extra": {
+            "reasoning_content": "The observations returned contextReference with omitted values — need narrower read with limit=1. Let me do that, plus alerts and metrics.\n\nLet me batch: get_resource_observations instance 1 limit=1, server 3 limit=1, list_active_alerts, get_server_alerts server 3, query_metrics instance 1 discover? Also query_metrics realtime core.\n\nNote relations empty for both — that's a fact (no relation recorded; unknown/lack of relation evidence).\n\nLet me now call:\n1. get_resource_observations instance 1, limit 1\n2. get_resource_observations server 3, limit 1\n3. list_active_alerts (limit 100)\n4. get_server_alerts serverId 3, activeOnly true, limit 100\n5. query_metrics instance 1 mode realtime\n6. get_server_metrics serverId 3 (latest)\n\nCareful: observations with limit=1 may only give one metric. But instructions say use same resource and time range with limit=1. I'll request specific metricIds to narrow. But I don't know metric ids. Maybe use limit=1 first to see structure.\n\nLet's do the batch."
+          },
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "观测结果因体积被省略，需按提示收窄读取；同时并行拉取告警与指标。",
+          "tool_calls": [
+            {
+              "id": "call_00_IASmnNuV3H3ZL8Z5W58D6589",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"limit\":1}"
+              }
+            },
+            {
+              "id": "call_01_KAqehygtAPAWIfTOzebW1477",
+              "type": "function",
+              "function": {
+                "name": "get_resource_observations",
+                "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"limit\":1}"
+              }
+            },
+            {
+              "id": "call_02_Ljauw2o0LeN2srO6kTk16771",
+              "type": "function",
+              "function": {
+                "name": "list_active_alerts",
+                "arguments": "{\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_03_VnQheVeI0PPG0w0Nvbx22752",
+              "type": "function",
+              "function": {
+                "name": "get_server_alerts",
+                "arguments": "{\"serverId\":3,\"activeOnly\":true,\"limit\":100}"
+              }
+            },
+            {
+              "id": "call_04_iynWenyRkVDOO2PB3k4Y1247",
+              "type": "function",
+              "function": {
+                "name": "query_metrics",
+                "arguments": "{\"resourceType\":\"instance\",\"resourceId\":1,\"mode\":\"realtime\"}"
+              }
+            },
+            {
+              "id": "call_05_7CAPdSXv7qbxF3DpoowL4093",
+              "type": "function",
+              "function": {
+                "name": "get_server_metrics",
+                "arguments": "{\"serverId\":3}"
+              }
+            }
+          ],
+          "reasoning_content": "The observations returned contextReference with omitted values — need narrower read with limit=1. Let me do that, plus alerts and metrics.\n\nLet me batch: get_resource_observations instance 1 limit=1, server 3 limit=1, list_active_alerts, get_server_alerts server 3, query_metrics instance 1 discover? Also query_metrics realtime core.\n\nNote relations empty for both — that's a fact (no relation recorded; unknown/lack of relation evidence).\n\nLet me now call:\n1. get_resource_observations instance 1, limit 1\n2. get_resource_observations server 3, limit 1\n3. list_active_alerts (limit 100)\n4. get_server_alerts serverId 3, activeOnly true, limit 100\n5. query_metrics instance 1 mode realtime\n6. get_server_metrics serverId 3 (latest)\n\nCareful: observations with limit=1 may only give one metric. But instructions say use same resource and time range with limit=1. I'll request specific metricIds to narrow. But I don't know metric ids. Maybe use limit=1 first to see structure.\n\nLet's do the batch."
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+        },
+        "version": 1,
+        "projectionMessageId": "model_c9ecdca3-d288-4001-82af-1100ebccd52a"
+      },
+      "reasoning_content": "The observations returned contextReference with omitted values — need narrower read with limit=1. Let me do that, plus alerts and metrics.\n\nLet me batch: get_resource_observations instance 1 limit=1, server 3 limit=1, list_active_alerts, get_server_alerts server 3, query_metrics instance 1 discover? Also query_metrics realtime core.\n\nNote relations empty for both — that's a fact (no relation recorded; unknown/lack of relation evidence).\n\nLet me now call:\n1. get_resource_observations instance 1, limit 1\n2. get_resource_observations server 3, limit 1\n3. list_active_alerts (limit 100)\n4. get_server_alerts serverId 3, activeOnly true, limit 100\n5. query_metrics instance 1 mode realtime\n6. get_server_metrics serverId 3 (latest)\n\nCareful: observations with limit=1 may only give one metric. But instructions say use same resource and time range with limit=1. I'll request specific metricIds to narrow. But I don't know metric ids. Maybe use limit=1 first to see structure.\n\nLet's do the batch."
+    },
+    {
+      "id": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c"
+            },
+            "generation": "ended",
+            "toolCallId": "call_00_IASmnNuV3H3ZL8Z5W58D6589",
+            "sourceMessageId": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"instance\",\"id\":1},\"observations\":[{\"resource\":{\"type\":\"instance\",\"id\":1},\"metricId\":\"cpu_usage\",\"value\":null,\"observedAt\":null,\"validUntil\":null,\"source\":\"metrics\",\"quality\":\"unknown\",\"reason\":\"MIGRATION_REVIEW_REQUIRED\"}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_00_IASmnNuV3H3ZL8Z5W58D6589"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_6de68a0ef5d8f534feb8ddf477f28c558e7d8c50696ed1cf65a725385c7bbe2c"
+      },
+      "tool_call_id": "call_00_IASmnNuV3H3ZL8Z5W58D6589"
+    },
+    {
+      "id": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72",
+      "name": "get_resource_observations",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72/part/0",
+            "name": "get_resource_observations",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72"
+            },
+            "generation": "ended",
+            "toolCallId": "call_01_KAqehygtAPAWIfTOzebW1477",
+            "sourceMessageId": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72",
+          "name": "get_resource_observations",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"resource\":{\"type\":\"server\",\"id\":3},\"observations\":[{\"resource\":{\"type\":\"server\",\"id\":3},\"metricId\":\"cpu_usage\",\"value\":9.1,\"observedAt\":\"2026-10-22T01:04:58.376Z\",\"validUntil\":\"2026-10-22T01:09:58.376Z\",\"source\":\"metrics\",\"quality\":\"good\",\"dimensions\":{}}]},\"status\":\"success\",\"summary\":\"get_resource_observations 执行完成\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_resource_observations\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_01_KAqehygtAPAWIfTOzebW1477"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_2efbccb1e03d18eb8a3bb9be5831dc8eb7d1e01a2ff34626aef159bda70e6b72"
+      },
+      "tool_call_id": "call_01_KAqehygtAPAWIfTOzebW1477"
+    },
+    {
+      "id": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b",
+      "name": "list_active_alerts",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b/part/0",
+            "name": "list_active_alerts",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b"
+            },
+            "generation": "ended",
+            "toolCallId": "call_02_Ljauw2o0LeN2srO6kTk16771",
+            "sourceMessageId": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b",
+          "name": "list_active_alerts",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"total\":0,\"alerts\":[]},\"summary\":\"找到 0 条活跃告警\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"list_active_alerts\",\"resource\":{\"type\":\"instance\"},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_02_Ljauw2o0LeN2srO6kTk16771"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_9070dbe012230b692d21349df4a41b80e6cc7e1051cca1b4952f47309e89366b"
+      },
+      "tool_call_id": "call_02_Ljauw2o0LeN2srO6kTk16771"
+    },
+    {
+      "id": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078",
+      "name": "get_server_alerts",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078/part/0",
+            "name": "get_server_alerts",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078"
+            },
+            "generation": "ended",
+            "toolCallId": "call_03_VnQheVeI0PPG0w0Nvbx22752",
+            "sourceMessageId": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078",
+          "name": "get_server_alerts",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"alerts\":[],\"total\":0},\"summary\":\"服务器 #3 告警 0 条\",\"details\":{\"server_id\":3},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_alerts\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_03_VnQheVeI0PPG0w0Nvbx22752"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_a00360e174fc59122dfa434048b4500943218b9cfc012d3dcfb3e8d41cfdb078"
+      },
+      "tool_call_id": "call_03_VnQheVeI0PPG0w0Nvbx22752"
+    },
+    {
+      "id": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d",
+      "name": "query_metrics",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"status\":\"warning\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"instance\",\"id\":1},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"evaluated_at\":\"2026-10-22T01:05:31.952Z\",\"profile\":{\"id\":\"instance-core\",\"version\":\"1.1.0\",\"owner\":\"product\",\"resource_type\":\"instance\",\"columns\":[{\"key\":\"db.uptime_seconds\",\"label\":\"数据库运行时长\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"database_size\",\"label\":\"数据库大小\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":4,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Elapsed seconds since database instance startup; not management-agent uptime.\",\"resource_type\":\"instance\",\"unit\":\"s\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"float64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.663Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"unit\":\"s\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"float64\",\"value\":31314},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"metric_binding_id\":\"instance:1:db.uptime_seconds\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]},{\"definition\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.\",\"unit\":\"By\",\"resource_type\":\"instance\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"diagnostic\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\",\"category\":\"extension\",\"namespace\":\"mysql\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.603Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1166016512\"},\"quality\":{\"status\":\"partial\",\"reason\":\"partial_input\"},\"accuracy\":\"estimated\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"metric_binding_id\":\"instance:1:mysql.tables.estimated_allocated_bytes\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"指标证据不完整或包含估算，不能据此判断无异常\",\"next_actions\":[\"检查 capability、attempt、coverage 和 freshness；不要将缺失值补零\"],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d/part/0",
+            "name": "query_metrics",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"status\":\"warning\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"instance\",\"id\":1},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"evaluated_at\":\"2026-10-22T01:05:31.952Z\",\"profile\":{\"id\":\"instance-core\",\"version\":\"1.1.0\",\"owner\":\"product\",\"resource_type\":\"instance\",\"columns\":[{\"key\":\"db.uptime_seconds\",\"label\":\"数据库运行时长\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"database_size\",\"label\":\"数据库大小\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":4,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Elapsed seconds since database instance startup; not management-agent uptime.\",\"resource_type\":\"instance\",\"unit\":\"s\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"float64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.663Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"unit\":\"s\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"float64\",\"value\":31314},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"metric_binding_id\":\"instance:1:db.uptime_seconds\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]},{\"definition\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.\",\"unit\":\"By\",\"resource_type\":\"instance\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"diagnostic\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\",\"category\":\"extension\",\"namespace\":\"mysql\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.603Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1166016512\"},\"quality\":{\"status\":\"partial\",\"reason\":\"partial_input\"},\"accuracy\":\"estimated\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"metric_binding_id\":\"instance:1:mysql.tables.estimated_allocated_bytes\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"指标证据不完整或包含估算，不能据此判断无异常\",\"next_actions\":[\"检查 capability、attempt、coverage 和 freshness；不要将缺失值补零\"],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d"
+            },
+            "generation": "ended",
+            "toolCallId": "call_04_iynWenyRkVDOO2PB3k4Y1247",
+            "sourceMessageId": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d",
+          "name": "query_metrics",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"status\":\"warning\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"instance\",\"id\":1},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"evaluated_at\":\"2026-10-22T01:05:31.952Z\",\"profile\":{\"id\":\"instance-core\",\"version\":\"1.1.0\",\"owner\":\"product\",\"resource_type\":\"instance\",\"columns\":[{\"key\":\"db.uptime_seconds\",\"label\":\"数据库运行时长\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"database_size\",\"label\":\"数据库大小\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":4,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Elapsed seconds since database instance startup; not management-agent uptime.\",\"resource_type\":\"instance\",\"unit\":\"s\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"float64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.663Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"db.uptime_seconds\",\"semantic_version\":\"1.0.0\"},\"unit\":\"s\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"float64\",\"value\":31314},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cd854fbe421a7ee8d9110cfe34041a1d6e4de5c25ba5fcbf18fa4b7ae85b173d\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:uptime_diagnostics\",\"binding_id\":\"instance:1\",\"collector_id\":\"uptime_diagnostics\",\"metric_binding_id\":\"instance:1:db.uptime_seconds\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]},{\"definition\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Estimated data_length plus index_length across visible non-system schemas; engine allocation statistics, not logical data bytes or host disk capacity.\",\"unit\":\"By\",\"resource_type\":\"instance\",\"scope\":\"resource\",\"kind\":\"gauge\",\"roles\":[\"diagnostic\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\",\"category\":\"extension\",\"namespace\":\"mysql\"},\"capability\":{\"resource_id\":\"1\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"sql\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:instance;required:instance\"},{\"kind\":\"resource\",\"evidence\":\"db.engine:matched;allowed:mysql\"},{\"kind\":\"version\",\"evidence\":\"db.version:matched;allowed:5.7,8.0,8.4,9.6\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-22T01:05:02.376Z\",\"valid_until\":\"2026-10-22T01:07:02.376Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"resource_id\":\"1\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"config_revision\":4,\"started_at\":\"2026-10-22T01:05:02.376Z\",\"ended_at\":\"2026-10-22T01:05:02.603Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\"]},\"series\":[{\"dimensions\":{},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"mysql.tables.estimated_allocated_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{},\"window\":{\"from\":\"2026-10-22T01:04:31.952Z\",\"to\":\"2026-10-22T01:05:31.952Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1166016512\"},\"quality\":{\"status\":\"partial\",\"reason\":\"partial_input\"},\"accuracy\":\"estimated\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-22T01:05:02.376Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:cdc7d73412f384ac72e415ffba7163cc12c2d6ecc0c17adbee35e955ce0d3c26\",\"source\":{\"attempt_id\":\"1495ff5f-b63a-4d55-a196-8b2dbe31e8c4:1:diagnostics_size\",\"binding_id\":\"instance:1\",\"collector_id\":\"diagnostics_size\",\"metric_binding_id\":\"instance:1:mysql.tables.estimated_allocated_bytes\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"mysql-custom-existing-scalars\",\"config_revision\":4,\"package_version\":\"1.0.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"指标证据不完整或包含估算，不能据此判断无异常\",\"next_actions\":[\"检查 capability、attempt、coverage 和 freshness；不要将缺失值补零\"],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"instance\",\"instanceId\":1},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_04_iynWenyRkVDOO2PB3k4Y1247"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_08e2fa2dc954d08ffb027907a76dc285524c5d0206bef1ea222b862d8635597d"
+      },
+      "tool_call_id": "call_04_iynWenyRkVDOO2PB3k4Y1247"
+    },
+    {
+      "id": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26",
+      "name": "get_server_metrics",
+      "role": "tool",
+      "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+      "source": "fact",
+      "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+      "content": "{\"success\":true,\"data\":{\"latest\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"history\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"summary\":\"服务器 #3 指标数据\",\"details\":{\"server_id\":3,\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+      "messageParts": {
+        "id": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26",
+        "role": "tool",
+        "parts": [
+          {
+            "id": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26/part/0",
+            "name": "get_server_metrics",
+            "type": "tool_result",
+            "source": "fact",
+            "status": "completed",
+            "content": "{\"success\":true,\"data\":{\"latest\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"history\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"summary\":\"服务器 #3 指标数据\",\"details\":{\"server_id\":3,\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+            "durable": {
+              "kind": "checkpoint",
+              "reference": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26"
+            },
+            "generation": "ended",
+            "toolCallId": "call_05_7CAPdSXv7qbxF3DpoowL4093",
+            "sourceMessageId": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26"
+          }
+        ],
+        "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+        "legacy": {
+          "id": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26",
+          "name": "get_server_metrics",
+          "role": "tool",
+          "runId": "840cebae-ae48-48d1-8774-71f2f2746449",
+          "source": "fact",
+          "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+          "content": "{\"success\":true,\"data\":{\"latest\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"history\":[{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":372297728,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7922962432,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":7421952,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":52912128,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":57102336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":53248,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":12288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.used_bytes\",\"metric_value\":33546,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":285196288,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":627900416,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1006632960,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":21416116224,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":262128,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"host.filesystem.size_bytes\",\"metric_value\":570396672,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.uptime.seconds\",\"metric_value\":504143.89,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"s\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.one_minute\",\"metric_value\":0.04,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.cpu.user_system_percent\",\"metric_value\":9.1,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_percent\",\"metric_value\":68.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.used_ratio\",\"metric_value\":0,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.used_bytes\",\"metric_value\":1940262912,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.memory.total_bytes\",\"metric_value\":2851979264,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.five_minutes\",\"metric_value\":0.07,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.load.fifteen_minutes\",\"metric_value\":0.03,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"1\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.swap.used_percent\",\"metric_value\":16.53,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.count\",\"metric_value\":288,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"count\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.sample_max_cpu_percent\",\"metric_value\":0.3,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.processes.cpu_sample_max_memory_percent\",\"metric_value\":7,\"dimensions\":{},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":634335232,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1373077504,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":13493153792,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":620478464,\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":513294336,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":1425989632,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":4194304,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":228582,\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285184000,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.available_bytes\",\"metric_value\":285143040,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"By\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":2,\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}},{\"metric_name\":\"linux.filesystem.inode_used_percent\",\"metric_value\":1,\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"recorded_at\":\"2026-10-22T01:04:58.376Z\",\"unit\":\"%\",\"quality\":{\"status\":\"good\",\"reason\":\"none\"}}],\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"summary\":\"服务器 #3 指标数据\",\"details\":{\"server_id\":3,\"freshness\":\"2026-10-22T01:04:58.376Z\",\"gaps\":[]},\"status\":\"success\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"get_server_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:aaabacff-a91a-43e6-97b7-fe841c40c8da\"}}",
+          "tool_call_id": "call_05_7CAPdSXv7qbxF3DpoowL4093"
+        },
+        "source": "fact",
+        "status": "completed",
+        "turnId": "24645d04-db2e-421f-a4e3-9f971d779e91",
+        "durable": {
+          "kind": "checkpoint",
+          "reference": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26"
+        },
+        "version": 1,
+        "projectionMessageId": "cp_e15e750f77b0106bd9ed6a77346a22bcebfcd7e4acfc3095983e92964ece0c26"
+      },
+      "tool_call_id": "call_05_7CAPdSXv7qbxF3DpoowL4093"
+    }
+  ],
+  "resources": [
+    {
+      "type": "instance",
+      "id": 1
+    },
+    {
+      "type": "server",
+      "id": 3
+    }
+  ]
+}

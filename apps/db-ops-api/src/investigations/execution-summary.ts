@@ -1,4 +1,6 @@
 import type { InvestigationResult } from './contracts.js';
+import { modelAnalysis } from './model-analysis.js';
+import { responseHash } from '@slide/agent-core';
 
 const decode = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
 export interface InvestigationStop { stopReason: string; reasonCode: string; source: 'runtime' | 'tool_receipt' | 'checkpoint' | 'legacy'; }
@@ -53,14 +55,20 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
   const reasonCode = result.resolution?.reasonCode ?? terminal?.reasonCode ?? (run.state === 'completed' ? 'RUNTIME_RESPONSE_READY' : 'INVESTIGATION_RUNTIME_PARTIAL');
   const available = evidence.filter(e => !e.expired_at && (!e.expires_at || new Date(e.expires_at).getTime() > Date.now())).slice(0, 100);
   const facts = available.map(e => ({ statement: String(decode(e.metadata_json).summary).slice(0, 4000), evidenceIds: [e.id] }));
+  const analysis = run.state === 'completed' && typeof result.event?.finalContent === 'string'
+    ? modelAnalysis(result.event.finalContent, available) : null;
+  // Never display a rejected candidate as a published analysis. The original
+  // terminal event remains immutable; its hash makes this rejection auditable.
+  const rejected = run.state === 'completed' && !analysis;
   const summary = run.state === 'completed'
-    ? String(result.event?.finalContent || '只读检查执行完成。').slice(0, 3000)
+    ? analysis?.summary ?? `模型最终输出未通过格式或证据引用校验；未发布判断与假设。原始输出 SHA256：${responseHash(result.event?.finalContent ?? null)}。`
     : `${stopExplanation(reasonCode)}。`;
   return {
     schemaVersion: 2, subject,
     summary: `${summary}\n已保留 ${facts.length} 项检查记录；根因与业务恢复尚未验证。`,
     facts, hypotheses: [], claims: [], rootCauseVerification: { status: 'unverified' }, problemStatus: 'unconfirmed',
     unresolvedQuestions: [facts.length ? '以上仅表示工具检查与返回内容；观测范围、缺失或过期的证据仍需核对。' : '没有可引用的有效检查证据，不能判断资源健康、根因或恢复。',
+      ...(rejected ? ['模型分析未发布：最终输出格式、字段限制或本次有效证据引用不符合要求；原始回执已保留，不自动修复或重放。'] : []),
       ...(run.state === 'completed' ? [] : ['本次未完成后续分析；执行部分完成与业务问题未解决分别记录。'])],
     recommendations: [{ action: reasonCode === 'INVESTIGATION_TOOL_WINDOW_LIMIT'
       ? '按当前时间缩小只读检查窗口，核对采集状态和有效观测；需要时提交新的调查请求。'
@@ -74,6 +82,7 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
       ...(execution?.provenance?.routeVersion ? { routeVersion: execution.provenance.routeVersion } : {}),
       ...(execution?.provenance?.inputHash ? { inputHash: execution.provenance.inputHash } : {}),
       usageStatus: execution && !execution.usageUnknown ? 'available' : 'unavailable' },
+    ...(analysis ?? {}),
     createdAt: new Date(run.finished_at).toISOString(),
   };
 }

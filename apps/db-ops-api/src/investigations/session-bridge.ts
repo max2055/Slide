@@ -1,3 +1,4 @@
+import { freezeExecutionAllocation, readExecutionAllocation, taskExecutionConfiguration, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { assertContinuationDeadline } from './continuation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
@@ -48,14 +49,18 @@ export class InvestigationSessionBridge {
   private readonly budgetDomain: string;
   private readonly reserveCostMicros: number;
   private readonly maxExecutionTokens?: number;
+  private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
+  private readonly budgetPolicy: BudgetPolicy;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
-    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number } = investigationBudgetConfiguration()) {
+    cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number; taskExecution?: TaskExecutionConfiguration } = investigationBudgetConfiguration()) {
+    this.budgetPolicy = Object.freeze(structuredClone(cancellationBudget.policy));
+    this.taskExecution = cancellationBudget.taskExecution && taskExecutionConfiguration(cancellationBudget.taskExecution, cancellationBudget.domain, this.budgetPolicy);
     this.chat = new ChatDatabaseService(poolProvider, authorization);
     this.budgetDomain = cancellationBudget.domain;
     this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
     this.maxExecutionTokens = cancellationBudget.maxExecutionTokens;
-    this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, cancellationBudget.policy, this.maxExecutionTokens);
+    this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, this.budgetPolicy, this.maxExecutionTokens, this.taskExecution);
   }
 
   storeFor(actor: ActorContext): MysqlInvestigationStore {
@@ -132,6 +137,10 @@ export class InvestigationSessionBridge {
     append: (event: OutboxInput) => Promise<string>, command: CreateCommand,
     firstRequest?: Omit<RequestCommand, 'investigationId' | 'expectedVersion'>): Promise<{ investigation: InvestigationRecord; acceptance?: InvestigationAcceptance }> {
     actor = freezeInvestigationCaller(actor);
+    // Gate precedes create-key/session/resource locks as well as admission.
+    // Competing creates must not hold those locks while waiting on this gate.
+    if (firstRequest && this.taskExecution?.id === 'MAX-222/task-v1')
+      await this.ledger.prepareDomainInTransaction(connection, this.budgetDomain);
     const store = this.storeFor(actor);
     const investigation = await store.createInTransaction(connection,
       { ...command, actor: { kind: actor.principalKind ?? 'user', id: actor.userId }, resources: command.resources.map(ref => ({ ...ref })) });
@@ -150,9 +159,36 @@ export class InvestigationSessionBridge {
 
   private async admitOnConnection(actor: ActorContext, store: MysqlInvestigationStore, connection: TransactionConnection,
     append: (event: OutboxInput) => Promise<string>, command: RequestCommand): Promise<InvestigationAcceptance> {
+    // Serialize a formal gate on the existing durable domain lock. A second
+    // request (including a continuation) must obtain a new trusted gate.
+    if (this.taskExecution?.id === 'MAX-222/task-v1')
+      await this.ledger.prepareDomainInTransaction(connection, this.budgetDomain);
     const { acceptance, isNew } = await store.admitInTransaction(connection, append,
       { ...command, actor: { kind: actor.principalKind ?? 'user', id: actor.userId } });
-    if (!isNew) return acceptance;
+    if (!isNew) {
+      const [requests] = await connection.execute('SELECT request_snapshot, execution_domain FROM investigation_requests WHERE id = ? FOR UPDATE',
+        [acceptance.requestId]) as [RowDataPacket[], unknown];
+      const request = requests[0];
+      if (this.taskExecution?.id === 'MAX-222/task-v1' || request.execution_domain != null) {
+        try {
+          const snapshot = typeof request.request_snapshot === 'string' ? JSON.parse(request.request_snapshot) : request.request_snapshot;
+          readExecutionAllocation(snapshot.executionAllocation, { requestId: acceptance.requestId, investigationId: acceptance.investigationId,
+            domain: this.budgetDomain, mode: snapshot.actor.kind === 'service' ? 'automatic' : 'manual',
+            profile: resolveInvestigationProfile(snapshot.profileId, snapshot.profileVersion),
+            executionDomain: request.execution_domain?.toString() ?? null }, this.budgetPolicy, this.taskExecution);
+        } catch {
+          throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+        }
+      }
+      return acceptance;
+    }
+    if (this.taskExecution?.id === 'MAX-222/task-v1') {
+      const [prior] = await connection.execute(
+        `SELECT id FROM investigation_requests WHERE id <> ?
+         AND execution_domain = ? LIMIT 1`,
+        [acceptance.requestId, this.budgetDomain]) as [RowDataPacket[], unknown];
+      if (prior.length) throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+    }
     const investigation = await this.authorization.load(connection, acceptance.investigationId);
     // HTTP caller authorizes admission, while an automatic predecessor keeps
     // its original service ceiling. A human JWT never upgrades execution.
@@ -178,15 +214,24 @@ export class InvestigationSessionBridge {
     const executionSubject = { kind: executionActor.principalKind ?? 'user', id: executionActor.userId };
     const [rows] = await connection.execute('SELECT request_snapshot FROM investigation_requests WHERE id = ? FOR UPDATE', [acceptance.requestId]) as [RowDataPacket[], unknown];
     const snapshot = typeof rows[0].request_snapshot === 'string' ? JSON.parse(rows[0].request_snapshot) : rows[0].request_snapshot;
+    const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
+    const executionAllocation = this.taskExecution && freezeExecutionAllocation(this.taskExecution, {
+      requestId: acceptance.requestId, investigationId: investigation.id, profile, domain: this.budgetDomain,
+      mode: executionSubject.kind === 'service' ? 'automatic' : 'manual',
+    }, this.budgetPolicy);
+    if (this.taskExecution?.id === 'MAX-222/task-v1')
+      await connection.execute('UPDATE investigation_requests SET execution_domain = ? WHERE id = ?', [this.budgetDomain, acceptance.requestId]);
     await connection.execute('UPDATE investigation_requests SET actor_kind = ?, actor_id = ?, request_snapshot = ? WHERE id = ?',
       [executionSubject.kind, executionSubject.id, JSON.stringify({ ...snapshot, actor: executionSubject, authority,
+        ...(executionAllocation ? { executionAllocation } : {}),
         ...(frozen ? { continuationOperator: { kind: actor.principalKind ?? 'user', id: actor.userId } } : {}) }), acceptance.requestId]);
     await this.chat.appendInvestigationMessage(executionActor, acceptance.investigationId, acceptance.version, acceptance.requestId,
       { messageId: randomUUID(), role: 'user', content: command.message }, connection);
     if (frozen) {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
       const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
-        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: this.maxExecutionTokens ?? profile.budget.maxTokens,
+        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? this.maxExecutionTokens ?? profile.budget.maxTokens,
+        ...(executionAllocation ? { executionAllocation } : {}),
         reserveCostMicros: this.reserveCostMicros });
       if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');
     }

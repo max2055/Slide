@@ -11,6 +11,9 @@ export interface ToolSecurityDefinition {
   audience: ToolAudience;
   effect: ToolEffect;
   resource: ToolResource;
+  /** Explicit typed targets for cross-resource tools. `resource` remains the
+   * legacy argument default; neither field grants access to an actual target. */
+  resourceTypes?: readonly ('instance' | 'server' | 'network_device')[];
   permissions: readonly string[];
   approval: ToolApproval;
   network: ToolNetwork;
@@ -57,7 +60,8 @@ const TOOL_SECURITY_CATALOG: Readonly<Record<string, ToolSecurityDefinition>> = 
   slide_oracle_tablespace_detail: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'registered-database', 'use'),
   get_instance_summary: definition('actor', 'read', 'instance', ['instance:view'], 'never', 'none', 'none'),
   list_active_alerts: definition('actor', 'read', 'instance', ['alert:view'], 'never', 'none', 'none'),
-  query_metrics: definition('actor', 'read', 'instance', ['metric:view'], 'never', 'none', 'none'),
+  query_metrics: Object.freeze({ ...definition('actor', 'read', 'instance', ['metric:view'], 'never', 'none', 'none'),
+    resourceTypes: Object.freeze(['instance', 'server', 'network_device'] as const) }),
   slide_complete_cron: definition('internal', 'write', 'cron', [], 'never', 'none', 'none'),
   spawn_subagent: definition('actor', 'delegate', 'none', ['config:manage'], 'never', 'internal', 'none'),
   access_subagent: definition('actor', 'delegate', 'none', ['config:manage'], 'never', 'internal', 'none'),

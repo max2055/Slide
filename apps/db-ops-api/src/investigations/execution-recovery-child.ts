@@ -14,6 +14,9 @@ const pool = mysql.createPool({
   timezone: 'Z',
   connectionLimit: 12,
 });
+// Match the parent fixture's UTC lease timestamps on servers whose default
+// session timezone is local. Otherwise fencing fails before the crash point.
+pool.on('connection', connection => connection.query("SET time_zone='+00:00'"));
 const command = JSON.parse(process.env.T04_CHILD_COMMAND!);
 const mode = process.env.T04_CHILD_CRASH;
 const pause = async (point: string) => {
@@ -33,8 +36,9 @@ const acquire = pool.getConnection.bind(pool);
   (c as any).query = async (sql: string, values?: unknown[]) => {
     const result = await query(sql, values);
     if (sql.startsWith("UPDATE agent_runs SET state = 'completed'")) mark('completion-after');
-    if (sql.startsWith('UPDATE agent_runs SET result_json =') && typeof values?.[0] === 'string') {
+    if (/^UPDATE agent_runs SET result_json\s*=/.test(sql) && typeof values?.[0] === 'string') {
       const data = JSON.parse(values[0]);
+      if (data.investigationExecution?.lastProviderReceipt?.reasonCode === 'OUTPUT_LIMIT') mark('length-checkpoint');
       if (data.completionPending === true) mark('staging-after');
       else if (data.investigationExecution?.provider?.status === 'sent') mark('provider-intent');
       else if (data.investigationExecution?.provider?.status === 'received') mark('provider-received');
@@ -79,8 +83,8 @@ const provider: LLMProvider = {
     await pause('provider-after');
     const hasTool = messages.some((m) => m.role === 'tool');
     return {
-      content: hasTool ? '已读取事实，根因待验证' : null,
-      finishReason: hasTool ? 'stop' : 'tool_calls',
+      content: hasTool ? process.env.T04_CHILD_LENGTH ? '{"analysisVersion":1' : '已读取事实，根因待验证' : null,
+      finishReason: hasTool ? process.env.T04_CHILD_LENGTH ? 'length' : 'stop' : 'tool_calls',
       toolCalls: hasTool
         ? []
         : [{ id: 'crash-summary-call', name: 'get_instance_summary', arguments: { instance_id: 101 } }],
@@ -131,16 +135,44 @@ const executor = new InvestigationExecutor({
     },
   },
 });
+// For the length restart regression, bring up the normal authenticated HTTP
+// surface in the SAME disposable worker process. Every restart gets a fresh
+// pool/authorization/bridge/server, not an in-memory projection of the result.
+let app: import('fastify').FastifyInstance | undefined;
+let address: string | undefined;
+if (process.env.T04_CHILD_LENGTH) {
+  const { default: Fastify } = await import('fastify');
+  const { registerInvestigationRoutes } = await import('./routes.js');
+  const { createVerifyToken } = await import('../auth-middleware.js');
+  const { InvestigationSessionBridge } = await import('./session-bridge.js');
+  const { LegacyAnalysisBridge } = await import('./legacy-analysis-bridge.js');
+  const contexts = new ActorContextService(() => pool as never);
+  const bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts));
+  app = Fastify();
+  await registerInvestigationRoutes(app, createVerifyToken(process.env.JWT_SECRET_KEY!, contexts), bridge,
+    bridge.observationServices(), new LegacyAnalysisBridge(() => pool, undefined, bridge));
+  address = await app.listen({ host: '127.0.0.1', port: 0 });
+}
 try {
   const result = await executor.execute({
     ...command,
     context: { ...command.context, signal: new AbortController().signal },
   });
   process.send?.({ terminal: result.state, error: result.error });
+  if (app && address) {
+    const { signAccessToken } = await import('../auth/actor-context.js');
+    const actor = await new ActorContextService(() => pool as never).loadActiveActor(result.actorId);
+    const response = await fetch(`${address}/api/investigations/${command.investigationId}`, {
+      headers: { authorization: `Bearer ${signAccessToken(actor, process.env.JWT_SECRET_KEY!)}` },
+    });
+    const body: any = await response.json();
+    process.send?.({ httpStatus: response.status, latestResult: body.latestResult, derivedRunState: body.derivedRunState });
+  }
 } catch (error) {
   process.send?.({ failure: error instanceof Error ? error.message : String(error) });
   process.exitCode = 1;
 } finally {
+  await app?.close();
   await pool.end();
   process.disconnect?.();
 }

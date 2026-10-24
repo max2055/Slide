@@ -2,6 +2,22 @@ import {it} from 'vitest';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
+it('omits oversized top-level rows while retaining warnings and canonical receipt identity',async()=>{
+ const {investigationToolContextResult:project}=await import('./executor.js');
+ const {responseHash}=await import('@slide/agent-core');
+ const value={success:true,status:'warning',rows:Array(200).fill('bounded-row'),observedAt:'2026-10-22T03:00:00Z',
+  summary:'Source incomplete; unknown is not healthy',next_actions:['inspect source'],artifacts:{reference:'evidence:1'}};
+ const before=JSON.stringify(value),view=JSON.parse(String(project(value,'row-call','ops')));
+ assert.equal(view.rows,undefined);
+ assert.equal(view.summary,value.summary);assert.deepEqual(view.next_actions,value.next_actions);
+ assert.deepEqual(view.artifacts,value.artifacts);assert.equal(view.observedAt,value.observedAt);
+ assert.deepEqual(view.data,{contextReference:{toolCallId:'row-call',sha256:responseHash(value),bytes:Buffer.byteLength(before)},evidenceOmitted:true,requiresNarrowerRead:true});
+ assert.equal(JSON.stringify(value),before);
+ assert.deepEqual(JSON.parse(String(project({success:true,rows:['one']},'small','ops'))),{success:true,rows:['one']});
+ const failure={...value,success:false,status:'error'};assert.equal(project(failure,'failed','ops'),failure);
+ const denied={...value,policyDecision:{allow:false,reasonCode:'DENIED'}};assert.equal(project(denied,'denied','ops'),denied);
+ assert.deepEqual(JSON.parse(String(project(value,'system','system'))),value);
+});
 it('bounded tool context preserves durable evidence and full batches',async()=>{
 
 const mod=await import(new URL('./executor.js',import.meta.url).href);
@@ -34,7 +50,7 @@ assert.equal(reference.data.contextReference.sha256,responseHash(large));
 assert.equal(reference.data.contextReference.bytes,Buffer.byteLength(before));
 const reordered=Object.fromEntries(Object.entries(large).reverse());assert.equal(JSON.parse(project(reordered,'current-tool','ops')).data.contextReference.sha256,reference.data.contextReference.sha256,'MySQL JSON object key normalization must retain the same receipt reference');
 assert.equal(reference.data.evidenceOmitted,true);assert.equal(reference.data.requiresNarrowerRead,true);
-assert.match(reference.summary,/maxRows=1/);assert.equal(reference.status,'warning');
+assert.equal(reference.summary,large.summary);assert.equal(reference.status,'warning');
 const small={success:true,status:'ok',data:{latest:[metric],history:[metric],freshness:metric.recorded_at,gaps:[]}};
 assert.deepEqual(JSON.parse(project(small,'small','ops')),small,'narrowed live evidence remains exact');
 const failure={success:false,status:'error',error:'DENIED'};
@@ -54,4 +70,34 @@ it('model references remain ephemeral and repeated projection preserves full can
  assert.equal(investigationContextMessages(raw,'system'),raw);
  const provider=new OpenAIProvider({apiKey:'fixture',model:'deepseek-flash'});
  assert.deepEqual(investigationContextMessages(provider.projectMessages(view),'ops').map(m=>m.content),view.map(m=>m.content));
+});
+
+it('post-execution failure projection preserves denial details and all business error fields', async () => {
+ const {investigationContextMessages,investigationToolContextResult}=await import('./executor.js');
+ const business={success:false,status:'error',errorCode:'METRIC_REFERENCE_REVIEW_REQUIRED',error:'Cannot read legacy metric',data:{state:'unknown'},next_actions:['review migration']};
+ const allowed={...business,policyDecision:{allow:true,reasonCode:'ALLOW',actor:{userId:1},requestId:'receipt'}};
+ const denied={...business,policyDecision:{allow:false,reasonCode:'RESOURCE_SCOPE_DENIED',resource:{type:'server',id:3}}};
+ const messages:any[]=[{role:'tool',tool_call_id:'allowed',content:JSON.stringify(allowed,null,2)},
+   {role:'tool',tool_call_id:'denied',content:JSON.stringify(denied,null,2)}];
+ const before=JSON.stringify(messages);
+ const view=investigationContextMessages(messages,'ops');
+ assert.deepEqual(JSON.parse(String(view[0].content)),business);
+ assert.deepEqual(JSON.parse(String(view[1].content)),denied);
+ assert.equal(investigationToolContextResult(allowed,'allowed','ops'),allowed,'executor failure object stays unchanged');
+ assert.equal(JSON.stringify(messages),before);
+ assert.equal(investigationContextMessages(messages,'system'),messages);
+ assert.deepEqual(investigationContextMessages(view,'ops'),view);
+});
+
+it('preserves non-display warnings, nonempty actions, unknown values and even atypical successful denials', async()=>{
+ const {investigationContextMessages}=await import('./executor.js');
+ const values=[
+  {success:true,status:'warning',summary:'A source is missing; this is not healthy',data:{value:null,quality:'unknown',reason:'source_error'},next_actions:['verify source'],artifacts:{reference:'evidence:1'}},
+  {success:true,status:'warning',policyDecision:{allow:false,reasonCode:'DENIED'},data:{padding:'x'.repeat(2000)}},
+  {success:false,status:'error',error:'uncertain; do not replay',data:{state:'unknown',padding:'x'.repeat(2000)}},
+ ];
+ const raw:any[]=values.map((v,i)=>({role:'tool',tool_call_id:`case${i}`,content:JSON.stringify(v)}));
+ const before=JSON.stringify(raw),view=investigationContextMessages(raw,'ops');
+ assert.deepEqual(view.map(m=>JSON.parse(String(m.content))),values);
+ assert.equal(JSON.stringify(raw),before);
 });
