@@ -9,6 +9,11 @@ const { ContextManager, sourceHash } = await import(new URL('runtime/context-man
 const { RecoveryPolicy } = await import(new URL('runtime/recovery-policy.js', core).href);
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-budget-b12-20261022.json', import.meta.url), 'utf8'));
 
+// The live projection of this recorded history now also carries the filesystem
+// pair routes (completeRead/seriesSelection) on its two paged FS reads: +4864
+// estimated tokens in the final request. Raising the cap by exactly that keeps
+// the original 411-token final margin of the 76542-used boundary under test.
+const FS_ROUTE_TOKENS = 4864;
 // Preserve original policy, initial history, all 24 facts, last inventory,
 // accepted summary/response and original run/request/job/fence. Only the next
 // response is scripted; every SDK request is sent to this loopback server.
@@ -53,7 +58,7 @@ async function finalRequest(violate = false) {
       contextWindowTokens: 65536, maxTokens: 8192, maxIterations: 8, maxToolResultChars: 128000,
       contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
       contextEvidence: (s, summary) => investigationExecutionEvidence(s, execution, binding, 2, summary),
-      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
+      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000 + FS_ROUTE_TOKENS, maxNoProgressSteps: 8 },
       resumeCheckpoint: { context_summary_v1: record, runtime_state_v1: recovery.snapshot(),
         context_state_v1: { schemaVersion: 1, compactCount: 2, successfulCompacts: 2, toolBatchesSinceCompact: 1, rapidRefills: 1 } },
       checkpointCallback: async c => { checkpoints.push(structuredClone(c)); },

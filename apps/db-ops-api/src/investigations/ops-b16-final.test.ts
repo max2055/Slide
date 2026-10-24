@@ -9,6 +9,10 @@ const core = new URL('../../../../packages/agent-core/src/', import.meta.url);
 const { ContextManager, sourceHash } = await import(new URL('runtime/context-manager.js', core).href);
 const { RecoveryPolicy } = await import(new URL('runtime/recovery-policy.js', core).href);
 const f = JSON.parse(readFileSync(new URL('./fixtures/ops-deadline-b16-20261023.json', import.meta.url), 'utf8'));
+// The live projection of this recorded history now also carries the filesystem pair routes (completeRead/seriesSelection).
+// The final request grows by 3979 estimated tokens, so the recorded 60152-token remainder no longer leaves the full
+// 8192 output; raise the cap by exactly the amount that restores it.
+const FS_ROUTE_TOKENS = 3979;
 const raw: Message[] = [...f.initialMessages, ...f.history];
 const execution = f.run.result_json.investigationExecution;
 const binding = { runId: f.run.id, requestId: execution.requestId, jobId: execution.jobId, fencingToken: execution.fencingToken };
@@ -51,7 +55,7 @@ it.each([false, true])('admits the complete B16 final through loopback SDK with 
     const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'deepseek-flash', baseURL: `http://127.0.0.1:${(receiver.address() as any).port}/v1`, capabilities: { model: 'deepseek-flash', contextWindowTokens: 1048576, maxOutputTokens: 393216, source: 'configuration', version: 'retained-B16' } });
     const provider = { getDefaultModel: actual.getDefaultModel.bind(actual), getModelCapabilities: actual.getModelCapabilities.bind(actual), countPromptTokens: actual.countPromptTokens.bind(actual), projectMessages: (m: Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'), chat: actual.chat.bind(actual), chatStream: actual.chatStream.bind(actual) };
     const result = await new AgentRunner(provider).run({ initialMessages: structuredClone(raw), tools, model: 'deepseek-flash', hook: new NoopHook(), maxIterations: 8, maxTokens: 8192, contextWindowTokens: 65536, maxToolResultChars: 128000,
-      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
+      budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000 + FS_ROUTE_TOKENS, maxNoProgressSteps: 8 },
       contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
       contextEvidence: (source, summary) => investigationExecutionEvidence(source, execution, binding, f.initialMessages.length, summary),
       resumeCheckpoint: { runtime_state_v1: recovery.snapshot(), context_summary_v1: record }, checkpointCallback: async c => { saved.push(structuredClone(c)); } });

@@ -8,6 +8,10 @@ const core = new URL('../../../../packages/agent-core/src/', import.meta.url);
 const { ContextManager, sourceHash } = await import(new URL('runtime/context-manager.js', core).href);
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-budget-b13-20261023.json', import.meta.url), 'utf8'));
 
+// The live projection of this recorded history now also carries the filesystem pair routes (completeRead/seriesSelection).
+// Without extra window the post-six replay stops on CONTEXT_UNRECOVERABLE before it can reach the TOKEN_BUDGET stop
+// under test. 67500 is the smallest window tried that restores it (67250 does not).
+const FS_ROUTE_WINDOW_TOKENS = 1964;
 // Full retained B13 input and receipts. Only the next reply is scripted, over
 // loopback HTTP; this neither sends to the product Provider nor resumes its DB.
 async function replay(before: boolean, violate = false) {
@@ -48,7 +52,7 @@ async function replay(before: boolean, violate = false) {
   });
   try {
     const result = await new AgentRunner(provider).run({ initialMessages: raw, runtimeRunId: binding.runId, tools, model: 'deepseek-flash', hook: new NoopHook(),
-      contextWindowTokens: 65536, maxTokens: 8192, maxIterations: 8, maxToolResultChars: 128000,
+      contextWindowTokens: 65536 + FS_ROUTE_WINDOW_TOKENS, maxTokens: 8192, maxIterations: 8, maxToolResultChars: 128000,
       contextPolicy: { recentToolBatches: 1, evidenceReferences: 'canonical', summaryMaxTokens: 10240 },
       contextEvidence: (source, summary) => investigationExecutionEvidence(source, execution, binding, 2, summary),
       budgetLimits: { maxProviderAttempts: 8, maxToolCalls: 20, maxTotalTokens: 128000, maxNoProgressSteps: 8 },
