@@ -43,3 +43,16 @@ it('bounds the advertised final analysis so the 8192 shared reasoning/output bud
   // planning bound, not deletion of existing valid evidence or historical text.
   expect(modelAnalysis(JSON.stringify({ ...answer, summary: '中'.repeat(401) }), [{ id: 'e', metadata_json: { source: 'tool:a' } }])).not.toBeNull();
 });
+
+it('accepts one JSON code fence but rejects prose or trailing text around it', () => {
+  const evidence = [{ id: 'evidence-a', metadata_json: { source: 'tool:a' } }];
+  const answer = { analysisVersion: 1, summary: '单点观察。',
+    claims: [{ statement: '当前依据仅支持单点观察。', supportingToolCallIds: ['a'], contradictingToolCallIds: [] }],
+    hypotheses: [], unresolvedQuestions: [], recommendations: [] };
+  const json = JSON.stringify(answer);
+  expect(modelAnalysis('```json\n' + json + '\n```', evidence)).not.toBeNull();
+  expect(modelAnalysis('```\n' + json + '\n```', evidence)).not.toBeNull();
+  expect(modelAnalysis('结果如下：\n```json\n' + json + '\n```', evidence)).toBeNull();
+  expect(modelAnalysis('```json\n' + json + '\n```\n以上。', evidence)).toBeNull();
+  expect(modelAnalysis('```json\n' + json + '\n```\n```', evidence)).toBeNull();
+});
