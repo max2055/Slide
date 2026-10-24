@@ -1,3 +1,4 @@
+import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
@@ -237,6 +238,18 @@ export class ServersPage extends LitElement {
   @state() private metricsLoading = false;
   private openColumnSettings() {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
+  }
+
+  private readonly listAccessChanged = () => this.requestUpdate();
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.listAccessChanged);
+    window.addEventListener('slide-session-expired', this.listAccessChanged);
+  }
+  override disconnectedCallback() {
+    window.removeEventListener('slide-permissions-loaded', this.listAccessChanged);
+    window.removeEventListener('slide-session-expired', this.listAccessChanged);
+    super.disconnectedCallback();
   }
 
   override firstUpdated() {
@@ -534,11 +547,9 @@ export class ServersPage extends LitElement {
 
   private _getColumns() {
     return [
-      { key: "host", label: "主机" },
-      { key: "type", label: "操作系统类型" },
-      { key: "version", label: "系统版本" },
-      { key: "status", label: "连接状态", textAlign: "center" },
-      { key: "actions", label: "操作", textAlign: "center" },
+      { key: "host", label: "主机名称" }, { key: "address", label: "地址" },
+      { key: "version", label: "系统版本" }, { key: "health", label: "观测健康" },
+      { key: "actions", label: "操作", width: "14rem" },
     ];
   }
 
@@ -547,10 +558,8 @@ export class ServersPage extends LitElement {
       return {
         id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
         searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
-        host: html`
-          <div style="font-weight:600;color:var(--text-strong);font-size:var(--text-md);">
-            <button class="btn-ghost" @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button>${srv.label?.trim() && srv.label.trim() !== srv.host ? html`<small>${srv.host}</small>` : nothing}
-          </div>`,
+        host: html`<span class="resource-name"><button class="btn-ghost" title=${srv.label?.trim() || srv.host} @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button><span class="full-value" aria-hidden="true">${srv.label?.trim() || srv.host}</span></span>`,
+        address: `${srv.host}:${srv.port ?? 22}`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
         status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
@@ -558,9 +567,9 @@ export class ServersPage extends LitElement {
         actions: html`
           <div class="actions">
             <button class="btn-sm" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
-            <button class="btn-sm" data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
-            <details><summary>更多</summary><button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${this._testingServerId === srv.id}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
-            <button class="btn-sm danger" @click=${() => this._confirmDelete(srv)}>删除</button></details>
+            <button class="btn-sm" title=${hasListPermission("servers:manage") ? "编辑服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
+            <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${!hasListPermission("servers:manage") || this._testingServerId !== null} title=${!hasListPermission("servers:manage") ? "需要服务器管理权限" : this._testingServerId !== null ? "已有服务器正在测试，请稍候" : "测试连接"}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
+            <button class="btn-sm danger" title=${hasListPermission("servers:manage") ? "删除服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} @click=${() => this._confirmDelete(srv)}>删除</button>
           </div>`,
       };
     });

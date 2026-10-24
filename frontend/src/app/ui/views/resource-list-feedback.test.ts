@@ -43,11 +43,12 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
   expect(refresh.disabled).toBe(true);
   finish!(response({}, 503));
   await vi.waitFor(() => expect(refresh.disabled).toBe(false));
-  expect(authFetch.mock.calls.map(call => call[0])).toEqual(tag === 'instances-page' ? [endpoint, '/api/resources/overview', '/api/metrics/query'] : [endpoint, '/api/metrics/query']);
+  expect(authFetch.mock.calls.map(call => call[0])).toEqual([endpoint, '/api/resources/overview', '/api/metrics/query', `/api/metrics/config/resources/${tag === 'instances-page' ? 'instance' : tag === 'servers-page' ? 'server' : 'network_device'}/1/status`]);
   expect(table.shadowRoot.querySelector('.desktop-resources app-data-table').columns.slice(0, 2).map((c: any) => c.label)).toEqual(['选择', '序号']);
   if (tag === 'servers-page') {
     const cell = table.shadowRoot.querySelector('.desktop-resources app-data-table tbody td:nth-child(3)');
-    expect(cell.textContent.match(/192\.0\.2\.1/g)).toHaveLength(1);
+    expect(cell.querySelector('button').textContent).toBe('192.0.2.1');
+    expect(cell.querySelector('small')).toBeNull();
   }
   if (tag === 'network-devices-page') expect(table.shadowRoot.querySelector('.desktop-resources app-data-table tbody .btn-ghost')).toBeTruthy();
 });

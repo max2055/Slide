@@ -164,6 +164,15 @@ describe('database instance edit connection validation', () => {
     expect(page.testMessage).toBe('用户名或密码错误');
   });
 
+  it('does not present historical healthy status as a new connection test result', async () => {
+    const page = document.createElement('instances-page') as any;
+    await page._testConnection({ ...existingInstance, health_status: 'healthy' });
+    expect(page.listTestStatus).toBe('idle');
+    expect(page.listTestMessage).toBe('');
+    expect(page.showTestDialog).toBe(true);
+    expect(authFetch).not.toHaveBeenCalled();
+  });
+
   it('does not trust a stale healthy status when the instance has no credential', async () => {
     authFetch.mockResolvedValue(response({}, false, 404));
     const page = document.createElement('instances-page') as any;

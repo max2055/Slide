@@ -1,3 +1,4 @@
+import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
@@ -80,6 +81,18 @@ export class NetworkDevicesPage extends LitElement {
   @state() private metricsLoading = false;
   private openColumnSettings() {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
+  }
+
+  private readonly listAccessChanged = () => this.requestUpdate();
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.listAccessChanged);
+    window.addEventListener('slide-session-expired', this.listAccessChanged);
+  }
+  override disconnectedCallback() {
+    window.removeEventListener('slide-permissions-loaded', this.listAccessChanged);
+    window.removeEventListener('slide-session-expired', this.listAccessChanged);
+    super.disconnectedCallback();
   }
 
   override firstUpdated() { void this.loadDevices(); }
@@ -378,8 +391,9 @@ export class NetworkDevicesPage extends LitElement {
 
   private columns() {
     return [
-      { key: "device", label: "设备" }, { key: "type", label: "设备类型" }, { key: "model", label: "型号" }, { key: "version", label: "系统版本" },
-      { key: "host", label: "管理地址" }, { key: "site", label: "站点" }, { key: "status", label: "设备状态" }, { key: "actions", label: "操作" },
+      { key: "device", label: "设备" }, { key: "address", label: "地址" },
+      { key: "model", label: "型号" }, { key: "health", label: "观测健康" },
+      { key: "actions", label: "操作", width: "14rem" },
     ];
   }
 
@@ -387,17 +401,17 @@ export class NetworkDevicesPage extends LitElement {
     return this.filteredDevices().map((device) => ({
       id: device.id, type: null, model: device.model, version: device.os_version,
       searchValues: [device.name, device.label, device.host, device.site, device.status, this.statusLabel(device.status)],
-      device: html`<button class="btn-ghost" type="button" @click=${() => this.navigate(device.id)}>${device.label || device.name}</button>`,
-      host: device.host,
+      device: html`<span class="resource-name"><button class="btn-ghost" type="button" title=${device.label || device.name} @click=${() => this.navigate(device.id)}>${device.label || device.name}</button><span class="full-value" aria-hidden="true">${device.label || device.name}</span></span>`,
+      address: device.host,
       site: device.site || "--",
       status: html`<app-badge variant=${this.statusVariant(device.status)}>${this.statusLabel(device.status)}</app-badge>`,
       collection: html`<app-badge variant=${device.collection_enabled ? "ok" : "muted"}>${device.collection_enabled ? "已启用" : "已停用"}</app-badge>`,
       lastCheck: device.last_check_at ? new Date(device.last_check_at).toLocaleString("zh-CN") : "--",
       actions: html`<div class="actions">
         <button class="btn-sm" type="button" @click=${() => this.navigate(device.id)}>详情</button>
-        <button class="btn-sm" type="button" data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
-        <details><summary>更多</summary><button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId === device.id}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
-        <button class="btn-sm danger" type="button" @click=${() => this.confirmDelete(device)}>删除</button></details>
+        <button class="btn-sm" type="button" title=${hasListPermission("network_devices:manage") ? "编辑网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
+        <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId !== null} title=${this.testingDeviceId !== null ? "已有网络设备正在测试，请稍候" : "测试连接"}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
+        <button class="btn-sm danger" type="button" title=${hasListPermission("network_devices:manage") ? "删除网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} @click=${() => this.confirmDelete(device)}>删除</button>
       </div>`,
     }));
   }
