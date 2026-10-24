@@ -35,7 +35,8 @@ it('bounds the advertised final analysis so the 8192 shared reasoning/output bud
     hypotheses: [], unresolvedQuestions: ['缺少可信重置来源。'], recommendations: [{ action: '核对只读生命周期来源。', priority: 'medium' }] };
   expect(validate(answer)).toBe(true);
   expect(modelAnalysis(JSON.stringify(answer), [{ id: 'evidence-a', metadata_json: { source: 'tool:a' } }])).not.toBeNull();
-  expect(validate({ ...answer, claims: Array.from({ length: 5 }, () => answer.claims[0]) })).toBe(false);
+  expect(validate({ ...answer, claims: Array.from({ length: 16 }, () => answer.claims[0]) })).toBe(true);
+  expect(validate({ ...answer, claims: Array.from({ length: 17 }, () => answer.claims[0]) })).toBe(false);
   expect(validate({ ...answer, summary: '中'.repeat(401) })).toBe(false);
   expect(validate({ ...answer, unresolvedQuestions: Array(5).fill('未知') })).toBe(false);
   // The publication parser remains backward compatible; this is a Provider

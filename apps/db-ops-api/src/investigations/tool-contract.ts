@@ -1,5 +1,6 @@
 import type { ToolSchema } from '@slide/agent-core';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
+import { coreProfiles } from '../metrics/consumers/service.js';
 
 /** Reuse the runtime request clock; no separate clock or argument rewriting. */
 const METRIC_HISTORY_TIME_GUIDANCE = 'history: from/to; to(exclusive) <= latest Current Time ISO instant; from = to - requested duration. Never round up (minute/hour/day). Z=UTC, not local time. Only omit both for the requested default maxWindowMs window; otherwise supply both.';
@@ -11,7 +12,7 @@ const opsDescriptions: Record<string, string> = {
   get_server_alerts: 'Server alerts; activeOnly=true.',
   get_server_metrics: 'Legacy latest/history, readable maxRows=1. metricName is NOT a semantic ID; prefer query_metrics discover on this server, then one returned metric_ids. Never guess aliases.',
   list_active_alerts: 'Active database alerts; severity/since(ISO) optional.',
-  query_metrics: 'Select one returned/discovered metric_ids per resource. discover(discovery_limit=8): index, next_offset, restart on revision change; discover+ID: definition/unit/kind. ' + METRIC_HISTORY_TIME_GUIDANCE + ' interval:1m, <=1h/60 buckets. Start series_index:0, then follow dimensions/selection.total_series; pair metrics by full dimensions, cover all series/windows. metric_window_v1 bucketDefaults apply per bucket; local fields override, values/quality/time/sources stay explicit. inventory: attributes.',
+  query_metrics: 'One advertised core/returned/discovered metric_ids/call. discover(discovery_limit=8): definitions only; next_offset, restart on revision change; discover+ID: semantics. ' + METRIC_HISTORY_TIME_GUIDANCE + ' interval:1m, <=1h/60 buckets. FS: omit series_index; selected pages give metricRead.completeRead/pairedRead. Others start series_index:0; follow dimensions/selection.total_series. Pair full dimensions/all series/windows. metric_window_v1: bucketDefaults apply per bucket; local fields override; values/quality/time/sources explicit. inventory: attributes.',
 };
 
 /** Shared model policy belongs once in the request, not in every schema.
@@ -67,5 +68,8 @@ export function investigationToolContract(tool: ToolSchema,
     // Legacy property prose can even contradict these constraints ("all instances").
     for (const property of Object.values(p)) delete property.description;
   }
-  return { name: tool.name, parameters, description: opsDescriptions[tool.name] ?? tool.description };
+  const core = tool.name === 'query_metrics' ? ' Core IDs (definitions, not capability): ' + JSON.stringify(Object.fromEntries(
+    candidates.filter(r => r.type in coreProfiles).map(r => [r.type, coreProfiles[r.type as keyof typeof coreProfiles].map(m => m.id)]),
+  )) : '';
+  return { name: tool.name, parameters, description: (opsDescriptions[tool.name] ?? tool.description) + core };
 }

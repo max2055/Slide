@@ -93,7 +93,7 @@ function metricReadGuidance(result: any, toolName?: string, args?: Record<string
     ? { tool: 'query_metrics', arguments: { ...resource, mode: 'history', metric_ids: [other],
       from: window.from, to: window.to, interval: '1m' } } : undefined;
   return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
-    ...(pairedRead ? { pairedRead, pairing: 'Read the peer before filesystem numerical conclusions. Match unique full mount/device/fs_type, window, observed_at and unit, never array index. Missing/duplicate peers, null, failures or zero capacity are gaps, not a healthy percentage. This route does not assert capability.' } : {}),
+    ...(pairedRead ? { pairedRead, ...(result.data?.selection ? { completeRead: { tool: 'query_metrics', arguments: { ...pairedRead.arguments, metric_ids: returnedMetricIds } } } : {}), pairing: 'Read completeRead (if selected) and pairedRead before conclusions. Match unique full mount/device/fs_type, window, observed_at and unit, never array index. Missing/duplicate peers, null, failures or zero capacity are gaps, not a healthy percentage. This route does not assert capability.' } : {}),
     ...(returnedMetricIds.length ? { returnedMetricIds,
       history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m', series_index: 0 } } } : {}),
     instructions: returnedMetricIds.length
@@ -158,7 +158,8 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     && data.metrics[0].series.every((s: any) => Array.isArray(s.buckets) && s.buckets.length <= 1)) {
     const { columns: _columns, ...profile } = data.profile ?? {};
     return JSON.stringify({ ...observation, data: { ...data, profile,
-      contextProjection: 'single_metric_v1', contextReference: reference } });
+      contextProjection: 'single_metric_v1', contextReference: reference, ...(metricRead?.pairedRead ? { metricRead,
+        seriesSelection: metricSeriesSelection(data, args) } : {}) } });
   }
   // A dimensioned metric is not inherently oversized. Preserve the complete
   // semantic page under THREE independent bounds; never select/merge healthy
@@ -196,7 +197,8 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
       return JSON.stringify({ ...observation, data: { ...data, profile,
         metrics: [{ ...data.metrics[0], series: [{ ...series, bucketDefaults: defaults,
           buckets: buckets.map((b: any) => Object.fromEntries(Object.entries(b).filter(([k]) => !Object.hasOwn(defaults, k)))) }] }],
-        contextProjection: 'metric_window_v1', contextReference: reference } });
+        contextProjection: 'metric_window_v1', contextReference: reference, ...(metricRead?.pairedRead ? { metricRead,
+          seriesSelection: metricSeriesSelection(data, args) } : {}) } });
     }
   }
   // Generated completion/count labels duplicate structured data; other prose

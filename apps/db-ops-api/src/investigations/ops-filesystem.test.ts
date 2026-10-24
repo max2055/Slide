@@ -13,6 +13,8 @@ import { investigationToolContract } from './tool-contract.js';
 import { modelAnalysis } from './model-analysis.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/ops-filesystem-20261024.json', import.meta.url), 'utf8'));
+const selectedFixture = JSON.parse(readFileSync(new URL('./fixtures/ops-fs-selected-20261024.json', import.meta.url), 'utf8'));
+const selectedReceipts = selectedFixture.receipts.filter((r: any) => r.arguments.metric_ids?.some((id: string) => ['host.filesystem.used_bytes', 'host.filesystem.size_bytes'].includes(id)));
 const original = JSON.parse(fixture.originalToolMessage.content);
 const originalArgs = JSON.parse(fixture.originalToolCall.function.arguments);
 const callId = fixture.originalToolCall.id;
@@ -23,9 +25,9 @@ const { ContextManager } = await import(new URL('../../../../packages/agent-core
 
 // Real normalized points are queried through the production semantic service.
 // The store and policy persistence are in-memory adapters, not the live storage.
-async function reader(missingMetric?: string) {
+async function reader(missingMetric?: string, actualSelected = false) {
   const registry = createConfigurationRegistry(), store = new MemoryPolicyStore();
-  const now = original.data.window.to, points = fixture.normalizedPoints.filter((p: any) => p.metric.id !== missingMetric);
+  const now = actualSelected ? selectedReceipts.map((r: any) => r.rawReceipt.data.window.to).sort().at(-1) : original.data.window.to, points = (actualSelected ? selectedFixture : fixture).normalizedPoints.filter((p: any) => p.metric.id !== missingMetric);
   const policy = new PolicyService(store, registry, { exists: async () => true,
     inventory: async () => ({ type: 'server', id: '3', attributes: {} }) }, () => now);
   const release = registry.list().find(r => r.package.id === 'linux-host' && r.package.version === '1.1.0')!.package;
@@ -43,6 +45,70 @@ async function reader(missingMetric?: string) {
 }
 
 describe('MAX222 retained FS receipt and bounded numerical model view', () => {
+  it('routes the actual mismatched index-zero receipts to complete same-window metric pages', () => {
+    expect(selectedReceipts).toHaveLength(2);
+    expect(selectedReceipts[0].rawReceipt.data.metrics[0].series[0].dimensions)
+      .not.toEqual(selectedReceipts[1].rawReceipt.data.metrics[0].series[0].dimensions);
+    for (const r of selectedReceipts) {
+      const before = JSON.stringify(r.rawReceipt);
+      const view = project(r.rawReceipt, r.id, r.arguments);
+      expect(view.data.contextProjection).toBe('single_metric_v1');
+      expect(view.data.metrics).toEqual(r.rawReceipt.data.metrics);
+      expect(view.data.contextReference.sha256).toBe(responseHash(r.rawReceipt));
+      expect(view.data.metricRead?.completeRead?.arguments).toEqual({ resourceType: 'server', resourceId: 3,
+        mode: 'history', metric_ids: r.arguments.metric_ids, from: r.rawReceipt.data.window.from,
+        to: r.rawReceipt.data.window.to, interval: '1m' });
+      expect(view.data.metricRead?.pairedRead?.arguments.metric_ids[0]).not.toBe(r.arguments.metric_ids[0]);
+      expect(view.data.metricRead?.pairedRead?.arguments.series_index).toBeUndefined();
+      expect(view.data.seriesSelection).toMatchObject({ total_series: 11, directoryComplete: false });
+      expect(JSON.stringify(r.rawReceipt)).toBe(before);
+    }
+  });
+
+  it('executes both routes from the real selected receipts and recovers all 11 full-dimension peers', async () => {
+    const tool = await reader(undefined, true);
+    for (const r of selectedReceipts) {
+      const guidance = project(r.rawReceipt, r.id, r.arguments).data.metricRead;
+      const receipts: any[] = [];
+      for (const route of [guidance.completeRead, guidance.pairedRead]) {
+        const bounded = boundedInvestigationArguments('query_metrics', route.arguments,
+          { maxBytes: 128000, maxRows: 200, maxWindowMs: 3600000 }, Date.parse(r.rawReceipt.data.window.to));
+        const receipt: any = await tool.handler(bounded.args, { actor: admin });
+        expect(receipt.success, JSON.stringify(receipt)).toBe(true);
+        const view = project(receipt, 'actual-route', bounded.args);
+        expect(view.data.evidenceOmitted).not.toBe(true);
+        expect(view.data.metrics[0].series).toHaveLength(11);
+        expect(view.data.metrics).toEqual(receipt.data.metrics);
+        receipts.push(view);
+      }
+      for (const s of receipts[0].data.metrics[0].series) {
+        const peers = receipts[1].data.metrics[0].series.filter((p: any) => key(p.dimensions) === key(s.dimensions));
+        expect(peers).toHaveLength(1);
+        expect(peers[0].buckets[0].observed_at).toBe(s.buckets[0].observed_at);
+        expect(peers[0].buckets[0].unit).toBe('By');
+        const point = selectedFixture.normalizedPoints.find((p: any) => p.metric.id === receipts[0].data.metrics[0].definition.id && key(p.dimensions) === key(s.dimensions));
+        expect(s.buckets[0].value).toEqual(point.value);
+      }
+    }
+  });
+
+  it.each(['missing dimensions', 'duplicate peer', 'wrong window', 'wrong unit', 'zero capacity', 'null', 'failure'])(
+    'retains selected %s without calculating or inventing a pairing', kind => {
+      const r = selectedReceipts[1], raw = structuredClone(r.rawReceipt), series = raw.data.metrics[0].series[0];
+      if (kind === 'missing dimensions') delete series.dimensions.mount;
+      if (kind === 'duplicate peer') raw.data.metrics[0].series.push(structuredClone(series));
+      if (kind === 'wrong window') raw.data.window.from = raw.data.window.to;
+      if (kind === 'wrong unit') series.buckets[0].unit = 's';
+      if (kind === 'zero capacity') series.buckets[0].value.value = '0';
+      if (kind === 'null') series.buckets[0].value = null;
+      if (kind === 'failure') raw.status = 'error';
+      const before = JSON.stringify(raw);
+      const view = kind === 'failure' ? investigationToolContextResult(raw, r.id, 'ops', 'query_metrics', r.arguments) as any : project(raw, r.id, r.arguments);
+      expect(view.data.metrics).toEqual(raw.data.metrics);
+      if (kind === 'wrong window') expect(view.data.metricRead?.pairedRead).toBeUndefined();
+      expect(JSON.stringify(raw)).toBe(before);
+    });
+
   it('keeps all 11 original series with exact values, dimensions, timestamps and receipt identity', () => {
     expect(responseHash(original)).toBe(fixture.provenance.rawReceiptHash);
     expect(Buffer.byteLength(JSON.stringify(original))).toBe(15331);
@@ -69,7 +135,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
     const tool = await reader();
     const bounded = boundedInvestigationArguments('query_metrics', args, { maxBytes: 128000, maxRows: 200, maxWindowMs: 3600000 }, Date.parse(original.data.window.to));
     const receipt: any = await tool.handler(bounded.args, { actor: admin });
-    expect(receipt.success).toBe(true);
+    expect(receipt.success, JSON.stringify(receipt)).toBe(true);
     expect(receipt.data.selection).toMatchObject({ series_index: 0, total_series: 11 });
     expect(receipt.data.metrics[0].series).toHaveLength(1);
     expect(project(receipt, 'narrowed', args).data.evidenceOmitted).not.toBe(true);
@@ -106,7 +172,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
   it.each(['host.filesystem.used_bytes', 'host.filesystem.size_bytes'])('does not invent a peer when %s is absent', async missing => {
     const tool = await reader(missing);
     const receipt: any = await tool.handler({ ...originalArgs, metric_ids: [missing] }, { actor: admin });
-    expect(receipt.success).toBe(true);
+    expect(receipt.success, JSON.stringify(receipt)).toBe(true);
     expect(receipt.status).toBe('warning');
     expect(project(receipt).data.metrics[0].series).toEqual([]);
     const forbidden: any = await tool.handler(originalArgs, { actor: { ...admin, permissions: [], instanceScopes: {} } });
@@ -122,7 +188,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
       const args = { ...originalArgs, mode: 'history', metric_ids: [id], from: original.data.window.from, to: original.data.window.to, interval: '1m' };
       const bounded = boundedInvestigationArguments('query_metrics', args, { maxBytes: 128000, maxRows: 200, maxWindowMs: 3600000 }, Date.parse(original.data.window.to));
       const receipt: any = await tool.handler(bounded.args, { actor: admin });
-      expect(receipt.success).toBe(true);
+      expect(receipt.success, JSON.stringify(receipt)).toBe(true);
       messages.push({ role: 'assistant', content: null, runId: binding.runId, tool_calls: [{ id: `local-${i}`, type: 'function', function: { name: tool.name, arguments: JSON.stringify(bounded.args) } }] },
         { role: 'tool', name: tool.name, runId: binding.runId, tool_call_id: `local-${i}`, content: JSON.stringify(receipt) });
       state.tools[`local-${i}`] = { name: tool.name, status: 'returned', inputHash: sha(bounded.args), result: receipt };
@@ -160,8 +226,9 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
   });
 
   it('carries every paired value over the real SDK final wire when the tool budget is exhausted (scripted loopback only)', async () => {
-    const tool = await reader(), bodies: any[] = [], returned: any[] = [], checkpoints: any[] = [];
-    const requests = [originalArgs, project(original).data.metricRead.pairedRead.arguments];
+    const tool = await reader(undefined, true), bodies: any[] = [], returned: any[] = [], checkpoints: any[] = [];
+    const selected = selectedReceipts[1], guidance = project(selected.rawReceipt, selected.id, selected.arguments).data.metricRead;
+    const requests = [guidance.completeRead.arguments, guidance.pairedRead.arguments];
     const finalContent = JSON.stringify({ analysisVersion: 1, summary: '离线脚本仅验证数值及引用到达终答，不代表真实模型分析。',
       claims: [{ statement: '本地回放获得文件系统成对原始回执，健康与根因未确认。', supportingToolCallIds: ['local-size', 'local-used'], contradictingToolCallIds: [] }],
       hypotheses: [], unresolvedQuestions: ['真实模型是否自主完成完整FS分析尚未验证。'], recommendations: [] });
@@ -187,7 +254,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
       const tools = new ToolRegistry();
       tools.register({ ...investigationToolContract(tool as any, [{ type: 'server', id: 3 }], { maxRows: 200, maxWindowMs: 3600000 })!,
         readOnly: true, concurrencySafe: false, exclusive: true, execute: async args => {
-          const bounded = boundedInvestigationArguments(tool.name, args, { maxRows: 200, maxBytes: 128000, maxWindowMs: 3600000 }, Date.parse(original.data.window.to));
+          const bounded = boundedInvestigationArguments(tool.name, args, { maxRows: 200, maxBytes: 128000, maxWindowMs: 3600000 }, Date.parse(selected.rawReceipt.data.window.to));
           const result: any = await tool.handler(bounded.args, { actor: admin });
           expect(result.success).toBe(true); returned.push(result); return result;
         } });
