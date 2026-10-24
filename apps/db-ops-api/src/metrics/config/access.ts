@@ -17,12 +17,16 @@ import { SnmpDiscovery } from '../snmp/collector.js';
 import { MysqlResourceRelationStore } from '../../resources/resource-service.js';
 import { SnmpDiscoveryCache } from './discovery-cache.js';
 import { HostBlockDiscoveryCache } from './host-counter.js';
+import { HostInterfaceDiscoveryCache } from './host-interface-counter.js';
+import { MysqlCounterDiscoveryCache } from './mysql-counter.js';
 import { assertAssetCollectionEnabled } from './effective-state.js';
 
 /** Called only after resource management authorization. No client-supplied target or credential. */
 export function createAssetCollectorAccess(preserveDiscovery = false): CollectorAccess {
  const discovery = new SnmpDiscoveryCache();
  const hostBlocks = new HostBlockDiscoveryCache();
+ const hostInterfaces = new HostInterfaceDiscoveryCache();
+ const mysqlCounters = new MysqlCounterDiscoveryCache();
  const assets = new MysqlResourceRelationStore();
  return {
   async resolve(ref) {
@@ -31,7 +35,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
     const pool = dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
     if (preserveDiscovery) await assertAssetCollectionEnabled(pool, ref);
     if (!await assets.exists(ref)) {
-      discovery.forget(ref.id); hostBlocks.forget(ref.id);
+      discovery.forget(ref.id); hostBlocks.forget(ref.id); hostInterfaces.forget(ref.id); mysqlCounters.forget(ref.id);
       throw new AdapterError('permission_denied');
     }
     const identity = async () => {
@@ -70,12 +74,13 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
       snmp = preserveDiscovery ? discovery.get(ref.id, [device.host, device.snmpPort, credentials]) : new SnmpDiscovery();
     }
     const reference = `credential:asset-${ref.type}-${ref.id}`;
-    const evidence = snmp ? { snmp } : ref.type === 'server' && preserveDiscovery ? { host_blocks: hostBlocks.get(ref.id, initialIdentity) } : {};
+    const evidence = snmp ? { snmp } : ref.type === 'server' && preserveDiscovery
+      ? { host_blocks: hostBlocks.get(ref.id, initialIdentity), host_interfaces: hostInterfaces.get(ref.id, initialIdentity) } : {};
     return { resource, credential_ref: reference, evidence, assertCurrent,
       resolve: async (credential, target, method) => {
         rule(credential === reference && target.type === ref.type && target.id === String(ref.id), 'COLLECTOR_IDENTITY');
         await assertCurrent();
-        if (!await assets.exists(ref)) { discovery.forget(ref.id); throw new AdapterError('permission_denied'); }
+        if (!await assets.exists(ref)) { discovery.forget(ref.id); hostBlocks.forget(ref.id); hostInterfaces.forget(ref.id); mysqlCounters.forget(ref.id); throw new AdapterError('permission_denied'); }
         if (ref.type === 'instance' && method === 'sql') {
           const instance = await instanceDatabaseService.getInstanceById(ref.id);
           const connection = databaseService.getConnection(ref.id);
@@ -86,7 +91,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
             || connection.config.user !== instance.username || connection.db_type !== instance.db_type
             || (connection.config.database || undefined) !== (instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : instance.db_type === 'mysql' ? 'mysql' : undefined))
             || connection.config.password !== password) throw new AdapterError('permission_denied');
-          return trialDatabaseTransport(connection);
+          return trialDatabaseTransport(connection, mysqlCounters.get(ref.id, initialIdentity));
         }
         if (ref.type === 'server' && method === 'ssh') {
           const server = await serverDatabaseService.getServerById(ref.id);

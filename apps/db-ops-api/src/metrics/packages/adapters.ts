@@ -17,6 +17,7 @@ import type { SnmpConfig, SnmpTableRow, SnmpVarbind } from '../../network-device
 import type { RawObservation } from '../../contracts/metrics/index.js';
 import type { SnmpDiscovery } from '../snmp/collector.js';
 import type { HostBlockDiscovery } from '../config/host-counter.js';
+import type { HostInterfaceDiscovery } from '../config/host-interface-counter.js';
 import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 import { hostGaugeFields } from './host-diagnostics.js';
 
@@ -35,6 +36,7 @@ export function bindSnmp(client: Pick<SnmpClient, 'table'> & Partial<Pick<SnmpCl
 }
 export interface DriverEvidence {
   host_blocks?: HostBlockDiscovery;
+  host_interfaces?: HostInterfaceDiscovery;
   snmp?: SnmpDiscovery;
   /** Trusted startup/discontinuity evidence, retained by the driver; never invent an epoch per sample. */
   counter?: RawObservation['counter'];
@@ -112,6 +114,14 @@ export function isHostBlockDevice(device: string): boolean {
   if (/^(?:sd|vd|xvd|hd)[a-z]+\d+$/.test(device)) return false;
   if (/^(?:nvme\d+n\d+|mmcblk\d+|md\d+)p\d+$/.test(device)) return false;
   return true;
+}
+
+/** Counters and interface generations must come from one batch; discovery owns
+ * the identity so a recreated interface cannot keep the old baseline. */
+async function hostNetworkSnapshot(evidence: DriverEvidence, transport: Extract<Transport, { method: 'ssh' }>, timeoutMs: number) {
+  if (!evidence.host_interfaces) return { result: (await fixedSsh(transport, [NETWORK_COMMAND], timeoutMs))[0], evidence };
+  const snapshot = await evidence.host_interfaces.read(transport, timeoutMs);
+  return { result: { stdout: snapshot.stdout, stderr: '', exitCode: 0, truncated: false }, evidence: snapshot.evidence };
 }
 
 async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, commands: string[], timeoutMs: number) {
@@ -203,12 +213,13 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
       inode_usage:row.inodeUsagePercent===null?null:{encoding:'float64',value:row.inodeUsagePercent}}}));
   }
   if (id === 'builtin:linux.network-diagnostics.v1' && transport.method === 'ssh') {
-    const [result]=await fixedSsh(transport,[NETWORK_COMMAND],timeoutMs);
+    const snapshot = await hostNetworkSnapshot(evidence, transport, timeoutMs);
+    const result = snapshot.result;
     if(result.exitCode!==0)throw new AdapterError('parse_error');
     const rows=parseProcNetDevExact(result.stdout).filter(r=>r.dimensions?.interface!=='lo'&&/_(errors|drops)$/.test(r.name));
     if(rows.length>maxRows)throw new AdapterError('parse_error');
     return rows.map(row=>({dimensions:{interface:row.dimensions!.interface!,direction:row.name.includes('_rx_')?'in':'out',event:row.name.endsWith('_errors')?'error':'drop'},
-      fields:{events:uint(row.value)},counter:hostCounter(evidence,'interfaces',row.dimensions!.interface!)}));
+      fields:{events:uint(row.value)},counter:hostCounter(snapshot.evidence,'interfaces',row.dimensions!.interface!)}));
   }
   if (id === 'builtin:linux.filesystem.v1' && transport.method === 'ssh') {
     const results = await fixedSsh(transport, [FILESYSTEM_BYTES_COMMAND, FILESYSTEM_INODES_COMMAND, FILESYSTEM_MOUNTS_COMMAND], timeoutMs);
@@ -220,7 +231,8 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     } }));
   }
   if (id === 'builtin:linux.network.v1' && transport.method === 'ssh') {
-    const [result] = await fixedSsh(transport, [NETWORK_COMMAND], timeoutMs);
+    const snapshot = await hostNetworkSnapshot(evidence, transport, timeoutMs);
+    const result = snapshot.result;
     if (result.exitCode !== 0) throw new AdapterError(/permission denied/i.test(result.stderr) ? 'permission_denied' : 'parse_error');
     const rows = parseProcNetDevExact(result.stdout)
       .filter(row => row.name === 'network_rx_bytes' || row.name === 'network_tx_bytes')
@@ -229,7 +241,7 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     return rows.map(row => {
       const identity = row.dimensions!.interface!;
       return { dimensions: { interface: identity, direction: row.name === 'network_rx_bytes' ? 'in' : 'out' },
-        fields: { network_bytes: exactCounter(row.value) }, counter: hostCounter(evidence, 'interfaces', identity) };
+        fields: { network_bytes: exactCounter(row.value) }, counter: hostCounter(snapshot.evidence, 'interfaces', identity) };
     });
   }
   if (id === 'builtin:linux.block.v1' && transport.method === 'ssh') {
