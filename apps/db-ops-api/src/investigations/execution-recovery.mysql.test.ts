@@ -229,6 +229,10 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       toolCalls?: boolean;
       missingUsage?: boolean;
       toolError?: boolean;
+      /** The live actor's registry no longer offers the tool, after the write-ahead record. */
+      liveToolsRejected?: boolean;
+      /** The original read-only handler is entered, then throws. */
+      toolThrows?: boolean;
       zeroSend?: boolean;
       overToolBudget?: boolean;
       analysisAnswer?: boolean;
@@ -286,15 +290,18 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       execute: async () => {
         toolCalls++;
         await options.beforeTool?.();
+        if (options.toolThrows) throw new Error('HANDLER_FAILED');
         return { success: true, rows: [{ health: 'unknown' }], password: 'must-redact' };
       },
     });
+    // The first registry is the executor's frozen one; later ones belong to the live actor of each call.
+    let registries = 0;
     return new InvestigationExecutor({
       pool: () => pool,
       ...(options.knownResponse ? { runtimeContext: {contextWindowTokens: 65536, maxTokens: 8192, summaryMaxTokens: 10240} } : {}),
       authorization: new InvestigationAuthorization(contexts),
       providerForPurpose: async () => provider,
-      toolsForActor: () => tools,
+      toolsForActor: () => (options.liveToolsRejected && registries++ > 0 ? new ToolRegistry() : tools),
       budget: {
         domain: 'test-investigation',
         policy,
@@ -1253,6 +1260,28 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(saved.investigationExecution.provider).toBeNull();
     await execute(executor);
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  const savedTools = async () => Object.values((await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]))[0]
+    .result_json.investigationExecution.tools ?? {}) as { status: string }[];
+  it('a rejection before the original handler is entered leaves no running tool and keeps the metered usage settled', async () => {
+    const executor = fixture({ liveToolsRejected: true });
+    const result = await execute(executor);
+    expect(result.state).not.toBe('completed');
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+    expect(await savedTools()).not.toContainEqual(expect.objectContaining({ status: 'running' }));
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toMatchObject({ state: 'settled', charged_tokens: 30 });
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(0);
+  });
+  it('a handler that was entered and failed stays running: the whole execution is unknown and never replayed', async () => {
+    const executor = fixture({ toolThrows: true });
+    const result = await execute(executor);
+    expect(result.state).toBe('partial');
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(1);
+    expect(await savedTools()).toContainEqual(expect.objectContaining({ status: 'running' }));
+    expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toMatchObject({ state: 'unknown', charged_tokens: 32000 });
+    await execute(executor);
+    expect(providerCalls).toBe(1); expect(toolCalls).toBe(1);
   });
   it.each(['answer', 'tools'] as const)('persists the final attempt %s through the actual executor and fresh recovery without a ninth send', async mode => {
     const executor = fixture(), provider = await (executor as any).options.providerForPurpose('fault_diagnosis');

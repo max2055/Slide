@@ -1062,6 +1062,7 @@ export class InvestigationExecutor {
           execute: async (value, toolContext) => {
             const toolId = currentToolId;
             if (!toolId) throw new Error('INVESTIGATION_TOOL_BINDING_INVALID');
+            let wrote = false, started = false;
             try {
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
@@ -1091,11 +1092,13 @@ export class InvestigationExecutor {
               await update((s) => {
                 s.tools[toolId] = { name, inputHash: hash(args), status: 'running' };
               });
+              wrote = true;
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
               const liveTool = scopedRegistry(live.actor).get(name);
               if (!liveTool?.readOnly || liveTool.requiresApproval || liveTool.ownerOnly)
                 throw new Error('INVESTIGATION_TOOL_FORBIDDEN');
+              started = true;
               const result = boundedResult(
                 await liveTool.execute(args, { ...toolContext, signal: toolContext?.signal ?? control.signal }),
                 profile.budget.maxRows,
@@ -1114,6 +1117,12 @@ export class InvestigationExecutor {
               });
               return contextToolResult(result, toolId);
             } catch (error) {
+              // Only this wrapper knows the original handler was never entered, so only here may it withdraw its
+              // own write-ahead record; reliable model usage then stays known. Once the handler started, a throw,
+              // timeout or abort leaves the record running and the whole execution unknown. If the withdrawal
+              // cannot be persisted the record also stays running (fail closed).
+              if (wrote && !started)
+                await update((s) => { if (s.tools[toolId]?.status === 'running') delete s.tools[toolId]; }).catch(() => undefined);
               // failOnToolError is enabled: an actual thrown tool exception is
               // fatal. Returned Error text and Core's repeat guard are not.
               fatalToolFailure ??= { toolCallId: toolId, stop: { ...investigationStop({ stopReason: 'tool_error',
