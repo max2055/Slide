@@ -78,14 +78,49 @@ function metricReadGuidance(result: any, toolName?: string, args?: Record<string
     || args?.resourceId !== undefined && args.resourceId !== id
     || args?.serverId !== undefined && args.serverId !== id) return undefined;
   const selected = toolName === 'get_resource_observations' && selectedObservationPage(result, args);
-  const returnedMetricIds = selected ? [...new Set<string>(result.data.observations.map((row: any) => row.metricId))] : [];
+  const returnedMetricIds = selected ? [...new Set<string>(result.data.observations.map((row: any) => row.metricId))]
+    : toolName === 'query_metrics' && Array.isArray(result.data?.metrics)
+      ? result.data.metrics.map((m: any) => m.definition?.id).filter((id: unknown) => typeof id === 'string') : [];
   const resource = { resourceType: type, resourceId: id };
+  const filesystemIds = ['host.filesystem.used_bytes', 'host.filesystem.size_bytes'];
+  const other = returnedMetricIds.length === 1 && filesystemIds.includes(returnedMetricIds[0])
+    ? filesystemIds.find(id => id !== returnedMetricIds[0]) : undefined;
+  const window = result.data?.window;
+  // The product profile supplies the related ID, not a guessed alias or proof
+  // of collection capability. Use the SAME bounded window, never array order.
+  const pairedRead = other && result.data?.profile?.columns?.some((c: any) => c.metric?.id === other)
+    && Date.parse(window?.to) > Date.parse(window?.from) && Date.parse(window.to) - Date.parse(window.from) <= 3600000
+    ? { tool: 'query_metrics', arguments: { ...resource, mode: 'history', metric_ids: [other],
+      from: window.from, to: window.to, interval: '1m' } } : undefined;
   return { discover: { tool: 'query_metrics', arguments: { ...resource, mode: 'discover', discovery_limit: 8 } },
+    ...(pairedRead ? { pairedRead, pairing: 'Read the peer before filesystem numerical conclusions. Match unique full mount/device/fs_type, window, observed_at and unit, never array index. Missing/duplicate peers, null, failures or zero capacity are gaps, not a healthy percentage. This route does not assert capability.' } : {}),
     ...(returnedMetricIds.length ? { returnedMetricIds,
       history: { tool: 'query_metrics', arguments: { ...resource, mode: 'history', interval: '1m', series_index: 0 } } } : {}),
     instructions: returnedMetricIds.length
       ? 'Choose one returnedMetricIds (not proof of capability); discover+metric_ids:[id] gives its definition without catalog rediscovery. history: metric_ids:[id], UTC from/to(exclusive), interval:1m, <=1h/60 buckets. Follow query_metrics history time contract. Start series_index:0 for unknown dimensions; returned dimensions/selection.total_series guide remaining series/windows. Pair filesystem metrics by full dimensions, not series_index. Legacy snapshots lack full semantics; failure is not zero.'
       : 'Read one discovered metric_ids; UTC from/to, interval:1m, <=1h/60 buckets. Follow query_metrics history time contract. Start series_index:0; inspect dimensions/selection.total_series to cover all series/windows. Legacy scalars lack full semantics.' };
+}
+/** Directory only: indices identify THIS receipt/window, not stable identities
+ * across metrics. Keep duplicate dimensions as separate entries. A page never
+ * authorizes another resource or silently discards a series from numeric data.
+ */
+function metricSeriesSelection(data: any, args?: Record<string, any>) {
+  if (data?.contract_version !== '1.0.0' || data.metrics?.length !== 1) return undefined;
+  const metric = data.metrics[0], ref = data.resource, window = data.window;
+  if (!Array.isArray(metric?.series) || !metric.series.length
+    || !['instance', 'server', 'network_device'].includes(ref?.type) || !Number.isSafeInteger(ref?.id) || ref.id <= 0
+    || typeof metric.definition?.id !== 'string' || !/^[a-z][a-z0-9_.]{0,127}$/.test(metric.definition.id)
+    || args?.resourceType !== undefined && args.resourceType !== ref.type
+    || args?.resourceId !== undefined && args.resourceId !== ref.id
+    || !(Date.parse(window?.to) > Date.parse(window?.from)) || Date.parse(window.to) - Date.parse(window.from) > 3600000) return undefined;
+  const start = data.selection?.series_index ?? 0, total = data.selection?.total_series ?? metric.series.length;
+  if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(total) || total < start + metric.series.length || total > 100) return undefined;
+  const entries = metric.series.slice(0, 16).map((s: any, i: number) => ({ series_index: start + i, dimensions: s.dimensions }));
+  if (Buffer.byteLength(JSON.stringify(entries)) > 8192) return undefined;
+  return { total_series: total, entries, directoryComplete: start === 0 && entries.length === total,
+    read: { tool: 'query_metrics', arguments: { resourceType: ref.type, resourceId: ref.id,
+      mode: 'history', metric_ids: [metric.definition.id], from: window.from, to: window.to, interval: '1m', series_index: start } },
+    instructions: 'Directory contains no values. Read each required index for this metric/window; indices may change across metrics/windows. Pair by full dimensions and observation time/unit. A missing or duplicate peer remains unresolved.' };
 }
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
@@ -98,7 +133,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
   if (profile !== 'ops') return json;
   if ((result as any).policyDecision?.allow === false) return result;
   if ((result as any).data?.contextReference && ((result as any).data?.evidenceOmitted === true
-    || ['single_metric_v1', 'metric_window_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
+    || ['single_metric_v1', 'metric_window_v1', 'metric_series_v1', 'metric_discovery_v1', 'bounded_observations_v1', 'bounded_server_metrics_v1'].includes((result as any).data?.contextProjection))) return json;
   const { policyDecision: _audit, ...observation } = result as Record<string, unknown>;
   const reference = { toolCallId, sha256: canonicalReceiptHash(result), bytes: Buffer.byteLength(json) };
   const data = observation.data as Record<string, any> | undefined;
@@ -124,6 +159,24 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     const { columns: _columns, ...profile } = data.profile ?? {};
     return JSON.stringify({ ...observation, data: { ...data, profile,
       contextProjection: 'single_metric_v1', contextReference: reference } });
+  }
+  // A dimensioned metric is not inherently oversized. Preserve the complete
+  // semantic page under THREE independent bounds; never select/merge healthy
+  // rows, omit nulls or cap just the first N series. Final assertFits still owns
+  // admission of the full request, including schemas, reasoning and suffixes.
+  if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
+    && data.metrics?.length === 1 && Array.isArray(data.metrics[0]?.series)) {
+    const series = data.metrics[0].series, duration = Date.parse(data.window?.to) - Date.parse(data.window?.from);
+    if (series.length > 1 && series.length <= 16 && duration > 0 && duration <= 3600000
+      && series.every((s: any) => Array.isArray(s.buckets) && s.buckets.length <= 60
+        && s.buckets.every((b: any) => Date.parse(b.window?.to) > Date.parse(b.window?.from)
+          && Date.parse(b.window.to) - Date.parse(b.window.from) <= 60000))
+      && series.reduce((n: number, s: any) => n + s.buckets.length, 0) <= 60) {
+      const { columns: _columns, ...profile } = data.profile ?? {};
+      const view = JSON.stringify({ ...observation, data: { ...data, profile,
+        contextProjection: 'metric_series_v1', contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
+      if (Buffer.byteLength(view) <= 16384) return view;
+    }
   }
   if (toolName === 'query_metrics' && data?.contract_version === '1.0.0'
     && Array.isArray(data.metrics) && data.metrics.length === 1
@@ -195,6 +248,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
     data: { contextReference: reference, evidenceOmitted: true, ...(selectedObservations ? { valuesProvided: false } : {}), requiresNarrowerRead: true,
       ...(toolName === 'query_metrics' && Array.isArray(data?.metrics)
         ? { metric_ids: data.metrics.map((m: any) => m.definition?.id) } : {}),
+      ...(toolName === 'query_metrics' && metricSeriesSelection(data, args) ? { seriesSelection: metricSeriesSelection(data, args) } : {}),
       ...(metricRead ? { metricRead } : {}) } });
 }
 /** Ephemeral model view only. Durable facts and checkpoints retain full results. */

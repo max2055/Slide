@@ -1,0 +1,2183 @@
+{
+  "provenance": {
+    "issue": "MAX-222",
+    "investigationId": "4b228ba5-d97a-43a0-9680-3f6ec30a3a9f",
+    "archiveSha256": "9de36ac1f82f61a7d9ae1ea996aa0e222e8e61f52ffaca2dcd08dc875006ff31",
+    "sqlFileSha256": "b89ed0f9714455d5be846c0bfcfc447a3c89e87ce24cea726641da8e54b18703",
+    "rawReceiptHash": "5167364e9604604a2c7bb4f7f1d1d3b86bd671edabef2c46307e137c86fdbd1d",
+    "note": "Original size tool message/call and normalized FS point subset, unchanged. Used receipts, edge cases and provider choices in tests are derived offline; no autonomous model proof."
+  },
+  "originalToolCall": {
+    "id": "call_00_exFkSR8pMtWMvaPS5b0r9075",
+    "type": "function",
+    "function": {
+      "name": "query_metrics",
+      "arguments": "{\"resourceType\":\"server\",\"resourceId\":3,\"mode\":\"realtime\",\"metric_ids\":[\"host.filesystem.size_bytes\"]}"
+    }
+  },
+  "originalToolMessage": {
+    "id": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113",
+    "name": "query_metrics",
+    "role": "tool",
+    "runId": "89b21b4d-7fa0-4928-8140-73790ce1d003",
+    "source": "fact",
+    "turnId": "8289e02b-be65-430c-bac0-92babe24b659",
+    "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"server\",\"id\":3},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"evaluated_at\":\"2026-10-24T00:57:17.568Z\",\"profile\":{\"id\":\"server-core\",\"version\":\"1.0.0\",\"owner\":\"product\",\"resource_type\":\"server\",\"columns\":[{\"key\":\"host.filesystem.used_bytes\",\"label\":\"文件系统已用\",\"metric\":{\"id\":\"host.filesystem.used_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.filesystem.size_bytes\",\"label\":\"文件系统容量\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.network.bytes_total\",\"label\":\"接口字节速率\",\"metric\":{\"id\":\"host.network.bytes_total\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":3,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Filesystem total bytes reported by df including reserved capacity.\",\"resource_type\":\"server\",\"unit\":\"By\",\"scope\":\"filesystem\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[{\"name\":\"mount\",\"meaning\":\"mount stable resource-local identity\",\"required\":true},{\"name\":\"device\",\"meaning\":\"device stable resource-local identity\",\"required\":true},{\"name\":\"fs_type\",\"meaning\":\"fs_type stable resource-local identity\",\"required\":true}],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"3\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"ssh\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:server;required:server\"},{\"kind\":\"resource\",\"evidence\":\"os.family:matched;allowed:linux\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-24T00:57:03.296Z\",\"valid_until\":\"2026-10-24T00:59:03.296Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"resource_id\":\"3\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"config_revision\":3,\"started_at\":\"2026-10-24T00:57:03.296Z\",\"ended_at\":\"2026-10-24T00:57:04.747Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:6177805aa0c20aee045a1bb2b002dd1e4cdb8085e516c503b6f53d51df97d933\",\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"sha256:bb4e535804ee0cc3f9d57b06118604c4b792440451e93c72bf0b96c471b3aac9\",\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"sha256:cc8bc3cac8e0970f81985403abc547bcbeb3a437c68b839bf8faf6884359247f\",\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"sha256:78a93166b313aab63f64ef4b130bb9ac7b96b96ac85a27658dc4929f010f4e6b\",\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"sha256:4b8b00cddcb15d4e84e7a79aced86bb527abea57845ea0857c8c59bd71182416\",\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"sha256:4831b67a068f9e8536a13b7623c130a9dbfb1c87e0c35f026bf5fdf98ce3382e\",\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"sha256:3f1622fa1d44e4d7dd5f8b4d183b179fb4d3d892c76a1cd12cdb368d4558045a\",\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"sha256:46f17269de1977c8210fee56de955a7ff144731b27a3088e87db1ba8c445bc31\",\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"sha256:9a839ede0f88ade08f36ec33c953a2614df3b21b0d00113f08d3d14f3387df03\",\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"sha256:aa7561ffdfdca563beac704ad4d53dfd333ef3bb2b46ce82738488613c04d0f7\",\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"sha256:5ea7044584ec070068f393524f2fa333d645d26d02704da16264d428da6a3ec4\",\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\"]},\"series\":[{\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:67c15dde9448e363\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:a0fd83f1be8feafd\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:e156fff170861a1a\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:6ca748ac7e3dbc91\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"627900416\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9125ee36fabffdce\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1006632960\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:409682490a986ceb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:541ea1c39c0d7486\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:904a68a2e3304bcb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"21416116224\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:f9d055f13bdb276c\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"262128\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:c6b559379cd7bde5\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"570396672\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9ab05e7cf1c300f8\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"已获取标准指标，请按定义解释数值\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4b228ba5-d97a-43a0-9680-3f6ec30a3a9f\"}}",
+    "messageParts": {
+      "id": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113",
+      "role": "tool",
+      "parts": [
+        {
+          "id": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113/part/0",
+          "name": "query_metrics",
+          "type": "tool_result",
+          "source": "fact",
+          "status": "completed",
+          "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"server\",\"id\":3},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"evaluated_at\":\"2026-10-24T00:57:17.568Z\",\"profile\":{\"id\":\"server-core\",\"version\":\"1.0.0\",\"owner\":\"product\",\"resource_type\":\"server\",\"columns\":[{\"key\":\"host.filesystem.used_bytes\",\"label\":\"文件系统已用\",\"metric\":{\"id\":\"host.filesystem.used_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.filesystem.size_bytes\",\"label\":\"文件系统容量\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.network.bytes_total\",\"label\":\"接口字节速率\",\"metric\":{\"id\":\"host.network.bytes_total\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":3,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Filesystem total bytes reported by df including reserved capacity.\",\"resource_type\":\"server\",\"unit\":\"By\",\"scope\":\"filesystem\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[{\"name\":\"mount\",\"meaning\":\"mount stable resource-local identity\",\"required\":true},{\"name\":\"device\",\"meaning\":\"device stable resource-local identity\",\"required\":true},{\"name\":\"fs_type\",\"meaning\":\"fs_type stable resource-local identity\",\"required\":true}],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"3\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"ssh\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:server;required:server\"},{\"kind\":\"resource\",\"evidence\":\"os.family:matched;allowed:linux\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-24T00:57:03.296Z\",\"valid_until\":\"2026-10-24T00:59:03.296Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"resource_id\":\"3\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"config_revision\":3,\"started_at\":\"2026-10-24T00:57:03.296Z\",\"ended_at\":\"2026-10-24T00:57:04.747Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:6177805aa0c20aee045a1bb2b002dd1e4cdb8085e516c503b6f53d51df97d933\",\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"sha256:bb4e535804ee0cc3f9d57b06118604c4b792440451e93c72bf0b96c471b3aac9\",\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"sha256:cc8bc3cac8e0970f81985403abc547bcbeb3a437c68b839bf8faf6884359247f\",\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"sha256:78a93166b313aab63f64ef4b130bb9ac7b96b96ac85a27658dc4929f010f4e6b\",\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"sha256:4b8b00cddcb15d4e84e7a79aced86bb527abea57845ea0857c8c59bd71182416\",\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"sha256:4831b67a068f9e8536a13b7623c130a9dbfb1c87e0c35f026bf5fdf98ce3382e\",\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"sha256:3f1622fa1d44e4d7dd5f8b4d183b179fb4d3d892c76a1cd12cdb368d4558045a\",\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"sha256:46f17269de1977c8210fee56de955a7ff144731b27a3088e87db1ba8c445bc31\",\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"sha256:9a839ede0f88ade08f36ec33c953a2614df3b21b0d00113f08d3d14f3387df03\",\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"sha256:aa7561ffdfdca563beac704ad4d53dfd333ef3bb2b46ce82738488613c04d0f7\",\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"sha256:5ea7044584ec070068f393524f2fa333d645d26d02704da16264d428da6a3ec4\",\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\"]},\"series\":[{\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:67c15dde9448e363\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:a0fd83f1be8feafd\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:e156fff170861a1a\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:6ca748ac7e3dbc91\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"627900416\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9125ee36fabffdce\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1006632960\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:409682490a986ceb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:541ea1c39c0d7486\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:904a68a2e3304bcb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"21416116224\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:f9d055f13bdb276c\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"262128\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:c6b559379cd7bde5\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"570396672\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9ab05e7cf1c300f8\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"已获取标准指标，请按定义解释数值\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4b228ba5-d97a-43a0-9680-3f6ec30a3a9f\"}}",
+          "durable": {
+            "kind": "checkpoint",
+            "reference": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113"
+          },
+          "generation": "ended",
+          "toolCallId": "call_00_exFkSR8pMtWMvaPS5b0r9075",
+          "sourceMessageId": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113"
+        }
+      ],
+      "runId": "89b21b4d-7fa0-4928-8140-73790ce1d003",
+      "legacy": {
+        "id": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113",
+        "name": "query_metrics",
+        "role": "tool",
+        "runId": "89b21b4d-7fa0-4928-8140-73790ce1d003",
+        "source": "fact",
+        "turnId": "8289e02b-be65-430c-bac0-92babe24b659",
+        "content": "{\"success\":true,\"status\":\"success\",\"data\":{\"contract_version\":\"1.0.0\",\"resource\":{\"type\":\"server\",\"id\":3},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"evaluated_at\":\"2026-10-24T00:57:17.568Z\",\"profile\":{\"id\":\"server-core\",\"version\":\"1.0.0\",\"owner\":\"product\",\"resource_type\":\"server\",\"columns\":[{\"key\":\"host.filesystem.used_bytes\",\"label\":\"文件系统已用\",\"metric\":{\"id\":\"host.filesystem.used_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.filesystem.size_bytes\",\"label\":\"文件系统容量\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"}},{\"key\":\"host.network.bytes_total\",\"label\":\"接口字节速率\",\"metric\":{\"id\":\"host.network.bytes_total\",\"semantic_version\":\"1.0.0\"}}]},\"configuration_revision\":3,\"metrics\":[{\"definition\":{\"category\":\"canonical\",\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\",\"meaning\":\"Filesystem total bytes reported by df including reserved capacity.\",\"resource_type\":\"server\",\"unit\":\"By\",\"scope\":\"filesystem\",\"kind\":\"gauge\",\"roles\":[\"core\"],\"temporality\":\"instant\",\"monotonic\":false,\"value_type\":\"uint64\",\"dimensions\":{\"keys\":[{\"name\":\"mount\",\"meaning\":\"mount stable resource-local identity\",\"required\":true},{\"name\":\"device\",\"meaning\":\"device stable resource-local identity\",\"required\":true},{\"name\":\"fs_type\",\"meaning\":\"fs_type stable resource-local identity\",\"required\":true}],\"max_series_per_resource\":100,\"max_value_length\":128,\"overflow\":\"reject\"},\"aggregation\":{\"time\":[\"last\",\"min\",\"max\",\"mean\"],\"space\":[\"none\"],\"missing\":\"preserve_null\",\"min_coverage\":1,\"quantiles\":\"not_applicable\"},\"lifecycle\":\"active\"},\"capability\":{\"resource_id\":\"3\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"status\":\"supported\",\"method\":\"ssh\",\"basis\":[{\"kind\":\"resource\",\"evidence\":\"resource_type:server;required:server\"},{\"kind\":\"resource\",\"evidence\":\"os.family:matched;allowed:linux\"},{\"kind\":\"permission\",\"evidence\":\"fixed_read_succeeded\"}],\"evaluated_at\":\"2026-10-24T00:57:03.296Z\",\"valid_until\":\"2026-10-24T00:59:03.296Z\"},\"enabled\":true,\"state\":\"available\",\"attempt\":{\"id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"resource_id\":\"3\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"config_revision\":3,\"started_at\":\"2026-10-24T00:57:03.296Z\",\"ended_at\":\"2026-10-24T00:57:04.747Z\",\"status\":\"succeeded\",\"error\":null,\"observation_ids\":[\"sha256:6177805aa0c20aee045a1bb2b002dd1e4cdb8085e516c503b6f53d51df97d933\",\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"sha256:bb4e535804ee0cc3f9d57b06118604c4b792440451e93c72bf0b96c471b3aac9\",\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"sha256:cc8bc3cac8e0970f81985403abc547bcbeb3a437c68b839bf8faf6884359247f\",\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"sha256:78a93166b313aab63f64ef4b130bb9ac7b96b96ac85a27658dc4929f010f4e6b\",\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"sha256:4b8b00cddcb15d4e84e7a79aced86bb527abea57845ea0857c8c59bd71182416\",\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"sha256:4831b67a068f9e8536a13b7623c130a9dbfb1c87e0c35f026bf5fdf98ce3382e\",\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"sha256:3f1622fa1d44e4d7dd5f8b4d183b179fb4d3d892c76a1cd12cdb368d4558045a\",\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"sha256:46f17269de1977c8210fee56de955a7ff144731b27a3088e87db1ba8c445bc31\",\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"sha256:9a839ede0f88ade08f36ec33c953a2614df3b21b0d00113f08d3d14f3387df03\",\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"sha256:aa7561ffdfdca563beac704ad4d53dfd333ef3bb2b46ce82738488613c04d0f7\",\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"sha256:5ea7044584ec070068f393524f2fa333d645d26d02704da16264d428da6a3ec4\",\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\"]},\"series\":[{\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/fs/cgroup\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:67c15dde9448e363\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev\",\"device\":\"devtmpfs\",\"fs_type\":\"devtmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"4194304\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:a0fd83f1be8feafd\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/0\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:e156fff170861a1a\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run/user/991\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"285196288\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:6ca748ac7e3dbc91\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot/efi\",\"device\":\"/dev/nvme0n1p1\",\"fs_type\":\"vfat\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"627900416\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9125ee36fabffdce\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/boot\",\"device\":\"/dev/nvme0n1p2\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1006632960\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:409682490a986ceb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/dev/shm\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:541ea1c39c0d7486\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/tmp\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"1425989632\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:904a68a2e3304bcb\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/\",\"device\":\"/dev/mapper/klas-root\",\"fs_type\":\"xfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"21416116224\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:f9d055f13bdb276c\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/sys/firmware/efi/efivars\",\"device\":\"efivarfs\",\"fs_type\":\"efivarfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"262128\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:c6b559379cd7bde5\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]},{\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"buckets\":[{\"contract_version\":\"1.0.0\",\"metric\":{\"id\":\"host.filesystem.size_bytes\",\"semantic_version\":\"1.0.0\"},\"unit\":\"By\",\"dimensions\":{\"mount\":\"/run\",\"device\":\"tmpfs\",\"fs_type\":\"tmpfs\"},\"window\":{\"from\":\"2026-10-24T00:56:17.568Z\",\"to\":\"2026-10-24T00:57:17.568Z\"},\"value\":{\"encoding\":\"uint64\",\"value\":\"570396672\"},\"quality\":{\"status\":\"good\",\"reason\":\"none\"},\"accuracy\":\"exact\",\"coverage\":1,\"freshness\":\"fresh\",\"observed_at\":\"2026-10-24T00:57:03.296Z\",\"sample_count\":1,\"sources\":[{\"id\":\"sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2\",\"source\":{\"attempt_id\":\"1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem\",\"binding_id\":\"server:3\",\"collector_id\":\"linux-filesystem\",\"metric_binding_id\":\"server:3:host.filesystem.size_bytes:9ab05e7cf1c300f8\"},\"versions\":{\"contract\":\"1.0.0\",\"package_id\":\"linux-host\",\"config_revision\":3,\"package_version\":\"1.1.0\",\"transform_version\":\"1.0.0\"}}]}]}]}],\"migrations\":[]},\"summary\":\"已获取标准指标，请按定义解释数值\",\"next_actions\":[],\"artifacts\":{},\"policyDecision\":{\"allow\":true,\"reasonCode\":\"ALLOW\",\"actor\":{\"userId\":1,\"username\":\"investigation-actor-1\",\"roles\":[]},\"tool\":\"query_metrics\",\"resource\":{\"type\":\"server\",\"serverId\":3},\"requestId\":\"investigation:4b228ba5-d97a-43a0-9680-3f6ec30a3a9f\"}}",
+        "tool_call_id": "call_00_exFkSR8pMtWMvaPS5b0r9075"
+      },
+      "source": "fact",
+      "status": "completed",
+      "turnId": "8289e02b-be65-430c-bac0-92babe24b659",
+      "durable": {
+        "kind": "checkpoint",
+        "reference": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113"
+      },
+      "version": 1,
+      "projectionMessageId": "cp_1a307476f7c670aee5be7c9d203a46a341aedb3eb361b201cf7afb4bee8ce113"
+    },
+    "tool_call_id": "call_00_exFkSR8pMtWMvaPS5b0r9075"
+  },
+  "normalizedPoints": [
+    {
+      "id": "sha256:0109345d36b8f214df0e9176abfeb0b745c6bd66ea3bb5352cd5c21fb13843b4",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "627900416",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:9125ee36fabffdce"
+      },
+      "lineage": [
+        {
+          "id": "sha256:aa03da11d890137b22bbf1811114264c25c1da8d05dc3eae18d79af5f8a0f5a7",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/boot/efi",
+        "device": "/dev/nvme0n1p1",
+        "fs_type": "vfat"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:0f40537ebc677b01952f291b9d7005734918e995c07fbf5bb32e8e2f3542bc58",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "262128",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:c6b559379cd7bde5"
+      },
+      "lineage": [
+        {
+          "id": "sha256:0bf958323a6b61ae99b4e81811a0b2b35a34fc49186474189083382c21905e1f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/sys/firmware/efi/efivars",
+        "device": "efivarfs",
+        "fs_type": "efivarfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:29eb792c4508aafcc17b8c39f7b6555df6aad2254aef23ce0e9b352a9c9d8efe",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "4194304",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:67c15dde9448e363"
+      },
+      "lineage": [
+        {
+          "id": "sha256:33e800a807b2017a26efcf36c48b071b0b37ca7e31af14a60b6b64e91a9504a4",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/sys/fs/cgroup",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:2b40b0bca1c8e8a610b2c59b4f34be7d8d581cf704269154dd9b687fa6713fd7",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "570396672",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:9ab05e7cf1c300f8"
+      },
+      "lineage": [
+        {
+          "id": "sha256:64c75679bb203f661b2914a205df4e7a6e7c5d372b0db717cd4567d8068d9881",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:2b448971d945618bd6abd28fceb83d76b3beeffa0717aa9d8055f7b504472dc8",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "285196288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:6ca748ac7e3dbc91"
+      },
+      "lineage": [
+        {
+          "id": "sha256:b9281d205d2d84ebaf1cc492b015d6ca40bffc2135a3b1cb9fc9552961e89aee",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run/user/991",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:365c992a88edc30a33b2c48736f62ffe849ec83b51237530cf46093c5d3791c9",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "372297728",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:409682490a986ceb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:1d2eeebf31580191c5d1774fe80afd4ee4f5f3e063a7715cbab4c934a8b00814",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/boot",
+        "device": "/dev/nvme0n1p2",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:38ebf8d815ed7d05a2904b45d055e8d14cab62d09bdae20d047704ed51e82660",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "627900416",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:9125ee36fabffdce"
+      },
+      "lineage": [
+        {
+          "id": "sha256:b3750755102fd1783b0a9e8e476b8d12f7c849ff51b507c887d39492f5f57916",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/boot/efi",
+        "device": "/dev/nvme0n1p1",
+        "fs_type": "vfat"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:3e951416ba0947230e11ec9ac4fbdb22f289c7ddf565e8d0815488d4714d06d9",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "7941128192",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:f9d055f13bdb276c"
+      },
+      "lineage": [
+        {
+          "id": "sha256:cffb37164d00f3304fe86a8bcc7ecbe3167f9703f69702598bb3a1961367c580",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/",
+        "device": "/dev/mapper/klas-root",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:3f1622fa1d44e4d7dd5f8b4d183b179fb4d3d892c76a1cd12cdb368d4558045a",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "52912128",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:904a68a2e3304bcb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:714a1cbe19849d1ce1cf3a066d093d9bd3aa709d16e0ae39fc2ce810b730bdc2",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/tmp",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:46f17269de1977c8210fee56de955a7ff144731b27a3088e87db1ba8c445bc31",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "372297728",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:409682490a986ceb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6ae6020882121a31dbfb75cfaa68063a23afd674731260e3b0cd2a017cecc639",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/boot",
+        "device": "/dev/nvme0n1p2",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:4831b67a068f9e8536a13b7623c130a9dbfb1c87e0c35f026bf5fdf98ce3382e",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "55480320",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:9ab05e7cf1c300f8"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6bb76e06f8abf25032155a424c1321ab08130886ac7d62771648440f85bd6e4e",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:48bb5f542f53b708145762b6448da4048ef92fc66b070d5630c5b493056d9c61",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1425989632",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:904a68a2e3304bcb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:28ffbb44609a56e4aae1fcfda5ffd1ea63010da26c4e9125967a4e4e9af64824",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/tmp",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:4b8b00cddcb15d4e84e7a79aced86bb527abea57845ea0857c8c59bd71182416",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "33546",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:c6b559379cd7bde5"
+      },
+      "lineage": [
+        {
+          "id": "sha256:20af35415e9e7448d467e2afbfd13b728fa9a2c69050fb138b270e9a2d08654f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/sys/firmware/efi/efivars",
+        "device": "efivarfs",
+        "fs_type": "efivarfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:4dd2dd35ac8fde74a35707178f8cf9e9b91f64cdff4ecf058ce45c53897425c2",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1006632960",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:409682490a986ceb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:9cd13eb3b29a81fd9e009bcab182b7c26794785896816b6f846fdf4c407d123e",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/boot",
+        "device": "/dev/nvme0n1p2",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:526eec26a234113fbfba956388b6d3557e78d3412ef0783de81578d872a55299",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:541ea1c39c0d7486"
+      },
+      "lineage": [
+        {
+          "id": "sha256:412716f483156cc0a628ec4eb87ba9e85613a1de40127b546f17052fd0fc7fa9",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/dev/shm",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:52d69f1d90bd0621dfbd3695fd6df0d0a41612ea36b0aa1714f7520db9727224",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "285196288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:e156fff170861a1a"
+      },
+      "lineage": [
+        {
+          "id": "sha256:918d6e152e938fb5dcb208c302384cce931f2af842144f38860992b3a609e6cb",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run/user/0",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:5a4a7ec7dbaeadd87c2bf42998458f8f94ab220283bae6a68b5d9564b991e781",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1006632960",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:409682490a986ceb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:7eb4242ef70150c90cf31f4c52db460145ec72bf6a8481dc6c81d1a94df17d67",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/boot",
+        "device": "/dev/nvme0n1p2",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:5cfb41f22d75a97b262a6ca3f4724c7ecfe7cafa986ff51cb1cddc8b36e9ab62",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "52912128",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:904a68a2e3304bcb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:4a71e11488c0212c2eafcf71c68af80dc5bd6ea1ac9ccb9751a6209ce290384f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/tmp",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:5ea7044584ec070068f393524f2fa333d645d26d02704da16264d428da6a3ec4",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "12288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:6ca748ac7e3dbc91"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ca546bb1d0aaece11fbb844e80b1cced7bee97ae317b3294f40a464c205c67f9",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run/user/991",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:6177805aa0c20aee045a1bb2b002dd1e4cdb8085e516c503b6f53d51df97d933",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "7941099520",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:f9d055f13bdb276c"
+      },
+      "lineage": [
+        {
+          "id": "sha256:dc93b8a75aba0c102fce3879fc84b438ccc2687f31e7d7d87541b03980991796",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/",
+        "device": "/dev/mapper/klas-root",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:69eef469fcc60bfed2c58645cb81b2ffa06163aa6492336a44cf2987f385de9b",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "7421952",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:9125ee36fabffdce"
+      },
+      "lineage": [
+        {
+          "id": "sha256:77d5f70f64760427ec535a09297aa81582735bb934fb945521d13450f102c482",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/boot/efi",
+        "device": "/dev/nvme0n1p1",
+        "fs_type": "vfat"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:7530c28a4c96b7bb11180905a0f6c625a3f63209e418cf6b14575eb5d6ef1471",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1425989632",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:541ea1c39c0d7486"
+      },
+      "lineage": [
+        {
+          "id": "sha256:74b858fa537a7a102458384c3430c1e89aead0ee5eee24b0469ca91b23523aaf",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/dev/shm",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:78a93166b313aab63f64ef4b130bb9ac7b96b96ac85a27658dc4929f010f4e6b",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:67c15dde9448e363"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ed088a3324d5c5cdf8103b897b61bc0389b248bbffc60f89dbdbf6e4399b21eb",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/sys/fs/cgroup",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:7e0c174a4a1060ba598a63f88387b9a05b772323e66b0a5078b0ef99c33e794e",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:67c15dde9448e363"
+      },
+      "lineage": [
+        {
+          "id": "sha256:9a79190d1669a3569e28b11ca4373ddee70f532e2b27f43d4f93a7debfcca457",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/sys/fs/cgroup",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:8206d0fb720db877bd4695d936774bf141eb32cbd49b189b2c3679390151e94a",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "285196288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:e156fff170861a1a"
+      },
+      "lineage": [
+        {
+          "id": "sha256:cf85d684d70e0ee8ff1a395534286e340c69d51d56609924317e63c9df1d4561",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run/user/0",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:8cdba25314b347d57ee4b80b89e9f525fa7ceb8124ae6799fa020cb299dd33c6",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1425989632",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:541ea1c39c0d7486"
+      },
+      "lineage": [
+        {
+          "id": "sha256:880ecba139adb8f1625364f087c532522487285bf0b1dfea8dcc9f6c6d7a4802",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/dev/shm",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:9a839ede0f88ade08f36ec33c953a2614df3b21b0d00113f08d3d14f3387df03",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "7421952",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:9125ee36fabffdce"
+      },
+      "lineage": [
+        {
+          "id": "sha256:01f02e6c2a67750aeb1c6fd6d7550d979fefa629cd43cdc58342ed193060d98f",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/boot/efi",
+        "device": "/dev/nvme0n1p1",
+        "fs_type": "vfat"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:a7d7de3abe7cf2bb5bb0826592465c9b29cf91778e09ed386a14a84716ce59f2",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "55480320",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:9ab05e7cf1c300f8"
+      },
+      "lineage": [
+        {
+          "id": "sha256:72479dd30567fbd40fd7f2e1dde4b29f4c86d1fa6be314b017ea974c6e12ea09",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:aa7561ffdfdca563beac704ad4d53dfd333ef3bb2b46ce82738488613c04d0f7",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "53248",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:e156fff170861a1a"
+      },
+      "lineage": [
+        {
+          "id": "sha256:84dd01195998b2bf78332fb3240b2febf1c0854d07a49f1fd0a05732aa7a071d",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run/user/0",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:b8e73f9469320595252d59f9962f692dd3391b7d9ae967cf55d2d333f77722ef",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "21416116224",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:f9d055f13bdb276c"
+      },
+      "lineage": [
+        {
+          "id": "sha256:526ae875421a2b8da3db5ea96821544729ea39fa00f4ad38b80cac6d490e299d",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/",
+        "device": "/dev/mapper/klas-root",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:bb4e535804ee0cc3f9d57b06118604c4b792440451e93c72bf0b96c471b3aac9",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:a0fd83f1be8feafd"
+      },
+      "lineage": [
+        {
+          "id": "sha256:02f0ef49e270a9f4a6866671ef9937057f21bc0d4b4be3b95f2cc32cc5ad3925",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/dev",
+        "device": "devtmpfs",
+        "fs_type": "devtmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:bdb5bb20b574e68e7c48069279604c10475c0c5f1702bd8d9db418331073ce6d",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "33546",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:c6b559379cd7bde5"
+      },
+      "lineage": [
+        {
+          "id": "sha256:9642c3168abe2fcf4bde20ebec8049fc1509be0bf1e8f9d7f7f346b577692d98",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/sys/firmware/efi/efivars",
+        "device": "efivarfs",
+        "fs_type": "efivarfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:cc8bc3cac8e0970f81985403abc547bcbeb3a437c68b839bf8faf6884359247f",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:541ea1c39c0d7486"
+      },
+      "lineage": [
+        {
+          "id": "sha256:1c9e70cb7de507e1bce362151706d6bab90be322e6e6a934d3ad0a1e894b78b7",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/dev/shm",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:d4298e85adca0b8b2a7e5771b07091e6baea5793639f3f229fe531fed033bb45",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "12288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:6ca748ac7e3dbc91"
+      },
+      "lineage": [
+        {
+          "id": "sha256:c2e3c2746566089cd72cc45c44aec3bf02ba8eb7dd24d31a982f24651c2c3b03",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run/user/991",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:d563eef55d93bed0d741f7fdda7a5f067156419784f311aba8364c0903e1cf85",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "1425989632",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:904a68a2e3304bcb"
+      },
+      "lineage": [
+        {
+          "id": "sha256:91ac7492945ccfbba858b824142bb672bf8895e35b68dc1c562844d2302566f9",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/tmp",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:e26798e327b958b0337402618b9b6e95a9ef68e0cef408b8a0b1aa19c404c65b",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "262128",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:c6b559379cd7bde5"
+      },
+      "lineage": [
+        {
+          "id": "sha256:5a1b5a7467e5082bd331749f104233e709a46ced96753761a6add0edd0b8e865",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/sys/firmware/efi/efivars",
+        "device": "efivarfs",
+        "fs_type": "efivarfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:e3bc26c9b17d57e2b44d8ec71197ee5a8ffebc6eacfb998b01fbe71223cfb65d",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "285196288",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:6ca748ac7e3dbc91"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6f29196ac1ae79455a9301a59726df932db2b801fc013311a2f7f2998a148e51",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run/user/991",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:e548afc9ba22da01d5751d28bb970d68aeab4aa2a750a443ebe12de8ad2fa73d",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "4194304",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:a0fd83f1be8feafd"
+      },
+      "lineage": [
+        {
+          "id": "sha256:c1d0332a54962fcfc5e10974b0c7996dd2fa2fd6f4774eed0906306be4c2e438",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/dev",
+        "device": "devtmpfs",
+        "fs_type": "devtmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:f1311c3072c844c79eb17fb940c290241b59f28ce77e37eed92d474167c9f7a2",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "570396672",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:9ab05e7cf1c300f8"
+      },
+      "lineage": [
+        {
+          "id": "sha256:8415cb2d4b13fc25423be0fb23fcbcddb7b13a08c083d63a5aa0bd00a9298af5",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/run",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:f93e251a1f037481b24046bb2cda8f1efb3782694a663d8e98dde4aa6c5d3cb5",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "53248",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:e156fff170861a1a"
+      },
+      "lineage": [
+        {
+          "id": "sha256:ab2648acf5f2caeeed1398d07c19c27cdedeea4e793c12ca9121cc99b63c61ec",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/run/user/0",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:f94892788b78c331258f32a6561db629881f157aec14d067bda0747f6c96fc77",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "4194304",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:67c15dde9448e363"
+      },
+      "lineage": [
+        {
+          "id": "sha256:7121f2f1ec839073ef3843c120715c0b5361a08f1d8b12e0b983c6da706f3360",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/sys/fs/cgroup",
+        "device": "tmpfs",
+        "fs_type": "tmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:f9c1a7d100e7e43d7bfea3ccde7ba50634cd492fd0dd2df596f281646e4a19aa",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "21416116224",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:f9d055f13bdb276c"
+      },
+      "lineage": [
+        {
+          "id": "sha256:891c0cb7d1bcefedec1021f469989eb90c84e6dab3ae5deb64a27d68ce7d6fc0",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/",
+        "device": "/dev/mapper/klas-root",
+        "fs_type": "xfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:fb9ea1b145ab385c54f2d60a08bad0acba30580bd181dd5347145489e8e02fc1",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "4194304",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.size_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "1c4c50ad-0513-41c2-a8fa-5497dd4a03d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.size_bytes:a0fd83f1be8feafd"
+      },
+      "lineage": [
+        {
+          "id": "sha256:6510d8bb7effc27db017b63194971fee49158c7ce2c6ad6bfb07a4e43d45aa36",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:57:07.048Z",
+      "dimensions": {
+        "mount": "/dev",
+        "device": "devtmpfs",
+        "fs_type": "devtmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:57:03.296Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:57:04.744Z",
+      "resource_type": "server"
+    },
+    {
+      "id": "sha256:fbea66f62f6522b0d1d420a358717b087525c02c107fca36b71594c67bb9ab3c",
+      "unit": "By",
+      "stage": "normalized",
+      "value": {
+        "value": "0",
+        "encoding": "uint64"
+      },
+      "metric": {
+        "id": "host.filesystem.used_bytes",
+        "semantic_version": "1.0.0"
+      },
+      "source": {
+        "attempt_id": "2bb57ebe-05f0-43a4-b41a-234ae8b803d9:1:linux-filesystem",
+        "binding_id": "server:3",
+        "collector_id": "linux-filesystem",
+        "metric_binding_id": "server:3:host.filesystem.used_bytes:a0fd83f1be8feafd"
+      },
+      "lineage": [
+        {
+          "id": "sha256:a9e32d77b1de1a6fb13b9fa85a763a450215e338a78b99c7c730f2329ac19754",
+          "stage": "raw"
+        }
+      ],
+      "quality": {
+        "reason": "none",
+        "status": "good"
+      },
+      "accuracy": "exact",
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "linux-host",
+        "config_revision": 3,
+        "package_version": "1.1.0",
+        "transform_version": "1.0.0"
+      },
+      "stored_at": "2026-10-24T00:56:01.556Z",
+      "dimensions": {
+        "mount": "/dev",
+        "device": "devtmpfs",
+        "fs_type": "devtmpfs"
+      },
+      "production": "measured",
+      "observed_at": "2026-10-24T00:55:57.220Z",
+      "resource_id": "3",
+      "collected_at": "2026-10-24T00:55:58.835Z",
+      "resource_type": "server"
+    }
+  ]
+}
