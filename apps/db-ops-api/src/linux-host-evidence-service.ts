@@ -31,6 +31,9 @@ export interface FilesystemEvidence {
   inodeUsed: number | null;
   inodeAvailable: number | null;
   inodeUsagePercent: number | null;
+  /** false when df -i reports "-" (the filesystem has no inode accounting);
+   * undefined when no inode row was returned at all. */
+  inodeSupported?: boolean;
 }
 
 export interface SystemLogEvidence {
@@ -143,6 +146,19 @@ interface DfInodeRow {
   inodeUsagePercent: number;
 }
 
+/** df -i prints "-" for filesystems without inode accounting (efivarfs, some vfat).
+ * That is a capability fact, not a missing or zero value. */
+function parseDfInodeGaps(stdout: string): Set<string> {
+  const gaps = new Set<string>();
+  for (const line of stdout.split(/\r?\n/).slice(1, MAX_FILESYSTEMS + 1)) {
+    const match = /^(.*?)\s+(\d+)\s+(\d+)\s+(\d+)\s+-\s+(.+)$/.exec(line.trim());
+    if (match && finiteInteger(match[2]) === 0 && finiteInteger(match[3]) === 0 && finiteInteger(match[4]) === 0) {
+      gaps.add(decodeGnuPath(match[5]));
+    }
+  }
+  return gaps;
+}
+
 function finiteInteger(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
   const parsed = Number(value);
@@ -205,6 +221,7 @@ export function parseFilesystemEvidence(
   findmntOutput = '',
 ): FilesystemEvidence[] {
   const inodeByMount = new Map(parseDfInodes(inodeOutput).map((row) => [row.mount, row]));
+  const inodeGaps = parseDfInodeGaps(inodeOutput);
   const findmntByMount = parseFindmnt(findmntOutput);
   return parseDfBytes(bytesOutput).map((row) => {
     const inode = inodeByMount.get(row.mount);
@@ -217,6 +234,7 @@ export function parseFilesystemEvidence(
       inodeUsed: inode?.inodeUsed ?? null,
       inodeAvailable: inode?.inodeAvailable ?? null,
       inodeUsagePercent: inode?.inodeUsagePercent ?? null,
+      ...(inodeGaps.has(row.mount) ? { inodeSupported: false } : {}),
     };
   });
 }

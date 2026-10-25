@@ -19,7 +19,7 @@ export const SummaryValueSchema = z.strictObject({
 export const MetricValueSchema = z.union([ScalarValueSchema, HistogramValueSchema, SummaryValueSchema]);
 export const QualitySchema = z.strictObject({
   status: z.enum(['good', 'partial', 'unknown', 'invalid']),
-  reason: z.enum(['none', 'partial_input', 'legacy_unknown', 'counter_baseline', 'counter_reset', 'counter_wrap', 'gap', 'missing_input', 'invalid_denominator', 'precision_loss', 'source_error', 'clock_skew', 'cardinality_exceeded']),
+  reason: z.enum(['none', 'partial_input', 'legacy_unknown', 'counter_baseline', 'counter_reset', 'counter_wrap', 'gap', 'missing_input', 'invalid_denominator', 'precision_loss', 'source_error', 'clock_skew', 'cardinality_exceeded', 'not_applicable']),
 });
 export const AccuracySchema = z.enum(['exact', 'estimated', 'unknown']);
 export const ProductionSchema = z.enum(['measured', 'derived']);
@@ -35,6 +35,8 @@ export const CollectionAttemptSchema = z.strictObject({
   config_revision: z.number().int().positive(), started_at: TimestampSchema, ended_at: TimestampSchema.optional(),
   status: z.enum(['running', 'succeeded', 'partial', 'failed', 'cancelled']),
   error: z.enum(['timeout', 'permission_denied', 'connection_error', 'parse_error', 'cancelled']).nullable(),
+  /** Stable, non-secret reason inside error; absent when the coarse code is enough. */
+  evidence_code: z.string().regex(/^[A-Z][A-Z0-9_]{2,63}$/).optional(),
   observation_ids: z.array(IdSchema),
 });
 export const CounterEvidenceSchema = z.strictObject({

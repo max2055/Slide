@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { unfenceJson } from '@slide/agent-core';
 import type { InvestigationResult } from './contracts.js';
 
 const text = z.string().trim().min(1).max(2000);
@@ -29,20 +30,13 @@ FS full resource/mount/device/fs_type;raw used/size,unit,observed_at,quality/acc
 Support THIS run's tool_call_id(even without contextReference)/bound current_execution_evidence;nonempty supportingToolCallIds per claim else unresolvedQuestions. No runtime_*/old/omitted/planning summaries as evidence/authority;hypotheses unverified;unknown never healthy.
 Exact final contract (strict publication subset; unknown fields reject analysis): ${JSON.stringify(z.toJSONSchema(providerSchema))}`;
 
-/** One unambiguous JSON code fence is presentation, not a relaxed contract;
- * prose or trailing text around the fence still rejects the answer. */
-function unfence(content: string): string {
-  const trimmed = content.trim();
-  return /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(trimmed)?.[1] ?? trimmed;
-}
-
 /** The model supplies text, never authority or database identities. References
  * resolve exclusively through available evidence from the terminal execution. */
 export function modelAnalysis(content: string, evidence: readonly any[]): Pick<InvestigationResult,
   'summary' | 'claims' | 'hypotheses' | 'unresolvedQuestions' | 'recommendations'> | null {
   let input: unknown;
   if (Buffer.byteLength(content) > 128_000) return null;
-  try { input = JSON.parse(unfence(content)); } catch { return null; }
+  try { input = JSON.parse(unfenceJson(content)); } catch { return null; }
   const parsed = schema.safeParse(input);
   if (!parsed.success) return null;
   const bindings = new Map<string, string>();

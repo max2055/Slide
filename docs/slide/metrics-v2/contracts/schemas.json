@@ -314,7 +314,8 @@
               "precision_loss",
               "source_error",
               "clock_skew",
-              "cardinality_exceeded"
+              "cardinality_exceeded",
+              "not_applicable"
             ]
           }
         },
@@ -1069,6 +1070,10 @@
             "type": "null"
           }
         ]
+      },
+      "evidence_code": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
       },
       "observation_ids": {
         "type": "array",
@@ -3396,7 +3401,8 @@
                         "precision_loss",
                         "source_error",
                         "clock_skew",
-                        "cardinality_exceeded"
+                        "cardinality_exceeded",
+                        "not_applicable"
                       ]
                     }
                   },
@@ -4213,7 +4219,8 @@
               "precision_loss",
               "source_error",
               "clock_skew",
-              "cardinality_exceeded"
+              "cardinality_exceeded",
+              "not_applicable"
             ]
           }
         },
@@ -4659,7 +4666,8 @@
           "precision_loss",
           "source_error",
           "clock_skew",
-          "cardinality_exceeded"
+          "cardinality_exceeded",
+          "not_applicable"
         ]
       }
     },
@@ -4786,7 +4794,8 @@
               "precision_loss",
               "source_error",
               "clock_skew",
-              "cardinality_exceeded"
+              "cardinality_exceeded",
+              "not_applicable"
             ]
           }
         },

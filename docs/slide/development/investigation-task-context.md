@@ -38,3 +38,20 @@ Ops 完整回答使用受限 JSON 分析格式，服务端只将当前执行的�
 普通发送附带当前剩余工具/Provider 额度的临时运行提示。工具额度为零时，
 仅本次请求不提供工具定义，让模型依据已有证据回答；原执行、用量、工具及
 最终上下文门禁保持有效。若 Provider 仍请求工具，原工具预算拒绝执行。
+
+## 部署映射与版本管理
+
+`INVESTIGATION_*` 只写进 `.env` 不会进入容器：`compose.production.yaml` 默认不转发这些变量。
+需要调整时，使用版本库中的 `deploy/compose.investigation.example.yaml` 叠加部署：
+
+```bash
+docker compose -p <project> --env-file <protected-env> \
+  -f compose.production.yaml -f deploy/compose.investigation.yaml up -d api
+```
+
+- 未配置相应变量时就删掉整行；空字符串会被拒绝（`INVESTIGATION_CONTEXT_CONFIGURATION`）。
+- 示例值来自一次验收样本，不是已证明的最小值；窗口/输出必须落在 Provider 已声明能力内，
+  并保证窗口预留不超过累计预算（`INVESTIGATION_MAX_TOKENS`），否则会以 `TOKEN_BUDGET` 失败。
+- 压缩摘要的输出上限不得超过 Provider 的最大输出；过小会导致摘要被 `finishReason=length` 截断。
+- 密钥、TLS 私钥、数据库口令保存在受保护的持久位置，不进入仓库或示例文件。
+- 验收应从空容器重建：核实际生效的配置、Provider 可用性，并跑一次代表性调查。

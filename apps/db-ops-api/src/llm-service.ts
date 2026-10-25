@@ -54,7 +54,7 @@ export interface ProviderClient {
   config: LLMProvider;
 }
 
-class LLMService {
+export class LLMService {
   private providerClients: Map<string, ProviderClient> = new Map();
   private providers: Map<string, LLMProvider> = new Map();
   private defaultProviderName: string | null = null;
@@ -64,34 +64,35 @@ class LLMService {
    * 初始化服务（从数据库加载配置）
    */
   async initialize(): Promise<boolean> {
-    this.providerClients.clear();
-    this.providers.clear();
-    this.defaultProviderName = null;
-    this.initialized = false;
+    // Build into a temporary set and swap only on success: a failed reload must
+    // keep the previous working clients. One bad Provider is isolated instead of
+    // taking the whole service down; using it later still fails explicitly.
+    const providers = new Map<string, LLMProvider>();
+    const clients = new Map<string, ProviderClient>();
+    let defaultProviderName: string | null = null;
+    const unavailable: string[] = [];
     try {
-      const providers = await llmDatabaseService.getEnabledProviders();
-
-      for (const provider of providers) {
-        this.providers.set(provider.name, provider);
-
-        if (provider.is_default && !this.defaultProviderName) {
-          this.defaultProviderName = provider.name;
-        }
-
-        // 初始化客户端
-        const client = await this.createClient(provider);
-        if (client) {
-          this.providerClients.set(provider.name, client);
+      const enabled = await llmDatabaseService.getEnabledProviders();
+      for (const provider of enabled) {
+        if (provider.is_default && !defaultProviderName) defaultProviderName = provider.name;
+        try {
+          const client = await this.createClient(provider);
+          if (!client) { unavailable.push(provider.name); continue; }
+          clients.set(provider.name, client);
+          providers.set(provider.name, provider);
+        } catch (error: any) {
+          unavailable.push(provider.name);
+          console.error('[LLM] Provider 不可用:', provider.name, error?.message);
         }
       }
-
+      if (!clients.size) throw new Error('LLM_CREDENTIAL_NOT_CONFIGURED');
+      this.providers = providers;
+      this.providerClients = clients;
+      this.defaultProviderName = defaultProviderName;
       this.initialized = true;
-      console.log(`[LLM] 已加载 ${providers.length} 个提供商`);
+      console.log(`[LLM] 已加载 ${enabled.length} 个提供商${unavailable.length ? `，不可用: ${unavailable.join(',')}` : ''}`);
       return true;
     } catch (error: any) {
-      this.providerClients.clear();
-      this.providers.clear();
-      this.defaultProviderName = null;
       console.error('[LLM] 初始化失败:', error.message);
       return false;
     }
@@ -109,9 +110,8 @@ class LLMService {
    * 重新加载 Provider 配置
    */
   async reloadConfig(): Promise<void> {
-    this.providerClients.clear();
-    this.providers.clear();
-    this.defaultProviderName = null;
+    // initialize() swaps only after a complete successful load, so the previous
+    // clients survive a failed reload.
     if (!await this.initialize()) throw new Error('LLM_CONFIGURATION_UNAVAILABLE');
   }
 

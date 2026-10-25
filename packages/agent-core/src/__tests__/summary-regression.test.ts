@@ -26,6 +26,7 @@ it("summary responses require durable matched disposition", async () => {
   };
   for (const kind of [
     "valid",
+    "fence",
     "json",
     "schema",
     "length",
@@ -43,7 +44,8 @@ it("summary responses require durable matched disposition", async () => {
       shouldExecuteTools: false,
       usage: { prompt_tokens: 11, completion_tokens: 7 },
     };
-    if (kind === "json") response.content = "```json\n" + response.content + "\n```";
+    if (kind === "fence") response.content = "```json\n" + response.content + "\n```";
+    if (kind === "json") response.content = "not json";
     if (kind === "schema" || kind === "rejected-save") response.content = "{}";
     if (kind === "length") response.finishReason = "length";
     if (kind === "tool") {
@@ -120,8 +122,8 @@ it("summary responses require durable matched disposition", async () => {
         const receipt = receipts[0];
         assert.equal(receipt.id, options.requestIdentity.id);
         assert.match(receipt.responseHash, /^[a-f0-9]{64}$/);
-        assert.equal(receipt.status, kind === "valid" || kind === "save" ? "accepted" : "rejected");
-        if (kind === "valid") {
+        assert.equal(receipt.status, kind === "valid" || kind === "fence" || kind === "save" ? "accepted" : "rejected");
+        if (kind === "valid" || kind === "fence") {
           assert(!error);
           assert.deepEqual(manager.summary.summary, valid);
         } else {

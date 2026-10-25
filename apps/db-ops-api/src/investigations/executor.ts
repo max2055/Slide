@@ -1,5 +1,5 @@
 import { allocationHash, readExecutionAllocation, taskExecutionConfiguration, type FrozenExecutionAllocation, type TaskExecutionConfiguration } from './execution-allocation.js';
-import {acknowledgeSummary, summaryRejection, responseHash as canonicalReceiptHash} from '@slide/agent-core';
+import {acknowledgeSummary, parseSummaryJson, summaryRejection, responseHash as canonicalReceiptHash} from '@slide/agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import { metricDiscoveryPage } from '../metrics/consumers/discovery.js';
 import type { Pool } from 'mysql2/promise';
@@ -368,7 +368,7 @@ export function investigationExecutionEvidence(source: readonly Message[], state
     if (state.usageUnknown || receipt?.status !== 'accepted' || receipt.purpose !== 'summary'
       || receipt.sourceHash !== sourceHash || summary.sourceHash !== sourceHash || !receipt.response
       || receipt.responseHash !== canonicalReceiptHash(receipt.response) || summaryRejection(receipt.response)
-      || canonicalReceiptHash(summary.summary) !== canonicalReceiptHash(JSON.parse(receipt.response.content))) return result;
+      || canonicalReceiptHash(summary.summary) !== canonicalReceiptHash(parseSummaryJson(receipt.response.content))) return result;
   }
   for (let i = 0; i < source.length; i++) {
     const assistant = source[i];

@@ -1,4 +1,4 @@
-import { test, expect, firefox, type BrowserContext } from '@playwright/test';
+import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,15 +22,30 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
       '-CAcreateserial', '-days', '1', '-extfile', 'extensions', '-out', 'server.crt']);
     env = await startInvestigationServer({ syntheticPromptTokens: 20,
       tls: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')) } });
+    // Chromium on Linux reads NSS from $HOME/.pki/nssdb. Give each profile its own
+    // HOME; never disable certificate checks.
+    const nss = async (name: string, withCa: boolean) => {
+      const home = join(directory, name);
+      const database = join(home, '.pki', 'nssdb');
+      await mkdir(database, { recursive: true });
+      command('certutil', ['-N', '--empty-password', '-d', `sql:${database}`]);
+      if (withCa) command('certutil', ['-A', '-d', `sql:${database}`, '-n', 'Slide isolated test CA', '-t', 'C,,', '-i', 'ca.crt']);
+      return { home, database };
+    };
     // Negative control: same browser and endpoint, no imported CA.
-    context = await firefox.launchPersistentContext(join(directory, 'untrusted'), { headless: true, timeout: 20_000, ignoreHTTPSErrors: false });
+    const untrustedProfile = await nss('untrusted', false);
+    context = await chromium.launchPersistentContext(join(directory, 'untrusted-profile'), {
+      headless: true, timeout: 20_000, ignoreHTTPSErrors: false,
+      env: { ...process.env, HOME: untrustedProfile.home, NSS_DEFAULT_DB_TYPE: 'sql' },
+    });
     const untrusted = await context.newPage();
-    await expect(untrusted.goto(env.url)).rejects.toThrow(/SEC_ERROR_UNKNOWN_ISSUER|SSL|certificate/i);
+    await expect(untrusted.goto(env.url)).rejects.toThrow(/ERR_CERT_AUTHORITY_INVALID|SEC_ERROR_UNKNOWN_ISSUER|SSL|certificate/i);
     await context.close(); context = undefined;
-    const profile = join(directory, 'trusted'); await mkdir(profile);
-    command('certutil', ['-N', '--empty-password', '-d', `sql:${profile}`]);
-    command('certutil', ['-A', '-d', `sql:${profile}`, '-n', 'Slide isolated test CA', '-t', 'C,,', '-i', 'ca.crt']);
-    context = await firefox.launchPersistentContext(profile, { headless: true, timeout: 20_000, ignoreHTTPSErrors: false });
+    const trustedProfile = await nss('trusted', true);
+    context = await chromium.launchPersistentContext(join(directory, 'trusted-profile'), {
+      headless: true, timeout: 20_000, ignoreHTTPSErrors: false,
+      env: { ...process.env, HOME: trustedProfile.home, NSS_DEFAULT_DB_TYPE: 'sql' },
+    });
     // Keep the original JWT even when WS authority revocation clears browser auth.
     const originalToken = env.token();
     await context.addInitScript(({ token, actor }) => {
@@ -95,7 +110,7 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     })).status, { id, token: originalToken })).toBe(404);
     expect(errors).toEqual([]); expect(env.workerErrors).toEqual([]); expect(env.observationErrors).toEqual([]);
     await writeFile(test.info().outputPath('trusted-tls.json'), JSON.stringify({
-      trust: 'isolated Firefox NSS CA; certificate errors enabled; untrusted profile rejected',
+      trust: 'isolated Chromium NSS CA; certificate errors enabled; untrusted profile rejected',
       secureContext: true, sameOriginWssConnections: bidirectional.length, attemptedConnections: agentSockets.length,
       ordinaryChatReply: true,
       completedResults: 2, offlineSeconds: 5, reconnectReplayed: false,

@@ -96,7 +96,10 @@ export class ContextManager {
     return this.contextConfig.contextWindowTokens;
   }
   assertFits(messages: Message[], limit = this.inputBudget, tools?: unknown[]): void {
-    if (this.tokens(messages, tools) > limit) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Protected context exceeds input budget');
+    const projected = this.tokens(messages, tools);
+    // Keep the stage and both numbers: operators need to know whether the tool
+    // batch, history or the window itself made the request unadmittable.
+    if (projected > limit) throw new RuntimeError('CONTEXT_UNRECOVERABLE', `Protected context exceeds input budget (${projected} > ${limit})`);
   }
   /** Shared ordinary-send planning; final request admission remains independent. */
   shouldCompact(raw: Message[], requestSuffix: Message[] = []): boolean {

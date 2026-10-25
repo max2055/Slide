@@ -212,7 +212,10 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     const rows=parseFilesystemEvidence(results[0].stdout,results[1].exitCode===0?results[1].stdout:'',results[2].exitCode===0?results[2].stdout:'');
     if(rows.length>maxRows)throw new AdapterError('parse_error');
     return rows.map(row=>({dimensions:{mount:row.mount,device:row.device,fs_type:row.fsType??'unknown'},fields:{available:exactCounter(row.availableBytes),
-      inode_usage:row.inodeUsagePercent===null?null:{encoding:'float64',value:row.inodeUsagePercent}}}));
+      inode_usage:row.inodeUsagePercent===null?null:{encoding:'float64',value:row.inodeUsagePercent}},
+      // "-" from df -i means this filesystem has no inode accounting; say so
+      // instead of reporting a generic source error.
+      ...(row.inodeSupported === false ? {field_evidence:{inode_usage:{quality:{status:'unknown' as const,reason:'not_applicable' as const}}}} : {})}));
   }
   if (id === 'builtin:linux.network-diagnostics.v1' && transport.method === 'ssh') {
     const snapshot = await hostNetworkSnapshot(evidence, transport, timeoutMs);
