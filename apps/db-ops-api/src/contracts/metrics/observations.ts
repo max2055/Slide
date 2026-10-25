@@ -19,7 +19,7 @@ export const SummaryValueSchema = z.strictObject({
 export const MetricValueSchema = z.union([ScalarValueSchema, HistogramValueSchema, SummaryValueSchema]);
 export const QualitySchema = z.strictObject({
   status: z.enum(['good', 'partial', 'unknown', 'invalid']),
-  reason: z.enum(['none', 'partial_input', 'legacy_unknown', 'counter_baseline', 'counter_reset', 'counter_wrap', 'gap', 'missing_input', 'invalid_denominator', 'precision_loss', 'source_error', 'clock_skew', 'cardinality_exceeded']),
+  reason: z.enum(['none', 'partial_input', 'legacy_unknown', 'counter_baseline', 'counter_reset', 'counter_wrap', 'gap', 'missing_input', 'invalid_denominator', 'precision_loss', 'source_error', 'clock_skew', 'cardinality_exceeded', 'not_applicable']),
 });
 export const AccuracySchema = z.enum(['exact', 'estimated', 'unknown']);
 export const ProductionSchema = z.enum(['measured', 'derived']);

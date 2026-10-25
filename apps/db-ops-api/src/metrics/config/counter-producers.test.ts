@@ -158,3 +158,19 @@ describe('network rows carry the same moment as their fresh generation', () => {
     }
   });
 });
+
+it('reports filesystems without inode accounting as not applicable', async () => {
+  const bytes = 'Filesystem 1-blocks Used Available Use% Mounted on\n/dev/x 100 40 60 40% /\n/dev/y 100 1 99 1% /boot/efi\n';
+  const inodes = 'Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/x 100 10 90 10% /\n/dev/y 0 0 0 - /boot/efi\n';
+  const mounts = '/dev/x / xfs\n/dev/y /boot/efi vfat\n';
+  const transport = { method: 'ssh' as const, client: undefined as never, pool: { execCommands: async (_client: unknown, commands: string[]) => {
+    const outputs = [bytes, inodes, mounts];
+    return commands.map((_command, index) => ({ stdout: outputs[index], stderr: '', exitCode: 0, signal: null, truncated: false }));
+  } } };
+  const rows = await collectFixed('builtin:linux.filesystem-diagnostics.v1', transport as Extract<Transport, { method: 'ssh' }>, {}, 1000, 100);
+  const efi = rows.find(row => row.dimensions.mount === '/boot/efi')!;
+  expect(efi.fields.inode_usage).toBeNull();
+  expect(efi.field_evidence?.inode_usage).toEqual({ quality: { status: 'unknown', reason: 'not_applicable' } });
+  const root = rows.find(row => row.dimensions.mount === '/')!;
+  expect(root.field_evidence?.inode_usage).toBeUndefined();
+});

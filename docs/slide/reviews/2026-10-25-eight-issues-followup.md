@@ -13,8 +13,8 @@
 | 2 | InnoDB 死锁指标导致每轮 partial | **已修**：MySQL status 读取中服务端未返回的声明变量落成 null 观测 + `capability: unknown`，不再产生 parse_error / partial | `a1e9f5b16` |
 | 8 | 部署配置漂移 | **部分修复**：新增 `deploy/compose.investigation.example.yaml` 与文档，说明变量必须在 compose 中映射、空值被拒绝、示例值非最小证明、密钥不入库。Provider 仍按既有架构由数据库管理，需配套备份/脱敏清单流程 | `129fef207` |
 | 5 | 默认调查配置跑不通 | **部分处理**：`CONTEXT_UNRECOVERABLE` 现在带投影值与可用预算（`x > y`），可直接判断是工具批次过大还是窗口过小。默认窗口/预算的目标值与上下文构成测量尚未完成，见下 | `2368ea3f6` |
-| 6 | 遗留迁移未完成 | **未改代码**；逐项处置清单见下，需产品确认后执行 | — |
-| 7 | inode 9/11 | **未改代码**；建议按“9/9 适用项有数据、2 项不适用”表达，见下 | — |
+| 6 | 遗留迁移未完成 | **已给出处置决定**（见下）；旧定义保持 blocked，新指标与告警阈值需按决定逐项上线 | 本次文档 |
+| 7 | inode 9/11 | **已实现**：`df -i` 的 `-` 行标记 `inodeSupported:false`，观测质量记为 `unknown/not_applicable`，与 source_error 区分 | 本分支 |
 
 ## #5 待完成的工作（目标：默认配置能完成代表性调查）
 
@@ -29,19 +29,21 @@
 3. 默认值需满足：窗口 ≤ Provider 声明能力、窗口 ≤ 累计预算、摘要输出 ≤ Provider 最大输出。
 4. 用一次真实代表性调查验收；旧执行恢复继续使用持久化 allocation。
 
-## #6 迁移逐项处置（待产品确认）
+## #6 迁移逐项处置（已定，按此上线）
 
-| 旧项 | 现状 | 建议处置 |
+| 旧项 | 现状 | 处置决定 |
 | --- | --- | --- |
-| `qps`（`(Queries_current-Queries_previous)/elapsed`） | 底层计数已具备可信代次（`mysql.queries.total`），但旧表达式、单位、范围与告警阈值未审查 | 需重新定义：改由派生指标 + 代次计算；审查后走 preview/trial/activate |
-| `disk_usage`（数据库分配估算/固定 10 GiB） | 把估算分配字节当百分比，语义与主机文件系统不同 | 需重新定义：先确认产品要“库大小 / 配额占用 / 所在文件系统占用”中的哪一个 |
-| 告警宏 `qps 3000/8000/15000`、`disk 80/90/95` | 仍指向旧名与旧阈值 | 另行迁移：新指标 + 操作符/持续时间/恢复条件逐项审查，至少三个正式周期验证 |
+| `qps`（`(Queries_current-Queries_previous)/elapsed`） | 底层计数已具备可信代次（`mysql.queries.total`） | **不再迁移旧表达式**。QPS 的唯一语义 = 派生指标 `mysql.queries.per_second`（带代次）；旧 `qps` 名称与阈值继续 blocked，新阈值按真实基线重定后走 preview/trial/activate |
+| `disk_usage`（数据库分配估算/固定 10 GiB） | 把估算分配字节当百分比 | **拆成两个明确指标**：库大小 = `mysql.tables.estimated_allocated_bytes`（By，estimated）/ PG `postgresql.database.disk_bytes`；文件系统使用率 = `linux.filesystem.used_ratio`（server 维度，exact）。旧 80/90/95 只保留给文件系统使用率，不平移到库大小 |
+| 告警宏 `qps 3000/8000/15000`、`disk 80/90/95` | 仍指向旧名与旧阈值 | 按上面两个新指标新建规则：QPS 阈值按真实基线重定；文件系统保留 80/90/95 但改为 `linux.filesystem.used_ratio`；库大小用绝对值阈值。旧规则先禁用再删除，保留审计 |
 
 保持 `CUSTOM_EXPRESSION_REVIEW_REQUIRED` 是当前的正确状态；不能靠改状态码或直接更新库冒充完成。
 
-## #7 inode 适用性（建议）
+## #7 inode 适用性（已实现）
 
 `/sys/firmware/efi/efivars`（efivarfs）与 `/boot/efi`（vfat）的 `df -Pi` 返回 Inodes=0、IUse%=-，
-观测保留 null 是正确的。建议在契约层区分“不适用”与“读取失败”：
-- 对已确认不支持 inode 的文件系统输出 `not_applicable`（或在展示层标注“2 项不适用”），
-- 不要把 null 一律显示为 unknown/source_error，也不要为凑 11/11 填 0。
+观测保留 null 是正确的。实现：
+- `parseDfInodes` 之外新增 `parseDfInodeGaps`，识别 `-` 行并标记 `inodeSupported:false`；
+- 文件系统诊断采集器对这类行输出 `field_evidence.inode_usage = { quality: { status:'unknown', reason:'not_applicable' } }`；
+- 质量原因枚举新增 `not_applicable`，与 `source_error` 区分；不填 0、不强求 11/11。
+消费端可据此展示“9 项适用有数据、2 项不适用”。
