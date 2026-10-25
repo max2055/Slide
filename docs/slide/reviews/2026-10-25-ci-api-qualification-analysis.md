@@ -105,3 +105,16 @@ job `investigation-api-qualification`。原始报告：该 run 的 artifact `inv
   当前证据不支持为此增加 matrix/artifact/plan 的复杂度。
 - 若后续 PR 反馈时延成为瓶颈，按上面估算单独开 issue 实施分片（3 片）或先试
   `--maxWorkers=2`，验收标准：整轮 14/14 全绿、覆盖清单不变、job ≤ 8 分钟。
+
+## 更新（2026-10-25 下午，用户决定分片）
+
+用户要求缩短 CI 时间，决定对 `investigation-api-qualification` 实施 3 分片：
+
+- `run-investigation-rollout.sh --api` 支持 `T12_API_SHARD=<i>/<n>`，转成 vitest `--shard`；
+  未设置时保持原来的单进程全量（本地/独立使用）。
+- CI 该 job 改为 `matrix.shard: [1, 2, 3]`，每片各自启动独立的 MySQL 8.4 + 9.6，
+  输出与 artifact 按 `api-shard-<n>` / `investigation-api-<sha>-shard-<n>` 区分。
+- 预期每片 ≈（测试 10.3 min + 空隙 6.8 min）/ 3 ≈ 5.7 min，加准备约 6–7 min；
+  整轮新瓶颈将变为 `browser-qualification`（近期实测 8.5–12 min）。
+- 验收：三片全绿；三份 `api.json` 合计 513 个文件 / 5293 个用例（环境齐全时），
+  与分片前一致；整轮时长以实测为准。
