@@ -16,7 +16,7 @@
 ## 环境与证据边界
 
 - 独立 Docker Compose 项目：`slide-zabbix-lab-20261021`。
-- 官方 Zabbix Server/Web/Agent2 7.0.21 LTS，PostgreSQL 16.10；镜像固定 digest，详见 [compose.yaml](compose.yaml) 与 [environment.json](environment.json)。该版本是本次研究版本，不声称最新补丁版本。
+- 官方 Zabbix Server/Web/Agent2 7.0.21 LTS，PostgreSQL 16.10；镜像固定 digest，详见 compose.yaml（历史附件 `compose.yaml` 未随附） 与 environment.json（历史附件 `environment.json` 未随附）。该版本是本次研究版本，不声称最新补丁版本。
 - 本地入口：http://localhost:18080；Sender 只绑定 `127.0.0.1:11051`；独立数据库卷及 Docker 网络，数据库不暴露宿主端口。
 - 保留运行供讨论。没有改动 Slide 产品代码、共享配置、业务数据和现有 Multica 任务，没有调用产品 LLM，也没有发送外部通知或执行远程修复命令。
 - **真实采集**：Agent2 采集实验容器自身 CPU、内存、文件系统、接口等。最终 158 个监控项，147 个曾有样本，其中 4 个为下述人工场景项，即 143 个非场景项曾有样本。这不代表 158 项全部正常。
@@ -33,7 +33,7 @@
 
 官方 Linux 模板在本版本包含 43 个直接监控项、15 个直接触发器、3 条发现规则、8 个图形及 3 个仪表盘。绑定主机后，自动发现生成额外的文件系统/接口监控项与触发器，故主机总数显著高于直接模板计数。
 
-证据：[绑定与宏](host-binding-and-macros.json)、[官方模板](builtin-linux-reference.json)、[发现规则与原型](discovery-and-prototypes.json)。
+证据：绑定与宏（历史附件 `host-binding-and-macros.json` 未随附）、官方模板（历史附件 `builtin-linux-reference.json` 未随附）、发现规则与原型（历史附件 `discovery-and-prototypes.json` 未随附）。
 
 ## 触发器实测
 
@@ -62,7 +62,7 @@ CPU 场景触发器配置：
 | 最后 CPU=60、上游=1、补发心跳 | 三个场景触发器均恢复，事件 109 关联恢复事件 112 | `15-final-recovery.json` |
 | 表达式工具输入 95、阈值 90 | TRUE；输入 90、阈值 90 得到 FALSE | 截图 20、21 |
 
-证据一致性脚本 [verify_evidence.py](verify_evidence.py) 检查上述关键关系，共 **14 项通过**，结果见 [verification.json](verification.json)。这些是实验环境证据检查，不是 Slide 产品验收通过数。
+证据一致性脚本 verify_evidence.py（历史附件 `verify_evidence.py` 未随附） 检查上述关键关系，共 **14 项通过**，结果见 verification.json（历史附件 `verification.json` 未随附）。这些是实验环境证据检查，不是 Slide 产品验收通过数。
 
 ### 需要准确借鉴的语义
 
@@ -80,7 +80,7 @@ CPU 场景触发器配置：
 
 单项 Agent 测试从真实 `agent:10050` 读取 `system.cpu.util[,idle]`，返回 `89.980329`，完成数值类型转换。测试对话框将读取、输入值、前值、预处理结果及错误放在一起，能解释失败发生在哪一步；测试与正式“立即执行”是两个入口。
 
-官方模板也存在环境不匹配：本容器中 10 项不支持，包含包信息读取和部分虚拟接口速率文件。错误作为具体监控项状态保留；另有 1 项尚无历史样本，不能由其他项有值推断它正常。证据见 [final-item-health.json](final-item-health.json)。这要求 Slide 在批量测试时显示成功、失败、不支持、未采样的数量与详情。
+官方模板也存在环境不匹配：本容器中 10 项不支持，包含包信息读取和部分虚拟接口速率文件。错误作为具体监控项状态保留；另有 1 项尚无历史样本，不能由其他项有值推断它正常。证据见 final-item-health.json（历史附件 `final-item-health.json` 未随附）。这要求 Slide 在批量测试时显示成功、失败、不支持、未采样的数量与详情。
 
 Zabbix 的机制清楚，但本次窄屏（约 663px）下嵌套对话框存在横向遮挡，测试按钮一度处于可视区外；键盘仍可触发。1440×1000 桌面对照下可完整查看主要配置。两种宽度的观察不能推导为全面响应式验收。Slide 可改进为单层抽屉或独立详情页、固定操作区、折叠高级项及条件摘要，避免照搬多层弹窗。
 
@@ -134,7 +134,7 @@ Slide 已有指标阈值、持续时间、恢复阈值/时长、质量与单位�
 
 - 恢复运行：同一路径执行 `docker compose ... start`。本次没有删除数据卷或导出镜像包。
 - 实验结束已补发正常场景值，并结束临时维护窗口。手工心跳不会自动持续发送，因此继续运行时“60 秒无心跳”实验规则会再次报警，这是保留的演示配置；真实 Agent 继续正常调度。
-- [全部截图说明](SCREENSHOTS.md)。主要图：历史与阈值 17、触发器编辑 19、表达式测试 20/21、事件处理及恢复 22。
+- 全部截图说明（历史附件 `SCREENSHOTS.md` 未随附）。主要图：历史与阈值 17、触发器编辑 19、表达式测试 20/21、事件处理及恢复 22。
 
 ## 官方机制参考
 
