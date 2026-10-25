@@ -49,6 +49,7 @@ export function requiredJobs(plan) {
   return {
     backend: plan.code, frontend: plan.code, 'agent-core': plan.code, 'sandbox-controller': plan.code, security: true,
     browser: plan.browser, 'browser-qualification': plan.integration,
+    'investigation-workspace-qualification': plan.integration,
     'recovery-qualification': plan.recovery, 'investigation-api-qualification': plan.api,
     'investigation-rollout-qualification': plan.rollout, 'rootless-sandbox-qualification': plan.sandbox,
   };

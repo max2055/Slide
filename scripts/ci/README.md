@@ -23,13 +23,14 @@ Basic checks remain enabled even for documentation-only PRs.
 - `backend` owns the ordinary API suite when the full MySQL candidate is not
   selected. Otherwise `investigation-api-qualification` runs the complete suite,
   including the ordinary tests and all enabled SQL gates. They never both run
-  the same full API suite in one workflow. The suite is split into three
-  `--shard=<i>/3` legs, each with its own isolated MySQL; the union of the legs
+  the same full API suite in one workflow. The suite is split into five
+  `--shard=<i>/5` legs, each with its own isolated MySQL; the union of the legs
   is the same complete candidate as the former single job.
-- `browser-qualification` owns the Investigation browser configuration, including
-  both feedback specs. The separate feedback browser invocation is removed.
-  Feedback evaluation/runtime qualification remains; its SQL files run separately
-  only when the full API candidate is not selected.
+- `investigation-workspace-qualification` owns the Investigation browser
+  configuration, including both feedback specs. `browser-qualification` owns
+  TLS/login/runtime/cron/candidate-isolation/instance-query/streaming/Edge.
+  Feedback evaluation/runtime qualification remains; its SQL files run
+  separately only when the full API candidate is not selected.
 - `investigation-rollout-qualification` owns the 10k duplicate / 100k event capacity
   fixture. Its `--rollout` mode does not repeat SQL or browser suites. The former
   31-file / 575-test SQL stage is covered by the full API candidate (verified
