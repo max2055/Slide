@@ -7,6 +7,7 @@ import { databaseService } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { llmService } from './llm-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
+import { databaseLogDialect, redactDatabaseLogText } from './database-log-redaction.js';
 import mysql from 'mysql2/promise';
 
 export interface DetectedPattern {
@@ -426,26 +427,38 @@ class DatabaseLogService {
       await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
 
       // 构建 prompt
+      const redactionGaps = new Set<string>();
       const logContent = errorLogs
         .slice(0, 20)
         .map((log) => {
-          let line = `[${log.log_level}] [${log.source}] ${log.message}`;
+          const dialect = databaseLogDialect(log.source);
+          const safeMessage = redactDatabaseLogText(log.message, dialect);
+          safeMessage.gaps.forEach((gap) => redactionGaps.add(gap));
+          let line = `[${log.log_level}] [${log.source}] ${safeMessage.text}`;
           if (log.detected_patterns && log.detected_patterns.length > 0) {
-            line += `\n  检测模式: ${log.detected_patterns.map((p) => `${p.pattern}(${p.severity})`).join(', ')}`;
+            line += `\n  检测模式: ${log.detected_patterns.map((p) => {
+              const pattern = redactDatabaseLogText(p.pattern, dialect);
+              pattern.gaps.forEach((gap) => redactionGaps.add(gap));
+              return `${pattern.text}(${p.severity})`;
+            }).join(', ')}`;
           }
-          // 脱敏：只截取 raw_content 前 500 字符
           if (log.raw_content) {
-            line += `\n  原始内容: ${log.raw_content.substring(0, 500)}`;
+            const safeRawContent = redactDatabaseLogText(log.raw_content, dialect);
+            safeRawContent.gaps.forEach((gap) => redactionGaps.add(gap));
+            line += `\n  原始内容: ${safeRawContent.text.substring(0, 500)}`;
           }
           return line;
         })
         .join('\n\n');
+      const redactionGapNote = redactionGaps.size > 0
+        ? `\n\n## 脱敏缺口\n以下内容无法安全解析，已从模型输入中省略：${[...redactionGaps].join(', ')}`
+        : '';
 
       const prompt = `请分析以下数据库错误日志，给出根因分析和处理建议：
 
 ## 错误日志（共 ${errorLogs.length} 条，展示前 20 条）
 
-${logContent}
+${logContent}${redactionGapNote}
 
 请从以下角度分析：
 1. **根因分析**：错误的可能原因
@@ -487,6 +500,7 @@ ${logContent}
               source: l.source,
               message: l.message,
             })),
+            redaction_gaps: [...redactionGaps],
             duration_ms: llmResult.duration_ms,
           },
           usage,
