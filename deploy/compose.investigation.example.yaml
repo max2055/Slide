@@ -1,0 +1,21 @@
+# 可选：调查运行预算（非秘密参数）
+#
+# 用法：与 compose.production.yaml 叠加，再 up -d api
+#   docker compose -p <project> --env-file <protected-env> \
+#     -f compose.production.yaml -f compose.investigation.example.yaml up -d api
+#
+# 说明：
+# - 这些变量必须在 compose 中显式映射才会进入 api 容器；只写进 .env 不会生效。
+# - runtime-configuration 拒绝空字符串，未配置时就删掉对应行，不要留空值。
+# - 下面的数值是 2026-10-25 验收样本使用过的配置，不是已证明的最小值；
+#   必须落在 Provider 已声明能力之内，并按实际负载实测调整。
+# - 密钥、TLS 私钥、数据库口令不要写进本文件或任何提交。
+services:
+  api:
+    environment:
+      INVESTIGATION_CONTEXT_WINDOW_TOKENS: "294912"
+      INVESTIGATION_OUTPUT_TOKENS: "8192"
+      INVESTIGATION_SUMMARY_OUTPUT_TOKENS: "10240"
+      INVESTIGATION_MAX_TOKENS: "300000"
+      # 可选的独立预算域；不设置时使用 investigation-v1。
+      INVESTIGATION_BUDGET_DOMAIN: "investigation-v1"
