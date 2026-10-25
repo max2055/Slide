@@ -172,6 +172,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
       - run: pnpm --filter slide-frontend test:browser
       - name: Streaming reading and phase regression
