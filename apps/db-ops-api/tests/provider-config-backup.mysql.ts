@@ -171,6 +171,7 @@ try {
   assert.equal(restored.applied, true);
   assert.equal(restored.verification?.ok, true, JSON.stringify(restored.verification?.issues));
   assert.equal(restored.plan.disable_extra.includes('delta'), true);
+  assert.equal(restored.plan.bindings_upsert.length, 3);
   const alphaRow = (await query<Array<any>>("SELECT display_name, enabled, is_default, api_key_encrypted FROM llm_providers WHERE name='alpha'"))[0];
   assert.equal(alphaRow.display_name, 'Alpha Provider');
   assert.equal(Boolean(alphaRow.enabled), true);

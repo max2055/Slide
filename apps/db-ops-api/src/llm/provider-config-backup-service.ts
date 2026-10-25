@@ -421,6 +421,7 @@ async function applySceneBindings(
       removals,
     );
   }
+  plan.bindings_upsert = document.scene_bindings;
   plan.dangling_bindings = document.scene_bindings.filter(binding => binding.provider === null);
 }
 
