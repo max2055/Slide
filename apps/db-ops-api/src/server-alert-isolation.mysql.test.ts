@@ -134,7 +134,7 @@ describe('server alert identity / real MySQL', () => {
     expect(Number(state[1].threshold_value)).toBe(50);
   });
 
-  it('recovers only the healthy dimension even while an unfiltered rule still fires elsewhere', async () => {
+  it('recovers only the healthy dimension of an unfiltered rule and preserves unknown dimensions', async () => {
     await rules();
     await f.pool.query('UPDATE alert_rules SET enabled=0 WHERE id=902');
     evidence.dimensions = { device: 'sda' };
