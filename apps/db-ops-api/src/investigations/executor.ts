@@ -122,6 +122,64 @@ function metricSeriesSelection(data: any, args?: Record<string, any>) {
       mode: 'history', metric_ids: [metric.definition.id], from: window.from, to: window.to, interval: '1m', series_index: start } },
     instructions: 'Directory contains no values. Read each required index for this metric/window; indices may change across metrics/windows. Pair by full dimensions and observation time/unit. A missing or duplicate peer remains unresolved.' };
 }
+/** Hoist schema/series metadata repeated byte-identically in every bucket of a
+ * multi-series page. Values, windows, quality, dimensions and evidence ids stay
+ * per bucket; the canonical receipt keeps the unmodified page.
+ */
+function compactSeriesPage(metric: any): any {
+  const series = Array.isArray(metric?.series) ? metric.series : [];
+  const buckets = series.flatMap((s: any) => Array.isArray(s?.buckets) ? s.buckets : []);
+  if (!buckets.length) return metric;
+  const identical = (values: unknown[]) => values.length > 0 && values.every(v => v !== undefined)
+    && new Set(values.map(canonicalReceiptHash)).size === 1;
+  const defaults: Record<string, unknown> = {};
+  for (const key of ['contract_version', 'metric', 'unit', 'window', 'accuracy', 'freshness', 'coverage', 'sample_count']) {
+    const values = buckets.map((b: any) => b?.[key]);
+    if (identical(values)) defaults[key] = values[0];
+  }
+  const sources = buckets.flatMap((b: any) => Array.isArray(b?.sources) ? b.sources : []);
+  const sourceShape = new Set(['id', 'source', 'versions']);
+  const innerShape = new Set(['attempt_id', 'binding_id', 'collector_id', 'metric_binding_id']);
+  const compactableSources = sources.length > 0 && sources.every((entry: any) => entry && typeof entry === 'object'
+    && Object.keys(entry).every(key => sourceShape.has(key))
+    && (!entry.source || (typeof entry.source === 'object' && Object.keys(entry.source).every(key => innerShape.has(key)))));
+  const sourceDefaults: Record<string, unknown> = {};
+  if (compactableSources) {
+    for (const key of ['attempt_id', 'binding_id', 'collector_id']) {
+      const values = sources.map((entry: any) => entry.source?.[key]);
+      if (identical(values)) sourceDefaults[key] = values[0];
+    }
+    const versions = sources.map((entry: any) => entry.versions);
+    if (identical(versions)) sourceDefaults.versions = versions[0];
+  }
+  const compactSource = (entry: any) => {
+    if (!compactableSources) return entry;
+    const compact: Record<string, unknown> = { id: entry.id };
+    if (entry.source?.metric_binding_id !== undefined) compact.metric_binding_id = entry.source.metric_binding_id;
+    for (const key of ['attempt_id', 'binding_id', 'collector_id'])
+      if (entry.source?.[key] !== undefined && !Object.hasOwn(sourceDefaults, key)) compact[key] = entry.source[key];
+    if (entry.versions !== undefined && !Object.hasOwn(sourceDefaults, 'versions')) compact.versions = entry.versions;
+    return compact;
+  };
+  const compactBucket = (bucket: any, dimensions: unknown) => {
+    const compact: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(bucket ?? {})) {
+      if (Object.hasOwn(defaults, key)) continue;
+      if (key === 'dimensions' && canonicalReceiptHash(value) === canonicalReceiptHash(dimensions)) continue;
+      if (key === 'sources' && Array.isArray(value)) { compact.sources = value.map(compactSource); continue; }
+      compact[key] = value;
+    }
+    return compact;
+  };
+  const attempt = metric.attempt && typeof metric.attempt === 'object'
+    ? (({ observation_ids: _ids, ...rest }: Record<string, unknown>) => rest)(metric.attempt)
+    : metric.attempt;
+  return { ...metric, attempt,
+    ...(Object.keys(defaults).length ? { bucketDefaults: defaults } : {}),
+    ...(Object.keys(sourceDefaults).length ? { sourceDefaults } : {}),
+    series: series.map((s: any) => ({ ...s, buckets: (Array.isArray(s?.buckets) ? s.buckets : [])
+      .map((b: any) => compactBucket(b, s.dimensions)) })) };
+}
 /** Model projection only; the complete bounded receipt is persisted first.
  * Keep live Ops batches small enough to leave room for protected history.
  * This cap is a planning limit; ContextManager still enforces final admission.
@@ -175,6 +233,7 @@ export function investigationToolContextResult(result: unknown, toolCallId: stri
       && series.reduce((n: number, s: any) => n + s.buckets.length, 0) <= 60) {
       const { columns: _columns, ...profile } = data.profile ?? {};
       const view = JSON.stringify({ ...observation, data: { ...data, profile,
+        metrics: [compactSeriesPage(data.metrics[0])],
         contextProjection: 'metric_series_v1', contextReference: reference, ...(metricRead ? { metricRead } : {}) } });
       if (Buffer.byteLength(view) <= 16384) return view;
     }

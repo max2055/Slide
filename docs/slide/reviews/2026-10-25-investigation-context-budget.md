@@ -47,3 +47,33 @@
    但代表性调查（6 结果以上）仍需要更大窗口或更小结果。
 3. **验收标准**：用一次真实代表性调查（两次 FS 配对 + 告警 + 关系）在选定默认值下 completed；
    旧执行恢复继续使用持久化 allocation，不因默认值变化扩容。
+
+## 第二轮测量（2026-10-25，工具结果压缩后）
+
+按上面的建议 1 压缩了 `metric_series_v1` 多序列页：把整页相同的
+`contract_version`/`metric`/`unit`/`window`/`accuracy`/`freshness`/`coverage`/`sample_count`
+提到 `bucketDefaults`，去掉与 `series.dimensions` 完全相同的 `bucket.dimensions`，
+把 `sources` 的公共生产者字段（attempt/binding/collector/versions）提到 `sourceDefaults`，
+每个序列只保留 `sources[].id` 与 `metric_binding_id`；`attempt.observation_ids`
+不再进入模型视图（canonical receipt 保留）。每个序列的
+dimensions/value/quality/observed_at 与证据 id 全部保留。
+
+用同一个 `ops-fs-final` fixture、把 raw receipts 重新过当前投影后测量：
+
+| 指标 | 压缩前 | 压缩后 | 变化 |
+| --- | --- | --- | --- |
+| 单个 FS 多序列页（11 挂载点，序列化消息） | 18,271 B | 9,612 B | -47% |
+| 整轮 messages | 112,026 B | 86,049 B | -23% |
+| 工具结果字节 | 99,002 B | 73,025 B | -26% |
+| 4 个结果批次（估算 tokens） | 42,343 | 33,684 | -20% |
+| 6 个结果批次（估算 tokens） | 101,606 | 75,629 | -26% |
+| 整轮 13 个结果（估算 tokens） | 116,706 | 90,729 | -22% |
+
+结论：
+
+- 压缩后整轮保守估算 **90,729 tokens**：128k 窗口（输入预算 118,848）可以容纳，
+  65k 窗口（输入预算 56,320）仍不够；默认窗口若仍要保持 65k，需要继续压缩或分页读取。
+- 压缩后最大的工具结果变成 discover 页（16,605/12,264 B，fixture 里按
+  `discovery_limit=64` 记录）；实时指引的 discover 路由用 `discovery_limit: 8`，
+  真实运行的 discover 页会更小。
+- 默认窗口/累计预算的调整属于产品决策，待选定后按本轮验收标准跑一次真实代表性调查。
