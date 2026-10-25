@@ -325,7 +325,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key = ?', ['investigation-v1']))[0]).toEqual(oldDomain);
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_ledger ORDER BY id'))[0]).toEqual(oldLedger);
     const [audit] = await pool.execute<RowDataPacket[]>(`SELECT details_json FROM audit_log_entries
-      WHERE action = 'investigation.effective_budget.update' AND JSON_EXTRACT(details_json, '$.rotation') IS NOT NULL`);
+      WHERE action = 'investigation.effective_budget.update' AND JSON_TYPE(JSON_EXTRACT(details_json, '$.rotation')) = 'OBJECT'`);
+    expect(audit).toHaveLength(1);
     expect((typeof audit[0].details_json === 'string' ? JSON.parse(audit[0].details_json) : audit[0].details_json))
       .toMatchObject({ rotation: { previousRevision: 1, revision: 2, previousDomain: 'investigation-v1', domain: 'investigation-v1:v2' } });
   });
