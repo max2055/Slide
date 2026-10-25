@@ -115,6 +115,10 @@ export class InvestigationGovernancePage extends LitElement {
       }
       const view = await response.json() as EffectiveBudgetView;
       if (generation !== this.generation || !this.isConnected) return;
+      if (!view || view.schemaVersion !== 1 || !view.effective?.runtime || !view.effective?.profileLimits || !view.defaults?.runtime) {
+        this.budgetError = '有效预算响应不完整，请稍后重试。';
+        return;
+      }
       this.budget = view;
       this.draft = { ...view.effective.runtime, ...view.effective.profileLimits };
     } catch {
