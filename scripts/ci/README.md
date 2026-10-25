@@ -23,12 +23,15 @@ Basic checks remain enabled even for documentation-only PRs.
 - `backend` owns the ordinary API suite when the full MySQL candidate is not
   selected. Otherwise `investigation-api-qualification` runs the complete suite,
   including the ordinary tests and all enabled SQL gates. They never both run
-  the same full API suite in one workflow. The suite is split into six
-  `--shard=<i>/6` legs, each with its own isolated MySQL; the union of the legs
-  is the same complete candidate as the former single job.
+  the same full API suite in one workflow. The suite is split into five
+  `--shard=<i>/5` legs plus one `exec` leg dedicated to
+  `execution-recovery.mysql.test.ts`; each leg has its own isolated MySQL (the
+  `exec` leg needs only the 8.4 server). The union of the legs is the same
+  complete candidate as the former single job.
 - `investigation-workspace-qualification` owns the Investigation browser
   configuration, including both feedback specs. `browser-qualification` owns
-  TLS/login/runtime/cron/candidate-isolation/instance-query/streaming/Edge.
+  TLS/login/runtime/cron/candidate-isolation/streaming.
+  `browser-edge-qualification` owns Edge critical paths and instance-query.
   Feedback evaluation/runtime qualification remains; its SQL files run
   separately only when the full API candidate is not selected.
 - `investigation-rollout-qualification` owns the 10k duplicate / 100k event capacity
@@ -41,8 +44,9 @@ Basic checks remain enabled even for documentation-only PRs.
 - `security` owns dependency audit and source secret scanning once. Rootless CI
   uses `--runtime-only` for security tests, deployment checks and real sandbox
   execution. Standalone rootless and release-security commands keep all scans.
-- Recovery scripts retain their separate process/container failure scenarios;
-  they are not removed merely because some test files overlap the API suite.
+- Recovery scripts retain their separate process/container failure scenarios,
+  split into five independent groups; they are not removed merely because some
+  test files overlap the API suite.
 - Packaging still performs a build with its traceable build ID and the rollback
   drill. It runs for full candidates, including packaging/CI changes on PRs.
 

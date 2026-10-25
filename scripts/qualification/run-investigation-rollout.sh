@@ -4,6 +4,14 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
 mode="${1:---full}"
 case "$mode" in --full|--integration|--api|--rollout) ;; *) echo 'Use --full, --integration, --api or --rollout' >&2; exit 64 ;; esac
+if [[ -n "${T12_API_SHARD:-}" && "$mode" != --api ]]; then
+  echo 'T12_API_SHARD is only valid with --api' >&2
+  exit 64
+fi
+if [[ -n "${T12_API_SHARD:-}" && ! "${T12_API_SHARD}" =~ ^([1-5]/5|exec)$ ]]; then
+  echo 'T12_API_SHARD must be 1/5..5/5 or exec' >&2
+  exit 64
+fi
 container="slide-t12-$$-$RANDOM"
 operations_container="${container}-operations"
 operations_port=''
@@ -14,7 +22,25 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:8.4 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null
+# The existing representative package is qualified on MySQL8.4. Operations'
+# reviewed formal mysql-basic source requires real 9.6. Keep both real gates;
+# do not fake versions or widen an unreviewed package's applicability. The
+# dedicated execution-recovery shard runs no Operations suite, so it skips the
+# second server (and its image pull) entirely.
+needs_operations=0
+if [[ "$mode" == --full || "$mode" == --api ]]; then
+  [[ "${T12_API_SHARD:-}" == exec ]] || needs_operations=1
+fi
+# Start both disposable servers before waiting so their image pulls and
+# initialization overlap instead of adding two sequential startup costs.
+docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:8.4 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
+primary_start=$!
+if [[ "$needs_operations" == 1 ]]; then
+  docker run --detach --rm --name "$operations_container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
+  operations_start=$!
+fi
+wait "$primary_start"
+if [[ "$needs_operations" == 1 ]]; then wait "$operations_start"; fi
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
 for _ in $(seq 1 60); do
@@ -26,11 +52,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then echo 'Isolated T12 MySQL unavailable' >&2; exit 1; fi
-# The existing representative package is qualified on MySQL8.4. Operations'
-# reviewed formal mysql-basic source requires real 9.6. Keep both real gates;
-# do not fake versions or widen an unreviewed package's applicability.
-if [[ "$mode" == --full || "$mode" == --api ]]; then
-  docker run --detach --rm --name "$operations_container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null
+if [[ "$needs_operations" == 1 ]]; then
   operations_port="$(docker port "$operations_container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
   operations_ready=0
   for _ in $(seq 1 60); do
@@ -72,10 +94,17 @@ run_gate() {
   tail -8 "$T12_OUTPUT_DIR/$name.log"
 }
 if [[ "$mode" == --api ]]; then
-  # CI splits this suite into parallel shards, each against its own isolated
-  # MySQL pair. Unset keeps the single-process candidate for local/standalone use.
+  # CI splits this suite into five parallel shards, each against its own
+  # isolated MySQL pair, plus one dedicated shard for the largest test file.
+  # Unset keeps the single-process candidate for local/standalone use.
   api_args=(--maxWorkers=1 --reporter=default --reporter=json --outputFile="$T12_OUTPUT_DIR/api.json")
-  if [[ -n "${T12_API_SHARD:-}" ]]; then api_args+=(--shard="$T12_API_SHARD"); fi
+  if [[ "${T12_API_SHARD:-}" == exec ]]; then
+    # Give the ~3.5-minute file its own shard so hash-ordered file blocks
+    # cannot stack it behind another slow file.
+    api_args+=(src/investigations/execution-recovery.mysql.test.ts)
+  elif [[ -n "${T12_API_SHARD:-}" ]]; then
+    api_args+=(--shard="$T12_API_SHARD" --exclude '**/execution-recovery.mysql.test.ts')
+  fi
   run_gate api pnpm --filter slide-api test "${api_args[@]}"
   exit 0
 fi
