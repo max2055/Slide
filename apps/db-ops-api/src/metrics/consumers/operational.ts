@@ -27,18 +27,22 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
     const migration = migrateReference(ref, engine, rule.metric_name);
     if (!migration.metric_id || rule.threshold_type === 'dynamic') return { ...unavailable, migration };
     const interval = effective.resolved.settings.interval_ms;
-    // One extra bucket absorbs the gap between the query edge and the latest
-    // collection. Without it the trailing partial bucket has no samples and
-    // every rule would be unknown; a real outage still becomes stale, and a
-    // missing bucket in the middle remains a gap.
-    const to = new Date().toISOString(), from = new Date(Date.parse(to) - (Math.max(seconds * 1000, interval) + interval)).toISOString();
+    // Sustained rules need one extra bucket to absorb the gap between the query
+    // edge and the latest collection. Without it the trailing partial bucket has
+    // no samples and every multi-bucket rule would be unknown; a real outage
+    // still becomes stale, and a missing bucket in the middle remains a gap.
+    // Instant rules (duration 0) keep the original edge window.
+    const lookback = Math.max(seconds * 1000, interval) + (seconds > 0 ? interval : 0);
+    const to = new Date().toISOString(), from = new Date(Date.parse(to) - lookback).toISOString();
     const result = await metricConsumerService.query(actor, { resource: ref, metric_ids: [migration.metric_id], from, to });
     const metric = result.metrics[0];
-    for (const series of metric.series) {
-      while (series.buckets.length > 1) {
-        const last = series.buckets.at(-1)!;
-        if (last.sample_count > 0 || last.value !== null) break;
-        series.buckets.pop();
+    if (seconds > 0) {
+      for (const series of metric.series) {
+        while (series.buckets.length > 1) {
+          const last = series.buckets.at(-1)!;
+          if (last.sample_count > 0 || last.value !== null) break;
+          series.buckets.pop();
+        }
       }
     }
     // Consumer queries expose counter rates with their own unit. An old count threshold cannot silently become a rate threshold.

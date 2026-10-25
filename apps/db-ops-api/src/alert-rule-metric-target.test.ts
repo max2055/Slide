@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { MetricRegistry } from './metric-registry.js';
+import { findAlertMetric } from './metrics/alert-metric-catalog.js';
 
 // Execute the actual route handlers with the real, target-keyed registry.
 // Only authorization and persistence are replaced in this focused regression.
@@ -17,8 +18,8 @@ async function request(method: 'POST' | 'PUT', body: Record<string, unknown>, st
   const existing = { id: 99, target_type: storedTarget, metric_name: 'filesystem_size_bytes' };
   const code = ts.transpileModule(routes, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('fastify', 'verifyToken', 'requirePermission', 'validateAlertRuleInstanceIds',
-    'metricRegistry', 'alertDatabaseService', 'requireAlertRuleAccess', code)(app,
-    async () => {}, () => async () => {}, () => null, registry, service, async () => existing);
+    'metricRegistry', 'findAlertMetric', 'alertDatabaseService', 'requireAlertRuleAccess', code)(app,
+    async () => {}, () => async () => {}, () => null, registry, findAlertMetric, service, async () => existing);
   try {
     const response = await app.inject({ method, url: method === 'POST' ? '/api/alert-rules' : '/api/alert-rules/99', payload: body });
     return { status: response.statusCode, body: response.json(), service };
