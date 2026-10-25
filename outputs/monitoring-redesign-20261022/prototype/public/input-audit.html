@@ -1,0 +1,193 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slide V4 · 少输入设计</title><style>body{margin:0;background:#f6f8fb;color:#26364a;font:14px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}header{padding:18px 32px;background:white;border-bottom:1px solid #dae2ec;display:flex;gap:24px;align-items:center;flex-wrap:wrap}nav{display:flex;gap:24px}a{color:#315f91;text-decoration:none}a[aria-current]{font-weight:700;text-decoration:underline}main{max-width:1140px;margin:32px auto;background:white;padding:36px;border:1px solid #dae2ec;border-radius:8px}table{border-collapse:collapse;width:100%;font-size:13px;display:block;overflow:auto}th,td{border:1px solid #dae2ec;padding:10px 14px;text-align:left;vertical-align:top}th{background:#f3f6fa}h1,h2,h3,h4{line-height:1.5;color:#172d46}h2{margin-top:36px;padding-bottom:8px;border-bottom:1px solid #e5eaf0}code{background:#f1f4f8;padding:2px 4px;border-radius:3px;overflow-wrap:anywhere}pre{overflow:auto;padding:16px;background:#f1f4f8}pre code{padding:0}p,li{overflow-wrap:anywhere}.notice{background:#edf4fb;border-left:3px solid #315f91;padding:12px 18px;margin-bottom:24px;font-size:13px}footer{font-size:12px;color:#607186;margin-top:32px}</style></head><body><header><strong>Slide · V4 设计评审</strong><nav><a href="./plan.html">详细方案</a><a href="./scope.html">项目范围</a><a href="./workspace-design.html">AI 工作空间设计</a><a href="./input-audit.html" aria-current="page">少输入设计</a><a href="./#templates">返回原型 ↗</a></nav></header><main><div class="notice">已确认范围：中文浅色桌面 · 无 Agent 原生采集 · 不做 Zabbix 模板兼容。本页是详细方案，拟建能力不代表已实现。</div><h1>AI 工作空间与监控配置输入负担排查</h1>
+<p>日期：2026-10-22。范围：AI 工作空间首版故障排查与恢复闭环，以及相邻监控配置原型。依据为当前源码、V2 原型和设计稿静态核查；本轮未运行浏览器业务验收、未修改产品代码。以下调整属于拟建设要求。</p>
+<p>V4 范围更新（用户已确认）：遵循<a href="scope.html">当前版本项目范围</a>，只做中文浅色桌面，1440×900 为主，1366×768/1920×1080 检查；不投入移动/平板、深色、听读顺序、完整无障碍及其他范围排除专项。保留基础标签、键盘、焦点和错误状态。纳管对象无 Agent，人工建设原生模板，不做 Zabbix 兼容；AI Agent 运行时保持现状。事件中心移除重复规则配置，证据引用当时规则快照。</p>
+<h2>1. 已确认的设计原则</h2>
+<p>用户要求：避免过多手工输入，能选择/筛选就选择/筛选，系统能够生成的内容不要求用户输入。</p>
+<p>处理顺序为：已有上下文自动带入 → 从权威记录自动读取 → 提供默认值或可复核草案 → 搜索/筛选/选择 → 只对确实缺失的内容要求补充。不能把所有文本框机械换成下拉框，也不能用没有依据的自动填充隐藏不确定性。</p>
+<p>系统自动生成标识、标题、时间线、版本引用和报告结构；用户确认范围、判断与操作意图。自动填充不意味着自动发起模型分析、扩大范围、批准变更或宣告恢复。</p>
+<h2>2. 当前明确发现及调整要求</h2>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>当前源码或原型表现</th>
+<th>调整要求</th>
+<th>优先级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>创建调查</td>
+<td><code>investigation-create.ts</code> 同时校验非空标题和目标</td>
+<td>标题由事件/资源/问题类型生成，可改名；事件进入时目标由结构化事实形成，用户只需核对</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>调查类型</td>
+<td>创建与筛选显示 Profile、Ops、System</td>
+<td>来源自动决定资源/平台；自主发起用中文对象类型选择，不要求理解内部 Profile</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>资源选择</td>
+<td>已支持名称搜索、类型筛选和多选，应保留</td>
+<td>默认带入来源资源；主资源明确标识；关联资源按有来源的推荐选择，不要求再次输入标识</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>大规模资源查找</td>
+<td>选择器只过滤已加载数据；截断时提示前 500 项之外可填确切 ID</td>
+<td>提供授权范围内服务端搜索、分页/继续加载和已选项独立显示；读取失败提供重试，不自动将 ID 输入当作常规兜底</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>时间范围</td>
+<td>创建页显示两个 datetime-local 字段；可空，但填写时需成对有效</td>
+<td>事件沿用发生时间与前后窗口；历史页沿用所选区间；自主发起提供最近 15 分钟/1 小时/24 小时和自定义。开始前显示绝对时间与时区，启动后固定本轮窗口</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>继续排查</td>
+<td><code>investigation-detail.ts</code> 的继续按钮依赖非空文字</td>
+<td>对有依据的下一步提供“检查连接池”“比较故障前后”“重试失败检查”等动作；点选生成可查看的明确请求，无需手写提示词，自由补充保留</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>人工补充</td>
+<td>V2 只有“请确认连接池上限及最近变更”的文字提示</td>
+<td>先查授权可读配置与变更记录，再显示结构化问题；变更可选“有/无/不清楚”并关联记录；连接池上限提供已查值或数字字段和“不清楚”，不编造选项值</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>行动来源与目标</td>
+<td><code>operations-actions.ts</code> 存在来源调查输入、结果版本数字输入、目标服务器 ID 输入</td>
+<td>从选定结果带入精确调查与结果版本；目标从授权且受动作能力支持的对象中选择，默认关联对象；不借此扩大现有动作支持范围</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>预计影响</td>
+<td>创建草案需填写自由文本，修订同样使用文本</td>
+<td>由注册动作、目标范围与已知证据生成可编辑草案；未知业务影响作为待确认项。结构化选择影响范围，特殊情况再补文字；草案确认后才提交审批</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>审批记录与意见</td>
+<td>有审批记录号输入；打开计划时已有尝试自动带入审批号；批准/驳回按钮仍要求非空备注</td>
+<td>精确绑定计划版本和服务端返回的审批，不手工输入编号；满足后端审计要求的常用理由可选择，其他理由补文字；缺少有效绑定时显示加载/失效/重提入口，不能猜编号</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>计划与报告查找</td>
+<td>存在手工计划标识入口、报告历史版本数字输入；已有计划列表和审批发现基础</td>
+<td>以名称、对象、状态和时间列表为主，报告版本改为带时间与摘要的历史列表；精确 ID 只留高级支持入口</td>
+<td>首版必须</td>
+</tr>
+<tr>
+<td>人工事件关联</td>
+<td><code>investigation-operation-context.ts</code> 要求自由文本关联/拆分依据</td>
+<td>提供原因分类和现有关系/变更证据选择，生成可审阅的说明；选择“其他”再写文字，不自动把建议原因记成人工认定</td>
+<td>后续增强</td>
+</tr>
+<tr>
+<td>交接与案例</td>
+<td>已有结果、案例与行动入口基础，设计要求输出交接摘要</td>
+<td>自动汇总证据和时间线形成草案；接手人/团队从授权名单搜索选择；用户确认缺口、敏感信息及适用条件，不重复填写已有调查内容</td>
+<td>闭环完善</td>
+</tr>
+</tbody>
+</table>
+<p>补充：现有资源名称选择、类型/状态筛选、计划列表、审批发现、验证参数与执行记录列表均应复用。不是从零重做，也不把已经自动完成的内容列为待开发。</p>
+<h2>3. 建议的最少输入路径</h2>
+<h3>从事件进入</h3>
+<p>事件“连接使用率过高” → 自动带入标题、事实目标、资源、事件引用和窗口 → 用户核对上下文 → 点击“开始只读排查”。</p>
+<p>目标：来源信息完整时，启动前必须填写的自由文本为 <strong>0 项</strong>。用户仍能编辑目标、对象和时间；确认不会立即执行变更。</p>
+<h3>从资源直接进入</h3>
+<p>已有资源 → 选择“响应慢 / 连接异常 / 容量不足 / 其他问题”等适配该资源的场景 → 默认可见的时间预设 → 开始排查。场景只提供有实现支持的检查，无法支持时说明限制。</p>
+<p>目标：常见场景必须填写的自由文本为 <strong>0 项</strong>；“其他问题”允许输入一段问题描述，不再重复填写标题。场景集合支持按类型筛选和搜索，避免用几十个固定按钮增加选择负担。</p>
+<h3>从工作空间自主发起</h3>
+<p>搜索选择对象 → 选择常见问题，或输入一段描述 → 核对系统生成的目标与窗口 → 开始。自然语言解析仅是可选辅助，选择路径无需先调用模型生成标题或猜测资源。</p>
+<h3>从结果继续</h3>
+<p>推荐下一步 → 查看检查范围与意图 → 一次提交形成新一轮执行。补充信息采用对应控件；已经提供的内容不重复提问。不能确定时选择“不清楚/暂时跳过”，保留缺口而非堵住整个调查。</p>
+<h3>从结果进入行动及验证</h3>
+<p>选择有能力支持的受控动作 → 带入精确结果、目标、前置条件及验证方案 → 人工核对草案 → 提交审批 → 独立批准与显式执行 → 系统汇总实际观测。填写编号和复制证据链接不应成为中间步骤。</p>
+<p>行动是否有效由实际观测和明确标准判断，不能用“用户点了已恢复”替代。需要人工确认业务症状时提供“已恢复/仍异常/无法确认”并允许补充证据，状态更新仍遵循原权限与恢复规则。</p>
+<h2>4. 相邻监控配置原型排查</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模板选择与版本</td>
+<td>保留全部授权模板搜索、兼容筛选和多选；新绑定可推荐兼容稳定发布版，已有版本保持固定，不自动升级或替用户绑定</td>
+</tr>
+<tr>
+<td>连接与凭据</td>
+<td>从资源配置读取地址、端口、引擎和凭据引用；缺项才补。凭据从有权限的凭据库选择，不反复输入密码，也不回显秘密</td>
+</tr>
+<tr>
+<td>参数覆盖</td>
+<td>默认继承模板、展示来源；只有点击覆盖才编辑。阈值等数值保留带单位的数字输入，可提供常用值，不能为了选择化限制合理取值</td>
+</tr>
+<tr>
+<td>监控项</td>
+<td>优先从现有指标/采集输出选择或复制；名称、单位、类型由所选定义带入。新自定义指标的稳定标识可由确定性规则生成、查重并允许专业人员在发布前编辑；发布后不能随展示名变动</td>
+</tr>
+<tr>
+<td>触发器</td>
+<td>监控项、函数、运算符、周期、严重度和依赖用结构化选择；名称由规则生成可编辑；高级表达式保留，且不能在模式切换时丢失语义</td>
+</tr>
+<tr>
+<td>测试采集/规则</td>
+<td>自动使用当前对象与有效参数；支持选授权真实样本、历史窗口或边界预设，模拟数据明确标记。正常测试不要求用户另写 SQL、复制 ID 或先输入模拟数值</td>
+</tr>
+<tr>
+<td>历史数据</td>
+<td>带入当前资源与监控项，提供时间预设、对比周期和图表缩放，图形/数值切换不重填条件</td>
+</tr>
+<tr>
+<td>确认事件</td>
+<td>操作者、时间和事件引用自动记录；常用备注可选、自定义备注可补。确认不是恢复，更不是批准变更</td>
+</tr>
+</tbody>
+</table>
+<h2>5. 交互与数据约束</h2>
+<ul>
+<li>自动带入的数据用可读摘要或标签显示，并提供局部“修改”，不铺满禁用输入框。</li>
+<li>默认值注明来源；预填不等于事实核验。无数据保留未知，不能为减少输入编造连接池上限、业务影响或根因。</li>
+<li>数据库、服务器等重名对象同时显示地址、类型及可用的环境标签，搜索结果可辨认；选项只来自当前授权范围。</li>
+<li>选项多时使用服务端搜索与分页；不得把未加载误报为不存在。已选项在翻页和筛选后保持，重新提交时校验权限与存在性。</li>
+<li>更换主对象、事件或窗口时，仅清理失效关联并说明原因，保留仍有效的用户补充；有未提交内容时避免静默丢弃。</li>
+<li>自动读取与复用事实默认不调用模型；需要额外模型生成草案时说明操作含义，刷新或打开表单不产生隐式分析任务。</li>
+<li>审批、拒绝、范围扩展和执行决定仍由有权限的人明确表达。常用理由只是便利输入，不能替审批人默认同意或伪造理由。</li>
+<li>前后端契约中若仍要求 title/goal/reason 等字段，由结构化上下文生成有效内容并保留来源；不能只在前端隐藏字段后提交空值或通用占位句。涉及审批理由策略的修改需另行核验后端约束。</li>
+<li>键盘可完成搜索、选择、移除和提交；控件有名称与加载/失败说明。少打字不能以嵌套弹窗和过多点击为代价。</li>
+</ul>
+<h2>6. 下一版原型验收要求</h2>
+<ol>
+<li>事件信息完整时，从事件到发起只读排查，必填自由文本为 0 项。</li>
+<li>资源已有配置时，常见问题按场景和时间选择即可发起；自定义问题最多要求一段描述，不再要求独立标题。</li>
+<li>标准闭环中不要求手工输入资源/调查/计划/审批 ID、结果版本、报告版本或复制证据引用。</li>
+<li>同一资源与时间从事件到调查、行动、验证连续带入；有意变更时显示差异，不静默重置或扩大范围。</li>
+<li>能点选有依据的下一项检查；无法确定的信息可标记未知。选择不会自动执行变更或代替审批。</li>
+<li>大规模资源、重名、搜索无结果、读取失败、权限变化、过期版本、缺配置均有可用路径。</li>
+<li>报告和交接从已有记录生成可复核草案，保留证据、缺口和人工补充来源。</li>
+</ol>
+<p>以上为设计验收要求，本轮仅完成静态排查，尚未验证这些目标已经实现。</p>
+<h2>7. 核查来源</h2>
+<ul>
+<li><code>frontend/src/app/ui/components/investigation-create.ts</code></li>
+<li><code>frontend/src/app/ui/controllers/investigations.ts</code></li>
+<li><code>frontend/src/app/ui/views/investigations.ts</code></li>
+<li><code>frontend/src/app/ui/views/investigation-detail.ts</code></li>
+<li><code>frontend/src/app/ui/views/operations-actions.ts</code></li>
+<li><code>frontend/src/app/ui/components/investigation-operation-context.ts</code></li>
+<li><code>outputs/monitoring-redesign-20261022/prototype/main.ts</code></li>
+</ul>
+<p>相关讨论：<a href="workspace-design.html">AI 工作空间体验设计</a>、<a href="2026-10-22-monitoring-operations-optimization-design.md">监控与运维优化方案</a>。</p>
+<h2>V4 原生模板少输入补充</h2>
+<p>新增监控项先选择已注册的可采集指标，自动带入名称、稳定标识、单位与映射；只调整名称、周期或允许参数。不要求手写内部 ID、SQL、命令或输出字段。无采集实现时明确提示并阻止加入可发布模板；测试沿原始字段→变换→指标展示结果。当前原型仅提供代表指标样例，不接真实采集。</p>
+<footer>来源：docs/superpowers/specs/2026-10-22-input-burden-audit.md。历史材料和源码引用请查阅仓库原始 Markdown。</footer></main></body></html>

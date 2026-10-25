@@ -1,0 +1,68 @@
+{
+  "scope": "Independent V4 prototype; no production API/model/collection/execution calls",
+  "checks": [
+    {
+      "command": "node frontend/node_modules/typescript/bin/tsc -p outputs/monitoring-redesign-20261022/prototype/tsconfig.json",
+      "checkedAt": "2026-10-22T06:02:55.052Z",
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "80603e",
+        "wall_time_seconds": 0.216386792,
+        "exit_code": 0,
+        "original_token_count": 0,
+        "output": ""
+      }
+    },
+    {
+      "command": "node frontend/node_modules/vite/bin/vite.js build --config outputs/monitoring-redesign-20261022/prototype/vite.config.mjs",
+      "checkedAt": "2026-10-22T06:02:55.058Z",
+      "status": "fulfilled",
+      "value": {
+        "chunk_id": "64dacc",
+        "wall_time_seconds": 0.362237375,
+        "exit_code": 0,
+        "original_token_count": 83,
+        "output": "vite v5.4.21 building for production...\ntransforming...\n✓ 31 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.73 kB │ gzip:  0.56 kB\ndist/assets/index-DkEcLiHE.css   39.61 kB │ gzip:  8.41 kB\ndist/assets/index-BrGLLvwh.js   195.96 kB │ gzip: 61.71 kB\n✓ built in 152ms\n"
+      }
+    }
+  ],
+  "packagedAt": "2026-10-22T06:07:10.211854+00:00",
+  "repositoryHead": "45fe437b7ccafa1c29060c9691bc2e20b326a00c",
+  "sha256": {
+    "AGENTS.md": "080d40eb2ae93d934b65e30692c21b11b6f99efe87e18a7f26c758aa0085ba57",
+    "frontend/AGENTS.md": "782c59c41a6646c331f1c6d6ed073d0623643cede7d9a912344933ac2f9c3a43",
+    "docs/slide/requirements/current-version-scope.md": "972e8207b024e6f5fbfb77f1fa2e7994c09d8f030dc01ebfc947695dcfbf48c4",
+    "docs/superpowers/plans/2026-10-22-prototype-v4.md": "a9f160fc28a7dded7c2697bc20fbc387106441e7020ed1ba7d401aa93dbbdc1c",
+    "docs/superpowers/specs/2026-10-22-ai-workspace-experience-review.md": "a9da69dd29d00af0ee54ce9f4f56569e9a5febd81057c0da0aa1a921af6de0e6",
+    "docs/superpowers/specs/2026-10-22-input-burden-audit.md": "e2fb987ba1fa2d07745c6baf66bc8f7ab936f5e4e0dd35f16dbe5c17cc7ecc71",
+    "docs/superpowers/specs/2026-10-22-monitoring-operations-optimization-design.md": "3b81b7432a7a7fd743dc0e260b616c8cf11d343cb57381a2452186ca3cfa5afc",
+    "outputs/monitoring-redesign-20261022/prototype/index.html": "40a79ceb47959077764684d594e46d149a1234651898d11cdafe62b9c37525e4",
+    "outputs/monitoring-redesign-20261022/prototype/vite.config.mjs": "e3552d59f4aa0c1fef9625b934ba384f435e331fe50833b0439f772e3fbd201b",
+    "outputs/monitoring-redesign-20261022/prototype/main.ts": "9d25fda3060a05f7f91ca57c266c66b3030dcafb700be6229a061f840e214cee",
+    "outputs/monitoring-redesign-20261022/prototype/workspace-v3.ts": "8ff48ca110c1b96949da033355c668cb2de9a5d2c660b7a488a82c7dbe4f150b",
+    "outputs/monitoring-redesign-20261022/prototype/env.d.ts": "35d26ea66c86da9701e4f4b467913481ffeae910761cea34c775c5dacb7f8eaa",
+    "outputs/monitoring-redesign-20261022/prototype/render-docs.cjs": "b69c49325de9380b30eb1fb9afe7e583372920ec15b365cf93e61061b2fae645",
+    "outputs/monitoring-redesign-20261022/prototype/collection-v4.ts": "2754654599203bd97420ea633c63b148c6b519a6ccec36c43cb3ae4c56587359",
+    "outputs/monitoring-redesign-20261022/prototype/style.css": "9baf241e213c7157bb9ee09c14d2d81b0613b1d96a30e8cecd22d7a1dc2a8061",
+    "outputs/monitoring-redesign-20261022/prototype/tsconfig.json": "9691a701dad3cd71a0ca974d9da9b1e72ead7f74aeb8eb85f2b42bc4042b470d",
+    "outputs/monitoring-redesign-20261022/prototype/overview-v3.ts": "9c5ced094d668ea350535fc95465c7f79ff990576b8093539e41069880548bcc",
+    "outputs/monitoring-redesign-20261022/prototype/dist/input-audit.html": "6109868be762c9d7e409f7b8c2e1cce5e1f2cf86d022ecb56a97420bd1323b43",
+    "outputs/monitoring-redesign-20261022/prototype/dist/index.html": "66f4b4dcb0ae90bbefbd02099bc11933ddb946110fe69f3d1d48d60ad1bf5633",
+    "outputs/monitoring-redesign-20261022/prototype/dist/scope.html": "44016322eccc2ea748b6a3a3db04e7acb085a36d160427b4c6cc45be514512f9",
+    "outputs/monitoring-redesign-20261022/prototype/dist/plan.html": "f592d3a2f216fdbbd9d06b13f6cdc62390237132d69a61bc8c685d381373e000",
+    "outputs/monitoring-redesign-20261022/prototype/dist/workspace-design.html": "a04136ca422b738277a06b1b019c15c55d2d412b230b30e38a0a7e0512e90f24",
+    "outputs/monitoring-redesign-20261022/prototype/public/input-audit.html": "6109868be762c9d7e409f7b8c2e1cce5e1f2cf86d022ecb56a97420bd1323b43",
+    "outputs/monitoring-redesign-20261022/prototype/public/scope.html": "44016322eccc2ea748b6a3a3db04e7acb085a36d160427b4c6cc45be514512f9",
+    "outputs/monitoring-redesign-20261022/prototype/public/plan.html": "f592d3a2f216fdbbd9d06b13f6cdc62390237132d69a61bc8c685d381373e000",
+    "outputs/monitoring-redesign-20261022/prototype/public/workspace-design.html": "a04136ca422b738277a06b1b019c15c55d2d412b230b30e38a0a7e0512e90f24",
+    "outputs/monitoring-redesign-20261022/prototype/dist/assets/index-DkEcLiHE.css": "7f469f73354e0f649d5db1654d8b121a97fa3301ad9aa709320a7678716e77bc",
+    "outputs/monitoring-redesign-20261022/prototype/dist/assets/index-BrGLLvwh.js": "4b8f298534c4845f1a997e60844683a3d1e2b685fe530539971304bec899c9f7"
+  },
+  "artifactChecks": {
+    "screenshots": 27,
+    "galleryExists": true,
+    "overviewExists": true,
+    "interactionEvidence": true,
+    "layoutEvidence": true
+  }
+}

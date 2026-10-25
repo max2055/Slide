@@ -1,0 +1,71 @@
+[
+  {
+    "height": 900,
+    "overflow": false,
+    "page": "#resource-overview",
+    "scrollWidth": 1440,
+    "theme": "light",
+    "width": 1440
+  },
+  {
+    "height": 768,
+    "overflow": false,
+    "page": "#resource-overview",
+    "scrollWidth": 1366,
+    "width": 1366
+  },
+  {
+    "height": 768,
+    "overflow": false,
+    "page": "#collection-mapping",
+    "scrollWidth": 1366,
+    "width": 1366
+  },
+  {
+    "height": 1080,
+    "overflow": false,
+    "page": "#collection-mapping",
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "height": 1080,
+    "overflow": false,
+    "page": "#problem",
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "height": 768,
+    "overflow": false,
+    "page": "#problem",
+    "scrollWidth": 1366,
+    "width": 1366
+  },
+  {
+    "height": 768,
+    "overflow": false,
+    "page": "#workspace",
+    "scrollWidth": 1366,
+    "width": 1366
+  },
+  {
+    "height": 1080,
+    "overflow": false,
+    "page": "#workspace",
+    "scrollWidth": 1920,
+    "width": 1920
+  },
+  {
+    "height": 900,
+    "overflow": false,
+    "page": "#problem",
+    "width": 1440
+  },
+  {
+    "height": 900,
+    "overflow": false,
+    "page": "#collection-mapping",
+    "width": 1440
+  }
+]
