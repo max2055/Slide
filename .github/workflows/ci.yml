@@ -240,6 +240,13 @@ jobs:
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
+      - name: Install Microsoft Edge for critical paths
+        run: pnpm --filter slide-frontend exec playwright install --with-deps msedge
+      - name: "Edge critical paths: login, investigation terminal state and WSS"
+        env:
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.edge-ci.config.ts
       - name: Instance query states with live MySQL and permissions
         env:
           MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
