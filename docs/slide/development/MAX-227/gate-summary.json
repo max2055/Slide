@@ -1,0 +1,25 @@
+{
+  "numTotalTests": 5335,
+  "numPassedTests": 5231,
+  "numFailedTests": 2,
+  "numPendingTests": 102,
+  "success": false,
+  "source_commit": "ecbc01a0a",
+  "failed_files": [
+    "apps/db-ops-api/src/investigations/governance.mysql.test.ts",
+    "apps/db-ops-api/src/operations/product-budget-lock.test.ts"
+  ],
+  "governance_recheck": "failed: JSON null matches IS NOT NULL, unordered audit[0].rotation is null",
+  "product_lock_recheck": "passed independently; original candidate read child failed OPERATIONS_BUDGET_LOCK_TIMEOUT",
+  "focused_mysql96": {
+    "passed": 13,
+    "optional_load_skipped": 1,
+    "load_before_after": "both passed separately"
+  },
+  "files": {
+    "total": 517,
+    "passed": 498,
+    "failed": 2,
+    "skipped": 17
+  }
+}
