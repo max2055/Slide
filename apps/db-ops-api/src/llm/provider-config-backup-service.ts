@@ -4,7 +4,7 @@
  * tests can cover sanitization and verification without MySQL.
  */
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Pool, PoolConnection } from 'mysql2/promise';
 import { decryptData } from '../db-connection.js';
@@ -24,6 +24,7 @@ import {
   findSecretLeaks,
   managedFields,
   parseBackupArtifact,
+  sanitizeBaseUrl,
   serializeBackupDocument,
   storedAuth,
   verifyRestoredConfiguration,
@@ -151,9 +152,14 @@ async function writeFileExclusive(path: string, text: string, force: boolean): P
   }
   await mkdir(dirname(resolve(path)), { recursive: true, mode: 0o700 });
   const temporary = `${path}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`;
-  await writeFile(temporary, text, { encoding: 'utf8', mode: 0o600 });
-  await chmod(temporary, 0o600);
-  await rename(temporary, path);
+  try {
+    await writeFile(temporary, text, { encoding: 'utf8', mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
   await chmod(path, 0o600);
   const checksum = backupChecksum(text);
   await writeFile(`${path}.sha256`, `${checksum}  ${basename(path)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -341,7 +347,7 @@ async function applyProviderEntries(
   const byName = new Map(currentProviders.map(provider => [provider.name, provider]));
   const backupNames = new Set(entries.map(entry => entry.name));
   const plan: RestorePlan = {
-    create: [], update: [], unchanged: [], disable_extra: [], credentials_required: [],
+    create: [], update: [], unchanged: [], disable_extra: [], credentials_required: [], base_url_redactions: [],
     bindings_upsert: [], bindings_changed: [], bindings_delete: [], dangling_bindings: [],
   };
   for (const entry of entries) {
@@ -359,6 +365,12 @@ async function applyProviderEntries(
       continue;
     }
     const changed = changedProviderFields(current, entry);
+    const currentFields = managedFields(current);
+    const sanitizedBase = sanitizeBaseUrl(currentFields.api_base_url);
+    if (currentFields.api_base_url !== entry.api_base_url
+      && sanitizedBase.reasons.length && sanitizedBase.value === entry.api_base_url) {
+      plan.base_url_redactions.push(entry.name);
+    }
     if (changed.length === 0) {
       plan.unchanged.push(entry.name);
     } else {
@@ -577,11 +589,12 @@ export async function restoreProviderConfiguration(
         providers_updated: plan.update.length,
         providers_unchanged: plan.unchanged.length,
         providers_disabled_extra: plan.disable_extra.length,
+        providers_base_url_redacted: plan.base_url_redactions.length,
         bindings_upserted: document.scene_bindings.length,
         bindings_deleted: plan.bindings_delete.length,
         dangling_bindings: plan.dangling_bindings.length,
         redactions: document.redactions.length,
-        providers_requiring_auth: plan.credentials_required,
+        providers_pending_reentry: plan.credentials_required,
       },
       actor: actorName(options),
       at: now,
@@ -631,6 +644,14 @@ export async function restoreProviderConfiguration(
   } finally {
     postConnection.release();
   }
+  for (const provider of plan.base_url_redactions) {
+    verification.issues.push({
+      code: 'BASE_URL_CREDENTIALS_REMOVED',
+      severity: 'warning',
+      provider,
+      message: `提供商 ${provider} 的 Base URL 原含凭据；本次恢复写入了脱敏后的 URL，若连接依赖该凭据将不可用`,
+    });
+  }
   const connections = options.checkConnections
     ? await checkProviderConnections(pool, options.checkConnections)
     : undefined;
@@ -649,7 +670,7 @@ export async function restoreProviderConfiguration(
         restore_audit_id: audit,
         artifact_sha256: artifact.sha256,
         issue_codes: [...new Set(verification.issues.map(issue => issue.code))],
-        providers_requiring_auth: verification.summary.credentials_required,
+        providers_pending_reentry: verification.summary.credentials_required,
         connections: connections?.map(check => ({ provider: check.provider, checked: check.checked, success: check.success })) ?? [],
       },
       errorMessage: verification.ok ? undefined : 'PROVIDER_CONFIG_BACKUP_VERIFY_FAILED',
@@ -706,7 +727,7 @@ export async function verifyProviderConfiguration(
       database: options.database,
       artifact_sha256: artifact.sha256,
       issue_codes: [...new Set(verification.issues.map(issue => issue.code))],
-      providers_requiring_auth: verification.summary.credentials_required,
+      providers_pending_reentry: verification.summary.credentials_required,
       connections: connections?.map(check => ({ provider: check.provider, checked: check.checked, success: check.success })) ?? [],
     },
     errorMessage: verification.ok ? undefined : 'PROVIDER_CONFIG_BACKUP_VERIFY_FAILED',

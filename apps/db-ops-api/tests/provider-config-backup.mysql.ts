@@ -161,6 +161,7 @@ try {
     { name: 'alpha', changed_fields: ['display_name'] },
     { name: 'beta', changed_fields: ['api_base_url'] },
   ]);
+  assert.deepEqual(dryRun.plan.base_url_redactions, ['beta']);
   assert.deepEqual(dryRun.plan.disable_extra, ['delta']);
   assert.deepEqual(dryRun.plan.bindings_changed.sort(), ['chat', 'sql_analysis']);
   assert.equal(dryRun.plan.bindings_delete.length, 0);
@@ -172,6 +173,11 @@ try {
   assert.equal(restored.verification?.ok, true, JSON.stringify(restored.verification?.issues));
   assert.equal(restored.plan.disable_extra.includes('delta'), true);
   assert.equal(restored.plan.bindings_upsert.length, 3);
+  assert.deepEqual(restored.plan.base_url_redactions, ['beta']);
+  assert.equal(restored.verification?.issues.some(issue =>
+    issue.code === 'BASE_URL_CREDENTIALS_REMOVED' && issue.provider === 'beta'), true);
+  const betaRow = (await query<Array<any>>("SELECT api_base_url FROM llm_providers WHERE name='beta'"))[0];
+  assert.equal(betaRow.api_base_url, 'https://api.example.test/v1?region=cn');
   const alphaRow = (await query<Array<any>>("SELECT display_name, enabled, is_default, api_key_encrypted FROM llm_providers WHERE name='alpha'"))[0];
   assert.equal(alphaRow.display_name, 'Alpha Provider');
   assert.equal(Boolean(alphaRow.enabled), true);

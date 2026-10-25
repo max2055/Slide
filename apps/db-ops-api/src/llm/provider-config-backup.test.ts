@@ -96,7 +96,34 @@ describe('provider configuration backup artifact', () => {
       value: 'https://host/v1',
       reasons: ['url_userinfo', 'url_query_credential'],
     });
+    expect(sanitizeBaseUrl('::::?x-api-key=abc&region=cn')).toEqual({
+      value: '::::?region=cn',
+      reasons: ['url_query_credential'],
+    });
     expect(sanitizeBaseUrl(null)).toEqual({ value: null, reasons: [] });
+  });
+
+  it('redacts common credential query-key variants but keeps api-version', () => {
+    const variants = [
+      'x-api-key', 'subscription-key', 'client_secret', 'clientSecret',
+      'secret_key', 'access_key', 'accessToken', 'APIKey',
+    ];
+    for (const key of variants) {
+      const sanitized = sanitizeBaseUrl(`https://api.example.test/v1?${key}=abc123&api-version=2024-06-01`);
+      expect(sanitized.value, key).toBe('https://api.example.test/v1?api-version=2024-06-01');
+      expect(sanitized.reasons, key).toContain('url_query_credential');
+      expect(findSecretLeaks({ [key]: 'abc123' }), key).toContainEqual({ path: `$.${key}`, rule: 'sensitive-key' });
+      expect(findSecretLeaks({ url: `https://api.example.test/v1?${key}=abc123` }), key)
+        .toContainEqual({ path: '$.url', rule: 'inline-credential' });
+      expect(findSecretLeaks({ url: sanitized.value }), key).toEqual([]);
+    }
+    const versionOnly = 'https://api.example.test/v1?api-version=2024-06-01';
+    expect(sanitizeBaseUrl(versionOnly)).toEqual({ value: versionOnly, reasons: [] });
+    expect(findSecretLeaks({ url: versionOnly })).toEqual([]);
+    expect(findSecretLeaks({ stored_auth: true, max_tokens: 2048, maxTokens: 1024, author: 'alice', api_version: '2024-06-01' })).toEqual([]);
+    const encoded = 'https://api.example.test/v1?client%5Fsecret=abc123&api-version=2024-06-01';
+    expect(sanitizeBaseUrl(encoded).value).toBe(versionOnly);
+    expect(findSecretLeaks({ url: encoded })).toContainEqual({ path: '$.url', rule: 'inline-credential' });
   });
 
   it('detects secret-like keys and values without echoing them', () => {
@@ -133,6 +160,10 @@ describe('provider configuration backup artifact', () => {
 
     const invalidScene = { ...parsed, scene_bindings: [{ scene: 'unknown', provider: 'deepseek', model: 'deepseek-chat' }] };
     expect(codeOf(() => parseBackupArtifact(JSON.stringify(invalidScene)))).toBe('PROVIDER_CONFIG_BACKUP_INVALID_ARTIFACT');
+
+    const longModel = JSON.parse(text);
+    longModel.providers[0].default_model = 'm'.repeat(101);
+    expect(codeOf(() => parseBackupArtifact(JSON.stringify(longModel)))).toBe('PROVIDER_CONFIG_BACKUP_INVALID_ARTIFACT');
   });
 
   it('computes the documented SHA-256 checksum', () => {
@@ -170,6 +201,25 @@ describe('provider configuration restore plan', () => {
     expect(plan.update).toEqual([]);
     expect(plan.unchanged).toEqual(['deepseek']);
     expect(plan.credentials_required).toEqual([]);
+    expect(plan.base_url_redactions).toEqual([]);
+  });
+
+  it('flags providers whose stored base URL credentials will be removed', () => {
+    const providerUrl = 'https://user:pass@api.example.test/v1?x-api-key=abc&region=cn';
+    const current = [
+      record(),
+      record({ id: 2, name: 'beta', display_name: 'Beta', is_default: false, api_base_url: providerUrl }),
+    ];
+    const document = documentFor(current);
+    expect(document.providers.find(provider => provider.name === 'beta')?.api_base_url)
+      .toBe('https://api.example.test/v1?region=cn');
+    const plan = buildRestorePlan(current, [], document);
+    expect(plan.base_url_redactions).toEqual(['beta']);
+    expect(plan.update).toContainEqual({ name: 'beta', changed_fields: ['api_base_url'] });
+    const verification = verifyRestoredConfiguration(current, [], document);
+    expect(verification.issues).toContainEqual(expect.objectContaining({
+      code: 'BASE_URL_CREDENTIALS_REMOVED', severity: 'warning', provider: 'beta',
+    }));
   });
 });
 

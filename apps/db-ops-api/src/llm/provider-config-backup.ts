@@ -108,13 +108,39 @@ export interface ProviderConfigBackupDocument {
 
 const DEPLOYMENT_TYPES: DeploymentType[] = ['local', 'cloud', 'api'];
 const API_FORMATS: ApiFormat[] = ['openai-completions', 'anthropic-messages', 'google-generative-ai'];
-const SENSITIVE_QUERY_KEYS = new Set([
-  'api_key', 'apikey', 'key', 'token', 'access_token', 'auth', 'authorization',
-  'password', 'passwd', 'secret', 'signature', 'sig', 'credential',
+const SENSITIVE_NAME_SEGMENTS = new Set([
+  'key', 'token', 'secret', 'password', 'passwd', 'auth', 'authorization',
+  'credential', 'credentials', 'signature', 'sig',
 ]);
-const SECRET_KEY_PATTERN = /apikey|password|passwd|secret|token|privatekey|credential|authorization|cookie|connectionstring|dsn/;
-// `max_tokens` / `maxTokens` are ordinary model limits, not credentials.
-const SECRET_KEY_ALLOWLIST = new Set(['maxtokens']);
+const SENSITIVE_NAME_COMPOUND = /apikey|accesskey|subscriptionkey|clientsecret|secretkey|privatekey|accesstoken|authtoken|refreshtoken|sessiontoken|credential/;
+// `max_tokens` / `maxTokens` are ordinary model limits, and `stored_auth` is
+// the boolean "key exists" summary; neither is a credential.
+const SECRET_KEY_ALLOWLIST = new Set(['maxtokens', 'storedauth']);
+
+/**
+ * Normalize separators/camelCase before matching so `x-api-key`,
+ * `subscription-key`, `client_secret`, `clientSecret`, `secret_key`,
+ * `access_key` and `accessToken` are all treated as credentials, while
+ * `api-version` and ordinary words such as `author`, `monkey` or `hockey`
+ * are not.
+ */
+export function isSensitiveCredentialName(name: string): boolean {
+  let decoded = name;
+  try {
+    decoded = decodeURIComponent(name);
+  } catch {
+    // Keep the raw name when it is not valid percent-encoding.
+  }
+  const normalized = decoded.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  if (SECRET_KEY_ALLOWLIST.has(normalized)) return false;
+  if (SENSITIVE_NAME_COMPOUND.test(normalized)) return true;
+  const segments = decoded
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map(segment => segment.toLowerCase());
+  return segments.some(segment => SENSITIVE_NAME_SEGMENTS.has(segment));
+}
 
 const SECRET_VALUE_RULES: ReadonlyArray<{ rule: string; test: (value: string) => boolean }> = [
   { rule: 'encrypted-v2', test: value => /^v2:[0-9a-f]{12}:[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/i.test(value) },
@@ -131,7 +157,12 @@ const SECRET_VALUE_RULES: ReadonlyArray<{ rule: string; test: (value: string) =>
   },
   {
     rule: 'inline-credential',
-    test: value => /(^|[?&;\s])(api[_-]?key|access[_-]?token|password|passwd|secret|token|auth)=/i.test(value),
+    test: value => {
+      for (const match of value.matchAll(/[?&;]([^=&#\s]+)=/g)) {
+        if (isSensitiveCredentialName(match[1])) return true;
+      }
+      return false;
+    },
   },
   { rule: 'private-key', test: value => /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value) },
 ];
@@ -156,8 +187,7 @@ export function findSecretLeaks(value: unknown, path = '$'): SecretFinding[] {
     }
     if (current && typeof current === 'object') {
       for (const [key, child] of Object.entries(current)) {
-        const normalizedKey = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
-        if (SECRET_KEY_PATTERN.test(normalizedKey) && !SECRET_KEY_ALLOWLIST.has(normalizedKey)) {
+        if (isSensitiveCredentialName(key)) {
           findings.push({ path: `${currentPath}.${key}`, rule: 'sensitive-key' });
         }
         visit(child, `${currentPath}.${key}`);
@@ -198,11 +228,16 @@ export function sanitizeBaseUrl(value: string | null | undefined): {
       reasons.push('url_userinfo');
     }
     const withoutCredentials = stripped.replace(
-      /([?&])(api[_-]?key|apikey|key|token|access[_-]?token|auth|authorization|password|passwd|secret|signature|sig|credential)=([^&#]*)/gi,
-      (_match, separator: string, key: string) => `${separator}${key}=[redacted]`,
+      /([?&])([^=&#\s]+)=([^&#\s]*)/g,
+      (match, _separator: string, key: string) => (isSensitiveCredentialName(key) ? '' : match),
     );
-    if (withoutCredentials !== stripped) reasons.push('url_query_credential');
-    return { value: reasons.length ? withoutCredentials : value, reasons };
+    if (withoutCredentials !== stripped) {
+      reasons.push('url_query_credential');
+      let cleaned = withoutCredentials.replace(/\?&/g, '?').replace(/&&/g, '&').replace(/\?$/, '').replace(/&$/, '');
+      if (stripped.includes('?') && !cleaned.includes('?') && cleaned.includes('&')) cleaned = cleaned.replace('&', '?');
+      return { value: cleaned, reasons };
+    }
+    return { value: reasons.length ? stripped : value, reasons };
   }
   if (parsed.username || parsed.password) {
     parsed.username = '';
@@ -212,7 +247,7 @@ export function sanitizeBaseUrl(value: string | null | undefined): {
   let removedQuery = false;
   const sensitiveKeys: string[] = [];
   for (const key of parsed.searchParams.keys()) {
-    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) sensitiveKeys.push(key);
+    if (isSensitiveCredentialName(key)) sensitiveKeys.push(key);
   }
   for (const key of sensitiveKeys) {
     parsed.searchParams.delete(key);
@@ -405,7 +440,7 @@ function validateProvider(raw: unknown, index: number): ProviderBackupEntry {
   const baseUrl = entry.api_base_url;
   if (baseUrl !== null && (typeof baseUrl !== 'string' || baseUrl.length > 255)) invalid(`invalid providers[${index}].api_base_url`);
   const defaultModel = entry.default_model;
-  if (defaultModel !== null && (typeof defaultModel !== 'string' || !defaultModel.trim() || defaultModel.length > 255)) {
+  if (defaultModel !== null && (typeof defaultModel !== 'string' || !defaultModel.trim() || defaultModel.length > 100)) {
     invalid(`invalid providers[${index}].default_model`);
   }
   let models: ModelInfo[] | null = null;
@@ -552,6 +587,8 @@ export interface RestorePlan {
   unchanged: string[];
   disable_extra: string[];
   credentials_required: string[];
+  /** Providers whose stored base URL contains credentials that the backup removed. */
+  base_url_redactions: string[];
   bindings_upsert: SceneBindingBackupEntry[];
   bindings_changed: LLMScene[];
   bindings_delete: LLMScene[];
@@ -566,7 +603,7 @@ export function buildRestorePlan(
   const currentByName = new Map(currentProviders.map(provider => [provider.name, provider]));
   const backupNames = new Set(document.providers.map(provider => provider.name));
   const plan: RestorePlan = {
-    create: [], update: [], unchanged: [], disable_extra: [], credentials_required: [],
+    create: [], update: [], unchanged: [], disable_extra: [], credentials_required: [], base_url_redactions: [],
     bindings_upsert: document.scene_bindings,
     bindings_changed: [],
     bindings_delete: [],
@@ -580,6 +617,12 @@ export function buildRestorePlan(
       const changed = changedProviderFields(current, entry);
       if (changed.length) plan.update.push({ name: entry.name, changed_fields: changed });
       else plan.unchanged.push(entry.name);
+      const currentFields = managedFields(current);
+      const sanitizedBase = sanitizeBaseUrl(currentFields.api_base_url);
+      if (currentFields.api_base_url !== entry.api_base_url
+        && sanitizedBase.reasons.length && sanitizedBase.value === entry.api_base_url) {
+        plan.base_url_redactions.push(entry.name);
+      }
     }
     if (entry.stored_auth && (!current || !storedAuth(current))) plan.credentials_required.push(entry.name);
   }
@@ -669,6 +712,17 @@ export function verifyRestoredConfiguration(
     if (changed.length) {
       issues.push({ code: 'PROVIDER_FIELD_MISMATCH', severity: 'error', provider: entry.name, fields: changed,
         message: `提供商 ${entry.name} 字段与备份不一致：${changed.join(', ')}` });
+    }
+    const currentFields = managedFields(current);
+    const sanitizedBase = sanitizeBaseUrl(currentFields.api_base_url);
+    if (currentFields.api_base_url !== entry.api_base_url
+      && sanitizedBase.reasons.length && sanitizedBase.value === entry.api_base_url) {
+      issues.push({
+        code: 'BASE_URL_CREDENTIALS_REMOVED',
+        severity: 'warning',
+        provider: entry.name,
+        message: `提供商 ${entry.name} 的 Base URL 含凭据；恢复会写入脱敏后的 URL，若连接依赖该凭据将不可用`,
+      });
     }
     if (entry.stored_auth && !storedAuth(current)) {
       credentialsRequired.push(entry.name);
