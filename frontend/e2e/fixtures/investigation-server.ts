@@ -297,6 +297,8 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
       current = worker!.runOnce((job, context) => registry.execute(job, context)).catch(e => workerErrors.push(String(e))).finally(() => current = undefined);
     }, 50);
     vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'),
+      // Parallel fixture servers must not invalidate one another's optimized dependencies.
+      cacheDir: resolve(workspace, '.vite'),
       define: { 'import.meta.env.VITE_AGENT_WS_URL': '""' }, server: { host: '127.0.0.1', port: 0, strictPort: false, https: optionsInput.tls,
         proxy: { '/api': { target: apiUrl, changeOrigin: true },
           '/__slide': { target: `http://127.0.0.1:${wsServer.address().port}`, changeOrigin: true },
