@@ -119,9 +119,11 @@ export function isHostBlockDevice(device: string): boolean {
 /** Counters and interface generations must come from one batch; discovery owns
  * the identity so a recreated interface cannot keep the old baseline. */
 async function hostNetworkSnapshot(evidence: DriverEvidence, transport: Extract<Transport, { method: 'ssh' }>, timeoutMs: number) {
-  if (!evidence.host_interfaces) return { result: (await fixedSsh(transport, [NETWORK_COMMAND], timeoutMs))[0], evidence };
+  if (!evidence.host_interfaces) return { result: (await fixedSsh(transport, [NETWORK_COMMAND], timeoutMs))[0], evidence, observed_at: undefined };
   const snapshot = await evidence.host_interfaces.read(transport, timeoutMs);
-  return { result: { stdout: snapshot.stdout, stderr: '', exitCode: 0, truncated: false }, evidence: snapshot.evidence };
+  // A fresh generation is stamped at read time; rows must carry that same
+  // moment or COUNTER_TIME rejects the first cycle of every process.
+  return { result: { stdout: snapshot.stdout, stderr: '', exitCode: 0, truncated: false }, evidence: snapshot.evidence, observed_at: snapshot.observed_at };
 }
 
 async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, commands: string[], timeoutMs: number) {
@@ -219,7 +221,8 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     const rows=parseProcNetDevExact(result.stdout).filter(r=>r.dimensions?.interface!=='lo'&&/_(errors|drops)$/.test(r.name));
     if(rows.length>maxRows)throw new AdapterError('parse_error');
     return rows.map(row=>({dimensions:{interface:row.dimensions!.interface!,direction:row.name.includes('_rx_')?'in':'out',event:row.name.endsWith('_errors')?'error':'drop'},
-      fields:{events:uint(row.value)},counter:hostCounter(snapshot.evidence,'interfaces',row.dimensions!.interface!)}));
+      fields:{events:uint(row.value)},counter:hostCounter(snapshot.evidence,'interfaces',row.dimensions!.interface!),
+      ...(snapshot.observed_at ? {observed_at:snapshot.observed_at} : {})}));
   }
   if (id === 'builtin:linux.filesystem.v1' && transport.method === 'ssh') {
     const results = await fixedSsh(transport, [FILESYSTEM_BYTES_COMMAND, FILESYSTEM_INODES_COMMAND, FILESYSTEM_MOUNTS_COMMAND], timeoutMs);
@@ -241,7 +244,8 @@ export async function collectFixed(id: string, transport: Transport, evidence: D
     return rows.map(row => {
       const identity = row.dimensions!.interface!;
       return { dimensions: { interface: identity, direction: row.name === 'network_rx_bytes' ? 'in' : 'out' },
-        fields: { network_bytes: exactCounter(row.value) }, counter: hostCounter(snapshot.evidence, 'interfaces', identity) };
+        fields: { network_bytes: exactCounter(row.value) }, counter: hostCounter(snapshot.evidence, 'interfaces', identity),
+        ...(snapshot.observed_at ? { observed_at: snapshot.observed_at } : {}) };
     });
   }
   if (id === 'builtin:linux.block.v1' && transport.method === 'ssh') {
