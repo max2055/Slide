@@ -20,7 +20,7 @@
 - 数据库连接口令、主机账号、JWT/加密密钥；
 - URL 中的 `user:password@` 与 `api_key`、`token`、`password` 等凭据查询参数。
 
-文件权限固定为 `0600`，失败时不会留下半成品临时文件。CLI 拒绝把产物写入任何 Git 工作树（包括 linked worktree）；这是“备份产物不入仓库”的硬约束，不依赖人工自觉。
+文件权限固定为 `0600`；写入使用同目录临时文件并原子替换，异常路径会尽力清理临时文件。底层 I/O 失败仍可能残留 `0600` 的 `.tmp-*`（不含密钥，但仍按受控文件处理）。CLI 拒绝把产物写入任何 Git 工作树（包括 linked worktree）；这是“备份产物不入仓库”的硬约束，不依赖人工自觉。
 
 产物不是加密文件，但包含 Provider 拓扑与模型配置，仍按敏感运维资料管理：只放在受控目录，不进入版本库、聊天工具、工单附件或公共对象存储。
 
@@ -54,13 +54,13 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
 
 数据库连接从 `apps/db-ops-api/.env` 或进程环境读取 `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`。`--database <name>` 可覆盖库名，主要用于演练或故障切换，不改变写入的凭据来源。
 
-`--out` 与产物参数建议使用绝对路径。`pnpm provider-config` 通过 `pnpm --filter slide-api exec` 运行，相对路径以 `apps/db-ops-api` 为基准；默认输出目录始终是绝对路径。
+`--out` 与产物参数必须使用绝对路径。`pnpm provider-config` 通过 `pnpm --filter slide-api exec` 运行，相对路径会以 `apps/db-ops-api` 为基准；若落在仓库内会被路径保护拒绝。默认输出目录始终是绝对路径。
 
 `--check-connections` 需要 `ENCRYPTION_KEY` 可解密现有密钥。`all` 会对每个已启用且有密钥的 Provider 发一次最小请求（每 Provider 约 50 tokens），无密钥的非本地 Provider 记为 `skipped: true`；显式点名但未配置密钥的 Provider 判为失败。按实际外部调用成本使用。
 
 `--actor` 记录到审计 `username`；默认取 `SLIDE_OPERATOR`、`USER`。生产操作应显式传入可追溯的操作者。
 
-退出码：
+直接运行 CLI 时的退出码：
 
 | 退出码 | 含义 |
 |---|---|
@@ -69,6 +69,16 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
 | 3 | 产物缺失、校验和不符、格式/结构非法、检出疑似密钥、路径在仓库内 |
 | 4 | 恢复已提交，但配置/场景/连接验证未通过；使用快照回滚 |
 | 1 | 数据库、审计写入或其他执行失败 |
+
+`pnpm provider-config` 入口会把任意非零子进程退出码折叠为 `1`。需要区分 2/3/4 的自动化，使用保留退出码的直接调用，或解析 stdout JSON 的 `ok`/`code`：
+
+```bash
+cd apps/db-ops-api
+pnpm exec tsx src/llm/provider-config-backup-cli.ts verify <artifact.json>
+echo $?   # 校验失败时为 3
+```
+
+`pnpm --filter slide-api exec ...` 同样会返回 1，不建议用于依赖退出码的脚本。CLI 的执行结果 JSON 包含 `ok`，失败时包含 `code`；参数错误只输出 usage 并以 2 退出。跨入口判断结果时解析 JSON 更可靠。
 
 ## 3. 备份流程
 
@@ -86,11 +96,11 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
    cd <产物目录> && shasum -a 256 -c <文件名>.sha256
    ```
 2. **确认来源**：检查产物的 `source.database`、`created_at`、Provider 列表和 `redactions`，确认是目标环境、目标时间点的备份。
-3. **试运行**：`pnpm provider-config restore <文件> --dry-run`。核对 `create`、`update`、`disable_extra`、`bindings_changed`、`bindings_delete`；计划不符合预期时停止。
+3. **试运行**：`pnpm provider-config restore <文件> --dry-run`。核对 `create`、`update`、`disable_extra`、`bindings_changed`、`bindings_delete`；计划不符合预期时停止。若 `base_url_redactions` 非空，说明数据库中的 Base URL 含凭据，恢复会写入脱敏后的 URL；先确认连接不依赖该凭据，或先修正配置。
 4. **执行恢复**：`pnpm provider-config restore <文件> --check-connections all --actor <操作者>`。
    - 恢复前会自动生成 `<产物名>.pre-restore.<UTC 时间>.json` 和 `.sha256`；这是回滚凭据，不得删除。
    - 恢复在单个事务内完成；Provider 与场景绑定的写入、审计记录同事务提交。
-5. **核对验证结果**：要求 `verification.ok: true`、`issues` 为空或只有预期的 `DANGLING_BINDING`/`CREDENTIAL_REQUIRED` 警告，并且 `connections` 中没有失败项（`success: false` 且未标记 `skipped`）。
+5. **核对验证结果**：要求 `verification.ok: true`、`issues` 为空或只有预期的 `DANGLING_BINDING`/`CREDENTIAL_REQUIRED`/`BASE_URL_CREDENTIALS_REMOVED` 警告，并且 `connections` 中没有失败项（`success: false` 且未标记 `skipped`）。
 6. **刷新运行时**：CLI 直接写数据库，运行中的 API 仍持有旧的 Provider 客户端缓存。按 PID → 端口 → cwd 核对本任务实例后优雅重启 API，或通过管理界面重新保存任一 Provider 配置触发热加载。未刷新前不能宣称运行时已生效。
 7. **留存审计**：记录 `audit_id`、`verification_audit_id`、快照路径和校验和。
 
@@ -99,7 +109,8 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
 - Provider 以 `name` 为自然键。存在则更新非敏感字段，**不触碰 `api_key_encrypted`**；不存在则新建，密钥为 `NULL`。
 - 数据库中存在但产物中没有的 Provider 只被禁用（`enabled = 0`、`is_default = 0`），不删除、不清空密钥。
 - 场景绑定按产物 upsert；产物中没有的绑定删除；悬空绑定按 `dangling_provider_id` 保留并在验证中给出警告。
-- 跨环境恢复时，`stored_auth: true` 但当前库没有密钥的 Provider 会出现在 `providers_requiring_auth`；必须在管理界面重新录入密钥，之后重新执行 `verify --against-db --check-connections ...`。
+- 数据库 Base URL 含 userinfo 或 `x-api-key`、`subscription-key`、`client_secret`、`clientSecret`、`secret_key`、`access_key` 等凭据参数时，备份会脱敏，恢复会把 Base URL 改写为脱敏值。`plan.base_url_redactions` 与 `BASE_URL_CREDENTIALS_REMOVED` 警告会列出这些 Provider；若连接依赖该凭据，恢复后会连接失败，必须先把凭据移到密钥字段/独立配置，或在维护窗口重新配置 Base URL。
+- 跨环境恢复时，`stored_auth: true` 但当前库没有密钥的 Provider 会出现在 `plan.credentials_required` / `verification.summary.credentials_required`（审计详情为 `providers_pending_reentry`）；必须在管理界面重新录入密钥，之后重新执行 `verify --against-db --check-connections ...`。
 - 同环境恢复保留原密钥；重命名 Provider 会被视为“新建 + 禁用旧项”，旧密钥无法自动关联。
 
 ## 5. 回滚
@@ -123,7 +134,7 @@ pnpm provider-config rollback <artifact.pre-restore.*.json> --actor <操作者>
 - [ ] `.sha256` 存在且 `shasum -a 256 -c` 通过。
 - [ ] `pnpm provider-config verify <文件>` 输出 `secret_findings: 0`。
 - [ ] 文本中不存在 `"api_key"`、`api_key_encrypted`、`v2:<12 hex>:` 密文、`"password"`、`"secret"`、`sk-` 开头的密钥、JWT、`-----BEGIN ... PRIVATE KEY-----`。
-- [ ] Base URL 不含 `user:password@`；不含 `api_key`、`token`、`password`、`secret` 等查询参数。若产物有 `redactions`，确认被移除的字段符合预期。
+- [ ] Base URL 不含 `user:password@`；不含 `api_key`、`x-api-key`、`subscription-key`、`client_secret`、`clientSecret`、`secret_key`、`access_key`、`accessToken`、`token`、`password`、`secret` 等凭据查询参数（键名大小写与 `_`/`-` 变体均覆盖）。若产物有 `redactions`，确认被移除的字段符合预期。
 - [ ] Provider 条目只有 `stored_auth` 布尔值，没有密钥内容。
 - [ ] `source` 只有数据库名，没有数据库主机、账号或口令。
 - [ ] 产物不在 `git status` 中，路径不在任何 Git 工作树内。
@@ -133,7 +144,7 @@ pnpm provider-config rollback <artifact.pre-restore.*.json> --actor <操作者>
 可用的快速文本检查（不会打印匹配内容）：
 
 ```bash
-grep -Eq '"api_key"|v2:[0-9a-f]{12}:|"password"|"secret"|-----BEGIN [A-Z ]*PRIVATE KEY-----' <文件> \
+grep -Eiq '"api_key"|api_key_encrypted|v2:[0-9a-f]{12}:|"password"|"secret"|x-api-key|subscription-key|client_secret|clientSecret|secret_key|access_key|accessToken|-----BEGIN [A-Z ]*PRIVATE KEY-----' <文件> \
   && echo "疑似密钥内容，停止使用" || echo "未发现禁止模式"
 ```
 
@@ -221,6 +232,7 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
 | `INVALID_ARTIFACT` / `UNSUPPORTED` | 版本或结构不匹配；使用对应版本的 CLI，不要手改 |
 | `PROVIDER_CONFIG_BACKUP_PATH_INSIDE_REPOSITORY` | 改到仓库外的受控目录 |
 | `CREDENTIAL_REQUIRED` | 在管理界面重新录入密钥，再执行 `verify --against-db --check-connections` |
+| `BASE_URL_CREDENTIALS_REMOVED` | 数据库 Base URL 含凭据，恢复已写入脱敏值；若连接依赖该凭据，先把凭据移到密钥字段/独立配置，或重新配置 Base URL 并验证连接 |
 | `CONNECTION_CHECK_FAILED` | 先核对网络、Base URL、模型与供应商状态；连接失败不等于配置恢复失败，但未通过不得宣称“连接可用” |
 | `DANGLING_BINDING` | 备份时即存在；恢复保留悬空引用，由管理员重新绑定场景 |
 | 恢复验证失败 | 使用自动生成的预恢复快照执行 `rollback`，保留输出和审计记录 |
