@@ -16,7 +16,8 @@
     "test:all": "tsx tests/smoke-test.ts && tsx tests/deep-smoke.ts && tsx tests/schema-validator.ts",
     "gateway:start": "echo 'Gateway removed — use DirectAdapter directly'",
     "gateway:stop": "echo 'Gateway removed'",
-    "actions:worker": "tsx src/operations/actions/worker-main.ts"
+    "actions:worker": "tsx src/operations/actions/worker-main.ts",
+    "migration:legacy-alerts": "tsx scripts/legacy-alert-migration.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

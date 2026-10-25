@@ -27,9 +27,24 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
     const migration = migrateReference(ref, engine, rule.metric_name);
     if (!migration.metric_id || rule.threshold_type === 'dynamic') return { ...unavailable, migration };
     const interval = effective.resolved.settings.interval_ms;
-    const to = new Date().toISOString(), from = new Date(Date.parse(to) - Math.max(seconds * 1000, interval)).toISOString();
+    // Sustained rules need one extra bucket to absorb the gap between the query
+    // edge and the latest collection. Without it the trailing partial bucket has
+    // no samples and every multi-bucket rule would be unknown; a real outage
+    // still becomes stale, and a missing bucket in the middle remains a gap.
+    // Instant rules (duration 0) keep the original edge window.
+    const lookback = Math.max(seconds * 1000, interval) + (seconds > 0 ? interval : 0);
+    const to = new Date().toISOString(), from = new Date(Date.parse(to) - lookback).toISOString();
     const result = await metricConsumerService.query(actor, { resource: ref, metric_ids: [migration.metric_id], from, to });
     const metric = result.metrics[0];
+    if (seconds > 0) {
+      for (const series of metric.series) {
+        while (series.buckets.length > 1) {
+          const last = series.buckets.at(-1)!;
+          if (last.sample_count > 0 || last.value !== null) break;
+          series.buckets.pop();
+        }
+      }
+    }
     // Consumer queries expose counter rates with their own unit. An old count threshold cannot silently become a rate threshold.
     if (metric.definition.kind === 'counter') return { ...unavailable, migration };
     if (rule.dimensions) metric.series = metric.series.filter(s => Object.entries(rule.dimensions!).every(([k, v]) => s.dimensions[k] === v));
@@ -37,9 +52,14 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
     let recovery = true, value: number | null = null, state = 'healthy';
     for (const level of ['critical', 'error', 'warning'] as const) {
       const threshold = compiled.thresholds[level]; if (threshold === undefined) continue;
+      // Derived rates and estimated allocators are valid evidence even when the
+      // float encoding is not exact (precision_loss) or the source is explicitly
+      // estimated. Unknown/invalid quality and null values remain unknown, so a
+      // counter reset is never evaluated as a real zero.
       const evaluation = evaluateMetric(metric, { metric_id: migration.metric_id,
         unit: metric.series[0]?.buckets[0]?.unit ?? metric.definition.unit, threshold, operator: compiled.operator,
-        duration_seconds: seconds, recovery_seconds: seconds, recovery_threshold: rule.recovery_threshold, missing: rule.missing_policy ?? 'unknown' });
+        duration_seconds: seconds, recovery_seconds: seconds, recovery_threshold: rule.recovery_threshold,
+        missing: rule.missing_policy ?? 'unknown', accepted_quality: ['good', 'partial'], allow_estimated: true });
       recovery &&= evaluation.recovery; value = evaluation.value;
       if (evaluation.state === 'firing') {
         const series = metric.series.find(s => Object.keys(s.dimensions).length === Object.keys(evaluation.dimensions ?? {}).length
