@@ -14,12 +14,15 @@ permissions:
 
 # Superseded PR commits share a group; main and manual runs remain independent.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # PR supersedes its own older runs; ordinary main pushes keep only the newest
+  # commit; nightly and release candidates keep their own full run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 jobs:
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       selection: ${{ steps.select.outputs.selection }}
       api: ${{ steps.select.outputs.api }}
@@ -29,6 +32,7 @@ jobs:
       sandbox: ${{ steps.select.outputs.sandbox }}
       rollout: ${{ steps.select.outputs.rollout }}
       artifact: ${{ steps.select.outputs.artifact }}
+      code: ${{ steps.select.outputs.code }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,6 +48,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: plan
     steps:
       - uses: actions/checkout@v4
@@ -59,10 +64,16 @@ jobs:
         run: pnpm security:audit
       - name: Scan production source for committed secrets
         run: pnpm security:scan
+      - name: Audit development dependencies (nightly, non-blocking)
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: pnpm audit --audit-level=high
 
   backend:
     runs-on: ubuntu-latest
     needs: plan
+    if: needs.plan.outputs.code == 'true'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -73,6 +84,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
       - name: Verify generated API contracts
         run: pnpm contracts:check
       - run: pnpm --filter slide-api typecheck
@@ -87,6 +100,8 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     needs: plan
+    if: needs.plan.outputs.code == 'true'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -97,8 +112,6 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Lint
-        run: pnpm lint
       - name: Typecheck
         run: pnpm --filter slide-frontend typecheck
       - name: Run tests
@@ -109,6 +122,8 @@ jobs:
   agent-core:
     runs-on: ubuntu-latest
     needs: plan
+    if: needs.plan.outputs.code == 'true'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -127,6 +142,8 @@ jobs:
   sandbox-controller:
     runs-on: ubuntu-latest
     needs: plan
+    if: needs.plan.outputs.code == 'true'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -144,6 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.browser == 'true'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -163,6 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.integration == 'true'
+    timeout-minutes: 25
     services:
       mysql:
         image: mysql:8.4
@@ -195,7 +214,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3-tools
-          pnpm --filter slide-frontend exec playwright install --with-deps chromium firefox
+          pnpm --filter slide-frontend exec playwright install --with-deps chromium
       - name: Trusted HTTPS same-origin WSS, messages, reconnect and revocation
         env:
           T06_TEST_MYSQL_PORT: '3306'
@@ -263,6 +282,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.recovery == 'true'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -316,6 +336,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.api == 'true'
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -336,12 +357,14 @@ jobs:
           name: investigation-api-${{ github.sha }}
           path: .qualification/t12/api-complete/
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 30
 
   investigation-rollout-qualification:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.rollout == 'true'
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -360,6 +383,7 @@ jobs:
           name: investigation-rollout-${{ github.sha }}
           path: .qualification/t12/
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 30
 
   rootless-sandbox-qualification:
@@ -390,6 +414,7 @@ jobs:
 
   release-artifact:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification]
     if: always()
     steps:
@@ -427,6 +452,7 @@ jobs:
 
   ci-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification, release-artifact]
     if: always()
     steps:

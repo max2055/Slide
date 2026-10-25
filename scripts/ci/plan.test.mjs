@@ -18,18 +18,29 @@ test('main, nightly and manual candidates retain every qualification', () => {
 test('documentation keeps basic checks without heavy qualification', () => {
   const plan = planChecks('pull_request', ['docs/guide.md', 'README.md', 'AGENTS.md']);
   assert.deepEqual(selected(plan), []);
-  assert.equal(requiredJobs(plan).backend, true);
+  for (const job of ['backend', 'frontend', 'agent-core', 'sandbox-controller']) assert.equal(requiredJobs(plan)[job], false, job);
   assert.equal(requiredJobs(plan).security, true);
 });
 
 test('UI changes retain real browser, permissions and SQL-backed acceptance', () => {
   for (const path of ['frontend/src/app/ui/views/instances.ts', 'frontend/e2e/fixtures/server.ts', 'frontend/src/app/styles/layout.css']) {
-    assert.deepEqual(selected(planChecks('pull_request', [path])), ['browser', 'integration']);
+    assert.deepEqual(selected(planChecks('pull_request', [path])), ['browser', 'code', 'integration']);
   }
 });
 
-test('ordinary API changes retain the full SQL candidate and recovery', () => {
-  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/metrics/storage.ts'])), ['api', 'browser', 'integration', 'recovery']);
+test('metric data, quality and query-chain changes keep their end-to-end checks', () => {
+  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/metrics/storage.ts'])), ['api', 'browser', 'code', 'integration', 'recovery']);
+});
+
+test('internal low-risk backend changes skip the browser qualification', () => {
+  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/notifications/email.ts'])), ['api', 'code']);
+});
+
+test('generated contract JSON under docs is not treated as documentation', () => {
+  for (const path of ['docs/slide/openapi.json', 'docs/slide/metrics-v2/contracts/schemas.json']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), full, path);
+  }
+  assert.deepEqual(selected(planChecks('pull_request', ['docs/guide.md', 'docs/slide/architecture.md'])), []);
 });
 
 test('cross-cutting, unknown, deleted and mixed paths require the full candidate', () => {

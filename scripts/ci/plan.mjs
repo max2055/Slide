@@ -2,25 +2,37 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export const selections = ['api', 'browser', 'integration', 'recovery', 'sandbox', 'rollout', 'artifact'];
+export const selections = ['api', 'browser', 'integration', 'recovery', 'sandbox', 'rollout', 'artifact', 'code'];
+
+// Markdown and planning notes cannot change runtime behaviour. Contract JSON under
+// docs/ is not documentation for this purpose: it is generated API/metrics output.
+const docOnly = /^(?:docs\/.*\.mdx?|(?:README|AGENTS|CLAUDE)\.md|LICENSE$|\.planning\/)/i;
+// Shared boundaries: any change here keeps the complete candidate.
+const crossCutting = /(?:security|authorization|permission|credential|sandbox|approval|auth\/|adapter\/|websocket|(?:^|\/)ws\/|investigations\/|migrations\/|(?:^|\/)sql\/|contracts\/|db-connection|worker-startup|lifecycle\/)/i;
+// Metric data, quality and query-chain changes keep their end-to-end checks.
+const dataPath = /(?:metrics|metric-|quality|query)/i;
 
 export function planChecks(eventName, paths = []) {
   const plan = Object.fromEntries(selections.map(key => [key, false]));
   const full = () => Object.assign(plan, Object.fromEntries(selections.map(key => [key, true])));
   if (eventName !== 'pull_request' || paths.length === 0) return full();
   for (const path of paths) {
-    if (/^(docs\/|\.planning\/|(?:README|AGENTS)\.md$|LICENSE$)/.test(path)) continue;
-    // Shared configuration, dependencies, permission boundaries and migrations
-    // affect multiple modules. Unknown paths also require the full candidate.
-    if (/(?:security|authorization|permission|credential|sandbox|approval)/i.test(path)) return full();
+    if (docOnly.test(path)) continue;
+    // Unknown or cross-cutting paths never shrink the candidate.
+    if (crossCutting.test(path)) return full();
     if (/^frontend\/(?:src|e2e|public)\//.test(path)) {
       plan.browser = plan.integration = true;
-    } else if (path.startsWith('apps/db-ops-api/')
-      && !/^apps\/db-ops-api\/(?:package\.json|[^/]+$|sql\/|src\/(?:auth\/|security\/|migrations\/|lifecycle\/|config\/|contracts\/|investigations\/|tools\/|agents\/|skills\/|adapter\/|db-connection|auth-middleware))/.test(path)) {
-      plan.api = plan.browser = plan.integration = plan.recovery = true;
-    } else {
-      return full();
+      plan.code = true;
+      continue;
     }
+    if (/^apps\/db-ops-api\//.test(path)) {
+      // Package, entry point or unknown backend location: verify everything.
+      if (/^apps\/db-ops-api\/(?:package\.json|[^/]+$)/.test(path)) return full();
+      plan.api = plan.code = true;
+      if (dataPath.test(path)) { plan.browser = plan.integration = plan.recovery = true; }
+      continue;
+    }
+    return full();
   }
   return plan;
 }
@@ -31,8 +43,11 @@ export function requiredJobs(plan) {
   }
   if (plan.integration && !plan.browser) throw new Error('Integration requires browser checks');
   if (plan.rollout && !plan.api) throw new Error('Rollout requires the full SQL candidate');
+  if (!plan.code && [plan.api, plan.browser, plan.integration, plan.recovery, plan.sandbox, plan.rollout, plan.artifact].some(Boolean)) {
+    throw new Error('Documentation-only selection cannot require code checks');
+  }
   return {
-    backend: true, frontend: true, 'agent-core': true, 'sandbox-controller': true, security: true,
+    backend: plan.code, frontend: plan.code, 'agent-core': plan.code, 'sandbox-controller': plan.code, security: true,
     browser: plan.browser, 'browser-qualification': plan.integration,
     'recovery-qualification': plan.recovery, 'investigation-api-qualification': plan.api,
     'investigation-rollout-qualification': plan.rollout, 'rootless-sandbox-qualification': plan.sandbox,
