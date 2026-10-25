@@ -65,6 +65,10 @@ export async function collectDatabase(id: string, transport: Transport, evidence
       if (!item || typeof item !== 'object' || !read.fields.some(f => f.name === item.Variable_name) || Object.hasOwn(values, item.Variable_name)) throw new AdapterError('parse_error');
       values[item.Variable_name] = item.Value;
     }
+    // A declared variable the server does not expose (e.g. Innodb_deadlocks on
+    // MySQL 8.4) is a source capability fact, not a malformed read: emit null so
+    // the observation stays unknown instead of failing the whole mapping.
+    for (const field of read.fields) if (!Object.hasOwn(values, field.name)) values[field.name] = null;
   } else {
     if (response.length !== 1 || !response[0] || typeof response[0] !== 'object') throw new AdapterError('parse_error');
     if (read.shape === 'array') {
@@ -77,7 +81,8 @@ export async function collectDatabase(id: string, transport: Transport, evidence
     }
   }
   if (read.database && (typeof database !== 'string' || !database || database.length > 128)) throw new AdapterError('parse_error');
-  const row: DecodedRow = { dimensions: read.database ? { database: database as string } : {}, fields: {}, accuracy: {}, counter, ...(observed_at ? { observed_at } : {}) };
+  const row: DecodedRow = { dimensions: read.database ? { database: database as string } : {}, fields: {}, accuracy: {}, counter, ...(observed_at ? { observed_at } : {}), field_evidence: {} };
+  for (const field of read.fields) if (read.shape === 'status' && !response.some((item: any) => item?.Variable_name === field.name)) row.field_evidence![field.name] = { capability: 'unknown' };
   for (const field of read.fields) {
     // A malformed/missing scalar is omitted so the public runner isolates only this mapping.
     try {

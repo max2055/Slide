@@ -148,6 +148,9 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
     execution.signal?.throwIfAborted();
     attempt.ended_at = TimestampSchema.parse(clock());
     attempt.error = error; attempt.status = error ? outputs.length ? 'partial' : 'failed' : 'succeeded';
+    // Keep the producer's stable reason so attempt history distinguishes a lost
+    // lifecycle proof from a genuine parse failure without re-running the read.
+    if (error && evidenceCode) attempt.evidence_code = evidenceCode;
     attempt.observation_ids = outputs.map(o => o.observation.id);
     validateAttempt(attempt); result.attempts.push(attempt); result.observations.push(...outputs); result.raw!.push(...rawOutputs);
     for (const mapping of collector.mappings) {

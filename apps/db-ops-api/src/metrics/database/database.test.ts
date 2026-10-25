@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
-import { createDatabaseRegistry, databaseReads, databaseReleases } from './catalog.js';
-import { bindDatabaseDriver } from './collector.js';
+import { createDatabaseRegistry, databaseReads, databaseReleases, implementationId } from './catalog.js';
+import { bindDatabaseDriver, collectDatabase } from './collector.js';
 import { runPackage, type PackageExecution } from '../packages/runner.js';
 import { MySQLProvider } from '../../collectors/mysql.provider.js';
 import { PostgreSQLProvider } from '../../collectors/postgresql.provider.js';
 import { OracleProvider } from '../../collectors/oracle.provider.js';
 import { DamengProvider } from '../../collectors/dameng.provider.js';
 import { sealRelease } from '../packages/model.js';
-import { MYSQL_STATUS_SQL, classifyError } from '../packages/adapters.js';
+import { AdapterError, MYSQL_STATUS_SQL, classifyError } from '../packages/adapters.js';
 import { validateObservationBatch } from '../../contracts/metrics/index.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../../../docs/slide/metrics-v2/database/fixtures.json', import.meta.url), 'utf8'));
@@ -152,5 +152,30 @@ describe('MAX-71 database representative packages', () => {
     const controller = new AbortController(); e.signal = controller.signal;
     const execute = vi.fn(async () => { controller.abort(); return { rows: [] }; }); e.resolve = async () => bindDatabaseDriver(execute);
     await expect(runPackage(registry, selection('mysql'), e)).rejects.toThrow(); expect(execute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('missing MySQL status variables stay unknown instead of failing the mapping', () => {
+  it('emits null with an unknown capability for a variable the server does not expose', async () => {
+    const read = databaseReads.find(r => r.engine === 'mysql' && r.name === 'diagnostic_gauges')
+      ?? (await import('./diagnostics.js')).diagnosticReads.find(r => r.engine === 'mysql' && r.name === 'diagnostic_gauges')!;
+    const rows = [{ Variable_name: 'Threads_running', Value: '2' }, { Variable_name: 'Threads_connected', Value: '9' }];
+    const transport = bindDatabaseDriver(async () => ({ rows }));
+    const [row] = await collectDatabase(implementationId(read), transport, {}, 1000);
+    expect(row.fields.Threads_running).toEqual({ encoding: 'uint64', value: '2' });
+    expect(row.fields.Open_files).toBeNull();
+    expect(row.field_evidence?.Open_files).toEqual({ capability: 'unknown' });
+  });
+
+  it('records the producer evidence code on the persisted attempt', async () => {
+    const f = fixture.engines.find((engine: any) => engine.engine === 'mysql');
+    const { e } = setup(f);
+    e.collect = async () => { throw new AdapterError('parse_error', 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE'); };
+    const result = await runPackage(registry, selection('mysql'), e);
+    expect(result.attempts.length).toBeGreaterThan(0);
+    for (const attempt of result.attempts) {
+      expect(attempt.error).toBe('parse_error');
+      expect(attempt.evidence_code).toBe('MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE');
+    }
   });
 });

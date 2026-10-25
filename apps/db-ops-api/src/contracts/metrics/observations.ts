@@ -35,6 +35,8 @@ export const CollectionAttemptSchema = z.strictObject({
   config_revision: z.number().int().positive(), started_at: TimestampSchema, ended_at: TimestampSchema.optional(),
   status: z.enum(['running', 'succeeded', 'partial', 'failed', 'cancelled']),
   error: z.enum(['timeout', 'permission_denied', 'connection_error', 'parse_error', 'cancelled']).nullable(),
+  /** Stable, non-secret reason inside error; absent when the coarse code is enough. */
+  evidence_code: z.string().regex(/^[A-Z][A-Z0-9_]{2,63}$/).optional(),
   observation_ids: z.array(IdSchema),
 });
 export const CounterEvidenceSchema = z.strictObject({
