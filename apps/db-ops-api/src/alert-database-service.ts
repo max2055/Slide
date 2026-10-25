@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { admitPersistedAlert } from './investigations/automatic-alert-admission.js';
 
 const dimensionKey = (dimensions?: Record<string, string> | null) =>
   JSON.stringify(Object.fromEntries(Object.entries(dimensions ?? {}).sort(([a], [b]) => a.localeCompare(b))));
@@ -150,10 +151,15 @@ class AlertDatabaseService {
           data.metric_name || null,
           data.metric_value || null,
           data.threshold_value || null,
-          data.tags ? JSON.stringify(data.tags) : null,
+          JSON.stringify({ ...(data.tags && typeof data.tags === 'object' && !Array.isArray(data.tags) ? data.tags : {}),
+            auto_analysis: { status: 'pending' } }),
         ]
       ) as any;
 
+      // Explicit transactions are recovered only after their commit is visible.
+      if (!connection) await admitPersistedAlert(Number(result.insertId)).catch(() => {
+        console.warn(`[AutomaticAlertAdmission] interrupted after persisted alert #${result.insertId}`);
+      });
       return { success: true, alertId: result.insertId };
     } catch (error: any) {
       console.error('创建告警失败:', error);
