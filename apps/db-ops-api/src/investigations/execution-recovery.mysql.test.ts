@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../migrations/runner.js';
+import { INVESTIGATION_EFFECTIVE_BUDGET_KEY } from './effective-budget.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { InvestigationAuthorization, provisionInvestigationServiceIdentity } from './authorization.js';
 import { MysqlInvestigationStore } from './store.js';
@@ -157,6 +158,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
   }, 60_000);
   beforeEach(async () => {
     await pool.query("UPDATE users SET status='active' WHERE id IN (101,102,104)");
+    await pool.query('DELETE FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
     for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources',
       'investigation_event_links',
       'operational_events',
@@ -1318,6 +1320,36 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(saved);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
+  });
+  it('freezes persisted effective runtime and profile limits for a new Run', async () => {
+    const stored = { schemaVersion: 1, version: 1,
+      runtime: { contextWindowTokens: 32768, outputTokens: 4096, summaryOutputTokens: 4096, maxExecutionTokens: 32768 },
+      profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 },
+      updatedAt: '2026-10-25T00:00:00.000Z', updatedBy: 101 };
+    await pool.query("REPLACE INTO system_config (config_key,config_value,value_type,updated_by) VALUES (?,?,'json',101)",
+      [INVESTIGATION_EFFECTIVE_BUDGET_KEY, JSON.stringify(stored)]);
+    const executor = fixture(), provider = await (executor as any).options.providerForPurpose('fault_diagnosis');
+    provider.chat = async () => { providerCalls++; return { content: JSON.stringify({ analysisVersion: 1,
+      summary: '只读证据不足，根因未验证。', claims: [], hypotheses: [], unresolvedQuestions: ['仍缺充分观测。'], recommendations: [] }),
+      finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 20, completion_tokens: 10 } }; };
+    const outcome = await execute(executor);
+    expect(outcome.state).toBe('completed');
+    const decodeState = async () => {
+      const result = (await rows('SELECT result_json FROM agent_runs WHERE id=?', [binding.runId]))[0].result_json;
+      return (typeof result === 'string' ? JSON.parse(result) : result).investigationExecution;
+    };
+    const state = await decodeState();
+    expect(state.runtimeContext).toMatchObject({ contextWindowTokens: 32768, maxTokens: 4096, summaryMaxTokens: 4096 });
+    expect(state.profileBudget).toMatchObject(stored.profileLimits);
+    await pool.query('UPDATE system_config SET config_value=? WHERE config_key=?', [JSON.stringify({ ...stored, version: 2,
+      runtime: { ...stored.runtime, contextWindowTokens: 16384 }, profileLimits: { ...stored.profileLimits, deadlineMs: 700_000 } }),
+      INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
+    const restarted = fixture();
+    const restartedProvider = await (restarted as any).options.providerForPurpose('fault_diagnosis');
+    restartedProvider.chat = async () => { throw new Error('MUST_NOT_DISPATCH'); };
+    await execute(restarted);
+    expect((await decodeState()).runtimeContext).toEqual(state.runtimeContext);
+    expect((await decodeState()).profileBudget).toEqual(state.profileBudget);
   });
   it('settles a metered length terminal through core checkpoint, durable result and a fresh executor without replay', async () => {
     const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));

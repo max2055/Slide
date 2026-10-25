@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import { InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema } from './effective-budget-contracts.js';
 
 const strict = { additionalProperties: false } as const;
 const count = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -48,10 +49,27 @@ export const InvestigationUsageResponseSchema = Type.Object({
   }, strict), { maxItems: 50 }), nextOffset: nullableCount,
 }, { ...strict, $id: 'InvestigationUsageResponse' });
 
+const effectiveBudgetDocument = Type.Object({
+  schemaVersion: Type.Literal(1), version: count, runtime: InvestigationRuntimeAllocationSchema,
+  profileLimits: InvestigationProfileLimitsSchema,
+  updatedAt: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' }),
+  updatedBy: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+}, strict);
+export const InvestigationEffectiveBudgetViewSchema = Type.Object({
+  schemaVersion: Type.Literal(1), source: Type.Union([Type.Literal('settings'), Type.Literal('defaults')]),
+  effective: effectiveBudgetDocument, defaults: effectiveBudgetDocument,
+  provider: Type.Union([Type.Object({ model: Type.String({ minLength: 1 }), contextWindowTokens: count,
+    maxOutputTokens: Type.Optional(count), preferredOutputTokens: Type.Optional(count),
+    source: Type.Union([Type.Literal('configuration'), Type.Literal('catalog'), Type.Literal('conservative-fallback')]) }, strict), Type.Null()]),
+  capabilityVerified: Type.Boolean(),
+}, strict);
+
 export type InvestigationBudgetResponse = Static<typeof InvestigationBudgetResponseSchema>;
 export type InvestigationUsageResponse = Static<typeof InvestigationUsageResponseSchema>;
+export type InvestigationEffectiveBudgetView = Static<typeof InvestigationEffectiveBudgetViewSchema>;
 export const InvestigationGovernanceSchemas = {
   InvestigationPoliciesResponse: InvestigationPoliciesResponseSchema,
   InvestigationBudgetResponse: InvestigationBudgetResponseSchema,
   InvestigationUsageResponse: InvestigationUsageResponseSchema,
+  InvestigationEffectiveBudgetView: InvestigationEffectiveBudgetViewSchema,
 };

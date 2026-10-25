@@ -12,6 +12,7 @@ import { INVESTIGATION_PROFILES, INVESTIGATION_PROMPTS, investigationProfileHash
 import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { InvestigationGovernanceStore } from './governance-store.js';
 import { registerInvestigationGovernanceRoutes } from './governance-routes.js';
+import { INVESTIGATION_EFFECTIVE_BUDGET_KEY, InvestigationEffectiveBudgetService } from './effective-budget.js';
 import { InvestigationGovernanceSchemas, type InvestigationUsageResponse } from './governance-contracts.js';
 import { buildClientTypes, buildOpenApiDocument } from '../contracts/generate-public-api.js';
 
@@ -58,7 +59,9 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     roleId = Number(role.insertId);
     serviceId = await provisionInvestigationServiceIdentity(pool as unknown as AuthorityExecutor, 't07c');
     contexts = new ActorContextService(() => pool as never);
-    store = new InvestigationGovernanceStore(() => pool, () => currentConfig, contexts);
+    store = new InvestigationGovernanceStore(() => pool, () => currentConfig, contexts,
+      new InvestigationEffectiveBudgetService(() => pool, async () => ({ model: 'fixture-model', contextWindowTokens: 1_000_000,
+        maxOutputTokens: 393_216, preferredOutputTokens: 393_216, source: 'configuration' }), () => '2026-10-25T00:00:00.000Z'));
     app = Fastify();
     await registerInvestigationGovernanceRoutes(app, createVerifyToken(secret, contexts), store);
     address = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -73,6 +76,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     // Dependent facts are cleaned only inside this run-owned database.
     for (const table of ['investigation_budget_resources', 'investigation_budget_ledger', 'investigation_budget_domains',
       'investigation_requests', 'investigation_resources', 'investigations', 'chat_sessions']) await pool.execute(`DELETE FROM ${table}`);
+    await pool.execute('DELETE FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
+    await pool.execute("DELETE FROM audit_log_entries WHERE action = 'investigation.effective_budget.update'");
   });
   afterAll(async () => {
     await app?.close(); await pool?.end();
@@ -259,6 +264,38 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     const before = await snapshot();
     expect(await (await read('budget')).json()).toMatchObject({ admissionStatus: 'conflict', policy: currentConfig.policy });
     expect(await snapshot()).toEqual(before);
+  });
+  const effectiveBody = { expectedVersion: 0,
+    runtime: { contextWindowTokens: 1_000_000, outputTokens: 393_216, summaryOutputTokens: 393_216, maxExecutionTokens: 1_000_000 },
+    profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 } };
+  const effective = (body: unknown, jwt = token) => fetch(`${address}/api/investigation-budget/effective`, {
+    method: 'PUT', headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const readEffective = (jwt = token) => fetch(`${address}/api/investigation-budget/effective`, {
+    headers: { authorization: `Bearer ${jwt}` } });
+  it('saves the effective budget with versioned audit details and re-reads it', async () => {
+    const response = await effective(effectiveBody);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    const view = await response.json();
+    expect(view).toMatchObject({ source: 'settings', effective: { version: 1, runtime: effectiveBody.runtime, profileLimits: effectiveBody.profileLimits } });
+    const [rows] = await pool.execute<RowDataPacket[]>('SELECT config_value, updated_by FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
+    expect(rows).toHaveLength(1); expect(Number(rows[0].updated_by)).toBe(101);
+    const [audit] = await pool.execute<RowDataPacket[]>("SELECT user_id, details_json FROM audit_log_entries WHERE action = 'investigation.effective_budget.update'");
+    expect(audit).toHaveLength(1); expect(audit[0].user_id).toBe('101');
+    const details = typeof audit[0].details_json === 'string' ? JSON.parse(audit[0].details_json) : audit[0].details_json;
+    expect(details).toMatchObject({ previousVersion: 0, version: 1, next: { runtime: effectiveBody.runtime } });
+    expect(await (await readEffective()).json()).toMatchObject({ source: 'settings', effective: { version: 1 } });
+  });
+  it('rejects stale versions, over-capability values and missing management permission', async () => {
+    expect((await effective(effectiveBody)).status).toBe(200);
+    const conflict = await effective(effectiveBody);
+    expect(conflict.status).toBe(409); expect((await conflict.json() as { error: string }).error).toBe('INVESTIGATION_BUDGET_CONFLICT');
+    const over = await effective({ ...effectiveBody, expectedVersion: 1,
+      runtime: { ...effectiveBody.runtime, outputTokens: 393_217, summaryOutputTokens: 393_217 } });
+    expect(over.status).toBe(422); expect((await over.json() as { error: string }).error).toBe('INVESTIGATION_BUDGET_CAPABILITY_EXCEEDED');
+    await grant('ai:view');
+    expect((await readEffective()).status).toBe(403);
+    expect((await effective(effectiveBody)).status).toBe(403);
   });
 });
 

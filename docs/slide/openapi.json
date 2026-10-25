@@ -5605,6 +5605,306 @@
         ],
         "type": "object"
       },
+      "InvestigationEffectiveBudgetView": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilityVerified": {
+            "type": "boolean"
+          },
+          "defaults": {
+            "additionalProperties": false,
+            "properties": {
+              "profileLimits": {
+                "additionalProperties": false,
+                "properties": {
+                  "deadlineMs": {
+                    "maximum": 900000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxBytes": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxProviderAttempts": {
+                    "maximum": 16,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxRows": {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxToolCalls": {
+                    "maximum": 64,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxWindowMs": {
+                    "maximum": 86400000,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "deadlineMs",
+                  "maxToolCalls",
+                  "maxProviderAttempts",
+                  "maxRows",
+                  "maxBytes",
+                  "maxWindowMs"
+                ],
+                "type": "object"
+              },
+              "runtime": {
+                "additionalProperties": false,
+                "properties": {
+                  "contextWindowTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxExecutionTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "summaryOutputTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "contextWindowTokens",
+                  "outputTokens",
+                  "summaryOutputTokens",
+                  "maxExecutionTokens"
+                ],
+                "type": "object"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "updatedAt": {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                "type": "string"
+              },
+              "updatedBy": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "version",
+              "runtime",
+              "profileLimits",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "effective": {
+            "additionalProperties": false,
+            "properties": {
+              "profileLimits": {
+                "additionalProperties": false,
+                "properties": {
+                  "deadlineMs": {
+                    "maximum": 900000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxBytes": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxProviderAttempts": {
+                    "maximum": 16,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxRows": {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxToolCalls": {
+                    "maximum": 64,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxWindowMs": {
+                    "maximum": 86400000,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "deadlineMs",
+                  "maxToolCalls",
+                  "maxProviderAttempts",
+                  "maxRows",
+                  "maxBytes",
+                  "maxWindowMs"
+                ],
+                "type": "object"
+              },
+              "runtime": {
+                "additionalProperties": false,
+                "properties": {
+                  "contextWindowTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "maxExecutionTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "summaryOutputTokens": {
+                    "maximum": 1000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "contextWindowTokens",
+                  "outputTokens",
+                  "summaryOutputTokens",
+                  "maxExecutionTokens"
+                ],
+                "type": "object"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "updatedAt": {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                "type": "string"
+              },
+              "updatedBy": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "version",
+              "runtime",
+              "profileLimits",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "contextWindowTokens": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxOutputTokens": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "preferredOutputTokens": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "const": "configuration",
+                        "type": "string"
+                      },
+                      {
+                        "const": "catalog",
+                        "type": "string"
+                      },
+                      {
+                        "const": "conservative-fallback",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "model",
+                  "contextWindowTokens",
+                  "source"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "settings",
+                "type": "string"
+              },
+              {
+                "const": "defaults",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "source",
+          "effective",
+          "defaults",
+          "provider",
+          "capabilityVerified"
+        ],
+        "type": "object"
+      },
       "InvestigationErrorCode": {
         "$id": "InvestigationErrorCode",
         "anyOf": [

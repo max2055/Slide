@@ -26,6 +26,8 @@ import type { ClaimedJob, JobExecutionContext } from '../workflows/worker-runtim
 import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
+import type { InvestigationProfile } from './contracts.js';
+import { InvestigationEffectiveBudgetService } from './effective-budget.js';
 import {resolveInvestigationRuntime} from './runtime-configuration.js';
 import { InvestigationCaseReferences } from './case-references.js';
 import {
@@ -377,6 +379,8 @@ export interface InvestigationExecutorOptions extends InvestigationRuntimeDepend
   /** Trusted server-side test configuration; never taken from workflow payloads. */
   contextInputLimit?: number;
   runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeConfiguration;
+  /** Durable operator settings; tests may inject a fixture. */
+  effectiveBudget?: Pick<InvestigationEffectiveBudgetService, 'readStored'>;
   authorization?: InvestigationAuthorization;
   systemToolsForInvestigation?: (actor: ActorContext, snapshot: Readonly<Record<string, any>>) => ToolRegistry;
   budget: { policy: BudgetPolicy; domain: string; reserveCostMicros: number; prices?: BudgetPrices; maxExecutionTokens?: number; taskExecution?: TaskExecutionConfiguration };
@@ -407,6 +411,8 @@ interface ExecutionState {
   lastProviderReceipt?: unknown;
   provenance?: { modelVersion: string; promptVersion: string; providerId?: number; routeVersion?: string; inputHash?: string };
   runtimeContext?: import('./runtime-configuration.js').InvestigationRuntimeContext;
+  /** Effective Profile limits frozen at the first execution of this Run. */
+  profileBudget?: Readonly<InvestigationProfile['budget']>;
   terminal?: InvestigationStop;
   tools: Record<string, { name: string; inputHash: string; status: 'running' | 'returned'; result?: unknown }>;
 }
@@ -608,11 +614,13 @@ export class InvestigationExecutor {
   private readonly bridge: InvestigationSessionBridge;
   private readonly ledger: MysqlInvestigationBudgetLedger;
   private readonly cases: InvestigationCaseReferences;
+  private readonly effectiveBudget: Pick<InvestigationEffectiveBudgetService, 'readStored'>;
   constructor(private readonly options: InvestigationExecutorOptions) {
     this.authorization = options.authorization ?? new InvestigationAuthorization();
     this.canonical = new CanonicalStore(options.pool as never, this.authorization);
     this.runs = new AgentRunService(options.pool as never, this.authorization);
     this.bridge = new InvestigationSessionBridge(options.pool, this.authorization);
+    this.effectiveBudget = options.effectiveBudget ?? new InvestigationEffectiveBudgetService(options.pool);
     if (options.budget.taskExecution) taskExecutionConfiguration(options.budget.taskExecution, options.budget.domain, options.budget.policy);
     // Copy trusted configuration before any asynchronous execution or caller mutation.
     this.options = { ...options, budget: structuredClone(options.budget) };
@@ -777,6 +785,13 @@ export class InvestigationExecutor {
         await this.settle(completed, base);
         return completed;
       }
+      const storedBudget = state ? undefined : await this.effectiveBudget.readStored();
+      const executionTokenLimit = storedBudget?.runtime.maxExecutionTokens ?? this.options.budget.maxExecutionTokens;
+      // Operator settings apply to new Runs. A resumed Run keeps the Profile
+      // limits frozen in its own durable state; a MAX-222 allocation keeps its
+      // task contract instead of the operator setting.
+      const effectiveProfileBudget: Readonly<InvestigationProfile['budget']> = storedBudget
+        ? { ...profile.budget, ...storedBudget.profileLimits } : profile.budget;
       if (!state) {
         state = await this.transaction(async (c) => {
           const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
@@ -792,24 +807,25 @@ export class InvestigationExecutor {
             mode: actor.principalKind === 'service' ? 'automatic' : 'manual' }, this.options.budget.policy, this.options.budget.taskExecution);
           const receipt = requestSnapshot?.budgetReceipt;
           const mode = actor.principalKind === 'service' ? 'automatic' : 'manual';
+          const runProfileBudget = allocation ? profile.budget : effectiveProfileBudget;
           let reservation: BudgetReservation;
           if (mode === 'automatic' || receipt) {
             reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
               domain: this.options.budget.domain,
               mode,
               profile,
-            });
+            }, executionTokenLimit);
           } else {
             const admission = await this.ledger.reserveExecutionInTransaction(c, {
               requestId,
               domain: this.options.budget.domain,
               mode,
               profile,
-              reserveTokens: allocation?.configuration.maxTotalTokens ?? this.options.budget.maxExecutionTokens ?? profile.budget.maxTokens,
+              reserveTokens: allocation?.configuration.maxTotalTokens ?? executionTokenLimit ?? profile.budget.maxTokens,
               ...(allocation ? { executionAllocation: allocation } : {}),
               reserveCostMicros: this.options.budget.reserveCostMicros,
               prices: this.options.budget.prices,
-            });
+            }, executionTokenLimit);
             if (admission.accepted === false) throw new Error(`INVESTIGATION_BUDGET_${admission.reason}`);
             reservation = admission.reservation;
           }
@@ -821,10 +837,11 @@ export class InvestigationExecutor {
             requestId,
             jobId: job.id,
             fencingToken: context.fencingToken,
-            deadlineAt: Date.now() + profile.budget.deadlineMs,
+            deadlineAt: Date.now() + runProfileBudget.deadlineMs,
             reservationId: reservation.id,
             reservedTokens: reservation.reservedTokens,
             ...(allocation ? { executionAllocation: allocation, allocationRunId: run.id } : {}),
+            profileBudget: runProfileBudget,
             usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
             usageUnknown: false,
             provider: null,
@@ -845,8 +862,9 @@ export class InvestigationExecutor {
       if (allocationHash(frozenAllocation ?? null) !== allocationHash(state.executionAllocation ?? null)
         || frozenAllocation && (state.allocationRunId !== run.id || state.reservedTokens !== frozenAllocation.configuration.maxTotalTokens))
         throw new Error('INVESTIGATION_ALLOCATION_INVALID');
-      const executionBudget = frozenAllocation ? { ...profile.budget, maxToolCalls: frozenAllocation.configuration.maxToolCalls,
-        maxProviderAttempts: frozenAllocation.configuration.maxProviderAttempts, deadlineMs: frozenAllocation.configuration.deadlineMs } : profile.budget;
+      const executionBudget = frozenAllocation ? { ...(state.profileBudget ?? profile.budget), maxToolCalls: frozenAllocation.configuration.maxToolCalls,
+        maxProviderAttempts: frozenAllocation.configuration.maxProviderAttempts, deadlineMs: frozenAllocation.configuration.deadlineMs }
+        : state.profileBudget ?? effectiveProfileBudget;
       if (state.schemaVersion !== 1 || state.requestId !== requestId || state.jobId !== job.id)
         throw new Error('INVESTIGATION_CHECKPOINT_INVALID');
       const update = async (work: (s: ExecutionState, c: InvestigationConnection) => void | Promise<void>) =>
@@ -879,7 +897,7 @@ export class InvestigationExecutor {
           domain: this.options.budget.domain,
           mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
           profile,
-        });
+        }, executionTokenLimit);
         if (reservation.id !== state.reservationId || reservation.reservedTokens !== state.reservedTokens)
           throw new Error('BUDGET_CONFLICT');
         await this.canonical.assertInvestigationLease(c, binding);
@@ -974,7 +992,9 @@ export class InvestigationExecutor {
       const legacyContext = this.options.contextInputLimit === undefined ? undefined
         : {...investigationContextLimits(modelCapabilities?.contextWindowTokens, this.options.contextInputLimit),
           maxTokens: Math.min(4096, modelCapabilities?.preferredOutputTokens ?? 4096, modelCapabilities?.maxOutputTokens ?? 4096)};
-      const runtimeContext = resolveInvestigationRuntime(modelCapabilities, this.options.runtimeContext,
+      const configuredRuntime = storedBudget ? { contextWindowTokens: storedBudget.runtime.contextWindowTokens,
+        maxTokens: storedBudget.runtime.outputTokens, summaryMaxTokens: storedBudget.runtime.summaryOutputTokens } : this.options.runtimeContext;
+      const runtimeContext = resolveInvestigationRuntime(modelCapabilities, configuredRuntime,
         frozenAllocation ? { contextWindowTokens: frozenAllocation.configuration.contextWindowTokens,
           maxTokens: frozenAllocation.configuration.maxTokens, summaryMaxTokens: frozenAllocation.configuration.summaryMaxTokens }
           : state.runtimeContext ?? legacyContext);
@@ -1110,7 +1130,7 @@ export class InvestigationExecutor {
           security?.effect !== 'read'
         )
           continue;
-        const contract = profile.id === 'system' ? tool : investigationToolContract(tool, snapshot.resources, profile.budget);
+        const contract = profile.id === 'system' ? tool : investigationToolContract(tool, snapshot.resources, executionBudget);
         if (!contract) continue;
         tools.register({
           ...tool,
@@ -1125,7 +1145,7 @@ export class InvestigationExecutor {
             try {
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
-              const { args, targets } = boundedInvestigationArguments(name, value, profile.budget, Date.now());
+              const { args, targets } = boundedInvestigationArguments(name, value, executionBudget, Date.now());
               const live = await this.transaction(async (c) => {
                 await this.canonical.lockInvestigationExecution(c, actor, binding);
                 await readReceipt(c);
@@ -1160,8 +1180,8 @@ export class InvestigationExecutor {
               started = true;
               const result = boundedResult(
                 await liveTool.execute(args, { ...toolContext, signal: toolContext?.signal ?? control.signal }),
-                profile.budget.maxRows,
-                profile.budget.maxBytes,
+                executionBudget.maxRows,
+                executionBudget.maxBytes,
               );
               toolContext?.signal?.throwIfAborted();
               control.signal.throwIfAborted();
@@ -1226,7 +1246,7 @@ export class InvestigationExecutor {
         // as dispatch, including qualification-only reductions. Keep the
         // configured context and execution-token ceilings unchanged.
         maxTokens: Math.min(runtimeContext.maxTokens, state.reservedTokens),
-        maxToolResultChars: profile.budget.maxBytes,
+        maxToolResultChars: executionBudget.maxBytes,
         budgetLimits: {
           maxToolCalls: executionBudget.maxToolCalls,
           maxProviderAttempts: executionBudget.maxProviderAttempts,

@@ -1,4 +1,5 @@
 import { freezeExecutionAllocation, readExecutionAllocation, taskExecutionConfiguration, type TaskExecutionConfiguration } from './execution-allocation.js';
+import { InvestigationEffectiveBudgetService } from './effective-budget.js';
 import { assertContinuationDeadline } from './continuation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
@@ -51,6 +52,7 @@ export class InvestigationSessionBridge {
   private readonly maxExecutionTokens?: number;
   private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
   private readonly budgetPolicy: BudgetPolicy;
+  private readonly effectiveBudget: InvestigationEffectiveBudgetService;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
     cancellationBudget: { domain: string; policy: BudgetPolicy; reserveCostMicros?: number; maxExecutionTokens?: number; taskExecution?: TaskExecutionConfiguration } = investigationBudgetConfiguration()) {
@@ -60,6 +62,7 @@ export class InvestigationSessionBridge {
     this.budgetDomain = cancellationBudget.domain;
     this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
     this.maxExecutionTokens = cancellationBudget.maxExecutionTokens;
+    this.effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider);
     this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, this.budgetPolicy, this.maxExecutionTokens, this.taskExecution);
   }
 
@@ -229,10 +232,12 @@ export class InvestigationSessionBridge {
       { messageId: randomUUID(), role: 'user', content: command.message }, connection);
     if (frozen) {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
+      const storedBudget = await this.effectiveBudget.readStoredFrom(connection);
+      const executionTokenLimit = storedBudget?.runtime.maxExecutionTokens ?? this.maxExecutionTokens;
       const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
-        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? this.maxExecutionTokens ?? profile.budget.maxTokens,
+        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? executionTokenLimit ?? profile.budget.maxTokens,
         ...(executionAllocation ? { executionAllocation } : {}),
-        reserveCostMicros: this.reserveCostMicros });
+        reserveCostMicros: this.reserveCostMicros }, executionTokenLimit);
       if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');
     }
     await assertContinuationDeadline(connection, command.continuationOf?.notAfter);
