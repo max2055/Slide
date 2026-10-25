@@ -28,13 +28,26 @@ export const responseHash = (response: unknown) =>
   createHash("sha256")
     .update(canonical(JSON.parse(JSON.stringify(response))))
     .digest("hex");
+/** One unambiguous JSON code fence is presentation, not a relaxed contract;
+ * prose, trailing text or a second fence still reject the answer. */
+export function unfenceJson(text: string): string {
+  const trimmed = text.trim();
+  return /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i.exec(trimmed)?.[1] ?? trimmed;
+}
+
+/** Shared by summary validation, receipt acknowledgement and recovery so every
+ * path reads the model's JSON the same way. */
+export function parseSummaryJson(text: string | null | undefined): unknown {
+  return JSON.parse(unfenceJson(text ?? ""));
+}
+
 export function summaryRejection(response: LLMResponse): SummaryRejection | undefined {
   if (response.error || response.errorKind) return "provider";
   if (response.finishReason !== "stop") return "incomplete";
   if (response.hasToolCalls || response.toolCalls.length) return "tools";
   let value: any;
   try {
-    value = JSON.parse(response.content ?? "");
+    value = parseSummaryJson(response.content);
   } catch {
     return "json";
   }
@@ -85,7 +98,7 @@ export function acknowledgeSummary(provider: any, payload: Record<string, any>):
       receipt.reason ||
       payload.context_summary_v1?.sourceHash !== receipt.sourceHash ||
       responseHash(payload.context_summary_v1?.summary) !==
-        responseHash(JSON.parse(provider.response.content))
+        responseHash(parseSummaryJson(provider.response.content))
     )
       throw Error("INVESTIGATION_PROVIDER_UNKNOWN");
   } else throw Error("INVESTIGATION_PROVIDER_UNKNOWN");

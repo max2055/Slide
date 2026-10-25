@@ -23,6 +23,14 @@ it('summary requires all six structured fields and rejects extra authority field
   expect(() => validateSummary('{}')).toThrow();
   expect(() => validateSummary(JSON.stringify({ ...summary, permissions: ['admin'] }))).toThrow();
 });
+it('summary accepts exactly one JSON code fence but rejects prose around it', () => {
+  const summary = { goal: ['inspect'], constraints: ['read only'], done: [], pending: ['check'], evidence: [], uncertain: [] };
+  const json = JSON.stringify(summary);
+  expect(validateSummary('```json\n' + json + '\n```')).toEqual(summary);
+  expect(validateSummary('```\n' + json + '\n```')).toEqual(summary);
+  expect(() => validateSummary('结果如下：\n```json\n' + json + '\n```')).toThrow('Summary must be JSON');
+  expect(() => validateSummary('```json\n' + json + '\n```\n以上。')).toThrow('Summary must be JSON');
+});
 
 import { autoCompact } from '../runtime/auto-compact.js';
 import { ContextManager } from '../runtime/context-manager.js';
@@ -284,4 +292,14 @@ it.each(['attempts', 'tokens'])('summary shares the ordinary %s budget before di
   if (limit === 'attempts') { f.recovery.state.providerAttempts = 1; }
   await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async () => {})).rejects.toMatchObject({ code: limit === 'attempts' ? 'MAX_PROVIDER_ATTEMPTS' : 'TOKEN_BUDGET' });
   expect(f.calls).toHaveLength(0);
+});
+
+import { summaryRejection, parseSummaryJson } from '../runtime/summary-receipt.js';
+it('receipt rejection and parsing share the same single-fence rule', () => {
+  const summary = { goal: ['inspect'], constraints: ['read only'], done: [], pending: ['check'], evidence: [], uncertain: [] };
+  const response = (content: string) => ({ content, finishReason: 'stop' as const, toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: {} });
+  expect(summaryRejection(response(JSON.stringify(summary)))).toBeUndefined();
+  expect(summaryRejection(response('```json\n' + JSON.stringify(summary) + '\n```'))).toBeUndefined();
+  expect(summaryRejection(response('前言\n```json\n' + JSON.stringify(summary) + '\n```'))).toBe('json');
+  expect(parseSummaryJson('```json\n' + JSON.stringify(summary) + '\n```')).toEqual(summary);
 });

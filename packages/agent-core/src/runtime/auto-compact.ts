@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {responseHash, summaryRejection, type SummaryReceipt} from './summary-receipt.js';
+import {parseSummaryJson, responseHash, summaryRejection, type SummaryReceipt} from './summary-receipt.js';
 import { assertRequestBudget, assertTokenBudget, planRequestBudget } from './budget.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import type { AgentHook, AgentHookContext, AgentRunSpec, LLMProvider, Message } from '../types.js';
@@ -22,7 +22,7 @@ export interface SummaryRecord {
 const fields = ['goal', 'constraints', 'done', 'pending', 'evidence', 'uncertain'] as const;
 export function validateSummary(text: string): Summary {
   let value: Summary;
-  try { value = JSON.parse(text); } catch { throw new RuntimeError('SUMMARY_INVALID', 'Summary must be JSON'); }
+  try { value = parseSummaryJson(text) as Summary; } catch { throw new RuntimeError('SUMMARY_INVALID', 'Summary must be JSON'); }
   if (!value || typeof value !== 'object' || Object.keys(value).length !== fields.length ||
     !fields.every(k => Array.isArray(value[k]) && value[k].every(v => typeof v === 'string')) || !value.goal.length) {
     throw new RuntimeError('SUMMARY_INVALID', 'Summary requires goal/constraints/done/pending/evidence/uncertain string arrays');
