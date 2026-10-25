@@ -14,8 +14,13 @@ type Kind = 'policies' | 'budget' | 'usage';
 type Facts = InvestigationBudgetResponse | InvestigationPoliciesResponse | InvestigationUsageResponse;
 type EffectiveBudgetView = InvestigationEffectiveBudgetView;
 type EffectiveBudgetDocument = EffectiveBudgetView['effective'];
-type BudgetDraft = EffectiveBudgetDocument['runtime'] & EffectiveBudgetDocument['profileLimits'];
+type AdmissionPolicy = NonNullable<EffectiveBudgetDocument['admission']>['policy'];
+type BudgetDraft = EffectiveBudgetDocument['runtime'] & EffectiveBudgetDocument['profileLimits'] & AdmissionPolicy;
 type BudgetKey = keyof BudgetDraft;
+const RUNTIME_KEYS = ['contextWindowTokens', 'outputTokens', 'summaryOutputTokens', 'maxExecutionTokens'] as const;
+const PROFILE_KEYS = ['deadlineMs', 'maxToolCalls', 'maxProviderAttempts', 'maxRows', 'maxBytes', 'maxWindowMs'] as const;
+const ADMISSION_KEYS = ['maxConcurrent', 'manualReserved', 'maxPerResourceConcurrent', 'maxAutomaticRequestsPerHour',
+  'maxAutomaticTokensPerDay', 'maxTotalTokensPerDay', 'maxCostMicrosPerDay'] as const;
 const BUDGET_FIELDS: Array<{ key: BudgetKey; label: string; hint: string; min: number; max: number }> = [
   { key: 'contextWindowTokens', label: '上下文窗口', hint: 'tokens；不得超过 Provider 上下文窗口，且至少比输出/摘要上限大 1024。', min: 1, max: 1_000_000 },
   { key: 'outputTokens', label: '普通输出上限', hint: 'tokens；不得超过 Provider 最大输出。', min: 1, max: 1_000_000 },
@@ -27,6 +32,13 @@ const BUDGET_FIELDS: Array<{ key: BudgetKey; label: string; hint: string; min: n
   { key: 'maxRows', label: '最大返回行数', hint: '默认 200。', min: 1, max: 1_000 },
   { key: 'maxBytes', label: '最大工具结果字节', hint: '默认 128,000。', min: 1, max: 1_000_000 },
   { key: 'maxWindowMs', label: '最大查询时间窗', hint: '毫秒；默认 3,600,000（1 小时）。', min: 1, max: 86_400_000 },
+  { key: 'maxConcurrent', label: '全局并发', hint: '同时运行的调查数；手动与自动共用。', min: 1, max: 64 },
+  { key: 'manualReserved', label: '手动并发保留', hint: '从全局并发中为手动请求保留的槽位，不得超过全局并发。', min: 0, max: 64 },
+  { key: 'maxPerResourceConcurrent', label: '每资源并发', hint: '同一资源上同时进行的调查数。', min: 1, max: 64 },
+  { key: 'maxAutomaticRequestsPerHour', label: '自动每小时请求', hint: '自动触发每 UTC 小时最多准入的请求数。', min: 1, max: 1_000 },
+  { key: 'maxAutomaticTokensPerDay', label: '自动每日 Token 上限', hint: '自动通道每日 Token 上限，不得超过全部每日上限。', min: 1, max: 1_000_000_000 },
+  { key: 'maxTotalTokensPerDay', label: '全部每日 Token 上限', hint: '手动与自动合计的每日 Token 上限，且不得低于单次执行上限。', min: 1, max: 1_000_000_000 },
+  { key: 'maxCostMicrosPerDay', label: '每日成本上限（micro）', hint: '按配置费率估算的每日成本上限；1,000,000 micro = 1 货币单位。', min: 1, max: 1_000_000_000_000 },
 ];
 const titles = { policies: '调查策略', budget: '有效预算', usage: '用量与成本' };
 const stateLabels = { reserved: '未发送保留', sent: '已发送待用量', settled: '已结算', unknown: '结果未知保留', cancelled: '发送前取消' };
@@ -103,6 +115,12 @@ export class InvestigationGovernancePage extends LitElement {
       if (generation === this.generation) this.error = '调查设置暂不可用，请检查连接后重试。';
     } finally { if (generation === this.generation) this.loading = false; }
   }
+  /** Admission quota is always present in a server-normalized view; legacy
+   * rows without it fall back to the reported defaults. */
+  private buildDraft(document: EffectiveBudgetDocument, view: EffectiveBudgetView): BudgetDraft | null {
+    const policy = document.admission?.policy ?? view.effective.admission?.policy ?? view.defaults.admission?.policy;
+    return policy ? { ...document.runtime, ...document.profileLimits, ...policy } : null;
+  }
   private async loadEffective() {
     const generation = this.generation, kind = this.kind;
     this.budgetLoading = true; this.budgetError = '';
@@ -115,12 +133,14 @@ export class InvestigationGovernancePage extends LitElement {
       }
       const view = await response.json() as EffectiveBudgetView;
       if (generation !== this.generation || !this.isConnected) return;
-      if (!view || view.schemaVersion !== 1 || !view.effective?.runtime || !view.effective?.profileLimits || !view.defaults?.runtime) {
+      const draft = view && view.schemaVersion === 1 && view.effective?.runtime && view.effective?.profileLimits && view.defaults?.runtime
+        ? this.buildDraft(view.effective, view) : null;
+      if (!draft) {
         this.budgetError = '有效预算响应不完整，请稍后重试。';
         return;
       }
       this.budget = view;
-      this.draft = { ...view.effective.runtime, ...view.effective.profileLimits };
+      this.draft = draft;
     } catch {
       if (generation === this.generation) this.budgetError = '有效预算暂不可用，请检查连接后重试。';
     } finally { if (generation === this.generation) this.budgetLoading = false; }
@@ -134,12 +154,26 @@ export class InvestigationGovernancePage extends LitElement {
   }
   private budgetDirty() {
     if (!this.draft || !this.budget) return false;
-    const base = { ...this.budget.effective.runtime, ...this.budget.effective.profileLimits };
-    return BUDGET_FIELDS.some(field => this.draft![field.key] !== base[field.key]);
+    const base = this.buildDraft(this.budget.effective, this.budget);
+    return !!base && BUDGET_FIELDS.some(field => this.draft![field.key] !== base[field.key]);
+  }
+  /** A policy edit rotates the ledger domain; runtime/Profile edits do not. */
+  private policyDirty() {
+    if (!this.draft || !this.budget) return false;
+    const base = this.buildDraft(this.budget.effective, this.budget);
+    return !!base && ADMISSION_KEYS.some(key => this.draft![key] !== base[key]);
+  }
+  /** Runtime/Profile edits still require verified provider capacity. */
+  private coreDirty() {
+    if (!this.draft || !this.budget) return false;
+    const base = this.buildDraft(this.budget.effective, this.budget);
+    return !!base && [...RUNTIME_KEYS, ...PROFILE_KEYS].some(key => this.draft![key] !== base[key]);
   }
   private restoreBudgetDefaults() {
     if (!this.budget) return;
-    this.draft = { ...this.budget.defaults.runtime, ...this.budget.defaults.profileLimits };
+    const draft = this.buildDraft(this.budget.defaults, this.budget);
+    if (!draft) return;
+    this.draft = draft;
     this.budgetFieldErrors = {}; this.budgetError = '';
   }
   private validateBudget(): boolean {
@@ -166,6 +200,12 @@ export class InvestigationGovernancePage extends LitElement {
       errors.contextWindowTokens = '必须至少比输出/摘要上限大 1024';
     if (!errors.maxExecutionTokens && draft.maxExecutionTokens < draft.contextWindowTokens)
       errors.maxExecutionTokens = '必须 ≥ 上下文窗口';
+    if (!errors.manualReserved && !errors.maxConcurrent && draft.manualReserved > draft.maxConcurrent)
+      errors.manualReserved = `不能超过全局并发 ${fmt(draft.maxConcurrent)}`;
+    if (!errors.maxAutomaticTokensPerDay && !errors.maxTotalTokensPerDay && draft.maxAutomaticTokensPerDay > draft.maxTotalTokensPerDay)
+      errors.maxAutomaticTokensPerDay = `不能超过全部每日上限 ${fmt(draft.maxTotalTokensPerDay)}`;
+    if (!errors.maxExecutionTokens && !errors.maxTotalTokensPerDay && draft.maxExecutionTokens > draft.maxTotalTokensPerDay)
+      errors.maxTotalTokensPerDay = `每日上限不能低于单次执行上限 ${fmt(draft.maxExecutionTokens)}`;
     this.budgetFieldErrors = errors;
     return Object.keys(errors).length === 0;
   }
@@ -173,6 +213,7 @@ export class InvestigationGovernancePage extends LitElement {
     if (code === 'INVESTIGATION_BUDGET_CONFLICT') return '配置已被他人修改，请刷新后重试。';
     if (code === 'INVESTIGATION_BUDGET_CAPABILITY_EXCEEDED') return '超出当前 Provider 能力，请调整窗口或输出上限。';
     if (code === 'INVESTIGATION_BUDGET_CAPABILITY_UNAVAILABLE') return '当前 Provider 能力未验证，暂不能保存。';
+    if (code === 'INVESTIGATION_BUDGET_POLICY_INVALID') return '准入策略冲突：手动保留不能超过全局并发，自动与单次执行上限不能超过每日总量。';
     if (code === 'INVESTIGATION_BUDGET_CONFIGURATION_INVALID') return '配置值不合法，请检查标红字段。';
     return [401, 403].includes(status) ? '当前账号无权保存此设置。' : '保存失败，请稍后重试。';
   }
@@ -182,7 +223,7 @@ export class InvestigationGovernancePage extends LitElement {
     if (!this.validateBudget()) { this.budgetError = '请修正标红字段后再保存。'; return; }
     this.budgetSaving = true;
     try {
-      const draft = this.draft;
+      const draft = this.draft, rotates = this.policyDirty();
       const response = await authFetch('/api/investigation-budget/effective', { method: 'PUT',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           expectedVersion: this.budget.effective.version,
@@ -190,13 +231,18 @@ export class InvestigationGovernancePage extends LitElement {
             summaryOutputTokens: draft.summaryOutputTokens, maxExecutionTokens: draft.maxExecutionTokens },
           profileLimits: { deadlineMs: draft.deadlineMs, maxToolCalls: draft.maxToolCalls,
             maxProviderAttempts: draft.maxProviderAttempts, maxRows: draft.maxRows, maxBytes: draft.maxBytes, maxWindowMs: draft.maxWindowMs },
+          admissionPolicy: { maxConcurrent: draft.maxConcurrent, manualReserved: draft.manualReserved,
+            maxPerResourceConcurrent: draft.maxPerResourceConcurrent, maxAutomaticRequestsPerHour: draft.maxAutomaticRequestsPerHour,
+            maxAutomaticTokensPerDay: draft.maxAutomaticTokensPerDay, maxTotalTokensPerDay: draft.maxTotalTokensPerDay,
+            maxCostMicrosPerDay: draft.maxCostMicrosPerDay },
         }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) { this.budgetError = this.budgetErrorMessage(body?.error, response.status); return; }
-      const view = body as EffectiveBudgetView;
-      this.budget = view; this.draft = { ...view.effective.runtime, ...view.effective.profileLimits };
+      const view = body as EffectiveBudgetView, next = this.buildDraft(view.effective, view);
+      if (!next) { this.budgetError = '有效预算响应不完整，请重新加载。'; return; }
+      this.budget = view; this.draft = next;
       this.budgetFieldErrors = {};
-      showToast('有效预算已保存，新执行将使用该分配', 'success');
+      showToast(rotates ? `准入策略已保存，新执行将使用账本域 ${view.admission.domain}` : '有效预算已保存，新执行将使用该分配', 'success');
     } catch { this.budgetError = '保存失败，请检查连接后重试。'; }
     finally { this.budgetSaving = false; }
   }
@@ -204,34 +250,42 @@ export class InvestigationGovernancePage extends LitElement {
     if (!this.budget) return html`<div class="section-head"><h2>有效预算（可编辑）</h2><span class="caption">${this.budgetLoading ? '正在加载…' : ''}</span></div>
       ${this.budgetError ? html`<div class="notice" role="alert"><div>${this.budgetError}</div></div>` : nothing}`;
     const budget = this.budget, provider = budget.provider, dirty = this.budgetDirty();
+    const rotates = this.policyDirty();
+    const blocked = !budget.capabilityVerified && this.coreDirty();
     return html`<div class="section-head"><div><h2>有效预算（可编辑）</h2><p class="caption">保存后仅影响新执行；在途 Run 继续使用已冻结的分配。</p></div>
         <div class="row">${badge(budget.source === 'settings' ? `持久设置 · v${budget.effective.version}` : '当前默认值', budget.source === 'settings' ? 'ok' : 'muted')}
+        ${badge(`账本域 ${budget.admission.domain} · 修订 ${budget.admission.revision}`, 'muted')}
         ${badge(budget.capabilityVerified ? 'Provider 能力已核验' : 'Provider 能力未核验', budget.capabilityVerified ? 'ok' : 'warn')}</div></div>
       <app-card data-budget="editor">
-        ${budget.capabilityVerified ? nothing : html`<div class="notice" role="alert"><div><strong>当前 Provider 能力不可用</strong>无法保存会超出模型能力的预算；请先完成模型配置。</div></div>`}
+        ${budget.capabilityVerified ? nothing : html`<div class="notice" role="alert"><div><strong>当前 Provider 能力不可用</strong>此时只能保存准入策略；运行时与 Profile 修改需先完成模型配置。</div></div>`}
         <div class="definitions-grid">
-          <div><h3>运行时分配</h3>${(['contextWindowTokens', 'outputTokens', 'summaryOutputTokens', 'maxExecutionTokens'] as const).map(key => this.renderBudgetInput(key))}</div>
-          <div><h3>Profile 限制</h3>${(['deadlineMs', 'maxToolCalls', 'maxProviderAttempts', 'maxRows', 'maxBytes', 'maxWindowMs'] as const).map(key => this.renderBudgetInput(key))}</div>
+          <div><h3>运行时分配</h3>${RUNTIME_KEYS.map(key => this.renderBudgetInput(key))}</div>
+          <div><h3>Profile 限制</h3>${PROFILE_KEYS.map(key => this.renderBudgetInput(key))}</div>
+          <div><h3>准入与每日配额</h3>${ADMISSION_KEYS.map(key => this.renderBudgetInput(key))}
+            <p class="caption" data-budget="rotation">修改准入策略会轮换账本域：新执行使用新域，旧账本只读保留，不重写、不迁移。</p></div>
         </div>
         <details><summary>Provider 能力与默认值</summary>${pairs([['Provider 模型', provider?.model ?? '不可用'],
           ['上下文窗口', provider ? fmt(provider.contextWindowTokens) : '—'],
           ['最大输出', provider?.maxOutputTokens !== undefined ? fmt(provider.maxOutputTokens) : '—'],
           ['来源', budget.source === 'settings' ? '持久设置' : '能力推导默认值'],
+          ['当前账本域', budget.admission.domain],
+          ['策略修订', `v${budget.admission.revision}（${budget.admission.source === 'settings' ? '持久设置' : '部署默认值'}）`],
           ['更新时间', budget.effective.updatedAt]])}</details>
         ${this.budgetError ? html`<div class="notice" role="alert"><div>${this.budgetError}</div></div>` : nothing}
         <div class="row">
-          <button class="btn btn-primary" data-budget-action="save" ?disabled=${this.budgetSaving || !dirty || !budget.capabilityVerified}
+          <button class="btn btn-primary" data-budget-action="save" ?disabled=${this.budgetSaving || !dirty || blocked}
             aria-busy=${String(this.budgetSaving)} @click=${() => this.saveBudget()}>保存有效预算</button>
           <button class="btn-ghost" data-budget-action="defaults" ?disabled=${this.budgetSaving} @click=${() => this.restoreBudgetDefaults()}>恢复默认值</button>
-          <span class="caption">${dirty ? '有未保存的修改' : '已与当前持久设置一致'}</span>
+          <span class="caption">${dirty ? (rotates ? '准入策略已修改 · 保存后轮换账本域' : '有未保存的修改') : '已与当前持久设置一致'}</span>
         </div>
       </app-card>`;
   }
   private renderBudgetInput(key: BudgetKey) {
     const field = BUDGET_FIELDS.find(item => item.key === key)!;
+    const gated = !(ADMISSION_KEYS as readonly BudgetKey[]).includes(key) && !this.budget?.capabilityVerified;
     return html`<app-form-field label=${field.label} hint=${field.hint} .error=${this.budgetFieldErrors[key] ?? ''} required>
       <input type="number" inputmode="numeric" min=${field.min} max=${field.max} step="1"
-        .value=${String(this.draft?.[key] ?? '')} ?disabled=${this.budgetSaving || !this.budget?.capabilityVerified}
+        .value=${String(this.draft?.[key] ?? '')} ?disabled=${this.budgetSaving || gated}
         @input=${(event: Event) => this.updateBudgetField(key, event)} />
     </app-form-field>`;
   }
@@ -257,7 +311,7 @@ export class InvestigationGovernancePage extends LitElement {
     const value = (key: keyof typeof policy, p: typeof policy) => key === 'maxCostMicrosPerDay' ? money(p.maxCostMicrosPerDay,p.currency) : typeof p[key] === 'number' ? fmt(p[key] as number) : p[key];
     return html`${this.renderBudgetEditor()}<div class="notice ${facts.admissionStatus === 'conflict' ? '' : 'neutral'}" role=${facts.admissionStatus === 'conflict' ? 'alert' : 'status'}><div><strong>${status[facts.admissionStatus]}</strong>${facts.admissionStatus === 'uninitialized' ? '只读查询不会创建预算域，剩余额度尚不可确定。' : '配置一致性不代表具备余额；每次执行仍需准入校验。'}</div></div>
       <div class="metrics">${stat('全部每日 Token 上限',fmt(policy.maxTotalTokensPerDay),'UTC 日窗口 · 配置额度')}${stat('自动每日 Token 上限',fmt(policy.maxAutomaticTokensPerDay),'包含在全部每日上限中')}${stat('每日成本上限',money(policy.maxCostMicrosPerDay,policy.currency),'按配置费率估算 · 非剩余余额')}</div>
-      <div class="section-head"><h2>预算规则</h2><span class="caption">当前加载配置 · 只读</span></div><app-card data-budget="loader"><div class="definitions-grid"><div><h3>并发与频次</h3>${pairs([['全局并发',`${fmt(policy.maxConcurrent)} 个`],['其中手动保留',`${fmt(policy.manualReserved)} 个`],['每资源并发',`${fmt(policy.maxPerResourceConcurrent)} 个`],['自动每小时请求',`${fmt(policy.maxAutomaticRequestsPerHour)} 次`]])}</div><div><h3>成本与预留</h3>${pairs([['币种',policy.currency],['每日成本上限',money(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',money(facts.reserveCostMicros,policy.currency)],['窗口时区','UTC']])}</div></div><details><summary>查看精确值与配置来源</summary>${pairs([['每日成本上限',exactMoney(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',exactMoney(facts.reserveCostMicros,policy.currency)],['配置来源',facts.source]])}</details></app-card>
+      <div class="section-head"><h2>预算规则</h2><span class="caption">当前加载配置 · 只读</span></div><app-card data-budget="loader"><div class="definitions-grid"><div><h3>并发与频次</h3>${pairs([['全局并发',`${fmt(policy.maxConcurrent)} 个`],['其中手动保留',`${fmt(policy.manualReserved)} 个`],['每资源并发',`${fmt(policy.maxPerResourceConcurrent)} 个`],['自动每小时请求',`${fmt(policy.maxAutomaticRequestsPerHour)} 次`]])}</div><div><h3>成本与预留</h3>${pairs([['币种',policy.currency],['每日成本上限',money(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',money(facts.reserveCostMicros,policy.currency)],['窗口时区','UTC']])}</div></div><details><summary>查看精确值与配置来源</summary>${pairs([['每日成本上限',exactMoney(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',exactMoney(facts.reserveCostMicros,policy.currency)],['配置来源',facts.policySource === 'settings' ? '有效预算设置' : '部署加载器'],['账本域',`${facts.domain} · 修订 ${facts.admissionRevision}`]])}</details></app-card>
       <div class="section-head"><h2>持久冻结配置</h2>${badge(facts.admissionStatus === 'conflict' ? '配置冲突' : frozen ? '一致' : '未初始化',facts.admissionStatus === 'conflict' ? 'danger' : frozen ? 'ok' : 'muted')}</div><app-card data-budget="frozen" .compact=${!!frozen}>${frozen ? table([{key:'field',label:'关键字段',width:'40%'},{key:'loader',label:'当前配置',width:'30%'},{key:'persisted',label:'冻结配置',width:'30%'}],fields.map(([key,label]) => ({field:label,loader:value(key,policy),persisted:html`<span class=${policy[key] !== frozen[key] ? 'conflict' : ''}>${value(key,frozen)}${policy[key] !== frozen[key] ? ' · 不一致' : ''}</span>`}))) : html`<app-empty-state icon="clipboard" title="尚无冻结预算" description="预算域尚未初始化。只读刷新不会保留额度或触发调查。"></app-empty-state>`}</app-card>
       <p class="detail-note">额度不等于余额或供应商收费；Profile 上限见调查 Profiles。${facts.automaticTriggerStatus === 'connected' ? '数据库告警试点已接入；每次实时校验权限与预算。' : '自动触发尚未接入。'}</p>`;
   }

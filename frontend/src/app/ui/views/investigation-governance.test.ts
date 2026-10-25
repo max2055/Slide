@@ -30,18 +30,22 @@ it.each([401, 403, 503])('HTTP %s clears old facts instead of showing fake curre
   expect((element as any).facts).toBeNull();
   expect(element.shadowRoot!.textContent).toContain(status === 401 ? '登录已失效' : status === 403 ? '无权访问' : '暂不可用');
 });
+const admissionPolicy = { maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2, maxAutomaticRequestsPerHour: 20,
+  maxAutomaticTokensPerDay: 5000000, maxTotalTokensPerDay: 5000000, maxCostMicrosPerDay: 10000000 };
 const budgetFacts = { schemaVersion: 1, source: 'investigationBudgetConfiguration',
-  policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2, maxAutomaticRequestsPerHour: 20,
-    maxAutomaticTokensPerDay: 256000, maxTotalTokensPerDay: 1000000, maxCostMicrosPerDay: 10000000 },
+  policy: { currency: 'USD', ...admissionPolicy },
   reserveCostMicros: 1000000, persistedPolicy: null, admissionStatus: 'uninitialized', automaticTriggerStatus: 'not_connected',
-  window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles' };
+  window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles',
+  domain: 'investigation-v1:v2', admissionRevision: 2, policySource: 'settings' };
 const runtime = { contextWindowTokens: 1000000, outputTokens: 393216, summaryOutputTokens: 393216, maxExecutionTokens: 1000000 };
 const profileLimits = { deadlineMs: 600000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128000, maxWindowMs: 3600000 };
+const admission = { revision: 2, policy: admissionPolicy };
 const effectiveView = { schemaVersion: 1, source: 'settings',
-  effective: { schemaVersion: 1, version: 3, runtime, profileLimits, updatedAt: '2026-10-25T00:00:00.000Z' },
-  defaults: { schemaVersion: 1, version: 0, runtime, profileLimits, updatedAt: '2026-10-25T00:00:00.000Z' },
+  effective: { schemaVersion: 1, version: 3, runtime, profileLimits, admission, updatedAt: '2026-10-25T00:00:00.000Z' },
+  defaults: { schemaVersion: 1, version: 0, runtime, profileLimits, admission, updatedAt: '2026-10-25T00:00:00.000Z' },
   provider: { model: 'deepseek-v4-flash', contextWindowTokens: 1000000, maxOutputTokens: 393216, preferredOutputTokens: 393216, source: 'configuration' },
-  capabilityVerified: true };
+  capabilityVerified: true,
+  admission: { domain: 'investigation-v1:v2', revision: 2, source: 'settings' } };
 function mockBudget(view: object = effectiveView) {
   vi.mocked(authFetch).mockImplementation(async (url: any) => String(url).includes('/effective')
     ? new Response(JSON.stringify(view)) : new Response(JSON.stringify(budgetFacts)));
@@ -65,12 +69,44 @@ it('renders the editable effective budget and saves it with the observed version
     const body = JSON.parse(init.body);
     expect(body.expectedVersion).toBe(3);
     expect(body.runtime.contextWindowTokens).toBe(500000);
+    expect(body.admissionPolicy).toEqual(admissionPolicy);
     return new Response(JSON.stringify({ ...effectiveView,
       effective: { ...effectiveView.effective, version: 4, runtime: { ...runtime, contextWindowTokens: 500000 } } }));
   });
   await (element as any).saveBudget();
   expect((element as any).budget.effective.version).toBe(4);
   expect(showToast).toHaveBeenCalledWith(expect.stringContaining('有效预算已保存'), 'success');
+});
+it('rotates the ledger domain when only the admission policy changes', async () => {
+  const element = await mountedBudget();
+  // 4 runtime + 6 profile fields precede the admission group; total is next to last.
+  const inputs = element.shadowRoot!.querySelectorAll('app-form-field input');
+  const input = inputs[15] as HTMLInputElement;
+  input.value = '8000000'; input.dispatchEvent(new Event('input', { bubbles: true }));
+  await element.updateComplete;
+  expect(element.shadowRoot!.textContent).toContain('保存后轮换账本域');
+  vi.mocked(authFetch).mockImplementation(async (_url: any, init: any) => {
+    const body = JSON.parse(init.body);
+    expect(body.admissionPolicy.maxTotalTokensPerDay).toBe(8000000);
+    expect(body.admissionPolicy.maxAutomaticTokensPerDay).toBe(5000000);
+    return new Response(JSON.stringify({ ...effectiveView, source: 'settings',
+      effective: { ...effectiveView.effective, version: 4,
+        admission: { revision: 3, policy: { ...admissionPolicy, maxTotalTokensPerDay: 8000000 } } },
+      admission: { domain: 'investigation-v1:v3', revision: 3, source: 'settings' } }));
+  });
+  await (element as any).saveBudget();
+  expect((element as any).budget.admission).toEqual({ domain: 'investigation-v1:v3', revision: 3, source: 'settings' });
+  expect(showToast).toHaveBeenCalledWith(expect.stringContaining('investigation-v1:v3'), 'success');
+});
+it('rejects conflicting admission values before sending the update', async () => {
+  const element = await mountedBudget();
+  const inputs = element.shadowRoot!.querySelectorAll('app-form-field input');
+  const input = inputs[11] as HTMLInputElement;
+  input.value = '9'; input.dispatchEvent(new Event('input', { bubbles: true }));
+  await element.updateComplete;
+  await (element as any).saveBudget();
+  expect((element as any).budgetFieldErrors.manualReserved).toContain('全局并发');
+  expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(2);
 });
 it('rejects an invalid window before sending the update', async () => {
   const element = await mountedBudget();

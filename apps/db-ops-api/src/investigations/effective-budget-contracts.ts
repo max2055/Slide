@@ -14,6 +14,13 @@ export const INVESTIGATION_EFFECTIVE_BUDGET_LIMITS = Object.freeze({
   maxRows: { min: 1, max: 1_000 },
   maxBytes: { min: 1, max: 1_000_000 },
   maxWindowMs: { min: 1, max: 86_400_000 },
+  maxConcurrent: { min: 1, max: 64 },
+  manualReserved: { min: 0, max: 64 },
+  maxPerResourceConcurrent: { min: 1, max: 64 },
+  maxAutomaticRequestsPerHour: { min: 1, max: 1_000 },
+  maxAutomaticTokensPerDay: { min: 1, max: 1_000_000_000 },
+  maxTotalTokensPerDay: { min: 1, max: 1_000_000_000 },
+  maxCostMicrosPerDay: { min: 1, max: 1_000_000_000_000 },
 });
 
 export const InvestigationRuntimeAllocationSchema = Type.Object({
@@ -30,6 +37,18 @@ export const InvestigationProfileLimitsSchema = Type.Object({
   maxBytes: integer(1, 1_000_000),
   maxWindowMs: integer(1, 86_400_000),
 }, strict);
+/** Admission and daily quota knobs. A change to any value rotates the ledger
+ * domain revision; it never rewrites an existing domain snapshot. */
+export const InvestigationAdmissionPolicySchema = Type.Object({
+  maxConcurrent: integer(1, 64),
+  manualReserved: integer(0, 64),
+  maxPerResourceConcurrent: integer(1, 64),
+  maxAutomaticRequestsPerHour: integer(1, 1_000),
+  maxAutomaticTokensPerDay: integer(1, 1_000_000_000),
+  maxTotalTokensPerDay: integer(1, 1_000_000_000),
+  maxCostMicrosPerDay: integer(1, 1_000_000_000_000),
+}, strict);
 
 export type InvestigationRuntimeAllocation = Static<typeof InvestigationRuntimeAllocationSchema>;
 export type InvestigationProfileLimits = Static<typeof InvestigationProfileLimitsSchema>;
+export type InvestigationAdmissionPolicy = Static<typeof InvestigationAdmissionPolicySchema>;

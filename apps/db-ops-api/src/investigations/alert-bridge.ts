@@ -10,6 +10,7 @@ import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { MysqlOperationalEventIngest } from './event-ingest.js';
 import { investigationBridgeFlags, databaseAlertPilotConfiguration } from './bridge-flags.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
+import { InvestigationEffectiveBudgetService, resolveAdmissionConfiguration } from './effective-budget.js';
 import { alertResource, alertInvestigationInput } from './resource-event-bridge.js';
 import type { TriggerBinding } from './trigger-policy.js';
 
@@ -47,13 +48,16 @@ async function retryAdmission<T>(work: () => Promise<T>): Promise<T> {
  * owner. Named locks serialize the two independent legacy/new transactions;
  * their durable idempotency keys recover a crash before attaching the link. */
 export class DatabaseAlertBridge {
+  private readonly effectiveBudget: InvestigationEffectiveBudgetService;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly contexts = new ActorContextService(),
     private readonly authorization = new InvestigationAuthorization(contexts),
     private readonly bridge = new InvestigationSessionBridge(poolProvider, authorization),
     private readonly flags = investigationBridgeFlags,
     private readonly pilot: () => { configured: boolean; serviceUserId: number; instanceIds: number[]; serverIds?: number[]; networkDeviceIds?: number[]; policyId: string; policyVersion: 1 } = databaseAlertPilotConfiguration,
-    private readonly budget = investigationBudgetConfiguration) {}
+    private readonly budget = investigationBudgetConfiguration) {
+    this.effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider, undefined, undefined, () => this.budget());
+  }
 
   /** legacy is a trusted, durable unsent-admission callback. It must use the
    * supplied idle connection for ALL SQL and never invoke a provider inline. */
@@ -153,13 +157,16 @@ export class DatabaseAlertBridge {
       if (id) response = { success: true, investigationId: id, id };
       else if (command.trigger === 'auto') {
         const config = this.budget();
+        // Automatic admission follows the durable effective-budget policy in
+        // its rotated domain; reading on the held connection adds no pool slot.
+        const admission = resolveAdmissionConfiguration(await this.effectiveBudget.readStoredFrom(authorityConnection), config);
         const binding: TriggerBinding = { source: resource.type === 'instance' ? 'database-alert-engine' : `${resource.type}-alert-engine`, verified: true, allowedOrigins: ['collector'],
-          policy: { id: resource.type === 'instance' ? 'database-alert-pilot' : `${resource.type}-alert-pilot`, version: 1, domain: config.domain, actor: command.actor,
+          policy: { id: resource.type === 'instance' ? 'database-alert-pilot' : `${resource.type}-alert-pilot`, version: 1, domain: admission.domain, actor: command.actor,
             profileId: 'ops', profileVersion: 1, resources: [{ ...resource, role: 'primary' }],
             kinds: [kind], threshold: 1, windowMs: 300_000, cooldownMs: 300_000, criticalSingle: true,
             reserveTokens: 32_000, reserveCostMicros: config.reserveCostMicros } };
         const ingest = new MysqlOperationalEventIngest(this.poolProvider, binding,
-          new MysqlInvestigationBudgetLedger(this.poolProvider, config.policy), this.authorization, this.bridge, modern ? input.context : undefined);
+          new MysqlInvestigationBudgetLedger(this.poolProvider, admission.policy), this.authorization, this.bridge, modern ? input.context : undefined);
         const receipt = await ingest.ingest({ schemaVersion: 1, sourceEventId: `alert:${command.alert.id}`, kind,
           subject: input.context.subject,
           occurredAt: new Date(command.alert.created_at).toISOString(), severity: command.alert.level as 'warning' | 'error' | 'critical',

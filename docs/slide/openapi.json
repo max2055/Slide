@@ -5146,6 +5146,11 @@
         "$id": "InvestigationBudgetResponse",
         "additionalProperties": false,
         "properties": {
+          "admissionRevision": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
           "admissionStatus": {
             "anyOf": [
               {
@@ -5173,6 +5178,10 @@
                 "type": "string"
               }
             ]
+          },
+          "domain": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$",
+            "type": "string"
           },
           "persistedPolicy": {
             "anyOf": [
@@ -5291,6 +5300,18 @@
             ],
             "type": "object"
           },
+          "policySource": {
+            "anyOf": [
+              {
+                "const": "settings",
+                "type": "string"
+              },
+              {
+                "const": "configuration",
+                "type": "string"
+              }
+            ]
+          },
           "profileLimitsSource": {
             "const": "/api/investigation-profiles",
             "type": "string"
@@ -5322,7 +5343,10 @@
           "admissionStatus",
           "automaticTriggerStatus",
           "window",
-          "profileLimitsSource"
+          "profileLimitsSource",
+          "domain",
+          "admissionRevision",
+          "policySource"
         ],
         "type": "object"
       },
@@ -5608,12 +5632,109 @@
       "InvestigationEffectiveBudgetView": {
         "additionalProperties": false,
         "properties": {
+          "admission": {
+            "additionalProperties": false,
+            "properties": {
+              "domain": {
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              "revision": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "settings",
+                    "type": "string"
+                  },
+                  {
+                    "const": "defaults",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "domain",
+              "revision",
+              "source"
+            ],
+            "type": "object"
+          },
           "capabilityVerified": {
             "type": "boolean"
           },
           "defaults": {
             "additionalProperties": false,
             "properties": {
+              "admission": {
+                "additionalProperties": false,
+                "properties": {
+                  "policy": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "manualReserved": {
+                        "maximum": 64,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "maxAutomaticRequestsPerHour": {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxAutomaticTokensPerDay": {
+                        "maximum": 1000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxConcurrent": {
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxCostMicrosPerDay": {
+                        "maximum": 1000000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxPerResourceConcurrent": {
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxTotalTokensPerDay": {
+                        "maximum": 1000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "maxConcurrent",
+                      "manualReserved",
+                      "maxPerResourceConcurrent",
+                      "maxAutomaticRequestsPerHour",
+                      "maxAutomaticTokensPerDay",
+                      "maxTotalTokensPerDay",
+                      "maxCostMicrosPerDay"
+                    ],
+                    "type": "object"
+                  },
+                  "revision": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "policy"
+                ],
+                "type": "object"
+              },
               "profileLimits": {
                 "additionalProperties": false,
                 "properties": {
@@ -5721,6 +5842,71 @@
           "effective": {
             "additionalProperties": false,
             "properties": {
+              "admission": {
+                "additionalProperties": false,
+                "properties": {
+                  "policy": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "manualReserved": {
+                        "maximum": 64,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "maxAutomaticRequestsPerHour": {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxAutomaticTokensPerDay": {
+                        "maximum": 1000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxConcurrent": {
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxCostMicrosPerDay": {
+                        "maximum": 1000000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxPerResourceConcurrent": {
+                        "maximum": 64,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "maxTotalTokensPerDay": {
+                        "maximum": 1000000000,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "maxConcurrent",
+                      "manualReserved",
+                      "maxPerResourceConcurrent",
+                      "maxAutomaticRequestsPerHour",
+                      "maxAutomaticTokensPerDay",
+                      "maxTotalTokensPerDay",
+                      "maxCostMicrosPerDay"
+                    ],
+                    "type": "object"
+                  },
+                  "revision": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "policy"
+                ],
+                "type": "object"
+              },
               "profileLimits": {
                 "additionalProperties": false,
                 "properties": {
@@ -5901,7 +6087,8 @@
           "effective",
           "defaults",
           "provider",
-          "capabilityVerified"
+          "capabilityVerified",
+          "admission"
         ],
         "type": "object"
       },
@@ -25453,7 +25640,7 @@
     },
     "/api/investigation-budget": {
       "get": {
-        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Current investigationBudgetConfiguration plus persisted policy matching/conflict; does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status reflects the database pilot configuration and flag.",
+        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Effective admission policy from the durable effective-budget setting (falling back to investigationBudgetConfiguration) plus persisted domain-policy matching/conflict for the domain revision new admissions target; reading does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status reflects the database pilot configuration and flag.",
         "operationId": "getInvestigationBudget",
         "responses": {
           "200": {

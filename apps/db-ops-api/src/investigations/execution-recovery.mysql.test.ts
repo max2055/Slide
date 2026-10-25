@@ -1351,6 +1351,42 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect((await decodeState()).runtimeContext).toEqual(state.runtimeContext);
     expect((await decodeState()).profileBudget).toEqual(state.profileBudget);
   });
+  it('activates a rotated admission policy for new Runs while an in-flight Run keeps its original domain', async () => {
+    const admissionPolicy = { maxConcurrent: 2, manualReserved: 1, maxPerResourceConcurrent: 2,
+      maxAutomaticRequestsPerHour: 7, maxAutomaticTokensPerDay: 900_000, maxTotalTokensPerDay: 900_000, maxCostMicrosPerDay: 8_000_000 };
+    const stored = { schemaVersion: 1, version: 1,
+      runtime: { contextWindowTokens: 32768, outputTokens: 4096, summaryOutputTokens: 4096, maxExecutionTokens: 32768 },
+      profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 },
+      admission: { revision: 2, policy: admissionPolicy },
+      updatedAt: '2026-10-25T00:00:00.000Z', updatedBy: 101 };
+    const store = (value: object) => pool.query("REPLACE INTO system_config (config_key,config_value,value_type,updated_by) VALUES (?,?,'json',101)",
+      [INVESTIGATION_EFFECTIVE_BUDGET_KEY, JSON.stringify(value)]);
+    await store(stored);
+    const rotated = { ...stored, version: 2, admission: { revision: 3,
+      policy: { ...admissionPolicy, maxConcurrent: 3, maxAutomaticTokensPerDay: 1_000_000, maxTotalTokensPerDay: 1_000_000 } } };
+    const executor = fixture({ beforeProvider: async () => {
+      // Rotate between the tool turn and the final answer: the admitted receipt
+      // must stay in its original domain instead of following the new policy.
+      if (providerCalls === 2) await store(rotated);
+    } });
+    expect((await execute(executor)).state).toBe('completed');
+    expect(await rows('SELECT CAST(domain_key AS CHAR) AS domain,state,charged_tokens FROM investigation_budget_ledger'))
+      .toEqual([{ domain: 'test-investigation:v2', state: 'settled', charged_tokens: 60 }]);
+    const [oldDomain] = await rows('SELECT policy_snapshot FROM investigation_budget_domains WHERE domain_key=?', ['test-investigation:v2']);
+    expect(typeof oldDomain.policy_snapshot === 'string' ? JSON.parse(oldDomain.policy_snapshot) : oldDomain.policy_snapshot)
+      .toEqual({ currency: 'USD', ...admissionPolicy });
+    expect(await rows('SELECT domain_key FROM investigation_budget_domains WHERE domain_key=?', ['test-investigation:v3'])).toHaveLength(0);
+    const settled = await rows('SELECT * FROM investigation_budget_ledger');
+    // A brand-new admission after the rotation resolves the new revision.
+    await admit(owner);
+    expect((await execute(fixture())).state).toBe('completed');
+    expect(await rows('SELECT CAST(domain_key AS CHAR) AS domain FROM investigation_budget_ledger WHERE request_id=?', [binding.requestId]))
+      .toEqual([{ domain: 'test-investigation:v3' }]);
+    expect(await rows('SELECT * FROM investigation_budget_ledger WHERE request_id <> ?', [binding.requestId])).toEqual(settled);
+    const [newDomain] = await rows('SELECT policy_snapshot FROM investigation_budget_domains WHERE domain_key=?', ['test-investigation:v3']);
+    expect(typeof newDomain.policy_snapshot === 'string' ? JSON.parse(newDomain.policy_snapshot) : newDomain.policy_snapshot)
+      .toEqual({ currency: 'USD', ...rotated.admission.policy });
+  }, 30_000);
   it('settles a metered length terminal through core checkpoint, durable result and a fresh executor without replay', async () => {
     const b9 = JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/ops-output-b9-20261022.json', import.meta.url), 'utf8'));
     const original = b9.finalResponse.content;

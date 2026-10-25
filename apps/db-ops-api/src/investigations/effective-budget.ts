@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
@@ -8,21 +9,33 @@ import { llmDatabaseService } from '../llm-database-service.js';
 import { resolveSceneModel } from '../llm/scene-routing.js';
 import { configuredModelCapabilities } from '../adapter/llm-provider-factory.js';
 import type { ModelCapabilities } from '@slide/agent-core';
-import { InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema,
-  type InvestigationProfileLimits, type InvestigationRuntimeAllocation } from './effective-budget-contracts.js';
-export { INVESTIGATION_EFFECTIVE_BUDGET_LIMITS, InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema } from './effective-budget-contracts.js';
-export type { InvestigationProfileLimits, InvestigationRuntimeAllocation } from './effective-budget-contracts.js';
+import { InvestigationAdmissionPolicySchema, InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema,
+  type InvestigationAdmissionPolicy, type InvestigationProfileLimits, type InvestigationRuntimeAllocation } from './effective-budget-contracts.js';
+import { investigationBudgetConfiguration, type InvestigationBudgetConfiguration } from './budget-configuration.js';
+import type { BudgetPolicy } from './budget-ledger.js';
+export { INVESTIGATION_EFFECTIVE_BUDGET_LIMITS, InvestigationAdmissionPolicySchema, InvestigationProfileLimitsSchema,
+  InvestigationRuntimeAllocationSchema } from './effective-budget-contracts.js';
+export type { InvestigationAdmissionPolicy, InvestigationProfileLimits, InvestigationRuntimeAllocation } from './effective-budget-contracts.js';
 
 const strict = { additionalProperties: false } as const;
 const at = () => Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' });
 const integer = (min: number, max: number) => Type.Integer({ minimum: min, maximum: max });
 
 export const INVESTIGATION_EFFECTIVE_BUDGET_KEY = 'investigation.effective_budget.v1';
+/** Admission quota plus its monotonic ledger-domain revision. The revision only
+ * advances when the policy changes, so a quota edit can never rewrite an
+ * existing domain snapshot or its historical ledger. */
+export const InvestigationEffectiveAdmissionSchema = Type.Object({
+  revision: integer(1, Number.MAX_SAFE_INTEGER),
+  policy: InvestigationAdmissionPolicySchema,
+}, strict);
 export const InvestigationEffectiveBudgetSchema = Type.Object({
   schemaVersion: Type.Literal(1),
   version: integer(1, Number.MAX_SAFE_INTEGER),
   runtime: InvestigationRuntimeAllocationSchema,
   profileLimits: InvestigationProfileLimitsSchema,
+  // Absent only in documents written before admission settings existed.
+  admission: Type.Optional(InvestigationEffectiveAdmissionSchema),
   updatedAt: at(),
   updatedBy: Type.Optional(integer(1, Number.MAX_SAFE_INTEGER)),
 }, strict);
@@ -30,8 +43,10 @@ export const InvestigationEffectiveBudgetInputSchema = Type.Object({
   expectedVersion: integer(0, Number.MAX_SAFE_INTEGER),
   runtime: InvestigationRuntimeAllocationSchema,
   profileLimits: InvestigationProfileLimitsSchema,
+  admissionPolicy: InvestigationAdmissionPolicySchema,
 }, strict);
 
+export type InvestigationEffectiveAdmission = Static<typeof InvestigationEffectiveAdmissionSchema>;
 export type InvestigationEffectiveBudget = Static<typeof InvestigationEffectiveBudgetSchema>;
 export type InvestigationEffectiveBudgetInput = Static<typeof InvestigationEffectiveBudgetInputSchema>;
 export interface InvestigationProviderCapacity {
@@ -48,6 +63,14 @@ export interface InvestigationEffectiveBudgetView {
   defaults: InvestigationEffectiveBudget;
   provider: InvestigationProviderCapacity | null;
   capabilityVerified: boolean;
+  /** Domain new admissions currently target; derived from the policy revision. */
+  admission: { domain: string; revision: number; source: 'settings' | 'defaults' };
+}
+export interface InvestigationAdmissionConfiguration {
+  domain: string;
+  policy: BudgetPolicy;
+  revision: number;
+  source: 'settings' | 'defaults';
 }
 export interface EffectiveBudgetAuditContext {
   clientIp?: string;
@@ -55,6 +78,7 @@ export interface EffectiveBudgetAuditContext {
 }
 export type EffectiveBudgetErrorCode =
   | 'INVESTIGATION_BUDGET_CONFIGURATION_INVALID'
+  | 'INVESTIGATION_BUDGET_POLICY_INVALID'
   | 'INVESTIGATION_BUDGET_CAPABILITY_UNAVAILABLE'
   | 'INVESTIGATION_BUDGET_CAPABILITY_EXCEEDED'
   | 'INVESTIGATION_BUDGET_CONFLICT'
@@ -84,24 +108,64 @@ function defaultRuntime(capability?: InvestigationProviderCapacity): Investigati
   return { contextWindowTokens: window, outputTokens: output, summaryOutputTokens: output,
     maxExecutionTokens: 1_000_000 };
 }
-export function defaultEffectiveBudget(capability?: InvestigationProviderCapacity, now = new Date().toISOString()): InvestigationEffectiveBudget {
-  return { schemaVersion: 1, version: 0, runtime: defaultRuntime(capability), profileLimits: { ...CONSERVATIVE_PROFILE_LIMITS }, updatedAt: now };
+function admissionPolicyFrom(policy: BudgetPolicy): InvestigationAdmissionPolicy {
+  return { maxConcurrent: policy.maxConcurrent, manualReserved: policy.manualReserved,
+    maxPerResourceConcurrent: policy.maxPerResourceConcurrent, maxAutomaticRequestsPerHour: policy.maxAutomaticRequestsPerHour,
+    maxAutomaticTokensPerDay: policy.maxAutomaticTokensPerDay, maxTotalTokensPerDay: policy.maxTotalTokensPerDay,
+    maxCostMicrosPerDay: policy.maxCostMicrosPerDay };
+}
+function defaultAdmission(policy: BudgetPolicy): InvestigationEffectiveAdmission {
+  return { revision: 1, policy: admissionPolicyFrom(policy) };
+}
+/** Revision 1 keeps the deployment's existing domain. Every changed policy
+ * opens a new sibling domain, so older snapshots and charges stay untouched. */
+export function admissionDomain(base: string, revision: number): string {
+  const domain = revision <= 1 ? base : `${base}:v${revision}`;
+  // Never truncate a domain key: an over-long base fails explicitly.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(domain)) throw invalid();
+  return domain;
+}
+/** Effective admission for new work: the persisted setting when present, else
+ * the deployment loader. A stored receipt is never passed through this. */
+export function resolveAdmissionConfiguration(stored: InvestigationEffectiveBudget | undefined,
+  base: InvestigationBudgetConfiguration = investigationBudgetConfiguration()): InvestigationAdmissionConfiguration {
+  const admission = stored?.admission;
+  if (!admission) return { domain: base.domain, policy: { ...base.policy }, revision: 1, source: 'defaults' };
+  return { domain: admissionDomain(base.domain, admission.revision),
+    policy: { currency: base.policy.currency, ...admission.policy }, revision: admission.revision, source: 'settings' };
+}
+function withAdmission(budget: InvestigationEffectiveBudget, base: BudgetPolicy): InvestigationEffectiveBudget {
+  return budget.admission ? budget : { ...budget, admission: defaultAdmission(base) };
+}
+export function defaultEffectiveBudget(capability?: InvestigationProviderCapacity,
+  now = new Date().toISOString(), base: BudgetPolicy = investigationBudgetConfiguration().policy): InvestigationEffectiveBudget {
+  return { schemaVersion: 1, version: 0, runtime: defaultRuntime(capability), profileLimits: { ...CONSERVATIVE_PROFILE_LIMITS },
+    admission: defaultAdmission(base), updatedAt: now };
 }
 
 export function assertEffectiveBudget(value: unknown): InvestigationEffectiveBudget {
   if (!Value.Check(InvestigationEffectiveBudgetSchema, value)) throw invalid();
   const budget = value as InvestigationEffectiveBudget;
-  assertRelations(budget.runtime);
+  assertRelations(budget.runtime, budget.admission);
   return budget;
 }
 export function assertEffectiveBudgetInput(value: unknown): InvestigationEffectiveBudgetInput {
   if (!Value.Check(InvestigationEffectiveBudgetInputSchema, value)) throw invalid();
-  assertRelations(value.runtime);
-  return value as InvestigationEffectiveBudgetInput;
+  const input = value as InvestigationEffectiveBudgetInput;
+  assertRelations(input.runtime, { revision: 1, policy: input.admissionPolicy });
+  return input;
 }
-function assertRelations(runtime: InvestigationRuntimeAllocation) {
+function assertRelations(runtime: InvestigationRuntimeAllocation, admission?: InvestigationEffectiveAdmission) {
   if (runtime.contextWindowTokens < Math.max(runtime.outputTokens, runtime.summaryOutputTokens) + 1024
     || runtime.maxExecutionTokens < runtime.contextWindowTokens) throw invalid();
+  if (!admission) return;
+  const policy = admission.policy;
+  // Cross-field quota conflicts fail explicitly at save AND on read; they are
+  // never clamped to a smaller value.
+  if (policy.manualReserved > policy.maxConcurrent || policy.maxAutomaticTokensPerDay > policy.maxTotalTokensPerDay)
+    throw new InvestigationEffectiveBudgetError('INVESTIGATION_BUDGET_POLICY_INVALID');
+  if (runtime.maxExecutionTokens > policy.maxTotalTokensPerDay)
+    throw new InvestigationEffectiveBudgetError('INVESTIGATION_BUDGET_POLICY_INVALID');
 }
 function assertCapability(runtime: InvestigationRuntimeAllocation, capability?: InvestigationProviderCapacity) {
   if (!capability || capability.source === 'conservative-fallback' || capability.maxOutputTokens === undefined) throw capabilitiesUnavailable();
@@ -129,14 +193,15 @@ function parseStored(value: unknown): InvestigationEffectiveBudget {
 export class InvestigationEffectiveBudgetService {
   constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool(),
     private readonly capabilityResolver: () => Promise<InvestigationProviderCapacity | undefined> = resolveProviderCapacity,
-    private readonly now: () => string = () => new Date().toISOString()) {}
+    private readonly now: () => string = () => new Date().toISOString(),
+    private readonly baseConfiguration: () => InvestigationBudgetConfiguration = investigationBudgetConfiguration) {}
 
   private async capability(safe: boolean): Promise<InvestigationProviderCapacity | undefined> {
     try { return await this.capabilityResolver(); } catch (error) { if (safe) return undefined; throw error; }
   }
 
   async defaults(): Promise<InvestigationEffectiveBudget> {
-    return defaultEffectiveBudget(await this.capability(true), this.now());
+    return defaultEffectiveBudget(await this.capability(true), this.now(), this.baseConfiguration().policy);
   }
 
   /** Durable settings only. Execution uses this to distinguish an operator
@@ -155,25 +220,30 @@ export class InvestigationEffectiveBudgetService {
 
   async get(): Promise<{ budget: InvestigationEffectiveBudget; source: 'settings' | 'defaults' }> {
     const stored = await this.readStored();
-    return stored ? { budget: stored, source: 'settings' } : { budget: await this.defaults(), source: 'defaults' };
+    const base = this.baseConfiguration();
+    return stored ? { budget: withAdmission(stored, base.policy), source: 'settings' }
+      : { budget: await this.defaults(), source: 'defaults' };
   }
 
   async view(): Promise<InvestigationEffectiveBudgetView> {
-    const [stored, defaults, capability] = await Promise.all([this.get(), this.defaults(), this.capability(true)]);
-    return { schemaVersion: 1, source: stored.source, effective: stored.budget, defaults, provider: capability ?? null,
-      capabilityVerified: !!capability && capability.source !== 'conservative-fallback' && capability.maxOutputTokens !== undefined };
+    const base = this.baseConfiguration();
+    const [stored, capability] = await Promise.all([this.readStored(), this.capability(true)]);
+    const defaults = defaultEffectiveBudget(capability, this.now(), base.policy);
+    const effective = stored ? withAdmission(stored, base.policy) : defaults;
+    const active = resolveAdmissionConfiguration(stored, base);
+    return { schemaVersion: 1, source: stored ? 'settings' : 'defaults', effective, defaults, provider: capability ?? null,
+      capabilityVerified: !!capability && capability.source !== 'conservative-fallback' && capability.maxOutputTokens !== undefined,
+      admission: { domain: active.domain, revision: active.revision, source: active.source } };
   }
 
   async save(actor: ActorContext, input: unknown, context: EffectiveBudgetAuditContext = {}): Promise<InvestigationEffectiveBudget> {
     const parsed = assertEffectiveBudgetInput(input);
-    const capability = await this.capability(false);
-    assertCapability(parsed.runtime, capability);
     const pool = this.poolProvider();
     if (!pool) throw unavailable();
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      const saved = await this.saveInTransaction(connection, actor, parsed, context, capability);
+      const saved = await this.saveInTransaction(connection, actor, parsed, context);
       await connection.commit();
       return saved;
     } catch (error) {
@@ -190,12 +260,25 @@ export class InvestigationEffectiveBudgetService {
     const [rows] = await connection.execute<RowDataPacket[]>('SELECT config_value FROM system_config WHERE config_key = ? FOR UPDATE', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
     const previous = rows.length ? parseStored(rows[0].config_value) : undefined;
     if (parsed.expectedVersion !== (previous?.version ?? 0)) throw new InvestigationEffectiveBudgetError('INVESTIGATION_BUDGET_CONFLICT');
-    const verified = capability ?? await this.capability(false);
-    assertCapability(parsed.runtime, verified);
+    // Provider capacity gates the runtime allocation only. A policy-only edit
+    // stays possible when the model has no verified capacity; the unchanged
+    // runtime was already validated when it was written.
+    const runtimeChanged = !previous || !isDeepStrictEqual(previous.runtime, parsed.runtime);
+    const verified = runtimeChanged ? capability ?? await this.capability(false) : undefined;
+    if (runtimeChanged) assertCapability(parsed.runtime, verified);
+    // A policy edit opens the next domain revision. Runtime/Profile edits do
+    // not rotate: they are frozen per Run and never rewrite a domain snapshot.
+    const base = this.baseConfiguration();
+    const previousAdmission = previous?.admission ?? defaultAdmission(base.policy);
+    const rotated = !isDeepStrictEqual(previousAdmission.policy, parsed.admissionPolicy);
+    const admission: InvestigationEffectiveAdmission = { revision: rotated ? previousAdmission.revision + 1 : previousAdmission.revision,
+      policy: { ...parsed.admissionPolicy } };
     const budget: InvestigationEffectiveBudget = { schemaVersion: 1, version: (previous?.version ?? 0) + 1,
-      runtime: { ...parsed.runtime }, profileLimits: { ...parsed.profileLimits }, updatedAt: this.now(), updatedBy: actor.userId };
+      runtime: { ...parsed.runtime }, profileLimits: { ...parsed.profileLimits }, admission,
+      updatedAt: this.now(), updatedBy: actor.userId };
     await connection.execute(`REPLACE INTO system_config (config_key, config_value, value_type, updated_by)
       VALUES (?, ?, 'json', ?)`, [INVESTIGATION_EFFECTIVE_BUDGET_KEY, JSON.stringify(budget), actor.userId]);
+    const auditedProvider = capability ?? verified ?? await this.capability(true);
     await connection.execute(`INSERT INTO audit_log_entries
       (id, event_type, level, user_id, username, user_role, action, resource_type, resource_id,
        details_json, client_ip, user_agent, result, timestamp_ms)
@@ -203,9 +286,14 @@ export class InvestigationEffectiveBudgetService {
         'investigation_budget', 'effective_budget_v1', ?, ?, ?, 'success', ?)`,
       [randomUUID(), String(actor.userId), actor.username, actor.roles[0] ?? null, JSON.stringify({
         previousVersion: previous?.version ?? 0, version: budget.version,
-        previous: previous ? { runtime: previous.runtime, profileLimits: previous.profileLimits } : null,
-        next: { runtime: budget.runtime, profileLimits: budget.profileLimits },
-        provider: verified ? { model: verified.model, contextWindowTokens: verified.contextWindowTokens, maxOutputTokens: verified.maxOutputTokens, source: verified.source } : null,
+        previous: previous ? { runtime: previous.runtime, profileLimits: previous.profileLimits,
+          admission: previous.admission ?? null } : null,
+        next: { runtime: budget.runtime, profileLimits: budget.profileLimits, admission: budget.admission },
+        rotation: rotated ? { previousRevision: previousAdmission.revision, revision: admission.revision,
+          previousDomain: admissionDomain(base.domain, previousAdmission.revision),
+          domain: admissionDomain(base.domain, admission.revision) } : null,
+        provider: auditedProvider ? { model: auditedProvider.model, contextWindowTokens: auditedProvider.contextWindowTokens,
+          maxOutputTokens: auditedProvider.maxOutputTokens, source: auditedProvider.source } : null,
       }), context.clientIp ?? null, context.userAgent ?? null, Date.now()]);
     return budget;
   }

@@ -143,7 +143,8 @@ export class MysqlInvestigationBudgetLedger {
    * admission savepoint rollback. This creates no allocation and charges nothing. */
   async prepareDomainInTransaction(connection: TransactionConnection, domain: string): Promise<void> {
     if (!key(domain)) throw invalid();
-    await this.lockDomain(connection, domain, true);
+    const row = await this.lockDomain(connection, domain, true);
+    if (row.policy_hash !== hash(this.policy)) throw new BudgetLedgerError('BUDGET_POLICY_CONFLICT');
   }
   /** Shared admission/executor contract. Both manual and automatic consumers
    * use this SAME request operation, never execution:<runId>. Live authority,
@@ -219,13 +220,18 @@ export class MysqlInvestigationBudgetLedger {
     const resourceKeys = resources.length ? resources.map(row => `${row.resource_type}:${row.resource_id}`).sort()
       : [`platform:${hash({ component: snapshot.context?.subject?.component ?? 'platform' })}`];
     const requestHash = hash({ domain: input.domain, mode: input.mode, profile: input.profile, resourceKeys });
-    await this.lockDomain(connection, input.domain, true);
+    const domainRow = await this.lockDomain(connection, input.domain, true);
     const [existing] = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE request_id = ? AND operation_id = ? FOR UPDATE', [input.requestId, input.operationId]);
     const commandHash = hash(input);
     if (existing) {
       if (existing.command_hash !== commandHash || existing.request_budget_hash !== requestHash) throw new BudgetLedgerError('BUDGET_CONFLICT');
+      // A stored receipt keeps its original domain policy: settlement/retry
+      // remains possible after a rotation, which never rewrites old charges.
       return { accepted: true, reused: true, reservation: record(existing) };
     }
+    // Only a NEW allocation must match the frozen domain policy. A rotated
+    // policy uses a new domain; the old domain stays read-only, never rewritten.
+    if (domainRow.policy_hash !== hash(this.policy)) throw new BudgetLedgerError('BUDGET_POLICY_CONFLICT');
     const previous = await select(connection, 'SELECT * FROM investigation_budget_ledger WHERE request_id = ? FOR UPDATE', [input.requestId]);
     if (previous.some(row => row.request_budget_hash !== requestHash)) throw new BudgetLedgerError('BUDGET_CONFLICT');
     const refuse = (reason: BudgetSuppression): BudgetAdmission => ({ accepted: false, reason });
@@ -338,14 +344,15 @@ export class MysqlInvestigationBudgetLedger {
     if (!row) throw new BudgetLedgerError('BUDGET_NOT_FOUND');
     return record(row);
   }
-  private async lockDomain(connection: TransactionConnection, domain: string, create = false): Promise<void> {
+  private async lockDomain(connection: TransactionConnection, domain: string, create = false): Promise<RowDataPacket> {
     if (create) await connection.execute(`INSERT INTO investigation_budget_domains (domain_key, policy_hash, policy_snapshot)
       VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE domain_key = domain_key`, [domain, hash(this.policy), JSON.stringify(this.policy)]);
     const [row] = await select(connection, 'SELECT policy_hash FROM investigation_budget_domains WHERE domain_key = ? FOR UPDATE', [domain]);
     if (!row) throw new BudgetLedgerError('BUDGET_NOT_FOUND');
     // Settlement must remain possible after config changes; frozen prices live
-    // on the row. Only NEW allocation requires matching admission policy.
-    if (create && row.policy_hash !== hash(this.policy)) throw new BudgetLedgerError('BUDGET_POLICY_CONFLICT');
+    // on the row. The caller decides whether a NEW allocation needs the policy
+    // hash check; an existing receipt stays reusable in its own domain.
+    return row;
   }
   private async mutate(id: string, work: (connection: TransactionConnection, row: RowDataPacket) => Promise<void>): Promise<BudgetReservation> {
     return this.transaction(connection => this.mutateInTransaction(connection, id, work));
