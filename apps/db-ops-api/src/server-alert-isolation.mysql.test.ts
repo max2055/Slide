@@ -40,7 +40,7 @@ describe('server alert identity / real MySQL', () => {
     [serverId, metric, tags === null ? null : JSON.stringify(tags), status]);
     return result.insertId as number;
   };
-  const rows = async () => (await f.pool.query<any[]>('SELECT * FROM alerts ORDER BY id'))[0];
+  const rows = async () => (await f.pool.query<any[]>("SELECT * FROM alerts ORDER BY JSON_EXTRACT(tags, '$.rule_id'), id"))[0];
   const rules = async () => {
     await f.pool.query(`INSERT INTO alert_rules
       (id, name, target_type, server_id, metric_name, operator, threshold, duration_seconds, severity, enabled)
@@ -88,7 +88,7 @@ describe('server alert identity / real MySQL', () => {
     await serverAlertEvaluator.evaluateServerRules();
     state = await rows(); expect(state.map(r => r.id)).toEqual(ids);
     for (const [index, threshold] of [10, 50].entries()) {
-      expect(state[index].threshold_value).toBe(String(threshold));
+      expect(Number(state[index].threshold_value)).toBe(threshold);
       expect(state[index].tags.rule_id).toBe(901 + index);
       expect(state[index].metric_value).toBe('80');
       expect(state[index].message).toContain(`超过阈值 ${threshold}`);
@@ -118,5 +118,35 @@ describe('server alert identity / real MySQL', () => {
     state = await rows(); expect(state.map(r => r.status)).toEqual(['resolved', 'unread']);
     await run('sdb');
     expect((await rows()).map(r => r.status)).toEqual(['resolved', 'resolved']);
+  });
+
+  it('binds a reused legacy row to its rule and updates the threshold snapshot atomically with the observation', async () => {
+    const legacy = await insert({ audit_marker: 'preserved' });
+    await rules();
+    await serverAlertEvaluator.evaluateServerRules(new Map([[901, {}]]));
+    let state = await rows(); expect(state).toHaveLength(1);
+    expect(state[0]).toMatchObject({ id: legacy, threshold_value: '10.00',
+      tags: { rule_id: 901, audit_marker: 'preserved' } });
+    await serverAlertEvaluator.evaluateServerRules(new Map([[902, {}]]));
+    state = await rows(); expect(state).toHaveLength(2);
+    expect(state[0].id).toBe(legacy);
+    expect(state[1].tags.rule_id).toBe(902);
+    expect(Number(state[1].threshold_value)).toBe(50);
+  });
+
+  it('recovers only the healthy dimension even while an unfiltered rule still fires elsewhere', async () => {
+    await rules();
+    await f.pool.query('UPDATE alert_rules SET enabled=0 WHERE id=902');
+    evidence.dimensions = { device: 'sda' };
+    await serverAlertEvaluator.evaluateServerRules();
+    evidence.dimensions = { device: 'sdb' };
+    await serverAlertEvaluator.evaluateServerRules();
+    evidence.value = 5;
+    await serverAlertEvaluator.evaluateServerRules();
+    let state = await rows(); expect(state).toHaveLength(2);
+    expect(state.map(r => r.status)).toEqual(['unread', 'resolved']);
+    evidence.dimensions = { device: 'sda' };
+    await serverAlertEvaluator.evaluateServerRules();
+    state = await rows(); expect(state.map(r => r.status)).toEqual(['resolved', 'resolved']);
   });
 });
