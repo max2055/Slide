@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "issue": "MAX-225",
+  "sourceCommit": "442ad300c",
+  "date": "2026-10-26 Asia/Shanghai",
+  "checks": [
+    {
+      "name": "SQL RED reproducer",
+      "files": 1,
+      "failed": 8
+    },
+    {
+      "name": "initial affected regression",
+      "files": 8,
+      "passed": 73
+    },
+    {
+      "name": "pool and policy regression",
+      "passed": 29,
+      "failed": 1,
+      "failureClassification": "new test fixture reused a live resource cooldown; isolated fixture subsequently passes"
+    },
+    {
+      "name": "three sources and transaction recovery SQL",
+      "files": 1,
+      "passed": 10,
+      "productionCodeMatchesCurrent": true,
+      "note": "one later budget-refusal case added but not executed after Docker outage"
+    },
+    {
+      "name": "final alert and policy units",
+      "files": 6,
+      "passed": 61
+    },
+    {
+      "name": "independent investigation gate",
+      "filesPassed": 42,
+      "filesSkipped": 1,
+      "passed": 380,
+      "skipped": 37
+    },
+    {
+      "name": "API typecheck",
+      "result": "passed"
+    },
+    {
+      "name": "public contracts",
+      "result": "passed"
+    },
+    {
+      "name": "full affected module gate",
+      "result": "incomplete",
+      "reason": "shared Docker daemon stopped answering; MySQL fixture setup timeout; own test processes stopped"
+    }
+  ],
+  "realAcceptance": {
+    "result": "blocked",
+    "sharedWrites": 0,
+    "modelRequests": 0,
+    "failure": "ETIMEDOUT before collection; shared MySQL connection unavailable concurrently with Docker daemon timeout",
+    "notProven": [
+      "real VM collection to alert",
+      "automatic live admission",
+      "valid model conclusion with citations",
+      "real recovery",
+      "auditable provider usage"
+    ]
+  },
+  "modelBudget": {
+    "parentLedgerRevision": 3,
+    "settledTokens": 0,
+    "outstandingReservations": 0,
+    "unknownRequests": 0,
+    "realModelSends": 0
+  }
+}
