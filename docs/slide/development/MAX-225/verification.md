@@ -1,6 +1,6 @@
 # MAX-225：三类资源自动告警准入检查点
 
-2026-10-26；本次为部分交付，真实业务验收与完整 gate 尚未完成，不应合并/发布或视为已解决。
+2026-10-26（第二轮，Docker/MySQL 恢复后）；真实 VM 采集→告警→自动受理→自然恢复已验证。真实模型结论与可审计用量仍未完成，不能视为全部验收通过。
 
 ## 目标和实现
 
@@ -28,17 +28,45 @@
 
 | 原验收 | 当前证据 | 状态 |
 |---|---|---|
-| 三类单条 critical 自动且仅创建一次 | 真实隔离 MySQL + 正式迁移，三类均从共享保存入口创建 owner/request/job；重复恢复不加 job | 已验证准入，不包含真实采集/模型执行 |
-| 不满足配置/身份/权限/范围/预算时抑制且不发模型 | 总开关/通道/级别/范围/配置无效的 SQL 检查通过；既有真实权限撤回回归通过；时窗边界/跨夜单测通过。新增预算拒绝专项因 Docker 中断未执行 | 部分验证；预算专项待重跑 |
-| 重复/重启零重派，unknown 不重放 | 桥实例重建后同 investigation/job；事务提交/回滚恢复；既有 unknown owner 回归与 1/2/10 连接池检查 | 已验证现有路径；最终完整 gate 待补 |
-| 真实 VM → 告警 → 自动受理 → 有引用有效结论 → 恢复/实测用量 | 读取现有资源清单成功；后续验收脚本在采集前 ETIMEDOUT，Docker daemon 的只读查询也超时 | 未完成，无模型发送 |
+| 三类单条 critical 自动且仅创建一次 | 真实隔离 MySQL + 正式迁移，三类均从共享保存入口创建 owner/request/job；重复恢复不加 job（本轮 11 项通过） | 已验证准入 |
+| 不满足配置/身份/权限/范围/预算时抑制且不发模型 | 总开关/通道/级别/范围/配置无效检查通过；真实权限撤回回归通过；时窗边界/跨夜单测通过；**此前未执行的预算拒绝专项本轮已执行并通过** | 已验证 |
+| 重复/重启零重派，unknown 不重放 | 桥实例重建后同 investigation/job；事务提交/回滚恢复；既有 unknown owner 回归与连接池检查 | 已验证 |
+| 真实 VM → 告警 → 自动受理 → 有引用有效结论 → 恢复/实测用量 | **采集→告警→自动受理→自然恢复已验证**（`vm-acceptance-20261026.json`）；有效引用结论与实测用量未完成 | 部分完成 |
 
-最终独立检查：告警/策略 6 文件 61 项通过；调查模块 42 文件 380 项通过、1 文件/37 项跳过；API typecheck、contracts:check 通过。较早 SQL 专项 10 项通过，当前生产逻辑与该次一致；此后仅新增预算拒绝测试及验收脚本 stage 字段。新增预算拒绝用例仍未运行，不隐去这一缺口。完整受影响模块 gate 在 MySQL fixture 初始化超时后终止，不宣称全绿。
+### 真实 VM 段（2026-10-26 本轮）
 
-## 环境阻塞和恢复
+脚本 `apps/db-ops-api/scripts/qualify-automatic-alert.ts` 以真实 SSH 采集 server #3（192.168.49.130，kylin）：
 
-Docker Desktop 在完整模块回归期间停止响应；后续 `docker ps` 8 秒超时，共享 MySQL 连接 10 秒 ETIMEDOUT。不能据此判定真实 VM 本身不可达。仅终止了已核对属于本 worktree 的测试进程，没有重启 Docker、共享 API 或共享数据库。精确测试容器清理请求也在 15 秒超时，待清理名称在 `cleanup.json`，仅可停止这些容器，不按名称前缀批量停服务。
+- 真实观测 `linux.cpu.user_system_percent` = 9.1%（质量 good，exact，measured，SSH 尝试 succeeded），据实设阈值 8.645。
+- 规则触发后创建单条 critical 告警，`tags.auto_analysis` = `{status:"pending", reason:"accepted", investigationId:def6e7ac-…}`。
+- `investigation_alert_owners` 恰好 1 行，`lane='investigation'`，同一 investigation_id；旧 lane 调用 0 次。
+- 下一次真实采样回落到 0%，告警自然恢复（`resolved_at` 有值），无人工写入观测、无伪造数值。
+- 全程 sharedWrites=0、modelRequests=0，共享库仅 SELECT。
 
-最小恢复条件：由共享环境所有者协调恢复 Docker/MySQL 可用性，然后用一个共用、可清理的隔离 MySQL 串行执行 SQL 回归，避免再并发创建多个 MySQL 容器。重跑新增预算拒绝检查、完整 gate；继续真实 VM 采集及真实模型结论验收。`apps/db-ops-api/scripts/qualify-automatic-alert.ts` 当前只覆盖无模型采集/准入/自然恢复段，显式传入 `MAX225_CONFIG_ENV`、`MAX225_EVIDENCE`、可选 `MAX225_SERVER_ID`；共享库仅 SELECT，其余写入隔离库，不制造 CPU 压力、不改共享配置。脚本本轮未越过采集前阻塞，不能作为成功证据。
+脚本本轮修复了三处使其无法越过采集的真实缺陷（此前被误判为纯环境阻塞）：`runPackage` 选择项缺 `overrides:{}`、评估器健康门 `dbConnection.isConnected()` 未指向隔离池、以及从未上报采集能力导致正式指标读取 `capability_unknown`。另外空载 VM 合法返回 0%，改为继续观察真实非零样本而非断言失败。
 
-真实模型发送前，仍必须按父单唯一 `model_test_budget_ledger` 预留并回读，再以 Provider/Runtime 实测结算；不复用历史测试账本。父账本本次读取 revision 3，实测发送 0、结算 0、预留 0、unknown 0，未修改账本，没有生成测试 token 或费用估算。
+### 本轮完整受影响模块 gate
+
+并行运行时出现 5s 超时/钩子超时（容器并发争用），以 `--maxWorkers=2` 串行复跑后全绿：
+
+- investigations：56 文件 552 通过、362 跳过
+- metrics：44 文件 442 通过、121 跳过
+- alert 相关 9 文件：8 通过 1 跳过，47 通过、28 跳过
+- workflows：15 文件 116 通过、45 跳过
+- 准入专项：11 项通过（含新增预算拒绝用例）
+- API typecheck、contracts:check 通过
+
+并行失败属环境争用（同一容器并发启动），串行复跑全绿；不据此宣称任意并发度下稳定。
+
+## 未完成项与原因
+
+- **真实模型结论（有证据引用）与可审计 provider 用量未完成**。本单子代理无法写入父单权威 `model_test_budget_ledger`（CLI 无 metadata 写入能力），按父策略"无法可靠计量时停止模型发送"，本轮不发起真实模型请求，model sends 仍为 0。
+- 若需完成该段，需由持有账本写入能力的 Chief 在预留/回读后授权一次真实调查运行。
+
+## 环境状态
+
+Docker 已恢复：`docker ps` 正常，共享 MySQL 3306 可达，正式迁移可执行。本轮产生的两个遗留测试容器（`slide-t08-68670-…`、`slide-t08-68672-…`）已按名精确停止，未按前缀批量清理其他服务；`cleanup.json` 中上一轮的 4 个容器已不存在。
+
+## 真实模型发送前的约束（沿用）
+
+真实模型发送前，仍必须按父单唯一 `model_test_budget_ledger` 预留并回读，再以 Provider/Runtime 实测结算；不复用历史测试账本。本轮未修改账本、未生成 token 或费用估算。

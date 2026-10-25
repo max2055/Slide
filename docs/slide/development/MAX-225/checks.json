@@ -1,43 +1,49 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "issue": "MAX-225",
   "sourceCommit": "442ad300c",
   "date": "2026-10-26 Asia/Shanghai",
+  "round": "second, after Docker/MySQL recovery",
   "checks": [
     {
-      "name": "SQL RED reproducer",
+      "name": "admission SQL suite including new budget refusal case",
       "files": 1,
-      "failed": 8
+      "passed": 11,
+      "note": "previously 10; the budget-refusal case that could not run during the Docker outage now passes"
     },
     {
-      "name": "initial affected regression",
-      "files": 8,
-      "passed": 73
+      "name": "investigations module",
+      "filesPassed": 56,
+      "filesSkipped": 9,
+      "passed": 552,
+      "skipped": 362,
+      "workers": 2,
+      "note": "default parallelism produced 5s and hook timeouts from container contention; serial rerun green"
     },
     {
-      "name": "pool and policy regression",
-      "passed": 29,
-      "failed": 1,
-      "failureClassification": "new test fixture reused a live resource cooldown; isolated fixture subsequently passes"
+      "name": "metrics module",
+      "filesPassed": 44,
+      "filesSkipped": 24,
+      "passed": 442,
+      "skipped": 121,
+      "workers": 2
     },
     {
-      "name": "three sources and transaction recovery SQL",
-      "files": 1,
-      "passed": 10,
-      "productionCodeMatchesCurrent": true,
-      "note": "one later budget-refusal case added but not executed after Docker outage"
-    },
-    {
-      "name": "final alert and policy units",
-      "files": 6,
-      "passed": 61
-    },
-    {
-      "name": "independent investigation gate",
-      "filesPassed": 42,
+      "name": "alert files",
+      "files": 9,
+      "filesPassed": 8,
       "filesSkipped": 1,
-      "passed": 380,
-      "skipped": 37
+      "passed": 47,
+      "skipped": 28,
+      "workers": 2
+    },
+    {
+      "name": "workflows module",
+      "filesPassed": 15,
+      "filesSkipped": 3,
+      "passed": 116,
+      "skipped": 45,
+      "workers": 2
     },
     {
       "name": "API typecheck",
@@ -46,26 +52,30 @@
     {
       "name": "public contracts",
       "result": "passed"
-    },
-    {
-      "name": "full affected module gate",
-      "result": "incomplete",
-      "reason": "shared Docker daemon stopped answering; MySQL fixture setup timeout; own test processes stopped"
     }
   ],
   "realAcceptance": {
-    "result": "blocked",
+    "resource": "server #3 192.168.49.130 (kylin) via real SSH",
+    "collectedMetric": "linux.cpu.user_system_percent",
+    "observedValue": 9.1,
+    "alertCreated": "critical, single, auto_generated",
+    "admission": "accepted, one investigation owner, lane=investigation, zero legacy calls",
+    "recoveredNaturally": true,
     "sharedWrites": 0,
     "modelRequests": 0,
-    "failure": "ETIMEDOUT before collection; shared MySQL connection unavailable concurrently with Docker daemon timeout",
+    "evidence": "docs/slide/development/MAX-225/vm-acceptance-20261026.json",
     "notProven": [
-      "real VM collection to alert",
-      "automatic live admission",
-      "valid model conclusion with citations",
-      "real recovery",
+      "valid model conclusion with evidence citations",
       "auditable provider usage"
-    ]
+    ],
+    "notProvenReason": "this child cannot write the parent authoritative model_test_budget_ledger (no CLI metadata write); policy forbids model sends without reliable reservation and settlement"
   },
+  "harnessDefectsFixed": [
+    "runPackage selection was missing overrides:{} and always failed with ZodError",
+    "dbConnection.isConnected stayed false so the evaluator skipped every run",
+    "no capability report was sent, so formal metric reads returned capability_unknown",
+    "an idle VM legitimately reports 0% CPU; the first zero sample aborted instead of continuing to a real nonzero sample"
+  ],
   "modelBudget": {
     "parentLedgerRevision": 3,
     "settledTokens": 0,
