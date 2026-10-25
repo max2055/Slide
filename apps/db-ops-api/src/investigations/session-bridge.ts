@@ -1,5 +1,6 @@
 import { freezeExecutionAllocation, readExecutionAllocation, taskExecutionConfiguration, type TaskExecutionConfiguration } from './execution-allocation.js';
-import { InvestigationEffectiveBudgetService } from './effective-budget.js';
+import { InvestigationEffectiveBudgetService, resolveAdmissionConfiguration, type InvestigationAdmissionConfiguration } from './effective-budget.js';
+import { investigationBudgetConfiguration, type InvestigationBudgetConfiguration } from './budget-configuration.js';
 import { assertContinuationDeadline } from './continuation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
@@ -22,25 +23,10 @@ import { publicDocument } from './stream.js';
 type RequestCommand = Omit<InvestigationAdmission, 'actor'>;
 type CreateCommand = Omit<InvestigationCreate, 'actor'>;
 
-/** One trusted configuration for HTTP cancellation and Workflow execution. */
-export function investigationBudgetConfiguration() {
-  const configured = process.env.INVESTIGATION_MAX_TOKENS;
-  const maxExecutionTokens = configured === undefined ? undefined : Number(configured);
-  if (configured !== undefined && (!configured.trim() || !Number.isSafeInteger(maxExecutionTokens)
-    || maxExecutionTokens! < 1 || maxExecutionTokens! > 1_000_000)) throw new Error('INVESTIGATION_MAX_TOKENS');
-  const automaticDaily = process.env.INVESTIGATION_AUTOMATIC_DAILY_TOKENS;
-  const maxAutomaticTokensPerDay = automaticDaily === undefined ? 256_000 : Number(automaticDaily);
-  if (automaticDaily !== undefined && (!automaticDaily.trim() || !Number.isSafeInteger(maxAutomaticTokensPerDay)
-    || maxAutomaticTokensPerDay < 1 || maxAutomaticTokensPerDay > 1_000_000)) throw new Error('INVESTIGATION_AUTOMATIC_DAILY_TOKENS');
-  // A separately named, server-owned domain permits isolated policy changes;
-  // existing domain snapshots/charges are never rewritten or silently migrated.
-  const domain = process.env.INVESTIGATION_BUDGET_DOMAIN ?? 'investigation-v1';
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(domain)) throw new Error('INVESTIGATION_BUDGET_DOMAIN');
-  return { ...(maxExecutionTokens === undefined ? {} : { maxExecutionTokens }), domain, reserveCostMicros: Number(process.env.INVESTIGATION_RESERVED_COST_MICROS ?? 1_000_000),
-    policy: { currency: 'USD', maxConcurrent: 4, manualReserved: 1, maxPerResourceConcurrent: 2,
-      maxAutomaticRequestsPerHour: 20, maxAutomaticTokensPerDay, maxTotalTokensPerDay: 1_000_000,
-      maxCostMicrosPerDay: Number(process.env.INVESTIGATION_DAILY_COST_MICROS ?? 10_000_000) } };
-}
+// Kept importable from this module for existing callers; the loader itself is
+// server-owned and lives beside the effective-budget defaults it feeds.
+export { investigationBudgetConfiguration } from './budget-configuration.js';
+export type { InvestigationBudgetConfiguration } from './budget-configuration.js';
 
 /** Server-owned bridge. The actor is a verified ActorContext, never the actor
  * field of a client command. One store owns admission/queue delivery. */
@@ -52,6 +38,7 @@ export class InvestigationSessionBridge {
   private readonly maxExecutionTokens?: number;
   private readonly taskExecution?: Readonly<TaskExecutionConfiguration>;
   private readonly budgetPolicy: BudgetPolicy;
+  private readonly baseConfiguration: InvestigationBudgetConfiguration;
   private readonly effectiveBudget: InvestigationEffectiveBudgetService;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly authorization = new InvestigationAuthorization(),
@@ -62,8 +49,19 @@ export class InvestigationSessionBridge {
     this.budgetDomain = cancellationBudget.domain;
     this.reserveCostMicros = cancellationBudget.reserveCostMicros ?? investigationBudgetConfiguration().reserveCostMicros;
     this.maxExecutionTokens = cancellationBudget.maxExecutionTokens;
-    this.effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider);
+    this.baseConfiguration = Object.freeze({ domain: cancellationBudget.domain, policy: this.budgetPolicy,
+      reserveCostMicros: this.reserveCostMicros,
+      ...(cancellationBudget.maxExecutionTokens === undefined ? {} : { maxExecutionTokens: cancellationBudget.maxExecutionTokens }) });
+    this.effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider, undefined, undefined,
+      () => this.baseConfiguration);
     this.ledger = new MysqlInvestigationBudgetLedger(poolProvider, this.budgetPolicy, this.maxExecutionTokens, this.taskExecution);
+  }
+
+  /** New admissions use the durable policy in its own rotated domain. The
+   * dormant MAX-222 task contract keeps its frozen base configuration. */
+  private admissionLedger(admission: InvestigationAdmissionConfiguration): MysqlInvestigationBudgetLedger {
+    return this.taskExecution ? this.ledger
+      : new MysqlInvestigationBudgetLedger(this.poolProvider, admission.policy, this.maxExecutionTokens);
   }
 
   storeFor(actor: ActorContext): MysqlInvestigationStore {
@@ -116,8 +114,12 @@ export class InvestigationSessionBridge {
       if (mode === 'automatic' || allocations.length) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
       return;
     }
+    // The receipt's domain is durable. Cancelling an admitted request must not
+    // guess the currently active domain after a policy rotation.
+    const receiptDomain = (snapshot.budgetReceipt as { domain?: unknown }).domain;
+    if (typeof receiptDomain !== 'string' || !receiptDomain) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
     const reservation = await this.ledger.reuseExecutionInTransaction(connection, value.requestId,
-      { domain: this.budgetDomain, mode, profile: resolveInvestigationProfile(investigation.profileId, investigation.profileVersion) });
+      { domain: receiptDomain, mode, profile: resolveInvestigationProfile(investigation.profileId, investigation.profileVersion) });
     if (reservation.state === 'settled' || reservation.state === 'cancelled') return;
     if (!runs.length && reservation.state === 'reserved')
       await this.ledger.cancelUnsentInTransaction(connection, reservation.id);
@@ -234,8 +236,14 @@ export class InvestigationSessionBridge {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
       const storedBudget = await this.effectiveBudget.readStoredFrom(connection);
       const executionTokenLimit = storedBudget?.runtime.maxExecutionTokens ?? this.maxExecutionTokens;
-      const reservation = await this.ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
-        domain: this.budgetDomain, mode: 'automatic', profile, reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? executionTokenLimit ?? profile.budget.maxTokens,
+      // A manually admitted continuation keeps using the frozen admission
+      // domain allocated by its MAX-222 task contract; normal automatic
+      // continuations reserve under the freshly resolved policy/domain.
+      const admission = this.taskExecution ? undefined : resolveAdmissionConfiguration(storedBudget, this.baseConfiguration);
+      const ledger = admission ? this.admissionLedger(admission) : this.ledger;
+      const reservation = await ledger.reserveExecutionInTransaction(connection, { requestId: acceptance.requestId,
+        domain: admission?.domain ?? this.budgetDomain, mode: 'automatic', profile,
+        reserveTokens: executionAllocation?.configuration.maxTotalTokens ?? executionTokenLimit ?? profile.budget.maxTokens,
         ...(executionAllocation ? { executionAllocation } : {}),
         reserveCostMicros: this.reserveCostMicros }, executionTokenLimit);
       if (!reservation.accepted) throw new InvestigationStoreError('INVESTIGATION_BUDGET_EXHAUSTED');

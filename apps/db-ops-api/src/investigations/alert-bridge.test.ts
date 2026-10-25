@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { bridgeTestFixture } from './bridge-test-fixture.js';
+import { INVESTIGATION_EFFECTIVE_BUDGET_KEY } from './effective-budget.js';
 
 describe('T08 database alert single owner / formal MySQL + JWT + HTTP', () => {
   let f: Awaited<ReturnType<typeof bridgeTestFixture>>;
@@ -68,5 +69,25 @@ describe('T08 database alert single owner / formal MySQL + JWT + HTTP', () => {
     await expect(f.alertBridge.dispatch(alert,'manual',f.owner,f.old)).rejects.toMatchObject({code:'INVESTIGATION_NOT_FOUND'});
     await expect(f.alertBridge.dispatch(alert,'manual',f.owner,f.old,id)).rejects.toMatchObject({code:'INVESTIGATION_NOT_FOUND'});
     expect(await f.count('workflow_jobs')).toBe(before); expect(f.oldCalls()).toBe(1);
+  });
+  it('automatic admission follows the effective policy in its rotated ledger domain', async () => {
+    const admissionPolicy = { maxConcurrent: 3, manualReserved: 0, maxPerResourceConcurrent: 3, maxAutomaticRequestsPerHour: 9,
+      maxAutomaticTokensPerDay: 1_000_000, maxTotalTokensPerDay: 1_000_000, maxCostMicrosPerDay: 10_000_000 };
+    await f.pool.query("REPLACE INTO system_config (config_key,config_value,value_type) VALUES (?,?,'json')",
+      [INVESTIGATION_EFFECTIVE_BUDGET_KEY, JSON.stringify({ schemaVersion: 1, version: 1,
+        runtime: { contextWindowTokens: 32768, outputTokens: 4096, summaryOutputTokens: 4096, maxExecutionTokens: 32768 },
+        profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 },
+        admission: { revision: 2, policy: admissionPolicy }, updatedAt: '2026-10-25T00:00:00.000Z' })]);
+    try {
+      const result = await f.alertBridge.dispatch(f.source(801),'auto',undefined,f.old);
+      expect(result.success).toBe(true);
+      const [ledger] = await f.pool.query<any[]>('SELECT CAST(domain_key AS CHAR) AS domain,state FROM investigation_budget_ledger WHERE request_id=?', [result.requestId]);
+      expect(ledger[0]).toMatchObject({ domain: 'investigation-v1:v2', state: 'reserved' });
+      const [domain] = await f.pool.query<any[]>('SELECT policy_snapshot FROM investigation_budget_domains WHERE domain_key=?', ['investigation-v1:v2']);
+      expect(typeof domain[0].policy_snapshot === 'string' ? JSON.parse(domain[0].policy_snapshot) : domain[0].policy_snapshot)
+        .toEqual({ currency: 'USD', ...admissionPolicy });
+    } finally {
+      await f.pool.query('DELETE FROM system_config WHERE config_key=?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
+    }
   });
 });

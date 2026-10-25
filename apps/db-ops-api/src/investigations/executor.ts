@@ -27,7 +27,7 @@ import { InvestigationAuthorization, type InvestigationAuthoritySnapshot } from 
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { investigationPrompt, resolveInvestigationProfile } from './profiles.js';
 import type { InvestigationProfile } from './contracts.js';
-import { InvestigationEffectiveBudgetService } from './effective-budget.js';
+import { InvestigationEffectiveBudgetService, resolveAdmissionConfiguration, type InvestigationAdmissionConfiguration } from './effective-budget.js';
 import {resolveInvestigationRuntime} from './runtime-configuration.js';
 import { InvestigationCaseReferences } from './case-references.js';
 import {
@@ -627,6 +627,12 @@ export class InvestigationExecutor {
     this.ledger = new MysqlInvestigationBudgetLedger(options.pool, options.budget.policy, options.budget.maxExecutionTokens, this.options.budget.taskExecution);
     this.cases = options.caseReferences ?? InvestigationCaseReferences.create(options.pool);
   }
+  /** New reservations honor the durable admission setting. A stored receipt or
+   * a MAX-222 task contract keeps the base policy of its own domain. */
+  private admissionLedger(admission: InvestigationAdmissionConfiguration): MysqlInvestigationBudgetLedger {
+    return this.options.budget.taskExecution ? this.ledger
+      : new MysqlInvestigationBudgetLedger(this.options.pool, admission.policy, this.options.budget.maxExecutionTokens);
+  }
   private async transaction<T>(work: (c: InvestigationConnection) => Promise<T>): Promise<T> {
     // Ingress owns domain before newly created Session rows. Executor owns
     // Session -> Investigation -> Request -> Job before domain. InnoDB may
@@ -792,6 +798,14 @@ export class InvestigationExecutor {
       // task contract instead of the operator setting.
       const effectiveProfileBudget: Readonly<InvestigationProfile['budget']> = storedBudget
         ? { ...profile.budget, ...storedBudget.profileLimits } : profile.budget;
+      const activeAdmission = state ? undefined : resolveAdmissionConfiguration(storedBudget, this.options.budget);
+      // A durable receipt or MAX-222 execution domain always wins over the
+      // current setting, so an in-flight Run keeps its original domain/policy.
+      const domainOf = (request: { execution_domain?: unknown; request_snapshot: unknown }) => {
+        const snapshot = decode(request.request_snapshot);
+        const receiptDomain = typeof snapshot?.budgetReceipt?.domain === 'string' ? snapshot.budgetReceipt.domain : undefined;
+        return request.execution_domain?.toString() ?? receiptDomain ?? activeAdmission?.domain ?? this.options.budget.domain;
+      };
       if (!state) {
         state = await this.transaction(async (c) => {
           const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
@@ -802,23 +816,29 @@ export class InvestigationExecutor {
             return persisted;
           }
           const requestSnapshot = decode(current.request.request_snapshot);
-          const allocation = readExecutionAllocation(requestSnapshot?.executionAllocation, { requestId,
-            investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
-            mode: actor.principalKind === 'service' ? 'automatic' : 'manual' }, this.options.budget.policy, this.options.budget.taskExecution);
           const receipt = requestSnapshot?.budgetReceipt;
           const mode = actor.principalKind === 'service' ? 'automatic' : 'manual';
+          const executionDomain = current.request.execution_domain?.toString() ?? null;
+          const receiptDomain = typeof receipt?.domain === 'string' ? receipt.domain : undefined;
+          // A request that already holds a durable receipt (or a MAX-222 task
+          // domain) keeps its domain across later policy rotations. Only a
+          // brand-new manual reservation resolves the current admission policy.
+          const domain = executionDomain ?? receiptDomain ?? activeAdmission!.domain;
+          const allocation = readExecutionAllocation(requestSnapshot?.executionAllocation, { requestId,
+            investigationId, profile, domain, executionDomain,
+            mode }, this.options.budget.policy, this.options.budget.taskExecution);
           const runProfileBudget = allocation ? profile.budget : effectiveProfileBudget;
           let reservation: BudgetReservation;
           if (mode === 'automatic' || receipt) {
             reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
-              domain: this.options.budget.domain,
+              domain,
               mode,
               profile,
             }, executionTokenLimit);
           } else {
-            const admission = await this.ledger.reserveExecutionInTransaction(c, {
+            const admission = await this.admissionLedger(activeAdmission!).reserveExecutionInTransaction(c, {
               requestId,
-              domain: this.options.budget.domain,
+              domain,
               mode,
               profile,
               reserveTokens: allocation?.configuration.maxTotalTokens ?? executionTokenLimit ?? profile.budget.maxTokens,
@@ -856,7 +876,7 @@ export class InvestigationExecutor {
         });
       }
       const frozenAllocation = readExecutionAllocation(decode(access.request.request_snapshot)?.executionAllocation, {
-        requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: access.request.execution_domain?.toString() ?? null,
+        requestId, investigationId, profile, domain: domainOf(access.request), executionDomain: access.request.execution_domain?.toString() ?? null,
         mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
       }, this.options.budget.policy, this.options.budget.taskExecution);
       if (allocationHash(frozenAllocation ?? null) !== allocationHash(state.executionAllocation ?? null)
@@ -886,7 +906,7 @@ export class InvestigationExecutor {
       const readReceipt = async (c: InvestigationConnection) => {
         const current = await this.canonical.lockInvestigationExecution(c, actor, binding);
         const currentAllocation = readExecutionAllocation(decode(current.request.request_snapshot)?.executionAllocation, {
-          requestId, investigationId, profile, domain: this.options.budget.domain, executionDomain: current.request.execution_domain?.toString() ?? null,
+          requestId, investigationId, profile, domain: domainOf(current.request), executionDomain: current.request.execution_domain?.toString() ?? null,
           mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
         }, this.options.budget.policy, this.options.budget.taskExecution);
         const currentState = decode(current.run.result_json)?.investigationExecution;
@@ -894,7 +914,7 @@ export class InvestigationExecutor {
           || allocationHash(currentState?.executionAllocation ?? null) !== allocationHash(frozenAllocation ?? null)
           || frozenAllocation && currentState?.allocationRunId !== run.id) throw new Error('INVESTIGATION_ALLOCATION_INVALID');
         const reservation = await this.ledger.reuseExecutionInTransaction(c, requestId, {
-          domain: this.options.budget.domain,
+          domain: domainOf(current.request),
           mode: actor.principalKind === 'service' ? 'automatic' : 'manual',
           profile,
         }, executionTokenLimit);
@@ -1510,8 +1530,12 @@ export class InvestigationExecutor {
         )
           throw new Error('INVESTIGATION_EXECUTION_INVALID');
         if (!snapshot.budgetReceipt) return null;
+        // Settlement reads the receipt's own durable domain; a rotated policy
+        // must never redirect cleanup/refund to the new domain.
+        const receiptDomain = snapshot.budgetReceipt.domain;
+        if (typeof receiptDomain !== 'string' || !receiptDomain) throw new Error('INVESTIGATION_EXECUTION_INVALID');
         return this.ledger.reuseExecutionInTransaction(c, binding.requestId, {
-          domain: this.options.budget.domain,
+          domain: receiptDomain,
           mode: request.actor_kind === 'service' ? 'automatic' : 'manual',
           profile: resolveInvestigationProfile(snapshot.profileId, snapshot.profileVersion),
         });

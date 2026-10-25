@@ -26,15 +26,17 @@ describe('trusted investigation cumulative allocation configuration', () => {
     vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', '1000000');
     vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN', 'max207-investigation-1m-v1');
     expect(investigationBudgetConfiguration()).toMatchObject({ domain:'max207-investigation-1m-v1',maxExecutionTokens:1000000,
-      policy:{maxAutomaticTokensPerDay:1000000,maxTotalTokensPerDay:1000000,maxConcurrent:4,manualReserved:1} });
+      policy:{maxAutomaticTokensPerDay:1000000,maxTotalTokensPerDay:5000000,maxConcurrent:4,manualReserved:1} });
     expect(investigationProfileHash(INVESTIGATION_PROFILES.ops)).toBe(before);
   });
-  it('keeps the default automatic daily policy and domain', () => {
+  it('keeps the relaxed default automatic daily policy and domain', () => {
     vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', undefined);
     vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN', undefined);
-    expect(investigationBudgetConfiguration()).toMatchObject({domain:'investigation-v1',policy:{maxAutomaticTokensPerDay:256000,maxTotalTokensPerDay:1000000}});
+    vi.stubEnv('INVESTIGATION_DAILY_COST_MICROS', undefined);
+    expect(investigationBudgetConfiguration()).toMatchObject({domain:'investigation-v1',
+      policy:{maxAutomaticTokensPerDay:5000000,maxTotalTokensPerDay:5000000,maxCostMicrosPerDay:10000000}});
   });
-  it.each(['0','-1','1000001','1.5','Infinity',''])('rejects invalid automatic daily quota %s', value => {
+  it.each(['0','-1','5000001','1.5','Infinity',''])('rejects invalid automatic daily quota %s', value => {
     vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', value);
     expect(() => investigationBudgetConfiguration()).toThrow('INVESTIGATION_AUTOMATIC_DAILY_TOKENS');
   });

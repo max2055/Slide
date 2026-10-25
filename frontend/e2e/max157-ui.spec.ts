@@ -4,6 +4,7 @@ import { INVESTIGATION_PROFILES, investigationProfileHash } from '../../apps/db-
 
 const output = process.env.MAX157_OUTPUT_DIR ?? 'test-results/max157-ui-acceptance';
 const policy = { currency:'USD',maxConcurrent:4,manualReserved:1,maxPerResourceConcurrent:1,maxAutomaticRequestsPerHour:60,maxAutomaticTokensPerDay:500000,maxTotalTokensPerDay:1000000,maxCostMicrosPerDay:10000000 };
+const admissionPolicy = { maxConcurrent:4,manualReserved:1,maxPerResourceConcurrent:1,maxAutomaticRequestsPerHour:60,maxAutomaticTokensPerDay:500000,maxTotalTokensPerDay:1000000,maxCostMicrosPerDay:10000000 };
 const group = { state:'settled',mode:'manual',currency:'USD',count:2,knownUsageCount:2,unknownUsageCount:0,pendingUsageCount:0,knownInputTokens:12000,knownCachedInputTokens:4000,knownOutputTokens:6000,reservedTokens:64000,outstandingTokens:0,settledTokens:18000,reservedCostMicros:200000,outstandingCostMicros:0,estimatedSettledCostMicros:140000,unknownCostCount:0 };
 const groups = [group,{...group,state:'unknown',knownUsageCount:0,unknownUsageCount:2,knownInputTokens:0,knownCachedInputTokens:0,knownOutputTokens:0,settledTokens:0,outstandingTokens:64000,outstandingCostMicros:200000,estimatedSettledCostMicros:0},...Array.from({length:4},(_,i) => ({...group,currency:i % 2 ? 'EUR':'USD',state:['sent','reserved','cancelled','settled'][i]}))];
 const manifest = {releaseId:'source-acceptance',commitSha:'8bdd8a3c09ae5d9f5e5436f6f26153bdcddb6737',treeDigest:'a'.repeat(64),signature:'acceptance-signature',repository:{origin:'https://github.com',ref:'main'},completeness:'partial',verification:{status:'repository-unbound',reason:'SOURCE_DEPLOYMENT_UNKNOWN'},files:Array.from({length:1971},(_,i) => ({path:`packages/agent-core/src/collectors/group-${Math.floor(i/50)+1}/resource-collector-${i+1}.ts`,bytes:1248+i*13,digest:'b'.repeat(64)})),skippedFiles:Array.from({length:123},(_,i) => ({path:`config/group-${i+1}/config-${i+1}.json`,reason:i % 2 ? 'SOURCE_BINARY_FILE':'SOURCE_SYMLINK_SKIPPED'})),warnings:[{path:'src/retained.ts',reason:'SOURCE_LARGE_FILE'}]};
@@ -28,15 +29,17 @@ async function fixture(page: Page, mode = 'normal', theme = 'dark', accent = '#4
     if (path === '/api/platform/source/manifest') body = manifest;
     if (path === '/api/investigation-profiles') body = {items:Object.values(INVESTIGATION_PROFILES).map(profile => ({profile,profileHash:investigationProfileHash(profile),toolAvailability:'not_evaluated',outputSchemaId:'InvestigationResult'}))};
     if (path === '/api/investigation-policies') body = {configurationStatus:mode === 'empty'?'not_configured':'configured',integrationStatus:mode === 'empty'?'not_connected':'connected',source:'production_composition',originBoundary:'investigation_engine_persist_only',items:mode === 'empty'?[]:[{id:'database-alert-pilot',version:1,enabled:false}]};
-    if (path === '/api/investigation-budget') body = {source:'investigationBudgetConfiguration',policy,reserveCostMicros:100000,persistedPolicy:mode === 'empty'?null:{...policy,maxTotalTokensPerDay:mode === 'conflict'?800000:policy.maxTotalTokensPerDay},admissionStatus:mode === 'empty'?'uninitialized':mode === 'conflict'?'conflict':'matching',automaticTriggerStatus:'connected'};
+    if (path === '/api/investigation-budget') body = {source:'investigationBudgetConfiguration',policy,reserveCostMicros:100000,persistedPolicy:mode === 'empty'?null:{...policy,maxTotalTokensPerDay:mode === 'conflict'?800000:policy.maxTotalTokensPerDay},admissionStatus:mode === 'empty'?'uninitialized':mode === 'conflict'?'conflict':'matching',automaticTriggerStatus:'connected',domain:'investigation-v1',admissionRevision:1,policySource:'configuration'};
     if (path === '/api/investigation-budget/effective') {
       const runtime = {contextWindowTokens:1000000,outputTokens:16384,summaryOutputTokens:16384,maxExecutionTokens:1000000};
       const profileLimits = {deadlineMs:600000,maxToolCalls:36,maxProviderAttempts:8,maxRows:200,maxBytes:128000,maxWindowMs:3600000};
+      const admission = {revision:1,policy:admissionPolicy};
       body = {schemaVersion:1,source:mode === 'empty'?'defaults':'settings',
-        effective:{schemaVersion:1,version:mode === 'empty'?0:3,runtime,profileLimits,updatedAt:'2026-10-25T00:00:00.000Z'},
-        defaults:{schemaVersion:1,version:0,runtime,profileLimits,updatedAt:'2026-10-25T00:00:00.000Z'},
+        effective:{schemaVersion:1,version:mode === 'empty'?0:3,runtime,profileLimits,admission,updatedAt:'2026-10-25T00:00:00.000Z'},
+        defaults:{schemaVersion:1,version:0,runtime,profileLimits,admission,updatedAt:'2026-10-25T00:00:00.000Z'},
         provider:{model:'controlled-model',contextWindowTokens:1000000,maxOutputTokens:393216,preferredOutputTokens:393216,source:'configuration'},
-        capabilityVerified:true};
+        capabilityVerified:true,
+        admission:{domain:'investigation-v1',revision:1,source:mode === 'empty'?'defaults':'settings'}};
     }
     if (path === '/api/investigation-usage') { const offset = Number(url.searchParams.get('offset') ?? 0),limit = Number(url.searchParams.get('limit') ?? 20); body = {total:mode === 'empty'?0:12,groupCount:mode === 'empty'?0:6,counts:{reserved:2,sent:2,settled:4,unknown:2,cancelled:2},knownUsageCount:4,unknownUsageCount:2,pendingUsageCount:2,reservedTokens:384000,outstandingTokens:192000,settledTokens:36000,costs:mode === 'empty'?[]:[{currency:'USD',reservedCostMicros:1200000,outstandingCostMicros:600000,estimatedSettledCostMicros:280000}],items:mode === 'empty'?[]:groups.slice(offset,offset+limit),nextOffset:mode !== 'empty' && offset+limit<groups.length?offset+limit:null}; }
     if (path === '/api/resources') body = {items:[{resource:{type:'instance',id:1},label:'订单数据库',status:'online',attributes:{}}]};

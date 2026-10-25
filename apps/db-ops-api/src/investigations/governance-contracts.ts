@@ -1,5 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema } from './effective-budget-contracts.js';
+import { InvestigationAdmissionPolicySchema, InvestigationProfileLimitsSchema, InvestigationRuntimeAllocationSchema } from './effective-budget-contracts.js';
 
 const strict = { additionalProperties: false } as const;
 const count = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -27,6 +27,9 @@ export const InvestigationBudgetResponseSchema = Type.Object({
   admissionStatus: Type.Union([Type.Literal('uninitialized'), Type.Literal('matching'), Type.Literal('conflict')]),
   automaticTriggerStatus: Type.Union([Type.Literal('not_connected'), Type.Literal('connected')]), window: Type.Literal('UTC_admission_day_and_hour'),
   profileLimitsSource: Type.Literal('/api/investigation-profiles'),
+  domain: Type.String({ pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }),
+  admissionRevision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  policySource: Type.Union([Type.Literal('settings'), Type.Literal('configuration')]),
 }, { ...strict, $id: 'InvestigationBudgetResponse' });
 export const InvestigationUsageResponseSchema = Type.Object({
   schemaVersion: Type.Literal(1), accessScope: Type.Literal('global_config_management'),
@@ -52,6 +55,7 @@ export const InvestigationUsageResponseSchema = Type.Object({
 const effectiveBudgetDocument = Type.Object({
   schemaVersion: Type.Literal(1), version: count, runtime: InvestigationRuntimeAllocationSchema,
   profileLimits: InvestigationProfileLimitsSchema,
+  admission: Type.Optional(Type.Object({ revision: count, policy: InvestigationAdmissionPolicySchema }, strict)),
   updatedAt: Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$' }),
   updatedBy: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
 }, strict);
@@ -62,6 +66,8 @@ export const InvestigationEffectiveBudgetViewSchema = Type.Object({
     maxOutputTokens: Type.Optional(count), preferredOutputTokens: Type.Optional(count),
     source: Type.Union([Type.Literal('configuration'), Type.Literal('catalog'), Type.Literal('conservative-fallback')]) }, strict), Type.Null()]),
   capabilityVerified: Type.Boolean(),
+  admission: Type.Object({ domain: Type.String({ pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }),
+    revision: count, source: Type.Union([Type.Literal('settings'), Type.Literal('defaults')]) }, strict),
 }, strict);
 
 export type InvestigationBudgetResponse = Static<typeof InvestigationBudgetResponseSchema>;

@@ -89,23 +89,41 @@ describe('durable investigation budget, real MySQL and formal migrations', () =>
   afterEach(() => vi.unstubAllEnvs());
   it('uses the exact factory policy for a new automatic million allocation while preserving old domains', async () => {
     vi.stubEnv('INVESTIGATION_MAX_TOKENS', '1000000');
-    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', undefined);
+    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS', '1000000');
     vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN', undefined);
     const original = investigationBudgetConfiguration();
     const originalLedger = new MysqlInvestigationBudgetLedger(() => pool, original.policy, original.maxExecutionTokens);
     const command = await input([1], {domain:original.domain, reserveTokens:1000000,reserveCostMicros:1000000});
     const { operationId: _unused, ...execution } = command;
-    expect(await originalLedger.reserveExecution(execution)).toEqual({accepted:false,reason:'AUTOMATIC_DAILY_TOKENS'});
+    const first = accepted(await originalLedger.reserveExecution(execution));
+    expect(first).toMatchObject({reservedTokens: 1000000, domain: original.domain});
+    const second = await input([2], {domain:original.domain, reserveTokens:1000000,reserveCostMicros:1000000});
+    const { operationId: _second, ...secondExecution } = second;
+    expect(await originalLedger.reserveExecution(secondExecution)).toEqual({accepted:false,reason:'AUTOMATIC_DAILY_TOKENS'});
     const oldDomain = (await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key=?',[original.domain]))[0][0];
-    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS','1000000');
-    // Changing the frozen old policy remains forbidden; it requires a new domain.
+    vi.stubEnv('INVESTIGATION_AUTOMATIC_DAILY_TOKENS','2000000');
+    // Changing the frozen old policy remains forbidden for a NEW allocation;
+    // it requires a new domain revision.
     const changed = investigationBudgetConfiguration();
     await expect(new MysqlInvestigationBudgetLedger(() => pool, changed.policy, changed.maxExecutionTokens)
-      .reserveExecution(execution)).rejects.toMatchObject({code:'BUDGET_POLICY_CONFLICT'});
-    vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN','max207-investigation-1m-v1');
+      .reserveExecution(secondExecution)).rejects.toMatchObject({code:'BUDGET_POLICY_CONFLICT'});
+    // An admitted receipt in the old domain stays reusable under the new policy.
+    await originalLedger.markSent(first.id);
+    await originalLedger.settle(first.id, { inputTokens: 1000000, cachedInputTokens: 0, outputTokens: 0 });
+    const reuseConnection = await pool.getConnection();
+    try {
+      await reuseConnection.beginTransaction();
+      expect(await new MysqlInvestigationBudgetLedger(() => pool, changed.policy, changed.maxExecutionTokens)
+        .reuseExecutionInTransaction(reuseConnection as unknown as TransactionConnection, command.requestId,
+          {domain: original.domain, mode: 'automatic', profile: INVESTIGATION_PROFILES.ops})).toEqual({ ...first, state: 'settled',
+          chargedTokens: 1000000, chargedCostMicros: first.reservedCostMicros, costStatus: 'known',
+          usage: { inputTokens: 1000000, cachedInputTokens: 0, outputTokens: 0 } });
+      await reuseConnection.commit();
+    } finally { await reuseConnection.rollback(); reuseConnection.release(); }
+    vi.stubEnv('INVESTIGATION_BUDGET_DOMAIN','max207-investigation-1m-v1:v2');
     const configured = investigationBudgetConfiguration();
     const service = new MysqlInvestigationBudgetLedger(() => pool,configured.policy,configured.maxExecutionTokens);
-    const freshCommand = await input([2],{domain:configured.domain,reserveTokens:1000000,reserveCostMicros:1000000});
+    const freshCommand = await input([3],{domain:configured.domain,reserveTokens:1000000,reserveCostMicros:1000000});
     const {operationId: _fresh, ...freshExecution} = freshCommand;
     const allocation = accepted(await service.reserveExecution(freshExecution));
     expect(allocation).toMatchObject({reservedTokens:1000000,domain:configured.domain});
@@ -120,9 +138,11 @@ describe('durable investigation budget, real MySQL and formal migrations', () =>
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key=?',[original.domain]))[0][0]).toEqual(oldDomain);
     await service.markSent(allocation.id);
     await service.settle(allocation.id,null);
-    const next = await input([3],{mode:'manual',domain:configured.domain,reserveTokens:1,reserveCostMicros:1});
+    // The rotated domain has the relaxed total headroom; old-domain charges are
+    // neither copied into nor subtracted from the new domain.
+    const next = await input([4],{mode:'manual',domain:configured.domain,reserveTokens:1,reserveCostMicros:1});
     const {operationId: _next,...nextExecution}=next;
-    expect(await service.reserveExecution(nextExecution)).toEqual({accepted:false,reason:'TOTAL_DAILY_TOKENS'});
+    expect(accepted(await service.reserveExecution(nextExecution))).toMatchObject({ reservedTokens: 1, domain: configured.domain });
     expect((await service.read(allocation.id)).chargedTokens).toBe(1000000);
   });
 

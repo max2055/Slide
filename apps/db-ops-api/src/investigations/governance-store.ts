@@ -9,7 +9,8 @@ import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledg
 import { investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationBudgetPolicySchema, type InvestigationBudgetResponse, type InvestigationUsageResponse } from './governance-contracts.js';
 import { databaseAlertPilotConfiguration, investigationBridgeFlags } from './bridge-flags.js';
-import { InvestigationEffectiveBudgetError, InvestigationEffectiveBudgetService, type EffectiveBudgetAuditContext } from './effective-budget.js';
+import { InvestigationEffectiveBudgetError, InvestigationEffectiveBudgetService, resolveAdmissionConfiguration,
+  type EffectiveBudgetAuditContext } from './effective-budget.js';
 
 export class GovernanceReadError extends Error {
   constructor(readonly code: 'GOVERNANCE_FORBIDDEN' | 'GOVERNANCE_UNAVAILABLE') { super(code); }
@@ -37,10 +38,16 @@ async function rows(c: PoolConnection, sql: string, values: unknown[] = []) {
  * access. The same SQL connection reloads live identity before ANY ledger read.
  * No write-side ledger method or implicit domain registration is used. */
 export class InvestigationGovernanceStore {
+  private readonly effectiveBudget: InvestigationEffectiveBudgetService;
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly configuration = investigationBudgetConfiguration,
     private readonly contexts = new ActorContextService(),
-    private readonly effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider)) {}
+    effectiveBudget?: InvestigationEffectiveBudgetService) {
+    // The effective-budget service shares this store's trusted loader so the
+    // defaults it reports are exactly the ones execution would fall back to.
+    this.effectiveBudget = effectiveBudget ?? new InvestigationEffectiveBudgetService(poolProvider,
+      undefined, undefined, () => this.configuration());
+  }
 
   private async read<T>(caller: ActorContext, management: boolean,
     work: (c: PoolConnection, current: ActorContext) => Promise<T>): Promise<T> {
@@ -84,14 +91,19 @@ export class InvestigationGovernanceStore {
       // it does not initialize a domain or perform any SQL.
       new MysqlInvestigationBudgetLedger(this.poolProvider, config.policy);
       if (!Number.isSafeInteger(config.reserveCostMicros) || config.reserveCostMicros < 1) throw unavailable();
-      const configured = policy(config.policy);
-      const [domain] = await rows(c, 'SELECT policy_snapshot, policy_hash FROM investigation_budget_domains WHERE domain_key = ?', [config.domain]);
+      // The durable setting wins, and its revision names the domain new
+      // admissions target. Reading never creates that domain.
+      const admission = resolveAdmissionConfiguration(await this.effectiveBudget.readStoredFrom(c), config);
+      const configured = policy(admission.policy);
+      const [domain] = await rows(c, 'SELECT policy_snapshot, policy_hash FROM investigation_budget_domains WHERE domain_key = ?', [admission.domain]);
       const persisted = domain ? policy(json(domain.policy_snapshot)) : null;
       return { schemaVersion: 1, source: 'investigationBudgetConfiguration', policy: configured,
         reserveCostMicros: number(config.reserveCostMicros), persistedPolicy: persisted,
         admissionStatus: persisted === null ? 'uninitialized' : isDeepStrictEqual(persisted, configured) && domain.policy_hash === createHash('sha256').update(JSON.stringify(configured)).digest('hex') ? 'matching' : 'conflict',
         automaticTriggerStatus: databaseAlertPilotConfiguration().configured && investigationBridgeFlags().opsAuto ? 'connected' : 'not_connected',
-        window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles' };
+        window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles',
+        domain: admission.domain, admissionRevision: admission.revision,
+        policySource: admission.source === 'settings' ? 'settings' : 'configuration' };
     });
   }
 

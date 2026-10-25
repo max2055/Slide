@@ -61,7 +61,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     contexts = new ActorContextService(() => pool as never);
     store = new InvestigationGovernanceStore(() => pool, () => currentConfig, contexts,
       new InvestigationEffectiveBudgetService(() => pool, async () => ({ model: 'fixture-model', contextWindowTokens: 1_000_000,
-        maxOutputTokens: 393_216, preferredOutputTokens: 393_216, source: 'configuration' }), () => '2026-10-25T00:00:00.000Z'));
+        maxOutputTokens: 393_216, preferredOutputTokens: 393_216, source: 'configuration' }), () => '2026-10-25T00:00:00.000Z',
+        () => currentConfig));
     app = Fastify();
     await registerInvestigationGovernanceRoutes(app, createVerifyToken(secret, contexts), store);
     address = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -265,9 +266,17 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect(await (await read('budget')).json()).toMatchObject({ admissionStatus: 'conflict', policy: currentConfig.policy });
     expect(await snapshot()).toEqual(before);
   });
+  // Derived from the same loader as `currentConfig`, so an operator env does
+  // not make the first save look like a policy change.
+  const loaderPolicy = investigationBudgetConfiguration().policy;
+  const admissionPolicy = { maxConcurrent: loaderPolicy.maxConcurrent, manualReserved: loaderPolicy.manualReserved,
+    maxPerResourceConcurrent: loaderPolicy.maxPerResourceConcurrent, maxAutomaticRequestsPerHour: loaderPolicy.maxAutomaticRequestsPerHour,
+    maxAutomaticTokensPerDay: loaderPolicy.maxAutomaticTokensPerDay, maxTotalTokensPerDay: loaderPolicy.maxTotalTokensPerDay,
+    maxCostMicrosPerDay: loaderPolicy.maxCostMicrosPerDay };
   const effectiveBody = { expectedVersion: 0,
     runtime: { contextWindowTokens: 1_000_000, outputTokens: 393_216, summaryOutputTokens: 393_216, maxExecutionTokens: 1_000_000 },
-    profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 } };
+    profileLimits: { deadlineMs: 600_000, maxToolCalls: 36, maxProviderAttempts: 8, maxRows: 200, maxBytes: 128_000, maxWindowMs: 3_600_000 },
+    admissionPolicy };
   const effective = (body: unknown, jwt = token) => fetch(`${address}/api/investigation-budget/effective`, {
     method: 'PUT', headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const readEffective = (jwt = token) => fetch(`${address}/api/investigation-budget/effective`, {
@@ -277,7 +286,9 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('private, no-store');
     const view = await response.json();
-    expect(view).toMatchObject({ source: 'settings', effective: { version: 1, runtime: effectiveBody.runtime, profileLimits: effectiveBody.profileLimits } });
+    expect(view).toMatchObject({ source: 'settings', effective: { version: 1, runtime: effectiveBody.runtime, profileLimits: effectiveBody.profileLimits,
+      admission: { revision: 1, policy: admissionPolicy } },
+    admission: { domain: 'investigation-v1', revision: 1, source: 'settings' } });
     const [rows] = await pool.execute<RowDataPacket[]>('SELECT config_value, updated_by FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
     expect(rows).toHaveLength(1); expect(Number(rows[0].updated_by)).toBe(101);
     const [audit] = await pool.execute<RowDataPacket[]>("SELECT user_id, details_json FROM audit_log_entries WHERE action = 'investigation.effective_budget.update'");
@@ -285,6 +296,43 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     const details = typeof audit[0].details_json === 'string' ? JSON.parse(audit[0].details_json) : audit[0].details_json;
     expect(details).toMatchObject({ previousVersion: 0, version: 1, next: { runtime: effectiveBody.runtime } });
     expect(await (await readEffective()).json()).toMatchObject({ source: 'settings', effective: { version: 1 } });
+  });
+  it('rotates the ledger domain on a policy change and leaves the old domain/ledger byte-identical', async () => {
+    await reserve('settled');
+    const [oldDomain] = await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key = ?', ['investigation-v1']);
+    const [oldLedger] = await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_ledger ORDER BY id');
+    expect(oldDomain).toHaveLength(1);
+    const rotated = { ...effectiveBody,
+      admissionPolicy: { ...admissionPolicy, maxTotalTokensPerDay: 8_000_000, maxAutomaticTokensPerDay: 8_000_000 } };
+    const response = await effective(rotated);
+    expect(response.status).toBe(200);
+    const view = await response.json();
+    expect(view).toMatchObject({ source: 'settings',
+      effective: { version: 1, admission: { revision: 2, policy: rotated.admissionPolicy } },
+      admission: { domain: 'investigation-v1:v2', revision: 2, source: 'settings' } });
+    const facts = await (await read('budget')).json();
+    expect(Value.Check(InvestigationGovernanceSchemas.InvestigationBudgetResponse, facts)).toBe(true);
+    expect(facts).toMatchObject({ policy: { ...rotated.admissionPolicy, currency: 'USD' }, domain: 'investigation-v1:v2',
+      admissionRevision: 2, policySource: 'settings', admissionStatus: 'uninitialized', persistedPolicy: null });
+    // Runtime/Profile-only edits never rotate.
+    const runtimeOnly = await effective({ ...effectiveBody, expectedVersion: 1,
+      runtime: { ...effectiveBody.runtime, contextWindowTokens: 500_000, outputTokens: 100_000, summaryOutputTokens: 100_000 },
+      admissionPolicy: rotated.admissionPolicy });
+    expect(runtimeOnly.status).toBe(200);
+    expect(await runtimeOnly.json()).toMatchObject({ effective: { version: 2, admission: { revision: 2 } },
+      admission: { domain: 'investigation-v1:v2', revision: 2 } });
+    // The old domain snapshot and its historical ledger are untouched.
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key = ?', ['investigation-v1']))[0]).toEqual(oldDomain);
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_ledger ORDER BY id'))[0]).toEqual(oldLedger);
+    const [audit] = await pool.execute<RowDataPacket[]>(`SELECT details_json FROM audit_log_entries
+      WHERE action = 'investigation.effective_budget.update' AND JSON_EXTRACT(details_json, '$.rotation') IS NOT NULL`);
+    expect((typeof audit[0].details_json === 'string' ? JSON.parse(audit[0].details_json) : audit[0].details_json))
+      .toMatchObject({ rotation: { previousRevision: 1, revision: 2, previousDomain: 'investigation-v1', domain: 'investigation-v1:v2' } });
+  });
+  it('fails a conflicting admission policy explicitly without writing settings or rotating', async () => {
+    expect((await effective({ ...effectiveBody, admissionPolicy: { ...admissionPolicy, manualReserved: 9 } })).status).toBe(400);
+    expect((await effective({ ...effectiveBody, admissionPolicy: { ...admissionPolicy, maxAutomaticTokensPerDay: 6_000_000 } })).status).toBe(400);
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]))[0]).toHaveLength(0);
   });
   it('rejects stale versions, over-capability values and missing management permission', async () => {
     expect((await effective(effectiveBody)).status).toBe(200);
