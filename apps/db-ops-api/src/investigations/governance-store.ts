@@ -9,6 +9,7 @@ import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledg
 import { investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationBudgetPolicySchema, type InvestigationBudgetResponse, type InvestigationUsageResponse } from './governance-contracts.js';
 import { databaseAlertPilotConfiguration, investigationBridgeFlags } from './bridge-flags.js';
+import { InvestigationEffectiveBudgetError, InvestigationEffectiveBudgetService, type EffectiveBudgetAuditContext } from './effective-budget.js';
 
 export class GovernanceReadError extends Error {
   constructor(readonly code: 'GOVERNANCE_FORBIDDEN' | 'GOVERNANCE_UNAVAILABLE') { super(code); }
@@ -38,9 +39,11 @@ async function rows(c: PoolConnection, sql: string, values: unknown[] = []) {
 export class InvestigationGovernanceStore {
   constructor(private readonly poolProvider: () => Pool | null,
     private readonly configuration = investigationBudgetConfiguration,
-    private readonly contexts = new ActorContextService()) {}
+    private readonly contexts = new ActorContextService(),
+    private readonly effectiveBudget = new InvestigationEffectiveBudgetService(poolProvider)) {}
 
-  private async read<T>(caller: ActorContext, management: boolean, work: (c: PoolConnection) => Promise<T>): Promise<T> {
+  private async read<T>(caller: ActorContext, management: boolean,
+    work: (c: PoolConnection, current: ActorContext) => Promise<T>): Promise<T> {
     const ceiling = freezeInvestigationCaller(caller);
     if (ceiling.principalKind === 'service' || ceiling.resourceBoundary) throw new GovernanceReadError('GOVERNANCE_FORBIDDEN');
     const pool = this.poolProvider();
@@ -52,12 +55,13 @@ export class InvestigationGovernanceStore {
       const required = ['ai:view', ...(management ? ['config:manage'] : [])];
       if (required.some(code => !hasPermission(new Set(current.permissions), code) || !hasPermission(new Set(ceiling.permissions), code)))
         throw new GovernanceReadError('GOVERNANCE_FORBIDDEN');
-      const result = await work(c);
+      const result = await work(c, current);
       await c.commit();
       return result;
     } catch (error) {
       await c.rollback();
-      if (error instanceof ActorAuthenticationError || error instanceof GovernanceReadError) throw error;
+      if (error instanceof ActorAuthenticationError || error instanceof GovernanceReadError
+        || error instanceof InvestigationEffectiveBudgetError) throw error;
       throw unavailable();
     } finally { c.release(); }
   }
@@ -89,6 +93,15 @@ export class InvestigationGovernanceStore {
         automaticTriggerStatus: databaseAlertPilotConfiguration().configured && investigationBridgeFlags().opsAuto ? 'connected' : 'not_connected',
         window: 'UTC_admission_day_and_hour', profileLimitsSource: '/api/investigation-profiles' };
     });
+  }
+
+  effectiveBudgetFacts(caller: ActorContext) {
+    return this.read(caller, true, async () => this.effectiveBudget.view());
+  }
+
+  saveEffectiveBudget(caller: ActorContext, input: unknown, context: EffectiveBudgetAuditContext = {}) {
+    return this.read(caller, true, async (c, current) =>
+      this.effectiveBudget.saveInTransaction(c, current, input, context));
   }
 
   usage(caller: ActorContext, limit = 20, offset = 0): Promise<InvestigationUsageResponse> {

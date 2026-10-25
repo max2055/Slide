@@ -30,8 +30,15 @@ export function configuredModelCapabilities(provider: LLMProvider, model: string
   // Custom endpoints cannot inherit a large window solely from an OpenAI-like model name.
   const window = configured !== undefined ? Math.min(configured, catalog?.contextWindow ?? Infinity)
     : nativeCatalog?.contextWindow ?? UNKNOWN_CONTEXT_WINDOW;
+  // A provider-configured max_tokens is a real output ceiling even when the
+  // model is absent from the bundled catalog (custom OpenAI-compatible
+  // endpoints). Expose it to the runtime and summary capability gates; a
+  // catalog can only tighten it.
+  const storedMax = selected?.maxTokens ?? provider.max_tokens;
+  const maxOutputTokens = storedMax !== undefined && catalog?.maxTokens !== undefined
+    ? Math.min(storedMax, catalog.maxTokens) : storedMax ?? catalog?.maxTokens;
   return { model, contextWindowTokens: window,
-    ...(selected?.maxTokens !== undefined || catalog ? { maxOutputTokens: selected?.maxTokens ?? catalog!.maxTokens } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     ...(provider.max_tokens !== undefined ? { preferredOutputTokens: Math.min(provider.max_tokens, selected?.maxTokens ?? catalog?.maxTokens ?? Infinity, window - 1025) } : {}),
     supportsTools: !!provider.supports_function_call,
     supportsVision: !!provider.supports_vision && (!catalog || catalog.input.includes('image')),

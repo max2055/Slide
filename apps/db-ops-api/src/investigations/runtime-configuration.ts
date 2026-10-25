@@ -38,7 +38,9 @@ export function resolveInvestigationRuntime(
     || selected.maxTokens + 1024 >= selected.contextWindowTokens) throw new Error('INVESTIGATION_CONTEXT_CONFIGURATION');
   const explicit = !persisted && Object.keys(configured).length > 0;
   if ((explicit || selected.contextWindowTokens > 16_000) && (!capability || capability.source === 'conservative-fallback')
-    || capability && (selected.contextWindowTokens > capability.contextWindowTokens || selected.maxTokens > (capability.maxOutputTokens ?? capability.preferredOutputTokens ?? 4096))) {
+    || capability && (selected.contextWindowTokens > capability.contextWindowTokens
+      || selected.maxTokens > (capability.maxOutputTokens ?? capability.preferredOutputTokens ?? 4096)
+      || capability.maxOutputTokens !== undefined && selected.summaryMaxTokens > capability.maxOutputTokens)) {
     throw new Error('INVESTIGATION_CONTEXT_CAPABILITY');
   }
   return {...selected};

@@ -50,7 +50,7 @@ async function login(page: Page, permissions = fullPermissions, theme = 'light')
 const view = (page: Page) => page.locator('investigation-governance-page');
 async function read(page: Page, kind: string) {
   await page.goto(`${env.url}/settings/ai/${kind}`);
-  await expect(view(page).getByRole('heading', { name: { policies: '调查策略', budget: '有效预算', usage: '用量与成本' }[kind] })).toBeVisible();
+  await expect(view(page).getByRole('heading', { name: { policies: '调查策略', budget: '有效预算', usage: '用量与成本' }[kind], exact: true })).toBeVisible();
 }
 async function snapshot() {
   const result: Record<string, unknown> = {};
@@ -81,6 +81,10 @@ test('real unconfigured policies, uninitialized effective budget and empty persi
   const before = await snapshot(); await login(page);
   await read(page, 'policies'); await expect(view(page)).toContainText('尚未配置'); await expect(view(page)).toContainText('尚未接入');
   await read(page, 'budget'); await expect(view(page)).toContainText('尚未初始化冻结预算');
+  await expect(view(page)).toContainText('有效预算（可编辑）');
+  await expect(view(page)).toContainText('当前默认值');
+  await expect(view(page).locator('[data-budget="editor"]')).toContainText('运行时分配');
+  await expect(view(page).getByRole('button', { name: '保存有效预算' })).toBeDisabled();
   await expect(view(page).locator('[data-budget="loader"]')).toContainText(String(investigationBudgetConfiguration().policy.maxConcurrent));
   await read(page, 'usage'); await expect(view(page).locator('app-empty-state')).toHaveAttribute('title', '暂无持久用量');
   expect(await snapshot()).toEqual(before);
@@ -133,9 +137,12 @@ test('R2 real durable governance visual evidence at both widths and themes', asy
       await page.locator('slide-app').evaluate((e: any, theme) => e.applySettings({ ...e.settings, themeMode: theme }), theme);
       await expect(page.locator('html')).toHaveAttribute('data-theme-mode', theme);
       await expect(view(page).getByRole('button', { name: /^刷新/ })).toBeEnabled();
+      if (kind === 'budget') await expect(view(page).locator('[data-budget="editor"]')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `${output}/${kind}-durable-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
       if (kind === 'budget') {
+        await view(page).locator('[data-budget="editor"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${output}/budget-editor-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
         await view(page).locator('[data-budget="frozen"]').scrollIntoViewIfNeeded();
         await page.screenshot({ path: `${output}/budget-frozen-${width}-${theme}-real-service.png`, fullPage: true, animations: 'disabled' });
       }

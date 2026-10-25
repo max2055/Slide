@@ -42,6 +42,14 @@ describe('configured provider consistency', () => {
     expect(configuredModelCapabilities(config, 'unknown')).toMatchObject({ contextWindowTokens: 8192, source: 'conservative-fallback' });
     expect(() => configuredModelCapabilities({ ...config, context_window: -1 }, 'unknown')).toThrow('INVALID_MODEL_CONTEXT');
   });
+  it('uses provider max_tokens as the verified output ceiling for an uncatalogued model', () => {
+    expect(configuredModelCapabilities({ ...config, context_window: 1_000_000, max_tokens: 393_216 }, 'deepseek-v4-flash'))
+      .toMatchObject({ contextWindowTokens: 1_000_000, maxOutputTokens: 393_216, preferredOutputTokens: 393_216, source: 'configuration' });
+  });
+  it('lets a static catalog tighten but never widen stored output limits', () => {
+    expect(configuredModelCapabilities({ ...config, context_window: 128_000, max_tokens: 8_192 }, 'deepseek-chat').maxOutputTokens).toBe(4_096);
+    expect(configuredModelCapabilities({ ...config, context_window: 128_000, max_tokens: 2_048 }, 'deepseek-chat').maxOutputTokens).toBe(2_048);
+  });
   it('uses the same explicit Anthropic endpoint/key/model without mutating the environment', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'old-key'); vi.stubEnv('ANTHROPIC_MODEL', 'old-model');
     const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [config], getProviderApiKey: async () => 'configured-key' });
