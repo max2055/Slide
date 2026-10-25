@@ -95,20 +95,23 @@ class ServerAlertEvaluator {
 
         for (const rule of rules) {
           try {
-            const semantic = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
-            if (!semantic.handled) continue;
-            {
-              if (!semantic.level || semantic.value === null) {
-                const recovery = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any,
-                  rule.recovery_seconds ?? rule.duration_seconds);
-                if (recovery.recovery) {
-                  assertWorkflowActive();
-                  const existing = await alertDatabaseService.findActiveServerAlert(serverId, rule.metric_name, rule.id);
-                  if (existing) { assertWorkflowActive(); await alertDatabaseService.resolveAlert(existing.id); }
-                }
-                continue;
+            // Recovery evidence belongs to the alert's complete dimension set.
+            // Check it even when a different dimension is still firing.
+            assertWorkflowActive();
+            const active = await alertDatabaseService.findActiveServerAlerts(serverId, rule.metric_name, rule.id);
+            for (const existing of active) {
+              const dimensions = existing.tags?.dimensions ?? {};
+              if (rule.dimensions && !Object.entries(rule.dimensions).every(([key, value]) => dimensions[key] === value)) continue;
+              const recovery = await evaluateOperationalRule({ type: 'server', id: serverId }, { ...rule, dimensions } as any,
+                rule.recovery_seconds ?? rule.duration_seconds);
+              if (recovery.recovery) {
+                assertWorkflowActive();
+                await alertDatabaseService.resolveAlert(existing.id);
               }
             }
+            const semantic = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
+            if (!semantic.handled) continue;
+            if (!semantic.level || semantic.value === null) continue;
             const currentValue = semantic.value!;
             const selectedDimensions = semantic.dimensions;
             const selectedRecordedAt = semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : undefined;
@@ -121,7 +124,9 @@ class ServerAlertEvaluator {
             const dimensionText = dimensions ? `（${Object.entries(dimensions).map(([key, value]) => `${key}=${value}`).join(', ')}）` : '';
             const message = `服务器指标 "${rule.metric_name}"${dimensionText} 当前值为 ${currentValue}，超过阈值 ${rule.threshold}；采集时间 ${collectedAt ?? 'unknown'}`;
 
-            const observation = { message, tags: {
+            const observation = { message, thresholdValue: String(rule.threshold), tags: {
+              rule_id: rule.id,
+              rule_name: rule.name,
               semantic_migration: semantic.migration,
               collected_at: collectedAt,
               observed_from: semantic.observation?.from ?? null,
@@ -134,7 +139,7 @@ class ServerAlertEvaluator {
             // Check for existing active alert (dedup)
             assertWorkflowActive();
             const existing = await alertDatabaseService.findActiveServerAlert(
-              serverId, rule.metric_name, rule.id,
+              serverId, rule.metric_name, rule.id, dimensions,
             );
             if (existing) {
               // Touch existing alert with updated value
