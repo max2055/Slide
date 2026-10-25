@@ -53,14 +53,14 @@ test('standalone API and integration modes retain their original coverage', () =
 test('sharded API keeps the largest file in a dedicated self-contained exec leg', () => harness(run => {
   const shard = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: '3' });
   assert.equal(shard.status, 0, shard.stderr);
-  assert.match(shard.trace, /slide-api test .*--shard=3\/5 --exclude \*\*\/execution-recovery\.mysql\.test\.ts/);
+  assert.match(shard.trace, /slide-api test .*--shard=3\/8 --exclude \*\*\/execution-recovery\.mysql\.test\.ts/);
   assert.match(shard.trace, /mysql:9\.6/);
   const exec = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: 'exec' });
   assert.equal(exec.status, 0, exec.stderr);
   assert.match(exec.trace, /slide-api test .*src\/investigations\/execution-recovery\.mysql\.test\.ts/);
   assert.doesNotMatch(exec.trace, /--shard=/);
   assert.doesNotMatch(exec.trace, /mysql:9\.6/);
-  const invalid = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: '7' });
+  const invalid = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: '9' });
   assert.equal(invalid.status, 64);
   assert.equal(invalid.trace, '');
 }));

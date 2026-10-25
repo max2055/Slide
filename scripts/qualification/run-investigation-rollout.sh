@@ -8,8 +8,8 @@ if [[ -n "${T12_API_SHARD:-}" && "$mode" != --api ]]; then
   echo 'T12_API_SHARD is only valid with --api' >&2
   exit 64
 fi
-if [[ -n "${T12_API_SHARD:-}" && ! "${T12_API_SHARD}" =~ ^([1-5]|exec)$ ]]; then
-  echo 'T12_API_SHARD must be 1..5 or exec' >&2
+if [[ -n "${T12_API_SHARD:-}" && ! "${T12_API_SHARD}" =~ ^([1-8]|exec)$ ]]; then
+  echo 'T12_API_SHARD must be 1..8 or exec' >&2
   exit 64
 fi
 container="slide-t12-$$-$RANDOM"
@@ -94,7 +94,7 @@ run_gate() {
   tail -8 "$T12_OUTPUT_DIR/$name.log"
 }
 if [[ "$mode" == --api ]]; then
-  # CI splits this suite into five parallel shards, each against its own
+  # CI splits this suite into eight parallel shards, each against its own
   # isolated MySQL pair, plus one dedicated shard for the largest test file.
   # Unset keeps the single-process candidate for local/standalone use.
   api_args=(--maxWorkers=1 --reporter=default --reporter=json --outputFile="$T12_OUTPUT_DIR/api.json")
@@ -103,7 +103,7 @@ if [[ "$mode" == --api ]]; then
     # cannot stack it behind another slow file.
     api_args+=(src/investigations/execution-recovery.mysql.test.ts)
   elif [[ -n "${T12_API_SHARD:-}" ]]; then
-    api_args+=(--shard="$T12_API_SHARD/5" --exclude '**/execution-recovery.mysql.test.ts')
+    api_args+=(--shard="$T12_API_SHARD/8" --exclude '**/execution-recovery.mysql.test.ts')
   fi
   run_gate api pnpm --filter slide-api test "${api_args[@]}"
   exit 0

@@ -23,13 +23,15 @@ Basic checks remain enabled even for documentation-only PRs.
 - `backend` owns the ordinary API suite when the full MySQL candidate is not
   selected. Otherwise `investigation-api-qualification` runs the complete suite,
   including the ordinary tests and all enabled SQL gates. They never both run
-  the same full API suite in one workflow. The suite is split into five
-  `--shard=<i>/5` legs plus one `exec` leg dedicated to
+  the same full API suite in one workflow. The suite is split into eight
+  `--shard=<i>/8` legs plus one `exec` leg dedicated to
   `execution-recovery.mysql.test.ts`; each leg has its own isolated MySQL (the
   `exec` leg needs only the 8.4 server). The union of the legs is the same
   complete candidate as the former single job.
 - `investigation-workspace-qualification` owns the Investigation browser
-  configuration, including both feedback specs. `browser-qualification` owns
+  configuration, including both feedback specs, split into two Playwright
+  shards. `browser` runs the frontend audit matrix in two Playwright shards
+  (the streaming regression stays on shard 1). `browser-qualification` owns
   TLS/login/runtime/cron/candidate-isolation/streaming.
   `browser-edge-qualification` owns Edge critical paths and instance-query.
   Feedback evaluation/runtime qualification remains; its SQL files run
