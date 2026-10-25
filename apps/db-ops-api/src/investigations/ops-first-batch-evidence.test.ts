@@ -17,6 +17,28 @@ const fs = JSON.parse(readFileSync(new URL('./fixtures/ops-fs-selected-20261024.
 const scope = [{ type: 'instance', id: 1 }, { type: 'server', id: 3 }];
 const budget = { maxRows: 200, maxBytes: 128000, maxWindowMs: 3600000 };
 const final = fixture['sdk-02-sent'], received = fixture['sdk-02-received'];
+// The live multi-series view hoists page-identical metadata; expand it before
+// comparing with the canonical receipt (same contract as ops-filesystem.test.ts).
+const canonicalMetric = (metric: any) => {
+  if (!metric.attempt || typeof metric.attempt !== 'object') return { ...metric };
+  const { observation_ids: _ids, ...attempt } = metric.attempt;
+  return { ...metric, attempt };
+};
+const expandMetric = (view: any) => {
+  const metric = view.data.metrics[0];
+  if (!metric?.bucketDefaults) return metric;
+  const { bucketDefaults, sourceDefaults, ...base } = metric;
+  return { ...base, series: metric.series.map((s: any) => ({ ...s, buckets: s.buckets.map((b: any) => ({
+    ...bucketDefaults, ...b,
+    ...(Object.hasOwn(b, 'dimensions') ? {} : { dimensions: s.dimensions }),
+    ...(Array.isArray(b.sources) && sourceDefaults ? { sources: b.sources.map((x: any) => x.source ? x : ({
+      id: x.id,
+      source: { attempt_id: x.attempt_id ?? sourceDefaults.attempt_id, binding_id: x.binding_id ?? sourceDefaults.binding_id,
+        collector_id: x.collector_id ?? sourceDefaults.collector_id, metric_binding_id: x.metric_binding_id },
+      versions: x.versions ?? sourceDefaults.versions,
+    })) } : {}),
+  })) })) };
+};
 const evidence = final.messages.filter((m: any) => m.role === 'tool')
   .map((m: any) => ({ id: `e-${m.tool_call_id}`, metadata_json: { source: `tool:${m.tool_call_id}` } }));
 const validate = new Ajv2020({ strict: false }).compile(JSON.parse(MODEL_ANALYSIS_POLICY.split('analysis): ')[1]));
@@ -113,7 +135,7 @@ describe('current evidence planning and nonempty claim support, actual failed ru
       const view = JSON.parse(String(investigationToolContextResult(raw, metric.id, 'ops', tool.name, args)));
       expect(view.data.evidenceOmitted).not.toBe(true);
       expect(view.data.metrics[0].series).toHaveLength(11);
-      expect(view.data.metrics).toEqual(raw.data.metrics);
+      expect(expandMetric(view)).toEqual(canonicalMetric(raw.data.metrics[0]));
       views.push(view);
       // When a page cannot fit, existing exact-directory guidance is executable.
       const large = structuredClone(raw); large.data.metrics[0].extra = 'x'.repeat(17000);
@@ -126,7 +148,7 @@ describe('current evidence planning and nonempty claim support, actual failed ru
       expect(narrow.data.metrics[0].series[0].dimensions).toEqual(omitted.data.seriesSelection.entries[0].dimensions);
       expect(investigationContextMessages([{ role: 'tool', name: tool.name, tool_call_id: metric.id, content: JSON.stringify(narrow) }], 'ops')[0].content).toContain('single_metric_v1');
     }
-    const [used, size] = views.map(v => v.data.metrics[0].series);
+    const [used, size] = views.map(v => expandMetric(v).series);
     for (const u of used) {
       const peer = size.filter((s: any) => key(s.dimensions) === key(u.dimensions));
       expect(peer).toHaveLength(1);

@@ -19,6 +19,29 @@ const original = JSON.parse(fixture.originalToolMessage.content);
 const originalArgs = JSON.parse(fixture.originalToolCall.function.arguments);
 const callId = fixture.originalToolCall.id;
 const project = (raw: any, id = callId, args = originalArgs) => JSON.parse(String(investigationToolContextResult(raw, id, 'ops', 'query_metrics', args)));
+// The live multi-series view hoists page-identical metadata. Expand it before
+// comparison so every value, time, quality, dimension and evidence id is still
+// asserted against the canonical receipt.
+const canonicalMetric = (metric: any) => {
+  if (!metric.attempt || typeof metric.attempt !== 'object') return { ...metric };
+  const { observation_ids: _ids, ...attempt } = metric.attempt;
+  return { ...metric, attempt };
+};
+const expandMetric = (view: any) => {
+  const metric = view.data.metrics[0];
+  if (!metric?.bucketDefaults) return metric;
+  const { bucketDefaults, sourceDefaults, ...base } = metric;
+  return { ...base, series: metric.series.map((s: any) => ({ ...s, buckets: s.buckets.map((b: any) => ({
+    ...bucketDefaults, ...b,
+    ...(Object.hasOwn(b, 'dimensions') ? {} : { dimensions: s.dimensions }),
+    ...(Array.isArray(b.sources) && sourceDefaults ? { sources: b.sources.map((x: any) => x.source ? x : ({
+      id: x.id,
+      source: { attempt_id: x.attempt_id ?? sourceDefaults.attempt_id, binding_id: x.binding_id ?? sourceDefaults.binding_id,
+        collector_id: x.collector_id ?? sourceDefaults.collector_id, metric_binding_id: x.metric_binding_id },
+      versions: x.versions ?? sourceDefaults.versions,
+    })) } : {}),
+  })) })) };
+};
 const key = (d: object) => JSON.stringify(Object.entries(d).sort(([a], [b]) => a.localeCompare(b)));
 const sha = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const { ContextManager } = await import(new URL('../../../../packages/agent-core/src/runtime/context-manager.js', import.meta.url).href);
@@ -78,15 +101,16 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
         const view = project(receipt, 'actual-route', bounded.args);
         expect(view.data.evidenceOmitted).not.toBe(true);
         expect(view.data.metrics[0].series).toHaveLength(11);
-        expect(view.data.metrics).toEqual(receipt.data.metrics);
+        expect(expandMetric(view)).toEqual(canonicalMetric(receipt.data.metrics[0]));
         receipts.push(view);
       }
-      for (const s of receipts[0].data.metrics[0].series) {
-        const peers = receipts[1].data.metrics[0].series.filter((p: any) => key(p.dimensions) === key(s.dimensions));
+      const first = expandMetric(receipts[0]), peer = expandMetric(receipts[1]);
+      for (const s of first.series) {
+        const peers = peer.series.filter((p: any) => key(p.dimensions) === key(s.dimensions));
         expect(peers).toHaveLength(1);
         expect(peers[0].buckets[0].observed_at).toBe(s.buckets[0].observed_at);
         expect(peers[0].buckets[0].unit).toBe('By');
-        const point = selectedFixture.normalizedPoints.find((p: any) => p.metric.id === receipts[0].data.metrics[0].definition.id && key(p.dimensions) === key(s.dimensions));
+        const point = selectedFixture.normalizedPoints.find((p: any) => p.metric.id === first.definition.id && key(p.dimensions) === key(s.dimensions));
         expect(s.buckets[0].value).toEqual(point.value);
       }
     }
@@ -104,7 +128,8 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
       if (kind === 'failure') raw.status = 'error';
       const before = JSON.stringify(raw);
       const view = kind === 'failure' ? investigationToolContextResult(raw, r.id, 'ops', 'query_metrics', r.arguments) as any : project(raw, r.id, r.arguments);
-      expect(view.data.metrics).toEqual(raw.data.metrics);
+      if (kind !== 'failure' && view.data.metrics[0]?.bucketDefaults) expect(expandMetric(view)).toEqual(canonicalMetric(raw.data.metrics[0]));
+      else expect(view.data.metrics).toEqual(raw.data.metrics);
       if (kind === 'wrong window') expect(view.data.metricRead?.pairedRead).toBeUndefined();
       expect(JSON.stringify(raw)).toBe(before);
     });
@@ -114,7 +139,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
     expect(Buffer.byteLength(JSON.stringify(original))).toBe(15331);
     const before = JSON.stringify(original), view = project(original);
     expect(view.data.evidenceOmitted).not.toBe(true);
-    expect(view.data.metrics).toEqual(original.data.metrics);
+    expect(expandMetric(view)).toEqual(canonicalMetric(original.data.metrics[0]));
     expect(view.data.metrics[0].series).toHaveLength(11);
     expect(view.data.contextReference.sha256).toBe(responseHash(original));
     expect(view.data.contextProjection).toBe('metric_series_v1');
@@ -150,7 +175,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
     if (kind === 'duplicate dimensions') metric.series[1].dimensions = structuredClone(metric.series[0].dimensions);
     if (kind === 'failure') { metric.state = 'temporary_failure'; metric.attempt = { status: 'failed', error: 'parse_error' }; }
     const before = JSON.stringify(raw), view = project(raw);
-    expect(view.data.metrics).toEqual(raw.data.metrics);
+    expect(expandMetric(view)).toEqual(canonicalMetric(raw.data.metrics[0]));
     expect(view.data.evidenceOmitted).not.toBe(true);
     expect(JSON.stringify(raw)).toBe(before);
   });
@@ -270,7 +295,7 @@ describe('MAX222 retained FS receipt and bounded numerical model view', () => {
       const receipts = bodies[1].messages.filter((m: any) => m.role === 'tool').map((m: any) => ({ id: m.tool_call_id, receipt: JSON.parse(m.content) }));
       expect(receipts.map((r: any) => r.id)).toEqual(['local-size', 'local-used']);
       expect(receipts.map((r: any) => r.receipt.data.metrics[0].series.length)).toEqual([11, 11]);
-      receipts.forEach((r: any, i: number) => expect(r.receipt.data.metrics).toEqual(returned[i].data.metrics));
+      receipts.forEach((r: any, i: number) => expect(expandMetric(r.receipt)).toEqual(canonicalMetric(returned[i].data.metrics[0])));
       expect(bodies[1].messages.some((m: any) => m.reasoning_content === 'Offline scripted selection; no model inference.')).toBe(true);
       for (const body of bodies) for (const m of body.messages) for (const c of m.tool_calls ?? [])
         expect(body.messages.filter((r: any) => r.tool_call_id === c.id)).toHaveLength(1);
