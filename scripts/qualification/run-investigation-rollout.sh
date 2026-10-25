@@ -8,8 +8,8 @@ if [[ -n "${T12_API_SHARD:-}" && "$mode" != --api ]]; then
   echo 'T12_API_SHARD is only valid with --api' >&2
   exit 64
 fi
-if [[ -n "${T12_API_SHARD:-}" && ! "${T12_API_SHARD}" =~ ^([1-5]/5|exec)$ ]]; then
-  echo 'T12_API_SHARD must be 1/5..5/5 or exec' >&2
+if [[ -n "${T12_API_SHARD:-}" && ! "${T12_API_SHARD}" =~ ^([1-5]|exec)$ ]]; then
+  echo 'T12_API_SHARD must be 1..5 or exec' >&2
   exit 64
 fi
 container="slide-t12-$$-$RANDOM"
@@ -103,7 +103,7 @@ if [[ "$mode" == --api ]]; then
     # cannot stack it behind another slow file.
     api_args+=(src/investigations/execution-recovery.mysql.test.ts)
   elif [[ -n "${T12_API_SHARD:-}" ]]; then
-    api_args+=(--shard="$T12_API_SHARD" --exclude '**/execution-recovery.mysql.test.ts')
+    api_args+=(--shard="$T12_API_SHARD/5" --exclude '**/execution-recovery.mysql.test.ts')
   fi
   run_gate api pnpm --filter slide-api test "${api_args[@]}"
   exit 0
