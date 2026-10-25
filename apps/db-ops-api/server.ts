@@ -108,6 +108,7 @@ import { authorizeAnalysisRequest, analysisConfigurationVersion } from './src/an
 import { createAnalysisRecoveryJob, registerAnalysisRecoveryHandler } from './src/analysis/analysis-recovery-schedule.js';
 import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
+import { findAlertMetric } from './src/metrics/alert-metric-catalog.js';
 import { metricDatabaseService, type MetricTargetType } from './src/metric-database-service.js';
 import { baselineCalculator } from './src/baseline-calculator.js';
 import { alertEscalationService } from './src/alert-escalation-service.js';
@@ -3175,10 +3176,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const data = request.body as any;
         const instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids ?? null);
         if (instanceIds === undefined) return;
-        // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
+        // D-14: 验证 metric_name 存在于旧注册表或已审核语义指标目录，且可采集
         let metricDef: any = null;
         if (data.metric_name) {
-          metricDef = metricRegistry.getById(data.metric_name, data.target_type || 'instance');
+          metricDef = findAlertMetric(data.metric_name, data.target_type || 'instance');
           if (!metricDef) {
             reply.code(400).send({ error: `指标 "${data.metric_name}" 不存在` });
             return;
@@ -3234,10 +3235,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           instanceIds = validateAlertRuleInstanceIds(request, reply, data.instance_ids);
           if (instanceIds === undefined) return;
         }
-        // D-14: 验证 metric_name 存在于 metric_definitions 且 is_collected=true
+        // D-14: 验证 metric_name 存在于旧注册表或已审核语义指标目录，且可采集
         if (data.metric_name || data.target_type !== undefined) {
           const metricName = data.metric_name ?? existingRule.metric_name;
-          const def = metricRegistry.getById(metricName, data.target_type ?? existingRule.target_type ?? 'instance');
+          const def = findAlertMetric(metricName, data.target_type ?? existingRule.target_type ?? 'instance');
           if (!def) {
             reply.code(400).send({ error: `指标 "${metricName}" 不存在` });
             return;

@@ -1,7 +1,10 @@
 import type { Ref } from '../policy/model.js';
 // Explicit, versioned read-time migration. Never writes over user policy or changes threshold units.
+// `qps` is deliberately absent: the legacy expression and its 3000/8000/15000
+// thresholds remain CUSTOM_EXPRESSION_REVIEW_REQUIRED. QPS exists only through
+// an explicit alert rule on mysql.queries.per_second with re-based thresholds.
 const maps: Record<string, Record<string, string>> = {
-  mysql: { uptime_seconds: 'db.uptime_seconds', connections: 'mysql.processlist.count', max_connections: 'mysql.connections.limit', qps: 'mysql.queries.per_second',
+  mysql: { uptime_seconds: 'db.uptime_seconds', connections: 'mysql.processlist.count', max_connections: 'mysql.connections.limit',
     innodb_row_lock_time_avg:'mysql.innodb.row_lock_average_ms',active_transactions:'mysql.transactions.active',thread_cache_hit_rate:'mysql.thread_cache.hit_percent',
     threads_running:'mysql.threads.running',threads_connected:'mysql.threads.connected',open_files:'mysql.files.open',
     buffer_pool_hit_rate:'mysql.buffer_pool.read_hit_percent',table_open_cache_hit_rate:'mysql.table_cache.hit_percent',key_blocks_usage:'mysql.key_cache.used_percent' },

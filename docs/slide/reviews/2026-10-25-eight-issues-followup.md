@@ -35,7 +35,7 @@
 | --- | --- | --- |
 | `qps`（`(Queries_current-Queries_previous)/elapsed`） | 底层计数已具备可信代次（`mysql.queries.total`） | **不再迁移旧表达式**。QPS 的唯一语义 = 派生指标 `mysql.queries.per_second`（带代次）；旧 `qps` 名称与阈值继续 blocked，新阈值按真实基线重定后走 preview/trial/activate |
 | `disk_usage`（数据库分配估算/固定 10 GiB） | 把估算分配字节当百分比 | **拆成两个明确指标**：库大小 = `mysql.tables.estimated_allocated_bytes`（By，estimated）/ PG `postgresql.database.disk_bytes`；文件系统使用率 = `linux.filesystem.used_ratio`（server 维度，exact）。旧 80/90/95 只保留给文件系统使用率，不平移到库大小 |
-| 告警宏 `qps 3000/8000/15000`、`disk 80/90/95` | 仍指向旧名与旧阈值 | 按上面两个新指标新建规则：QPS 阈值按真实基线重定；文件系统保留 80/90/95 但改为 `linux.filesystem.used_ratio`；库大小用绝对值阈值。旧规则先禁用再删除，保留审计 |
+| 告警宏 `qps 3000/8000/15000`、`disk 80/90/95` | 仍指向旧名与旧阈值 | 按上面两个新指标新建规则：QPS 阈值按真实基线重定；文件系统保留 80/90/95% 的语义，但 `linux.filesystem.used_ratio` 是 0–1 比率，必须写 **0.80/0.90/0.95**（不是 80/90/95，见 #256）；库大小用绝对值字节阈值。旧规则先禁用再删除，保留审计 |
 
 保持 `CUSTOM_EXPRESSION_REVIEW_REQUIRED` 是当前的正确状态；不能靠改状态码或直接更新库冒充完成。
 
