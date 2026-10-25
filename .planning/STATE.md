@@ -1,20 +1,37 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.9
-milestone_name: 生产化与可信运维闭环
-current_phase: 140
-current_phase_name: 代码审计安全整改
-status: complete
-last_updated: "2026-07-24T00:16:00+08:00"
-last_activity: 2026-07-24
-last_activity_desc: Phase 140 completed; three security remediation batches and local qualification gates passed
+milestone: v0.11
+milestone_name: 调查可信闭环与预算可配置
+current_phase: 145
+current_phase_name: 调查预算配置化（A+B）
+status: planned
+last_updated: "2026-10-25T17:00:32+08:00"
+last_activity: 2026-10-25
+last_activity_desc: GSD reconciled with the actual post-v0.9 state; v0.11 phases 145-148 added for the remaining backlog
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
+
+## v0.11 调查可信闭环与预算可配置 — Planned (2026-10-25)
+
+> GSD 自 v0.9/Phase 140（2026-07-24）后未维护；MAX-222 A/B/C/D、发布、部署和 CI 改造均在 GSD 之外完成。本 milestone 只收口剩余未完成项，不改写已发布历史。
+
+| Phase | Status | Scope |
+|---|---|---|
+| 145 | Not planned | 调查预算配置化 A+B：运行时分配 + Profile 限制进入“有效预算”设置；默认值按模型上限放宽；摘要能力门禁；合并 PR #240；真实代表性调查验收 |
+| 146 | Not planned | 准入/每日预算策略 C：可编辑 + 域版本轮换 + 审计 |
+| 147 | Not planned | #6 旧模板迁移逐项上线（qps/disk_usage/告警宏） |
+| 148 | Not planned | #8 Provider 配置备份/脱敏流程 |
+
+**Current Position:**
+
+- Repo baseline: main `518be9553`（含 CI 分片）；PR #240（工具结果压缩）14/14 全绿，待合并（Phase 145-01）。
+- 未闭环项来源：`outputs/MAX222-takeover-NOTES.md` 的“未闭环清单”。
+- 下一步：`/gsd-plan-phase 145`。
 
 ## v0.9 生产化与可信运维闭环 — Shipped
 
