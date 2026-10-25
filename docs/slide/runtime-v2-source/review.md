@@ -38,7 +38,7 @@
 ```bash
 SLIDE_REVIEW_ROOT=/Users/max/Coding/40-Slide-main-runtime \
   /Users/max/Coding/40-Slide-main-runtime/apps/db-ops-api/node_modules/.bin/tsx \
-  /Users/max/Coding/40-Slide/docs/reviews/2026-09-28-agent-runtime/probe.mts
+  /Users/max/Coding/40-Slide/docs/slide/reviews/2026-09-28-agent-runtime/probe.mts
 ```
 
 | 复现 | 输入 | 实测结果 | 要求的行为 |

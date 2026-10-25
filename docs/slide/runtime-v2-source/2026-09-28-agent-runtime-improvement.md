@@ -26,7 +26,7 @@
 
 ## 1. 核验结论与成功标准
 
-现有 runner 在普通非空无工具文本上缺少有效性边界。确定性复现还确认连续 4 次 length 后 completed、续写只保留尾段、空响应补救绕过 length 判断。详情和 pinned links 见 `docs/reviews/2026-09-28-agent-runtime/review.md`。
+现有 runner 在普通非空无工具文本上缺少有效性边界。确定性复现还确认连续 4 次 length 后 completed、续写只保留尾段、空响应补救绕过 length 判断。详情和 pinned links 见 `docs/slide/reviews/2026-09-28-agent-runtime/review.md`。
 
 ZCode 提供状态、Stop hooks、异常提醒和 compact 生命周期参考，但不提供“模型说完即业务正确”的保证。FinalGuard 负责可判定的格式/退化/资源与工具状态，业务结果沿用结构化证据；不得以文本相似度推断写操作已经成功。
 

@@ -11,6 +11,7 @@
 - ✅ **v0.9 生产化与可信运维闭环** — Phases 131-139 (shipped 2026-07-20; Phase 139 GO)
 - ✅ **Post-v0.9 安全整改** — Phase 140 (complete 2026-07-24)
 - 📝 **Proposed v0.10 基础运维助手** — planned 2026-08-25; scope frozen in `docs/superpowers/plans/2026-08-25-infrastructure-ops-master.md`
+- 📋 **v0.11 调查可信闭环与预算可配置** — Phases 145-148 (planned 2026-10-25; GSD reconciled with the actual post-v0.9 work)
 
 ### Proposed v0.10: 基础运维助手
 
@@ -27,6 +28,15 @@ The four executable plans are:
 2. `docs/superpowers/plans/2026-08-25-server-ops-expansion.md`
 3. `docs/superpowers/plans/2026-08-25-huawei-network-device.md`
 4. `docs/superpowers/plans/2026-08-25-infrastructure-ops-master.md`
+
+### Planned v0.11: 调查可信闭环与预算可配置
+
+GSD 自 v0.9/Phase 140（2026-07-24）后未再维护；仓库里的 MAX-222 A/B/C/D、发布、部署和 CI 改造都在 GSD 之外完成。本 milestone 只收口**当前仍未完成**的工作，不改写已发布历史。
+
+- **Phase 145: 调查预算配置化（A+B）** — 运行时分配与 Profile 限制进入“有效预算”设置；默认值按模型上限放宽；修复摘要能力门禁；合并已绿的工具结果压缩 PR #240；用真实代表性调查验收。
+- **Phase 146: 准入与每日预算策略可配置（C）** — 每日/并发/成本策略可编辑，改策略走域版本轮换与审计，历史账本不重写。
+- **Phase 147: 旧模板迁移逐项上线（#6）** — qps 改为带代次的派生速率；disk_usage 拆成库大小与文件系统使用率；告警宏/规则按决定逐项上线，旧规则先禁用后删除并保留审计。
+- **Phase 148: Provider 配置备份/脱敏流程（#8）** — Provider 配置备份/恢复演练、脱敏清单和管理员流程；密钥不入库、不入日志。
 
 ## Phases
 
@@ -1271,3 +1281,76 @@ Plans:
 - [x] `140-01-PLAN.md` — 数据库 SSRF、品牌越权、生产依赖 High 漏洞
 - [x] `140-02-PLAN.md` — 审批凭证、错误泄露、HTTP 安全边界
 - [x] `140-03-PLAN.md` — 密钥迁移、安全告警、CI 门禁与最终复验
+
+## 📋 v0.11 调查可信闭环与预算可配置 (Planned 2026-10-25)
+
+**Goal:** 把调查的运行时预算、Profile 限制和准入/每日策略从代码常量/env 迁移到可审计的“有效预算”设置；默认值在 Provider 能力范围内尽量放宽；修复摘要能力门禁；并用真实代表性调查完成验收。同时收口 #6 旧模板迁移与 #8 Provider 配置备份/脱敏流程。
+
+**Source of truth:** 当前代码（main `518be9553` + PR #240）、2026-10-25 的测量与验收记录、`outputs/MAX222-takeover-NOTES.md` 的未闭环清单。
+
+**Note:** GSD 自 v0.9/Phase 140（2026-07-24）后未再维护；仓库里的 MAX-222 A/B/C/D、发布、部署和 CI 改造都在 GSD 之外完成。本 milestone 只收口仍未完成的工作，不改写已发布历史。
+
+### Phase 145: 调查预算配置化（A+B）
+
+**Goal:** 让每执行运行时分配（context window / output / summary / maxExecutionTokens）和 Profile 限制（deadline / maxToolCalls / maxProviderAttempts / maxRows / maxBytes / maxWindowMs）成为可由管理员在“有效预算”页编辑的持久设置；保存时按 Provider 能力校验，执行开始时冻结到本次 run，新设置只影响新执行。默认值按模型上限放宽。修复 `autoCompact` 的摘要能力门禁（无 catalog `maxOutputTokens` 时接受 Provider 配置的 `max_tokens`）。合并已绿的 PR #240（工具结果压缩）作为上下文压力回归的一部分。
+
+**Depends on:** Phase 140（已发布基线）
+
+**Status:** Not planned
+
+**Plans:** 0/6 planned
+
+- [ ] `145-01-PLAN.md` — 合并 PR #240（工具结果压缩）并复验回放锚点
+- [ ] `145-02-PLAN.md` — 运行时分配设置（DB 单行、revision、审计、执行时冻结）
+- [ ] `145-03-PLAN.md` — Profile 限制进入设置（deadline/toolCalls/attempts/rows/bytes/window）
+- [ ] `145-04-PLAN.md` — 摘要能力门禁修复 + 单元/契约测试
+- [ ] `145-05-PLAN.md` — “有效预算”页可编辑（config:manage）+ API 契约/审计
+- [ ] `145-06-PLAN.md` — 默认值放宽 + 真实代表性调查验收（新鲜 FS 数值、completed、不重放）
+
+### Phase 146: 准入与每日预算策略可配置（C）
+
+**Goal:** 把 `maxConcurrent` / `manualReserved` / `maxPerResourceConcurrent` / `maxAutomaticRequestsPerHour` / `maxAutomaticTokensPerDay` / `maxTotalTokensPerDay` / `maxCostMicrosPerDay` 从代码常量/env 迁到“有效预算”设置。策略变更走域版本轮换（新 domain revision），历史 ledger 只读保留；保存/执行双重校验；审计记录变更人、时间、旧/新值。默认值放宽（每日 token 上限 5M 起，具体以成本策略为准）。
+
+**Depends on:** Phase 145
+
+**Status:** Not planned
+
+**Plans:** 0/3 planned
+
+- [ ] `146-01-PLAN.md` — 策略设置模型 + 保存/执行双校验 + 边界
+- [ ] `146-02-PLAN.md` — 域版本轮换/迁移 + 历史账本不变 + 审计
+- [ ] `146-03-PLAN.md` — UI 与 API 契约 + 回归（改策略不影响在途 run）
+
+### Phase 147: 旧模板迁移逐项上线（#6）
+
+**Goal:** 按已定的 #6 处置逐项上线：qps 只保留带代次的 `mysql.queries.per_second`；disk_usage 拆为 `mysql.tables.estimated_allocated_bytes`（estimated）与 `linux.filesystem.used_ratio`（exact）；告警宏/规则按新指标和新阈值重建，旧规则先禁用再删除并保留审计；口径对不上继续保持 unknown/CUSTOM_EXPRESSION_REVIEW_REQUIRED。
+
+**Depends on:** Phase 145（预算/预算域稳定）
+
+**Status:** Not planned
+
+**Plans:** 0/3 planned
+
+- [ ] `147-01-PLAN.md` — 新指标/派生速率与阈值定义
+- [ ] `147-02-PLAN.md` — 告警规则迁移（禁用旧规则、建新规则、审计）
+- [ ] `147-03-PLAN.md` — 真实基线复验与 unknown 保留验收
+
+### Phase 148: Provider 配置备份/脱敏流程（#8）
+
+**Goal:** 补齐 #8 未完成部分：Provider 配置（不含明文密钥）备份/恢复演练、脱敏清单、管理员操作流程与文档；备份产物不入仓库、不含密钥/密文/连接口令；恢复后连接/场景绑定可验证。
+
+**Depends on:** Phase 145
+
+**Status:** Not planned
+
+**Plans:** 0/3 planned
+
+- [ ] `148-01-PLAN.md` — 备份/恢复脚本与演练（脱敏、校验和、回滚）
+- [ ] `148-02-PLAN.md` — 脱敏清单 + 管理员流程 + 文档
+- [ ] `148-03-PLAN.md` — 恢复后验证与审计
+
+### v0.11 Release Rule
+
+- Phase 145/146 的预算设置必须在 Provider 能力内保存和执行双校验；任何超限必须显式失败，不静默截断。
+- 在途 run 使用持久化 allocation；新设置只影响新执行；历史 ledger 不重写。
+- Phase 147/148 的真实验收不能用 mock/探针替代；口径对不上保持 unknown。

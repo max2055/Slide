@@ -1,0 +1,457 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/max2055/Slide",
+  "retrievedAt": "2026-09-07T07:56:31Z",
+  "evaluatedHead": "05be2ab6b2d9fc2295407df872397e63bb1cedce",
+  "scope": "All PR metadata and bodies returned by gh pr list --state all --limit 200; diffs and fix/test evidence examined separately. PR-supplied verification is historical evidence, not rerun in this assessment.",
+  "counts": {
+    "total": 32,
+    "merged": 29,
+    "closedUnmerged": 1,
+    "open": 2
+  },
+  "pullRequests": [
+    {
+      "baseRefOid": "12eeb91fccbfb10fc22ecbab9d12f04fc0d25a57",
+      "body": "## Summary\n\n**Phase 116: 去 OpenClaw 运行时引用**\n\n将前端 runtime 代码中的 `openclaw` CLI 二进制名、环境变量、数据目录、Symbol 键、用户可见消息全部替换为 Slide 自有标识，并创建集中品牌配置模块 `branding.ts` 作为单一真相源。\n\n## Changes\n\n### branding.ts — 集中品牌配置\n- 新建 `frontend/src/app/src/branding.ts`，导出 `CLI_NAME`、`PRODUCT_NAME`、`ENV_PREFIX`、`STATE_DIR` 及 4 个 helper\n- 接入 26 个文件，品牌变更只需改一处\n\n### 运行时标识全局替换\n- `OPENCLAW_*` 环境变量 → `SLIDE_*`（12 源文件 + 3 测试文件）\n- `Symbol.for(\"openclaw.*\")` → `Symbol.for(\"slide.*\")`（5 文件，8 处）\n- `~/.openclaw/` → `~/.slide/` 数据目录路径\n- `__OPENCLAW_CONTROL_UI_BASE_PATH__` → `__SLIDE_CONTROL_UI_BASE_PATH__`\n\n### 用户可见文本\n- 版本信息、MCP 描述、系统消息、重启提示中的 \"OpenClaw\" → \"Slide\"\n- CLI 显示文字改为 UI 指引（\"Settings → Plugins\"）\n\n### 死代码清理\n- 删除 `update-startup.ts`（527 行）\n- 修复 5 个死导入（引用不存在的文件：`tmp-openclaw-dir.js`、`pi-tools.js` 等）\n- 用 `os.homedir()`/`os.tmpdir()` 替换死函数引用\n- `commands-system-prompt.ts` 移除死 `createOpenClawCodingTools` 调用\n\n### 其他清理\n- SQL 注释 `OpenClaw-compatible` → `DAG-compatible`（3 处）\n- CSS 注释 `OpenClaw theme system` → `Slide theme system`（2 处）\n- 移除 8 个 dead GitHub/docs.openclaw.ai URL\n- `includeInOpenClawGroup` → `includeInSlideGroup`（28 处）\n- `extractOpenClawMetadata` → `extractSlideSkillMetadata`\n- 中止触发词、i18n 术语表（12 语言）、测试断言同步更新\n\n## Verification\n\n- [x] TypeScript 编译：Phase 116 改动零新增错误\n- [x] Grep 验证：所有运行时 `openclaw` 引用已清除（历史注释除外）\n- [ ] 正式 VERIFICATION.md 待补（非阻塞）\n\n## Key Decisions\n\n- 创建 `branding.ts` 而非到处硬编码 — 未来品牌变更只需改一处\n- 不做 fallback：`OPENCLAW_*` 和 `SLIDE_*` 不共存\n- `OpenClawConfig` 类型暂不重命名（~97 文件，单独 phase 处理）\n- Slide 无 CLI — 删除 openclaw 特殊显示 case，插件安装提示改为 UI 指引\n\n---\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "createdAt": "2026-06-02T13:56:56Z",
+      "headRefOid": "a3b9cf5a8c077032d9489c7aba53b5fb9c974f9d",
+      "mergeCommit": {
+        "oid": "7f93f797eb0b2f2d58c248c2040dc3bd9b8540d4"
+      },
+      "mergedAt": "2026-06-02T13:57:29Z",
+      "number": 1,
+      "state": "MERGED",
+      "title": "Phase 116: 去 OpenClaw 运行时引用 — 全面品牌替换为 Slide",
+      "url": "https://github.com/max2055/Slide/pull/1"
+    },
+    {
+      "baseRefOid": "7f93f797eb0b2f2d58c248c2040dc3bd9b8540d4",
+      "body": "## Summary\n- Remove all `openclaw` references from source code (9 files)\n- Delete 290+ dead files in `auto-reply/` (keep only 7 reachable)\n- Delete dead `protocol/` and `gateway/protocol/` directories\n- Delete 30+ dead `media/` files\n- Delete dead `ui/ui/` directory and other scattered dead files\n- Add stub modules for missing dependencies\n- Update type definitions (MessageContentItem, ToolCard, AppViewState, etc.)\n- **Fix all TypeScript errors: 1428 → 0**\n- Vite build verified successful\n\n## Test plan\n- [x] `npx tsc --noEmit` passes with 0 errors\n- [x] `npm run build` succeeds (2.1s)\n- [x] No `openclaw` string in any `.ts`/`.js` source file\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+      "createdAt": "2026-06-03T05:17:19Z",
+      "headRefOid": "bdefe8505e6e98806b4be8ef7303c40b6d9d4428",
+      "mergeCommit": {
+        "oid": "a151f111e48f423edecbefad53ac7e6e56107926"
+      },
+      "mergedAt": "2026-06-03T05:17:33Z",
+      "number": 2,
+      "state": "MERGED",
+      "title": "feat(phase-117): standalone cleanup — remove openclaw, dead code, fix all tsc errors",
+      "url": "https://github.com/max2055/Slide/pull/2"
+    },
+    {
+      "baseRefOid": "8415acbf32803056bfec5da538b7452e3bb8511f",
+      "body": "## Summary\n- close Phase 132-139 security, recovery, monitoring, notification, and Agent runtime findings\n- verify Feishu delivery and saved-credential UX without exposing stored secrets\n- add traceable release artifacts, SHA256 verification, and an atomic rollback drill\n\n## Current local verification\n- API: 95 files / 994 tests\n- Frontend: 21 files / 184 tests\n- Agent Core: 7 files / 69 tests\n- Managed browser: 22/22 plus cancellation/attachment 2/2\n- Qualification matrix: 37/37\n- MySQL bootstrap/repeat schema invariant: 51 migrations\n- Lint: 0 errors (249 warnings)\n",
+      "createdAt": "2026-07-22T16:25:22Z",
+      "headRefOid": "86c38d3755d5388cf66b4eb95bc71aa278cc33cc",
+      "mergeCommit": {
+        "oid": "48b50b650362fa7835ddcadd61db647cc41576f4"
+      },
+      "mergedAt": "2026-07-23T13:49:09Z",
+      "number": 3,
+      "state": "MERGED",
+      "title": "Release qualification and operational closure",
+      "url": "https://github.com/max2055/Slide/pull/3"
+    },
+    {
+      "baseRefOid": "48b50b650362fa7835ddcadd61db647cc41576f4",
+      "body": "## Summary\n- remove the existing nanobot-reference Gitlink from repository tracking\n- ignore the preserved local nanobot-reference directory\n\n## Verification\n- local directory remains present\n- git check-ignore confirms nanobot-reference contents are ignored\n- staged diff check passed",
+      "createdAt": "2026-07-23T14:04:16Z",
+      "headRefOid": "79b1b0484015474d2f7a9ee7bb87bbc8372feef6",
+      "mergeCommit": {
+        "oid": "e4fb5f16677909b534d974d23c20378b2fb9695e"
+      },
+      "mergedAt": "2026-07-23T14:08:22Z",
+      "number": 4,
+      "state": "MERGED",
+      "title": "Stop tracking nanobot reference",
+      "url": "https://github.com/max2055/Slide/pull/4"
+    },
+    {
+      "baseRefOid": "e4fb5f16677909b534d974d23c20378b2fb9695e",
+      "body": "## Summary\n- enforce database target, branding, approval, error and HTTP security boundaries\n- migrate credentials to versioned AES-256-GCM and add deduplicated security events\n- add dependency, secret-scan and security regression CI gates with GSD evidence\n\n## Verification\n- pnpm security:audit\n- pnpm security:scan\n- pnpm security:test\n- pnpm contracts:check\n- pnpm -r test\n- pnpm -r typecheck\n- git diff --check\n\n## Residual risk\n- production audit retains 3 moderate and 3 low advisories; no high or critical findings\n- unrelated local files are excluded from this PR",
+      "createdAt": "2026-07-23T16:28:44Z",
+      "headRefOid": "f4ea38fffff8dc4d0a67cba216839b4d06db98b2",
+      "mergeCommit": {
+        "oid": "21c98c303c927c880fab23a2cc7aa53272b8296d"
+      },
+      "mergedAt": "2026-07-23T16:33:33Z",
+      "number": 5,
+      "state": "MERGED",
+      "title": "Close Phase 140 security audit findings",
+      "url": "https://github.com/max2055/Slide/pull/5"
+    },
+    {
+      "baseRefOid": "21c98c303c927c880fab23a2cc7aa53272b8296d",
+      "body": "## Summary\n- Complete report-driven security remediation across API, frontend, agent tooling, deployment, and schema governance.\n- Add system-wide sandbox switch and connect SandboxClient.execute() to execute_code.\n- Fix sandbox concurrency admission, persistent config auditing, and fail-closed execute_code result auditing.\n\n## Verification\n- pnpm -r test: API 1459, frontend 237, agent-core 69, sandbox-controller 8\n- pnpm -r --if-present typecheck\n- pnpm --filter slide-frontend build\n- pnpm security:audit\n- pnpm security:scan\n- pnpm security:deployment\n- pnpm qualification:matrix: 37/37\n- Linux rootless sandbox qualification completed earlier.",
+      "createdAt": "2026-08-17T23:25:02Z",
+      "headRefOid": "73428768c91055a297380e9d56cd28e228a33650",
+      "mergeCommit": {
+        "oid": "ada864da3b8b658f664eae44b904e81930abbc69"
+      },
+      "mergedAt": "2026-08-17T23:29:07Z",
+      "number": 6,
+      "state": "MERGED",
+      "title": "Complete security audit remediation and sandbox governance",
+      "url": "https://github.com/max2055/Slide/pull/6"
+    },
+    {
+      "baseRefOid": "20557839c8d08bf9abf74ba03f9a175e45260a20",
+      "body": "## Scope\n- Upgrade the default dashboard to a permission-aware infrastructure operations overview for databases, servers, and network devices.\n- Add bounded, quality-aware metric aggregation and resource freshness/risk views.\n- Keep database capacity/type charts scoped to database views and preserve independent module failure handling.\n\n## Review note\nThis branch is currently 19 commits and about 295 files ahead of origin/main. It includes four commits that exist on the local main branch but are not yet on origin/main, plus the infrastructure/security work that the dashboard depends on. Please confirm whether this should be merged as one infrastructure release or split into stacked PRs before marking this PR ready.\n\n## Validation\n- pnpm test (frontend 48 files / 297 tests; backend 190 files / 1724 tests; sandbox-controller 5 files / 14 tests; agent-core 9 files / 80 tests)\n- pnpm --filter slide-api typecheck\n- pnpm --filter slide-frontend typecheck\n- pnpm --filter slide-frontend build\n- pnpm contracts:check\n- pnpm lint (0 errors; existing warnings remain)\n\n## Merge checklist\n- [ ] Confirm the 19-commit scope\n- [ ] GitHub CI is green\n- [ ] At least one approval\n- [ ] All review conversations resolved\n- [ ] Verify migrations and release notes",
+      "createdAt": "2026-08-31T05:07:32Z",
+      "headRefOid": "611f5a2a752411a8a17df1b47f0efc0ba09f24f6",
+      "mergeCommit": {
+        "oid": "af31a4078b4a992dd38f3fe3338aa292d1e209aa"
+      },
+      "mergedAt": "2026-08-31T08:03:19Z",
+      "number": 7,
+      "state": "MERGED",
+      "title": "feat(dashboard): unify infrastructure operations overview",
+      "url": "https://github.com/max2055/Slide/pull/7"
+    },
+    {
+      "baseRefOid": "af31a4078b4a992dd38f3fe3338aa292d1e209aa",
+      "body": "## What\n\n- Use Node 24 from `.nvmrc` in every CI job.\n- Pin the workspace package manager to pnpm 11.19.0.\n- Move pnpm 11 workspace overrides/build policy into `pnpm-workspace.yaml`.\n- Keep `engines.node` at `>=20`; this does not remove Node 20/22 project support.\n- Explicitly deny optional `ssh2`/`cpu-features` native build scripts while allowing the existing required builds.\n\n## Validation\n\n- Node v24.18.0 and pnpm v11.19.0 metadata assertions.\n- Clean temporary workspace `pnpm install --frozen-lockfile --offline` passed; ssh2 import passed.\n- Backend/frontend/agent typechecks, contracts check, lint (0 errors), frontend build, and workspace tests passed.\n- Docker image versions and historical documentation are intentionally unchanged in this PR.",
+      "createdAt": "2026-09-01T01:39:58Z",
+      "headRefOid": "e0ba86846f847ba7b1a83f24900a4f0d627a5e8e",
+      "mergeCommit": {
+        "oid": "009426241bad06acc87500330bf31a9d952e9c92"
+      },
+      "mergedAt": "2026-09-01T01:46:09Z",
+      "number": 8,
+      "state": "MERGED",
+      "title": "ci: standardize Node 24 and pnpm 11.19.0",
+      "url": "https://github.com/max2055/Slide/pull/8"
+    },
+    {
+      "baseRefOid": "009426241bad06acc87500330bf31a9d952e9c92",
+      "body": "## Summary\n- detect active database instances that lack a runtime connection before metric collection\n- rebuild the connection from the latest persisted credential and continue collection in the same heartbeat\n- cover the missing-credential to credential-added recovery sequence\n\n## Verification\n- corepack pnpm --filter slide-api test (189 files, 1680 tests)\n- corepack pnpm --filter slide-api typecheck\n- corepack pnpm exec oxlint apps/db-ops-api/src/monitor-collector.ts apps/db-ops-api/src/monitor-collector-credential-recovery.test.ts\n\nCloses MAX-6",
+      "createdAt": "2026-09-01T03:39:20Z",
+      "headRefOid": "f1273c0ac77341a8ca4fdbb3cc84de087a14a143",
+      "mergeCommit": {
+        "oid": "3e079f0aefe010539413ec59703d5a6019602bf9"
+      },
+      "mergedAt": "2026-09-01T05:14:43Z",
+      "number": 9,
+      "state": "MERGED",
+      "title": "MAX-6: 恢复补录凭据后的监控采集",
+      "url": "https://github.com/max2055/Slide/pull/9"
+    },
+    {
+      "baseRefOid": "252d11ad30dc38dc4e352583f0a6c63b8280f747",
+      "body": "## Summary\n\n- add an admin-managed inactivity timeout backed by `system_config`\n- apply the configured timeout to new and rotated refresh tokens while preserving existing token expiry\n- centralize protected frontend requests so 401 responses refresh once, then clear auth and show one friendly timeout message without changing 403 handling\n- add backend, API-client, and settings UI coverage\n\n## Verification\n\n- `corepack pnpm -r test` (2,071 tests passed)\n- `corepack pnpm --filter slide-api typecheck`\n- `corepack pnpm --filter slide-frontend typecheck`\n- `corepack pnpm lint` (0 errors; existing warnings only)\n- `corepack pnpm --filter slide-frontend build`\n\nCloses MAX-7\n",
+      "createdAt": "2026-09-01T06:22:42Z",
+      "headRefOid": "6f21668bbe1839a8d1b1a2e07cbb92befbb49a63",
+      "mergeCommit": {
+        "oid": "c0bcd4b9774195830d2f8d9c7681982b5d3473d5"
+      },
+      "mergedAt": "2026-09-01T07:11:22Z",
+      "number": 10,
+      "state": "MERGED",
+      "title": "MAX-7: configure idle session timeout",
+      "url": "https://github.com/max2055/Slide/pull/10"
+    },
+    {
+      "baseRefOid": "c0bcd4b9774195830d2f8d9c7681982b5d3473d5",
+      "body": "Closes MAX-8\n\n## Summary\n- wait for WebSocket auth_ok before reporting connected or sending chat frames\n- reject queued sends and clear all chat busy state when authentication expires\n- skip empty chat history requests and preserve REST response bodies in errors\n- cover revoked JWT, authentication races, 4001 cleanup, and empty sessions\n\n## Verification\n- frontend: 314 tests passed\n- DirectAdapter focused suite: 27 tests passed\n- frontend and API typechecks passed\n- frontend production build passed\n- full API suite: 1755 passed, 3 unrelated monitor-collector tests failed on existing mock/assertion drift",
+      "createdAt": "2026-09-01T08:15:13Z",
+      "headRefOid": "0cba8afc8a8f5fe3db97d58bb9dfccbe86fee037",
+      "mergeCommit": {
+        "oid": "451e3a34e662fa895b749e188662fcb9b7b4a892"
+      },
+      "mergedAt": "2026-09-01T08:41:05Z",
+      "number": 11,
+      "state": "MERGED",
+      "title": "MAX-8: expire stale chat sessions cleanly",
+      "url": "https://github.com/max2055/Slide/pull/11"
+    },
+    {
+      "baseRefOid": "451e3a34e662fa895b749e188662fcb9b7b4a892",
+      "body": "## Summary\n\n- cap every Oracle realtime metric query round-trip at 5 seconds and restore the connection's prior timeout\n- replace Oracle 12c `FETCH FIRST` slow-query limiting with an Oracle 11g-compatible ordered subquery and `ROWNUM`\n- add source-contract coverage for both behaviors\n\n## Verification\n\n- `corepack pnpm --filter slide-api exec vitest run src/__tests__/oracle-database-service.test.ts` (15 passed)\n- `corepack pnpm --filter slide-api typecheck`\n- `corepack pnpm exec oxlint apps/db-ops-api/src/database-service.ts apps/db-ops-api/src/__tests__/oracle-database-service.test.ts` (0 errors; 14 pre-existing warnings in `database-service.ts`)\n- `corepack pnpm --filter slide-api test` (1758 passed, 3 unrelated existing failures in `monitor-collector.test.ts` and `monitor-collector-credential-recovery.test.ts`)\n\nCloses MAX-9\n",
+      "createdAt": "2026-09-01T09:09:22Z",
+      "headRefOid": "0729e27d8f81b8b7256291b835c2ed6442b25c35",
+      "mergeCommit": {
+        "oid": "63c3383d04203b3486faea264d839392df30f1c0"
+      },
+      "mergedAt": "2026-09-01T09:13:10Z",
+      "number": 12,
+      "state": "MERGED",
+      "title": "MAX-9: bound Oracle metrics queries and support 11g",
+      "url": "https://github.com/max2055/Slide/pull/12"
+    },
+    {
+      "baseRefOid": "63c3383d04203b3486faea264d839392df30f1c0",
+      "body": "Closes MAX-11\n\n## Summary\n\n- preserve sparse metric samples and reconstruct the latest valid value for each metric across collection intervals\n- isolate QPS/TPS counter baselines and make provider failures, persistence failures, re-entry, timeout handling, and capability state reliable\n- bound history queries and add collection-query indexes for database instances, servers, and network devices\n- prevent false alert-duration matches when sparse historical samples contain only null values\n\n## Database migration\n\n- adds `082_metric_collection_reliability.sql` with indexes supporting latest/history metric lookups\n- keeps `sql/schema.sql` aligned for new installations\n\n## Verification\n\n- `corepack pnpm --filter slide-api typecheck`\n- backend gate: 194 files, 1770 tests passed\n- repository gate: backend 1770, frontend 314, agent core 80, sandbox controller 14 tests passed\n- explicit migration contract test: 1 test passed\n- `git diff --check`\n",
+      "createdAt": "2026-09-01T15:34:33Z",
+      "headRefOid": "443bf70d3f5be464dced5deb4af96693b40336ef",
+      "mergeCommit": {
+        "oid": "0785db9a163600ad8107b35586abd2739ffc9a8f"
+      },
+      "mergedAt": "2026-09-02T14:18:25Z",
+      "number": 13,
+      "state": "MERGED",
+      "title": "MAX-11: harden metric collection and query reliability",
+      "url": "https://github.com/max2055/Slide/pull/13"
+    },
+    {
+      "baseRefOid": "0785db9a163600ad8107b35586abd2739ffc9a8f",
+      "body": "## Summary\n\n- keep authenticated routes mounted while the persisted JWT reconnects, and stop relying on the retired control-session token\n- acknowledge `chat.send` only after the matching server run starts, with explicit timeout/disconnect/duplicate-run failures\n- persist and restore accent/button palettes without server defaults overwriting local user choices\n- activate reloaded database instances, run the first metric collection immediately, and keep scheduler/capability state consistent\n- restore immutable migration checksums and seed the session timeout through a forward migration so existing databases start cleanly\n\n## Verification\n\n- `frontend`: 52 test files, 319 tests passed\n- `apps/db-ops-api`: 194 test files, 1767 tests passed\n- frontend and backend TypeScript checks passed\n- frontend production build passed\n- fixture-backed Playwright regression passed for deep-route refresh, first chat message, terminal loading state, and appearance persistence\n- live MySQL-backed API started with the migration ledger current; health, admin login, preferences, and instance-list APIs returned 200\n- live headed Chromium kept `/instances-db` mounted without a login flash, restored server-backed theme/mode/accent after reload, and completed a first-message Agent response in a newly assigned session\n\n## Environment limitation\n\nThe available MySQL database contains no managed database instances, including no Dameng instance with stored credentials. Real Dameng connection and metric UAT therefore remains unavailable; the reload-to-first-collection path is covered by focused service and route contract tests.\n\nCloses MAX-13\nRelated: MAX-12\n",
+      "createdAt": "2026-09-02T10:04:01Z",
+      "headRefOid": "aebf582a6a39628c9f8f9c7e3ed04d25132cd6e4",
+      "mergeCommit": {
+        "oid": "c0be295076ebf0458ecb0d2381c27150bf2200dd"
+      },
+      "mergedAt": "2026-09-02T14:35:02Z",
+      "number": 14,
+      "state": "MERGED",
+      "title": "MAX-12 / MAX-13: Fix auth refresh, chat send, theme persistence, and Dameng collection",
+      "url": "https://github.com/max2055/Slide/pull/14"
+    },
+    {
+      "baseRefOid": "c0be295076ebf0458ecb0d2381c27150bf2200dd",
+      "body": "## Summary\n\n- make SSH host-key fingerprints optional while enrolling servers and network devices, while retaining mandatory verification for actual SSH connections\n- return actionable 400 responses and UI guidance when config backup SSH setup is incomplete\n- add the approval-gated `slide_add_network_device` Agent tool for credential-free inventory enrollment\n\n## Verification\n\n- `corepack pnpm -r test` (2199 tests passed)\n- backend focused regression: 105 tests passed\n- frontend focused regression: 10 tests passed\n- backend and frontend TypeScript checks passed\n- public API contract check passed\n- frontend production build passed\n- oxlint: 0 errors (existing warnings remain)\n\nCloses MAX-15\n",
+      "createdAt": "2026-09-03T07:12:57Z",
+      "headRefOid": "6d3e4c129a722a6c361fac4b8a8aee7ecfc69ede",
+      "mergeCommit": {
+        "oid": "198fa5fccb0e22dc00fa7279565e51e13bdfcac1"
+      },
+      "mergedAt": "2026-09-03T08:26:33Z",
+      "number": 15,
+      "state": "MERGED",
+      "title": "MAX-15: Fix network device enrollment and backup errors",
+      "url": "https://github.com/max2055/Slide/pull/15"
+    },
+    {
+      "baseRefOid": "c0be295076ebf0458ecb0d2381c27150bf2200dd",
+      "body": "Closes MAX-18\n\n## Summary\n\n- store runtime prompt versions in the existing writable agent-state volume\n- load bundled prompts as defaults and overlay persisted edits/custom versions\n- cover read-only bundle creation and restart persistence with unit tests\n\n## Verification\n\n- `corepack pnpm --filter slide-api test` (196 files, 1778 tests passed)\n- `corepack pnpm --filter slide-api typecheck`\n- `docker compose -f compose.production.yaml config --quiet` with required variables\n",
+      "createdAt": "2026-09-03T07:54:25Z",
+      "headRefOid": "006b3f7421b164bd23bf82cd87c074d8af8c16db",
+      "mergeCommit": {
+        "oid": "67313ee57ca0b53bf34db85d6a407e408a4e2380"
+      },
+      "mergedAt": "2026-09-03T08:40:21Z",
+      "number": 16,
+      "state": "MERGED",
+      "title": "MAX-18: persist prompt versions in writable storage",
+      "url": "https://github.com/max2055/Slide/pull/16"
+    },
+    {
+      "baseRefOid": "198fa5fccb0e22dc00fa7279565e51e13bdfcac1",
+      "body": "Closes MAX-17\n\n## 改动\n- 数据库、服务器、网络设备列表统一为“详情 / 编辑 / 测试 / 删除”及共享紧凑按钮样式\n- 网络设备移除含糊的手动“采集”入口，明确后台定时采集，并保留用于诊断和即时刷新的“测试”操作\n- 补齐网络设备删除确认流程，以及服务器列表测试入口\n- 修复网络设备操作列在手机端被通用表格规则隐藏的问题\n\n## 验证\n- `npm test -- --run`（52 files / 322 tests）\n- `npm run typecheck`\n- `npm run build`\n- Playwright 基础设施流程：1440x900 与 390x844 两个视口均通过",
+      "createdAt": "2026-09-03T08:37:38Z",
+      "headRefOid": "3946fe116343fbcda058223cd69635b272dd443e",
+      "mergeCommit": {
+        "oid": "8aff860cec33d1b08181d151e40a425cb438db01"
+      },
+      "mergedAt": "2026-09-03T08:45:40Z",
+      "number": 17,
+      "state": "MERGED",
+      "title": "MAX-17: 统一资源列表操作样式",
+      "url": "https://github.com/max2055/Slide/pull/17"
+    },
+    {
+      "baseRefOid": "8aff860cec33d1b08181d151e40a425cb438db01",
+      "body": "## Summary\n\n- audit production environment-variable dependencies and document which settings should remain deployment-owned\n- move server and network-device collection intervals from environment variables to validated `system_config` values\n- add an admin-only collection settings API and UI; updates re-arm running collector timers without a restart\n\n## Validation\n\n- `corepack pnpm -r test` (2215 tests passed)\n- `corepack pnpm --filter slide-api typecheck`\n- `corepack pnpm --filter slide-frontend typecheck`\n- `corepack pnpm --filter slide-frontend build`\n- `corepack pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts --check`\n- targeted `oxlint` (0 warnings, 0 errors on new files)\n- `git diff --check`\n",
+      "createdAt": "2026-09-03T09:46:04Z",
+      "headRefOid": "a4c3d0568286bac28f8fa3e1e3415eef5699d876",
+      "mergeCommit": null,
+      "mergedAt": null,
+      "number": 18,
+      "state": "CLOSED",
+      "title": "MAX-19: migrate collection intervals to system settings",
+      "url": "https://github.com/max2055/Slide/pull/18"
+    },
+    {
+      "baseRefOid": "8aff860cec33d1b08181d151e40a425cb438db01",
+      "body": "## Summary\n\n- replace server and network-device global collection intervals with metric-driven scheduling\n- extend persisted schedule state to `network_device` and batch only due SSH commands or SNMP OIDs/tables\n- make metric registry CRUD target-aware so `(target_type, id)` frequencies update independently\n- expose resource types in the metric registry UI and document the environment-variable audit\n\nThis supersedes the closed #18 implementation; no collection-frequency system settings are added.\n\n## Verification\n\n- `corepack pnpm -r test` (2211 tests passed before the final target-aware no-op update guard)\n- `corepack pnpm --filter slide-api test` (1794 tests passed after the final guard)\n- backend and frontend TypeScript checks passed\n- frontend production build passed\n- public API contract check passed\n- `git diff --check` passed\n\nCloses MAX-19\n",
+      "createdAt": "2026-09-03T13:45:24Z",
+      "headRefOid": "81d47c61b3d3969d29094f775bf2db0f3e9336b9",
+      "mergeCommit": {
+        "oid": "ab1a2f04731969251d86a5de9c3a7a3d5574f315"
+      },
+      "mergedAt": "2026-09-03T14:16:33Z",
+      "number": 19,
+      "state": "MERGED",
+      "title": "MAX-19: schedule resource collection by metric",
+      "url": "https://github.com/max2055/Slide/pull/19"
+    },
+    {
+      "baseRefOid": "ab1a2f04731969251d86a5de9c3a7a3d5574f315",
+      "body": "## Summary\n- accept the exact historical checksums deployed for `000_schema_baseline.sql` and `070_network_device_resource_foundation.sql`\n- keep rejecting unknown migration checksum changes\n- add regression coverage for both deployed variants\n\n## Why\nExisting databases initialized from the affected releases cannot start the API after the historical migration files changed. The forward migrations already restore the intended final schema, so these known checksums are safe to accept.\n\n## Test Plan\n- [x] `npm test` (197 files, 1786 tests)\n- [x] `npm run typecheck`\n- [x] start API against the affected existing migration ledger\n- [x] `curl http://localhost:3000/api/health` returns `status: ok`",
+      "createdAt": "2026-09-03T14:17:40Z",
+      "headRefOid": "981c0ef60d42bb966fd395fad7aba6ee948c552e",
+      "mergeCommit": {
+        "oid": "889ff93bbcab1780443dab97567815765e5988ab"
+      },
+      "mergedAt": "2026-09-03T14:22:59Z",
+      "number": 20,
+      "state": "MERGED",
+      "title": "fix(migrations): accept deployed historical checksums",
+      "url": "https://github.com/max2055/Slide/pull/20"
+    },
+    {
+      "baseRefOid": "889ff93bbcab1780443dab97567815765e5988ab",
+      "body": "## Summary\n\n- reorganize the primary navigation into workspace, resources, operations, and security groups with fixed platform-status/settings entries\n- add the event center, audit center, and platform status compositions while reusing existing business components\n- replace flat settings navigation with four permission-aware groups, stable child routes, URL-backed merged tabs, legacy redirects, and a mobile grouped selector\n- update navigation/unit/Playwright coverage for routing, history restoration, permissions, and responsive layout\n\n## Verification\n\n- `cd frontend && npm test` (53 files, 329 tests)\n- `cd frontend && npm run typecheck`\n- `cd frontend && npm run build`\n- `cd frontend && npx playwright test e2e/menu-settings-navigation.spec.ts --project=chromium` (4 tests)\n\nLocal full-stack startup was not available because MySQL was not listening on `127.0.0.1:3306`; the focused Playwright suite uses the repository's fixture-backed browser pattern.\n\nCloses MAX-20\n",
+      "createdAt": "2026-09-04T02:11:08Z",
+      "headRefOid": "e9a2ca8ac02a2d45d15bc510f59ac7725635fea7",
+      "mergeCommit": {
+        "oid": "6ba9433b3e51a70d6c3a9a97abbc30f0518f2931"
+      },
+      "mergedAt": "2026-09-04T02:30:22Z",
+      "number": 21,
+      "state": "MERGED",
+      "title": "MAX-20: reorganize navigation and settings routes",
+      "url": "https://github.com/max2055/Slide/pull/21"
+    },
+    {
+      "baseRefOid": "6ba9433b3e51a70d6c3a9a97abbc30f0518f2931",
+      "body": "## 修复内容\n\n- 修正深层设置路由下 Logo 使用相对路径导致加载失败的问题\n- 补充登录安全菜单的锁图标，并用类型约束防止无效图标名称\n- 为运维总览和通知通道使用独立图标，避免与分析策略、AI 助手重复\n- 增加全部可见菜单图标存在且不重复、Logo 正常加载的回归测试\n\n## 验证\n\n- `npm test`：53 个文件、331 项测试通过\n- `npm run typecheck`：通过\n- `npm run build`：通过\n- `npx playwright test e2e/menu-settings-navigation.spec.ts --project=chromium`：4/4 通过\n",
+      "createdAt": "2026-09-04T03:41:18Z",
+      "headRefOid": "aac2a55e1167ff90718e9ba8b63ad9e7fcc9613c",
+      "mergeCommit": {
+        "oid": "ea2c5265268d000843d2ae87272bf96b4760a9e2"
+      },
+      "mergedAt": "2026-09-04T04:57:20Z",
+      "number": 22,
+      "state": "MERGED",
+      "title": "fix(MAX-20): restore logo and distinct menu icons",
+      "url": "https://github.com/max2055/Slide/pull/22"
+    },
+    {
+      "baseRefOid": "ea2c5265268d000843d2ae87272bf96b4760a9e2",
+      "body": "## Summary\n- add authenticated feedback CRUD with per-user visibility and admin access\n- add the `slide_record_feedback` Agent tool with third-person guidance and idempotent storage\n- add the feedback history page and fixed sidebar entry with responsive desktop/mobile layouts\n\n## Verification\n- full repository test gate: 2231 passed\n- backend and frontend TypeScript checks passed\n- frontend production build passed\n- Playwright navigation and feedback scenarios: 5 passed\n\nCloses MAX-22",
+      "createdAt": "2026-09-04T05:50:18Z",
+      "headRefOid": "fc9c7985720cc418c146f6d2b5dadaf7ed4c254f",
+      "mergeCommit": {
+        "oid": "00189ad9851731fd10adef9821dc15597ba5a1de"
+      },
+      "mergedAt": "2026-09-04T06:45:48Z",
+      "number": 23,
+      "state": "MERGED",
+      "title": "MAX-22: 增加问题反馈功能",
+      "url": "https://github.com/max2055/Slide/pull/23"
+    },
+    {
+      "baseRefOid": "00189ad9851731fd10adef9821dc15597ba5a1de",
+      "body": "Closes MAX-21\n\n## Summary\n\n- record authenticated state-changing HTTP operations and login results in the persistent audit log without request bodies\n- add an `audit:view` protected system-audit query API with time, operation-type, keyword, and pagination filters\n- add System Audit and Agent Audit sub-tabs with responsive filtering, table, pagination, and detail UI\n\n## Validation\n\n- backend focused audit tests: 44 passed\n- frontend focused audit tests: 4 passed\n- backend and frontend typechecks passed\n- frontend production build passed\n- frontend full suite: 339 passed\n- backend full suite: 1811 passed, 1 unrelated WebSocket timing test timed out under full concurrency and passed alone\n- runtime API and desktop/mobile browser checks passed\n",
+      "createdAt": "2026-09-04T07:52:55Z",
+      "headRefOid": "d03ea6e6ac4d2453e6188ea2485a9c5eb2d5caaf",
+      "mergeCommit": {
+        "oid": "06de94dfadbed9fb895ab1fe3481ac5c297da6cb"
+      },
+      "mergedAt": "2026-09-04T07:59:38Z",
+      "number": 24,
+      "state": "MERGED",
+      "title": "MAX-21: 增加系统审计功能",
+      "url": "https://github.com/max2055/Slide/pull/24"
+    },
+    {
+      "baseRefOid": "06de94dfadbed9fb895ab1fe3481ac5c297da6cb",
+      "body": "Closes MAX-23\n\n## Summary\n- preserve and replay unacknowledged chat frames with the original message and idempotency keys\n- reconcile replays through durable run snapshots and resume session event broadcasts\n- classify and log authentication, rate-limit, restart, and network closes\n- enforce actor-scoped run idempotency with migration 086\n\n## Verification\n- corepack pnpm -r test\n- corepack pnpm --filter slide-frontend typecheck\n- corepack pnpm --filter slide-api typecheck\n- corepack pnpm lint\n- corepack pnpm --filter slide-frontend build",
+      "createdAt": "2026-09-04T08:42:31Z",
+      "headRefOid": "def9d92112d4d4ee371fced0d942abfd82b264aa",
+      "mergeCommit": {
+        "oid": "74153c9520a3844c7e590c76a64dfbdae3932d5f"
+      },
+      "mergedAt": "2026-09-04T08:52:31Z",
+      "number": 25,
+      "state": "MERGED",
+      "title": "MAX-23: recover chat sends after WebSocket disconnects",
+      "url": "https://github.com/max2055/Slide/pull/25"
+    },
+    {
+      "baseRefOid": "74153c9520a3844c7e590c76a64dfbdae3932d5f",
+      "body": "Closes MAX-24\n\n- move synchronous theme restoration to a same-origin external script\n- validate production HTML scripts against the Nginx CSP during every frontend build\n- cover persisted, system, and malformed theme settings\n\nValidation:\n- npm test (57 files, 345 tests)\n- npm run typecheck\n- npm run build",
+      "createdAt": "2026-09-04T09:01:05Z",
+      "headRefOid": "c30bc717d492776c9a5d8ec2debafe804572b5d8",
+      "mergeCommit": {
+        "oid": "4fe5a7584c61b2f2fab7e195f0dd5979955399df"
+      },
+      "mergedAt": "2026-09-04T09:11:53Z",
+      "number": 26,
+      "state": "MERGED",
+      "title": "MAX-24: fix CSP-blocked theme initialization",
+      "url": "https://github.com/max2055/Slide/pull/26"
+    },
+    {
+      "baseRefOid": "74153c9520a3844c7e590c76a64dfbdae3932d5f",
+      "body": "Closes MAX-25\n\n## Summary\n- reuse on-risk approvals by actor, tool, and resource across retry argument changes\n- return distinct pending, rejected, expired, and consumed approval states\n- add same-tool batch approval API and Approval Center action\n\n## Verification\n- backend: 205 test files, 1825 tests passed\n- frontend: 56 test files, 343 tests passed\n- backend and frontend typechecks passed\n- frontend production build passed",
+      "createdAt": "2026-09-04T09:11:27Z",
+      "headRefOid": "07c6a7b4261c950d719a094ade6fd26db68d9ebd",
+      "mergeCommit": {
+        "oid": "561928bf676813076a417aff6e052965b498d9d1"
+      },
+      "mergedAt": "2026-09-04T15:53:21Z",
+      "number": 27,
+      "state": "MERGED",
+      "title": "MAX-25: deduplicate Agent tool approvals",
+      "url": "https://github.com/max2055/Slide/pull/27"
+    },
+    {
+      "baseRefOid": "561928bf676813076a417aff6e052965b498d9d1",
+      "body": "## Summary\n\n- make SSH host-key fingerprints optional for server and network-device connection flows\n- keep strict SHA256 verification when a fingerprint is supplied\n- allow collection, diagnostics, and configuration backups to operate without a fingerprint\n- update UI validation, operator messages, and regression coverage\n\n## Verification\n\n- `cd apps/db-ops-api && npm run typecheck`\n- `cd apps/db-ops-api && npm test` (1823 passed)\n- `cd frontend && npm run typecheck`\n- `cd frontend && npm test` (344 passed)\n- `cd frontend && npm run build`\n\nCloses MAX-26\n",
+      "createdAt": "2026-09-04T16:02:31Z",
+      "headRefOid": "c6664e5ec73627fcd7b62392fef27a722c5d27cd",
+      "mergeCommit": {
+        "oid": "84baa7953655e70f18defa7e031b75cace8c94c7"
+      },
+      "mergedAt": "2026-09-04T16:13:06Z",
+      "number": 28,
+      "state": "MERGED",
+      "title": "MAX-26: make SSH host fingerprint optional",
+      "url": "https://github.com/max2055/Slide/pull/28"
+    },
+    {
+      "baseRefOid": "84baa7953655e70f18defa7e031b75cace8c94c7",
+      "body": "Closes MAX-27\n\n## Summary\n\n- repair ownership and write permissions for prompt storage in existing production volumes before the API starts\n- preserve the API's non-root runtime and read-only root filesystem\n- constrain the one-shot initializer to no network and only the capabilities required for permission repair\n- extend deployment security qualification coverage for the initializer contract\n\n## Verification\n\n- `corepack pnpm --filter slide-api test` (205 files, 1832 tests)\n- `corepack pnpm --filter slide-api typecheck`\n- `corepack pnpm --filter slide-api exec tsx ../../tests/qualification/deployment-security.ts`\n- `corepack pnpm --filter slide-api exec tsx ../../tests/qualification/coverage-matrix.ts --validate`\n- `corepack pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts --check`\n- `corepack pnpm audit --prod --audit-level=low`\n- `corepack pnpm lint` (0 errors; existing warnings only)\n- production Compose config validation\n- Docker regression using a root-owned `0700` volume: old prompt preserved and UID 10001 created a new version after initialization\n",
+      "createdAt": "2026-09-04T16:24:21Z",
+      "headRefOid": "0f3e8d804fbcbf275d198f95ea1238d11f93e135",
+      "mergeCommit": {
+        "oid": "d59fb7c28d059ece1a3ffb59ca10230510c6e048"
+      },
+      "mergedAt": "2026-09-04T16:30:24Z",
+      "number": 29,
+      "state": "MERGED",
+      "title": "MAX-27: repair prompt volume permissions",
+      "url": "https://github.com/max2055/Slide/pull/29"
+    },
+    {
+      "baseRefOid": "d59fb7c28d059ece1a3ffb59ca10230510c6e048",
+      "body": "## Problem\\nProduction chat connections could repeatedly close with WebSocket code 1006 while HTTP LLM connection tests remained healthy.\\n\\n## Changes\\n- Bind DirectAdapter WebSocket explicitly to 0.0.0.0, with AGENT_WS_HOST override support.\\n- Disable Nginx buffering for /agent-ws long lived connections.\\n\\n## Validation\\n- DirectAdapter tests: 28 passed\\n- Frontend DirectGateway tests: 33 passed\\n- API typecheck passed\\n- Frontend production build and CSP check passed",
+      "createdAt": "2026-09-06T06:18:37Z",
+      "headRefOid": "b5a627d940ccae132b99bcc145b66ae6c1b6a1a1",
+      "mergeCommit": {
+        "oid": "05be2ab6b2d9fc2295407df872397e63bb1cedce"
+      },
+      "mergedAt": "2026-09-06T06:25:45Z",
+      "number": 30,
+      "state": "MERGED",
+      "title": "fix: stabilize DirectAdapter WebSocket connections",
+      "url": "https://github.com/max2055/Slide/pull/30"
+    },
+    {
+      "baseRefOid": "05be2ab6b2d9fc2295407df872397e63bb1cedce",
+      "body": "达梦采集原先以缓冲命中率估算内存，旧实时入口还会因可选视图查询失败而丢失整批结果。现在两个入口统一使用 DM8 `V$MEM_POOL` 的数据占用量和总大小计算内存池使用率；内存缺失保持不可用，其他可采指标继续返回。旧入口的 QPS/TPS 同时修正为按驱动数组结果读取计数器并计算每秒速率。\n\n验证：后端类型检查通过，针对性测试 63 项通过。完整后端测试 1833 项通过、5 项超时；涉及的 4 个文件单进程复测 89 项全部通过。此 PR 基于最新主干整理，仅包含 MAX-30 的 6 个文件，其内容与已验证提交 `ffe18c0` 一致。\n\n现场限制：当前源码已无报告中的 `V$MEMORY` 查询，定时采集已按指标隔离；本地系统库没有达梦实例，目标环境的复采及健康状态恢复尚未验证。应用后可通过 `POST /api/database/instances/:id/reload` 触发复采，核对返回的成功指标及后续健康状态。\n\n内存口径为数据库内存池占用率，并非宿主机物理内存使用率。DM8 字段依据：[达梦官方动态视图文档](https://eco.dameng.com/document/dm/zh-cn/pm/dm8-admin-manual-appendix2.html)。\n",
+      "createdAt": "2026-09-07T07:40:23Z",
+      "headRefOid": "b6575c7aca64a936ff7210feaa511b6b2507d988",
+      "mergeCommit": null,
+      "mergedAt": null,
+      "number": 31,
+      "state": "OPEN",
+      "title": "MAX-30: 修复达梦 DM8 内存采集与批次故障隔离",
+      "url": "https://github.com/max2055/Slide/pull/31"
+    },
+    {
+      "baseRefOid": "05be2ab6b2d9fc2295407df872397e63bb1cedce",
+      "body": "Closes MAX-32\\n\\nRemove the obsolete alert button and alert sub-tab from server detail. Alert management remains available through the event center; add a regression contract test.",
+      "createdAt": "2026-09-07T07:45:23Z",
+      "headRefOid": "a741557b396e1d4d0f1608d54448f9835f6196f1",
+      "mergeCommit": null,
+      "mergedAt": null,
+      "number": 32,
+      "state": "OPEN",
+      "title": "MAX-32: remove orphan server alert navigation",
+      "url": "https://github.com/max2055/Slide/pull/32"
+    }
+  ]
+}
