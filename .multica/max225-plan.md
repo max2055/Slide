@@ -1,0 +1,2 @@
+MAX-225：三类资源在共享 createAlert 的自动提交成功后调用现有 RCA 桥；显式传入事务的写入不得在提交前受理，周期恢复扫描补齐。桥内使用同一 SQL 连接 fail-closed 读取 auto_analysis_config，应用总开关、级别、本地时窗（支持跨午夜）、数据库白名单；三类实际资源范围仍由现有专用服务身份配置限定。自动通道关闭禁止新建 legacy 分支；已有 owner 不改变 lane，unknown 不重放。保留当前 criticalSingle=true、threshold=1 明确策略。告警 tags.auto_analysis 持久化受理/抑制事实，不用 tags 授权。恢复只处理无事实或已冻结未链接的自动意图，既有 job 由 worker 恢复。不改前端、不扩展兄弟任务。
+验证：RED SQL 复现；GREEN 三类写入、开关/级别/时窗/范围/身份/实时权限/预算、owner 重启幂等/unknown；相关告警和调查模块回归、typecheck、必要完整 gate。真实 VM 与模型调用须先核对资源/服务归属及父账本，可靠预留/计量后发送；缺环境不可伪称通过。
