@@ -22,7 +22,6 @@ coverage
 **/.playwright/
 frontend/test-results/
 tmp/
-nanobot-reference/
 /outputs/
 
 **/test-results*/
