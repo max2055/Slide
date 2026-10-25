@@ -135,3 +135,26 @@ describe('trusted Linux interface lifecycle', () => {
       .rejects.toMatchObject({ code: 'parse_error', evidenceCode: 'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE' });
   });
 });
+
+describe('network rows carry the same moment as their fresh generation', () => {
+  const fakeClock = () => '2026-10-24T12:00:05.000Z';
+  it('stamps rows from the snapshot so COUNTER_TIME holds on the first cycle', async () => {
+    const discovery = new HostInterfaceDiscovery(fakeClock);
+    const transport = sshTransport(() => [identity(), identity()]);
+    const rows = await collectFixed('builtin:linux.network.v1', transport as Extract<Transport, { method: 'ssh' }>,
+      { host_interfaces: discovery } as never, 1000, 100);
+    for (const row of rows) expect(row.observed_at).toBe(fakeClock());
+    expect(rows[0].counter!.discontinuity!.observed_at).toBe(fakeClock());
+  });
+  it('keeps the row moment at or after the generation stamp after reuse', async () => {
+    let now = '2026-10-24T12:00:05.000Z';
+    const discovery = new HostInterfaceDiscovery(() => now);
+    const transport = sshTransport(() => [identity(), identity()]);
+    await collectFixed('builtin:linux.network.v1', transport as Extract<Transport, { method: 'ssh' }>, { host_interfaces: discovery } as never, 1000, 100);
+    now = '2026-10-24T12:01:05.000Z';
+    const rows = await collectFixed('builtin:linux.network.v1', transport as Extract<Transport, { method: 'ssh' }>, { host_interfaces: discovery } as never, 1000, 100);
+    for (const row of rows) {
+      expect(Date.parse(row.counter!.discontinuity!.observed_at)).toBeLessThanOrEqual(Date.parse(row.observed_at!));
+    }
+  });
+});
