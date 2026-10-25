@@ -9,7 +9,7 @@ job `investigation-api-qualification`。原始报告：该 run 的 artifact `inv
 - 该 job 实测 **1126 s（18.8 分钟）**，其中 vitest 占 **1027 s（17.1 分钟）**，
   其余 99 s 为 checkout/install、两个 MySQL 容器启动、artifact 上传。
 - vitest 自身也**不是并行**的（`--maxWorkers=1`）：513 个测试文件串行执行，
-  文件内测试合计 10.3 分钟，**文件间空隙（worker/环境切换）5.7 分钟，占 33%**。
+  文件内测试合计 10.3 分钟，**文件间空隙（worker/环境切换）6.8 分钟，占 40%**。
 - 最慢的单个文件 172.8 s（`execution-recovery.mysql.test.ts`，含真实 Chromium 用例），
   最慢的单个用例 54.1 s（trigger-concurrency 的 10,000 事件并发）。
 - 真正重复的准备主要是**每个测试文件自建库 + 跑迁移**（72 个文件 `CREATE DATABASE`）
@@ -28,7 +28,7 @@ job `investigation-api-qualification`。原始报告：该 run 的 artifact `inv
 | 测试文件 | 513 |
 | 用例 | 5293（通过 5192，跳过 101） |
 | 单文件测试耗时合计 | 10.3 min |
-| 文件间空隙合计 | 5.7 min（512 次切换） |
+| 文件间空隙合计 | 6.8 min（512 次切换） |
 | 单文件最长 | 172.8 s |
 | 单用例最长 | 54.1 s |
 
@@ -58,7 +58,7 @@ job `investigation-api-qualification`。原始报告：该 run 的 artifact `inv
 | 9 | 13.3 s | 1 | `src/operations/action-readiness.mysql.test.ts` |
 | 10 | 12.0 s | 49 | `src/investigations/observation.mysql.test.ts` |
 
-前 10 个文件合计 415 s，占文件耗时总和的 67%；它们都是真实 MySQL/真实进程用例，
+前 10 个文件合计 404.9 s，占文件耗时总和的 65%；它们都是真实 MySQL/真实进程用例，
 属于验收本体，不建议裁剪。
 
 ## 最慢 10 个用例
@@ -82,8 +82,8 @@ job `investigation-api-qualification`。原始报告：该 run 的 artifact `inv
 
 | 项 | 实测成本 | 可否去掉/合并 | 结论 |
 | --- | --- | --- | --- |
-| 每文件建库 + 迁移 | 72 个文件 `CREATE DATABASE`；MySQL 类文件后的切换均值 1.06 s，空隙合计 5.7 min | 不能简单去掉：隔离是这些用例的前提 | 保留；如并行化，每个分片仍需独立库 |
-| 文件间 worker/环境重置 | 512 次切换，合计 5.7 min | 可减少：多 worker/多分片 | 唯一有量级的提速点 |
+| 每文件建库 + 迁移 | 72 个文件 `CREATE DATABASE`；MySQL 类文件后的切换均值 1.06 s，空隙合计 6.8 min | 不能简单去掉：隔离是这些用例的前提 | 保留；如并行化，每个分片仍需独立库 |
+| 文件间 worker/环境重置 | 512 次切换，合计 6.8 min | 可减少：多 worker/多分片 | 唯一有量级的提速点 |
 | 两个 MySQL 容器串行启动（8.4 + 9.6） | 1084 s 步骤中 vitest 窗口外约 57 s（含拉镜像、启动、就绪探测、vitest 启动） | 9.6 只有 operations 用例需要 | 可改成 services 并平行启动，收益数十秒，暂不做 |
 | API job 的 Chromium 安装 | 25 s | `execution-recovery` 的 T04 用例需要真实 Chromium | 不能去掉；除非把该用例迁到已有 Chromium 的 browser-qualification |
 | 每个 job 的 `pnpm install` | 4 s/job × 13 job（已有 pnpm store 缓存） | 已是最小 | 保留 |
