@@ -64,10 +64,10 @@
 
 ## 固化位置与交付边界
 
-- [根执行规则](../../AGENTS.md)：授权沿用、正文与日志职责、范围/委派/验证。
-- [Multica Issue Management](../../.agents/skills/multica-issue-management/SKILL.md)：建单粒度、去重、分配/派发核验、父子和PR/CI接续。
-- [前端规则](../../frontend/AGENTS.md)：设计输入、代表页先行、视觉与真实业务验收。
-- [资源计量与预算规则](../slide/development/resource-governance.md)：预算作用域与计量口径。
+- [根执行规则](../../../AGENTS.md)：授权沿用、正文与日志职责、范围/委派/验证。
+- [Multica Issue Management](../../../.agents/skills/multica-issue-management/SKILL.md)：建单粒度、去重、分配/派发核验、父子和PR/CI接续。
+- [前端规则](../../../frontend/AGENTS.md)：设计输入、代表页先行、视觉与真实业务验收。
+- [资源计量与预算规则](../development/resource-governance.md)：预算作用域与计量口径。
 
 截至本次复盘，上述规则已写入当前工作区；根规则、Multica技能和前端规则存在既有未提交改动，本轮保留并追加必要条款。尚未提交本次规则更新或创建PR，不能称已合入main或已同步到全部远端执行工作树。已落库的本批任务契约与接续配置是另一项已有执行依据，不等于这些通用规则已经发布。
 

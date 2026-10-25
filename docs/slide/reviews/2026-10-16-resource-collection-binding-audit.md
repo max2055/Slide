@@ -110,10 +110,10 @@
 
 ## 证据与限制
 
-- [最终数据快照](../../outputs/binding-audit-20261016/final-evidence.json)：脱敏资源清单、绑定、应用状态、四轮采集计数、正式发布与切换登记计数。
-- [发布后等待应用](../../outputs/binding-audit-20261016/mysql-published-pending.jpg)
-- [调度后已应用](../../outputs/binding-audit-20261016/mysql-applied.jpg)
-- [已有成功采集时间但列表仍缺值](../../outputs/binding-audit-20261016/mysql-list-no-formal-value.jpg)
+- [最终数据快照](../../../outputs/binding-audit-20261016/final-evidence.json)：脱敏资源清单、绑定、应用状态、四轮采集计数、正式发布与切换登记计数。
+- [发布后等待应用](../../../outputs/binding-audit-20261016/mysql-published-pending.jpg)
+- [调度后已应用](../../../outputs/binding-audit-20261016/mysql-applied.jpg)
+- [已有成功采集时间但列表仍缺值](../../../outputs/binding-audit-20261016/mysql-list-no-formal-value.jpg)
 - 真实验证覆盖本机 MySQL 9.6 和既有 Linux 服务器基础包；没有为断连数据库、网络设备或全部包宣称端到端通过。
 - 没有修改业务源码、创建 PR 或实现批量功能；没有调用产品 LLM，产品模型调用为 0。
 - “正式接管后页面有值”仍未通过，应作为后续修复的验收终点。

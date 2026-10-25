@@ -19,7 +19,7 @@
 
 ## 完整交付物
 
-- 复核：`docs/reviews/2026-09-28-agent-runtime/review.md`
+- 复核：`docs/slide/reviews/2026-09-28-agent-runtime/review.md`
 - 计划：`docs/superpowers/plans/2026-09-28-agent-runtime-improvement.md`
 - 复现：本目录 `probe.mts`、`probe-results.json`
 - 四份文件均已作为附件上传到 MAX-86；CLI 未返回 issue 网页 URL，使用任务编号定位。

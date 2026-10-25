@@ -12,7 +12,7 @@
 
 本稿交付的是去重后的完善方案和建单建议，不是已经确认的新视觉设计，不包含新的产品实现。本次未创建/启动 Multica 任务；R01–R09 是方案包编号，不是已有任务编号。原型设计任务可以先建立来追踪设计产物，布局开发任务以确认后的原型为输入。
 
-你提供的“完整 UI 与美感审计报告”和“整体 UI 与美感报告”是同一文件，按一个来源处理。输入只有两份审计报告：[22 项问题报告](/Users/max/Coding/40-Slide/docs/reviews/2026-10-15-ui-audit.md)、[整体 UI 与美感报告](/Users/max/Coding/40-Slide/docs/reviews/2026-10-15-overall-ui-visual-audit.md)，以及 MAX-157 已批准 R2 与已合并实现。
+你提供的“完整 UI 与美感审计报告”和“整体 UI 与美感报告”是同一文件，按一个来源处理。输入只有两份审计报告：[22 项问题报告](/Users/max/Coding/40-Slide/docs/slide/reviews/2026-10-15-ui-audit.md)、[整体 UI 与美感报告](/Users/max/Coding/40-Slide/docs/slide/reviews/2026-10-15-overall-ui-visual-audit.md)，以及 MAX-157 已批准 R2 与已合并实现。
 
 ## 1. 同步与证据基线
 

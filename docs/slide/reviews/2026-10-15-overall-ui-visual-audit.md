@@ -1,4 +1,4 @@
-> **历史审计提示（2026-10-15 更新）：** 本文保留 main `8bdd8a3c` 的审计事实。MAX-157 已通过 PR #170 合入，当前 main 为 `3ca5c6fb9357`；已完成范围已从 [后续完善方案](/Users/max/Coding/40-Slide/docs/reviews/2026-10-15-ui-improvement-plan-after-max157.md) 的待办中剔除。当前去重范围与建单/原型策略以该方案为准。
+> **历史审计提示（2026-10-15 更新）：** 本文保留 main `8bdd8a3c` 的审计事实。MAX-157 已通过 PR #170 合入，当前 main 为 `3ca5c6fb9357`；已完成范围已从 [后续完善方案](/Users/max/Coding/40-Slide/docs/slide/reviews/2026-10-15-ui-improvement-plan-after-max157.md) 的待办中剔除。当前去重范围与建单/原型策略以该方案为准。
 
 # Slide 整体 UI 与美感设计审计
 
@@ -17,7 +17,7 @@
 - 本轮截图主要为 1702×986，部分 1696×983；前次为 1702×943，窄屏为 390×844。浅色、用户强调色为靛蓝；用户深色截图和原型的主题/视口/数据与实页不同，仅比较信息结构，不做逐像素优劣判断。
 - 当前实页仍是原有布局：源码快照长清单、治理字段平铺、诊断各区纵向累积；导航仍为数据库→服务器→网络设备、“普通对话”、资源概览位于关注事项子页。说明已批准布局**尚未体现于当前运行页面**，不据此断言开发分支是否完成或任务最新状态。
 
-完整范围、每行方法与限制见 [覆盖清单](/Users/max/Coding/40-Slide/outputs/overall-ui-visual-audit-2026-10-15/coverage.md)；机器可读结果见 [审计数据](/Users/max/Coding/40-Slide/outputs/overall-ui-visual-audit-2026-10-15/audit-data.json)。前次功能/可用性报告见 [前次 UI 审计](/Users/max/Coding/40-Slide/docs/reviews/2026-10-15-ui-audit.md)。
+完整范围、每行方法与限制见 [覆盖清单](/Users/max/Coding/40-Slide/outputs/overall-ui-visual-audit-2026-10-15/coverage.md)；机器可读结果见 [审计数据](/Users/max/Coding/40-Slide/outputs/overall-ui-visual-audit-2026-10-15/audit-data.json)。前次功能/可用性报告见 [前次 UI 审计](/Users/max/Coding/40-Slide/docs/slide/reviews/2026-10-15-ui-audit.md)。
 
 ## 按设计标准评价
 
