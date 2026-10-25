@@ -22,8 +22,10 @@ coverage
 **/.playwright/
 frontend/test-results/
 tmp/
-nanobot-reference/
 /outputs/
 
 **/test-results*/
 **/playwright-report/
+/.multica/
+/apps/db-ops-api/.qualification/
+/.planning/phases/

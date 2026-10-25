@@ -76,7 +76,10 @@ describe('94-01-01: docs/slide/ directory structure and file cleanup', () => {
 
   // ===== Root files kept (D-03) =====
 
-  // #278 consolidated the root instruction file into AGENTS.md and removed CLAUDE.md.
+  it('CLAUDE.md is removed after consolidating the root instructions into AGENTS.md', () => {
+    expect(existsSync(join(ROOT, 'CLAUDE.md'))).toBe(false);
+  });
+
   it('AGENTS.md is kept at root', () => {
     expect(existsSync(join(ROOT, 'AGENTS.md'))).toBe(true);
   });
