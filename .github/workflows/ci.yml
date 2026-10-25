@@ -162,6 +162,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.browser == 'true'
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -173,8 +177,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
-      - run: pnpm --filter slide-frontend test:browser
+      - run: pnpm --filter slide-frontend test:browser --shard=${{ matrix.shard }}/2
       - name: Streaming reading and phase regression
+        if: matrix.shard == 1
         run: pnpm --filter slide-frontend exec playwright test streaming-render.spec.ts --config playwright.streaming.config.ts --grep 'real phases'
 
   browser-qualification:
@@ -233,18 +238,6 @@ jobs:
         run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
         run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
-      - name: Install Microsoft Edge for critical paths
-        run: pnpm --filter slide-frontend exec playwright install --with-deps msedge
-      - name: "Edge critical paths: login, investigation terminal state and WSS"
-        env:
-          T06_TEST_MYSQL_PORT: '3306'
-          T06_TEST_MYSQL_PASSWORD: qualification-test-password
-        run: pnpm --filter slide-frontend exec playwright test --config playwright.edge-ci.config.ts
-      - name: Instance query states with live MySQL and permissions
-        env:
-          MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
-          MAX163_TEST_MYSQL_PASSWORD: ${{ env.DB_PASSWORD }}
-        run: pnpm --filter slide-frontend exec playwright test --config playwright.instance-query.config.ts
       - name: Feedback evaluation and runtime qualification
         env:
           T11_TEST_MYSQL_PORT: '3306'
@@ -276,14 +269,71 @@ jobs:
           include-hidden-files: true
           retention-days: 30
 
+  # Edge and instance-query need the same MySQL service but no browser state
+  # from the job above. Splitting them keeps the browser critical path below
+  # the API shard ceiling instead of stacking both slow steps in one job.
+  browser-edge-qualification:
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.integration == 'true'
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: qualification-test-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pqualification-test-password"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_USER: root
+      DB_PASSWORD: qualification-test-password
+      QUALIFICATION_ADMIN_PASSWORD: Tpam1234
+      QUALIFICATION_CANCELLATION_E2E: '1'
+      QUALIFICATION_CRON_E2E: '1'
+      PLAYWRIGHT_MANAGED_ENV: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium and Microsoft Edge
+        run: |
+          pnpm --filter slide-frontend exec playwright install --with-deps chromium
+          pnpm --filter slide-frontend exec playwright install --with-deps msedge
+      - name: "Edge critical paths: login, investigation terminal state and WSS"
+        env:
+          T06_TEST_MYSQL_PORT: '3306'
+          T06_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.edge-ci.config.ts
+      - name: Instance query states with live MySQL and permissions
+        env:
+          MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
+          MAX163_TEST_MYSQL_PASSWORD: ${{ env.DB_PASSWORD }}
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.instance-query.config.ts
+
   # The investigation workspace specs own their isolated servers and fixture.
   # Running them beside the managed qualification steps cuts the former
   # single-job wall time roughly in half; the two jobs share no runtime state.
+  # Playwright shards the 79 tests across two runners so a slow spec cannot
+  # hold the whole job.
   investigation-workspace-qualification:
     runs-on: ubuntu-latest
     needs: plan
     if: needs.plan.outputs.integration == 'true'
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     services:
       mysql:
         image: mysql:8.4
@@ -311,19 +361,20 @@ jobs:
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
           T11_TEST_MYSQL_PORT: '3306'
           T11_TEST_MYSQL_PASSWORD: qualification-test-password
-        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts
+        run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts --shard=${{ matrix.shard }}/2
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: investigation-workspace-${{ github.sha }}
+          name: investigation-workspace-${{ github.sha }}-shard-${{ matrix.shard }}
           path: frontend/test-results-investigation/
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
 
   # The recovery scripts each provision their own disposable MySQL/PostgreSQL
-  # containers with unique names and ports; the two groups share no runtime
-  # state. Keep the original order inside the environment group.
+  # containers with unique names and ports; the groups share no runtime state.
+  # Keep the original script order inside every group. Splitting the former
+  # environment/scenarios pair five ways removes their serial long poles.
   recovery-qualification:
     runs-on: ubuntu-latest
     needs: plan
@@ -332,7 +383,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [environment, scenarios]
+        group: [environment-startup, environment-recovery, environment-stability, scenarios-authority, scenarios-delivery]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -344,61 +395,62 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Empty database and repeat startup
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-startup'
         run: bash scripts/qualification/run-environment.sh bootstrap-upgrade
       - name: PostgreSQL credential collection and client release
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-startup'
         run: bash scripts/qualification/run-pg-collection.sh
       - name: Worker failover and fencing
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-startup'
         run: bash scripts/qualification/run-environment.sh failover
       - name: Startup lease, D1 readiness and Compose feature passthrough
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-recovery'
         run: pnpm --filter slide-api exec tsx ../../tests/qualification/startup-readiness.test.ts
       - name: Report occurrence crashes and atomic notification outbox
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-recovery'
         run: bash scripts/qualification/run-report-recovery.sh
       - uses: actions/upload-artifact@v4
-        if: always() && matrix.group == 'environment'
+        if: always() && matrix.group == 'environment-recovery'
         with:
           name: recovery-initialization-${{ github.sha }}
           path: .qualification/report-recovery/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
-      - name: Delegation ceilings and live grant revocation in isolated MySQL
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-auth-boundary.sh
-      - name: Analysis dispatch crashes, unknown billing windows and revoked authority
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-analysis-recovery.sh
-      - name: Database alert single ownership and legacy result bridges in isolated MySQL
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-investigation-bridges.sh
-      - name: Metrics retention through production workflow assembly and isolated MySQL
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-metric-retention.sh
-      - name: Bounded V23 source claims, lease loss and production formal publication
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-v23-source.sh
-      - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-alert-event-transitions.sh
-      - name: Instance removal, connection release and retry in isolated MySQL
-        if: matrix.group == 'scenarios'
-        run: bash scripts/qualification/run-instance-removal.sh
       - name: Backup and restore
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-stability'
         run: bash scripts/qualification/run-environment.sh backup-restore
       - name: Concurrent workflow stability
-        if: matrix.group == 'environment'
+        if: matrix.group == 'environment-stability'
         run: bash scripts/qualification/run-environment.sh stability
+      - name: Delegation ceilings and live grant revocation in isolated MySQL
+        if: matrix.group == 'scenarios-authority'
+        run: bash scripts/qualification/run-auth-boundary.sh
+      - name: Database alert single ownership and legacy result bridges in isolated MySQL
+        if: matrix.group == 'scenarios-authority'
+        run: bash scripts/qualification/run-investigation-bridges.sh
+      - name: Instance removal, connection release and retry in isolated MySQL
+        if: matrix.group == 'scenarios-authority'
+        run: bash scripts/qualification/run-instance-removal.sh
+      - name: Analysis dispatch crashes, unknown billing windows and revoked authority
+        if: matrix.group == 'scenarios-delivery'
+        run: bash scripts/qualification/run-analysis-recovery.sh
+      - name: Metrics retention through production workflow assembly and isolated MySQL
+        if: matrix.group == 'scenarios-delivery'
+        run: bash scripts/qualification/run-metric-retention.sh
+      - name: Bounded V23 source claims, lease loss and production formal publication
+        if: matrix.group == 'scenarios-delivery'
+        run: bash scripts/qualification/run-v23-source.sh
+      - name: Event lifecycle transactions, conflict and manual confirmation in isolated MySQL
+        if: matrix.group == 'scenarios-delivery'
+        run: bash scripts/qualification/run-alert-event-transitions.sh
 
   # These modes each provision a disposable MySQL server and consume no artifacts
   # from the unit jobs. Keep serial test workers within each isolated server.
-  # The suite is split into six shards; each shard gets its own MySQL pair so
-  # the isolated-database contract is unchanged and the slowest file (~173 s)
-  # bounds the wall time.
+  # Eight hash-ordered shards cover the ordinary suite; the largest file gets a
+  # dedicated shard so it cannot stack behind another slow file in one leg.
+  # Every leg still uses its own isolated MySQL pair (the exec leg needs only
+  # the 8.4 server), so the isolated-database contract is unchanged.
   investigation-api-qualification:
     runs-on: ubuntu-latest
     needs: plan
@@ -407,7 +459,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, exec]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -420,9 +472,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install browser for API suites with Chromium coverage
         run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
-      - name: Full API candidate against isolated MySQL (shard ${{ matrix.shard }}/6)
+      - name: Full API candidate against isolated MySQL (shard ${{ matrix.shard }})
         env:
-          T12_API_SHARD: ${{ matrix.shard }}/6
+          T12_API_SHARD: ${{ matrix.shard }}
         run: T12_OUTPUT_DIR="$GITHUB_WORKSPACE/.qualification/t12/api-shard-${{ matrix.shard }}" bash scripts/qualification/run-investigation-rollout.sh --api
       - uses: actions/upload-artifact@v4
         if: always()
@@ -488,7 +540,7 @@ jobs:
   release-artifact:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, investigation-workspace-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification]
+    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, browser-edge-qualification, investigation-workspace-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification]
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -526,7 +578,7 @@ jobs:
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, investigation-workspace-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification, release-artifact]
+    needs: [plan, security, backend, frontend, agent-core, sandbox-controller, browser, browser-qualification, browser-edge-qualification, investigation-workspace-qualification, recovery-qualification, investigation-api-qualification, investigation-rollout-qualification, rootless-sandbox-qualification, release-artifact]
     if: always()
     steps:
       - uses: actions/checkout@v4
