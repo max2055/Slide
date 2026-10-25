@@ -27,3 +27,6 @@ nanobot-reference/
 
 **/test-results*/
 **/playwright-report/
+/.multica/
+/apps/db-ops-api/.qualification/
+/.planning/phases/
