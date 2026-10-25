@@ -72,7 +72,11 @@ run_gate() {
   tail -8 "$T12_OUTPUT_DIR/$name.log"
 }
 if [[ "$mode" == --api ]]; then
-  run_gate api pnpm --filter slide-api test --maxWorkers=1 --reporter=default --reporter=json --outputFile="$T12_OUTPUT_DIR/api.json"
+  # CI splits this suite into parallel shards, each against its own isolated
+  # MySQL pair. Unset keeps the single-process candidate for local/standalone use.
+  api_args=(--maxWorkers=1 --reporter=default --reporter=json --outputFile="$T12_OUTPUT_DIR/api.json")
+  if [[ -n "${T12_API_SHARD:-}" ]]; then api_args+=(--shard="$T12_API_SHARD"); fi
+  run_gate api pnpm --filter slide-api test "${api_args[@]}"
   exit 0
 fi
 run_gate rollout pnpm --filter slide-api exec tsx ../../tests/qualification/investigation-rollout.ts
