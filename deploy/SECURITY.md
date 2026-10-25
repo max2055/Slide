@@ -27,6 +27,22 @@ install a compatible Oracle Instant Client on the target host and use the
 documented `deploy/oracle-client.compose.example.yaml` override. Do not copy
 Oracle client binaries into the application image or repository.
 
+## Provider configuration backup
+
+LLM provider API keys are stored encrypted in the platform database. The
+operator backup flow exports only non-secret provider fields and scene
+bindings; it never includes `api_key_encrypted`, plaintext keys, DB passwords
+or URL credentials. Follow
+[Provider 配置备份、恢复与脱敏流程](../docs/slide/development/provider-config-backup.md)
+for the checklist and commands. Keep artifacts outside every Git worktree with
+mode `0600`, verify the sibling SHA-256 before restore, and re-enter
+credentials after a cross-environment restore. Run the disposable MySQL drill
+before relying on the procedure:
+
+```bash
+pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
+```
+
 ## Database network discovery
 
 Database discovery is exposed only through the `discover_database_endpoints`
