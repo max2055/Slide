@@ -90,7 +90,7 @@ pnpm --filter slide-api exec tsx tests/provider-config-backup.mysql.ts
 4. **执行恢复**：`pnpm provider-config restore <文件> --check-connections all --actor <操作者>`。
    - 恢复前会自动生成 `<产物名>.pre-restore.<UTC 时间>.json` 和 `.sha256`；这是回滚凭据，不得删除。
    - 恢复在单个事务内完成；Provider 与场景绑定的写入、审计记录同事务提交。
-5. **核对验证结果**：要求 `verification.ok: true`、`issues` 为空或只有预期的 `DANGLING_BINDING`/`CREDENTIAL_REQUIRED` 警告，并且 `connections[].success: true`。
+5. **核对验证结果**：要求 `verification.ok: true`、`issues` 为空或只有预期的 `DANGLING_BINDING`/`CREDENTIAL_REQUIRED` 警告，并且 `connections` 中没有失败项（`success: false` 且未标记 `skipped`）。
 6. **刷新运行时**：CLI 直接写数据库，运行中的 API 仍持有旧的 Provider 客户端缓存。按 PID → 端口 → cwd 核对本任务实例后优雅重启 API，或通过管理界面重新保存任一 Provider 配置触发热加载。未刷新前不能宣称运行时已生效。
 7. **留存审计**：记录 `audit_id`、`verification_audit_id`、快照路径和校验和。
 
