@@ -1070,6 +1070,10 @@
           }
         ]
       },
+      "evidence_code": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+      },
       "observation_ids": {
         "type": "array",
         "items": {
