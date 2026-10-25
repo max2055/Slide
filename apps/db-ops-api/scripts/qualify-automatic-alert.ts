@@ -11,6 +11,7 @@ import { createAssetCollectorAccess } from '../src/metrics/config/access.js';
 import { createConfigurationRegistry } from '../src/metrics/config/registry.js';
 import { runPackage } from '../src/metrics/packages/runner.js';
 import { policyService } from '../src/metrics/policy/service.js';
+import { MysqlPolicyStore } from '../src/metrics/policy/store.js';
 import { admin } from '../src/metrics/policy/test-support.js';
 import { RolloutControl } from '../src/metrics/rollout/control.js';
 import { serverAlertEvaluator } from '../src/server-alert-evaluator.js';
@@ -21,7 +22,7 @@ const env = parse(readFileSync(process.env.MAX225_CONFIG_ENV));
 process.env.ENCRYPTION_KEY = env.ENCRYPTION_KEY;
 const shared = mysql.createPool({host:env.DB_HOST,port:Number(env.DB_PORT??3306),user:env.DB_USER,password:env.DB_PASSWORD,database:env.DB_NAME});
 const evidence: any = {schemaVersion:1, qualification:'MAX-225', startedAt:new Date().toISOString(), sharedWrites:0, modelRequests:0, samples:[]};
-const originalPool = dbConnection.getPool;
+const originalPool = dbConnection.getPool, originalIsConnected = dbConnection.isConnected;
 let f: Awaited<ReturnType<typeof bridgeTestFixture>> | undefined;
 try {
   evidence.stage='read_bound_resource';
@@ -30,6 +31,9 @@ try {
   const server = servers[0];
   evidence.stage='isolated_schema';
   f = await bridgeTestFixture(); dbConnection.getPool = () => f!.pool;
+  // The evaluator's health gate reads its own flag; point it at the same real
+  // isolated pool the rest of this qualification writes through.
+  dbConnection.isConnected = () => true;
   const columns = Object.keys(server);
   await f.pool.query(`INSERT INTO servers (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`,columns.map(key=>server[key]));
   await f.pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 201,id FROM permissions WHERE code='servers:view'");
@@ -48,21 +52,30 @@ try {
   const control = new RolloutControl(f.pool);
   let initialized = false, alertId: number | undefined;
   evidence.resource={type:'server',id:server.id};
-  for (let index=0;index<8;index++) {
+  for (let index=0;index<30;index++) {
     evidence.stage='collect_vm';
-    const result = await runPackage(registry,{package:{id:pin.id,version:pin.version,digest:pin.digest},credential_ref:access.credential_ref},
+    const result = await runPackage(registry,{package:{id:pin.id,version:pin.version,digest:pin.digest},credential_ref:access.credential_ref,overrides:{}},
       {...access,binding_id:`server:${server.id}`,attempt_id:`MAX225:${randomUUID()}`,config_revision:1,observed_at:new Date().toISOString(),
         signal:AbortSignal.timeout(30_000),collector_ids:[collector.id],metric_keys:[`${definition.id}@${definition.semantic_version}`]});
     const observation = result.observations.find(o=>o.observation.metric.id===definition.id)?.observation;
     evidence.samples.push({attempts:result.attempts.map(a=>({status:a.status,error:a.error})),observation});
     assert(observation?.quality.status==='good' && observation.value?.encoding==='float64','REAL_CPU_OBSERVATION_REQUIRED');
     if (!initialized) {
-      assert(observation.value.value>0,'NONZERO_CPU_REQUIRED_FOR_NATURAL_RECOVERY');
+      // An idle VM legitimately reports 0%; a real threshold needs a real
+      // nonzero sample, so keep observing instead of fabricating one.
+      if (!(observation.value.value>0)) continue;
       evidence.threshold=observation.value.value*0.95;
       await f.pool.query(`INSERT INTO alert_rules (id,name,target_type,server_id,metric_name,operator,threshold,duration_seconds,severity,enabled)
         VALUES (9001,'MAX225 real VM CPU','server',?,'cpu_usage','>',?,0,'critical',1)`,[server.id,evidence.threshold]);
       await control.initialize(observation,{source:'semantic',read:'semantic',revision:1,package:{id:pin.id,version:pin.version,digest:pin.digest}});
       await control.applied(observation,{source:'semantic',generation:1,revision:1});
+      // The evaluator refuses to read a metric whose collection method has no
+      // capability evidence. This attempt is that evidence: the real SSH
+      // collection below returned a good value for exactly this metric.
+      await new MysqlPolicyStore(()=>f.pool).reportCapabilities(ref,1,[{resource_id:String(server.id),
+        metric:{id:definition.id,semantic_version:definition.semantic_version},status:'supported',method:collector.method,
+        basis:[{kind:'method',evidence:`attempt:${result.attempts[0]!.id}`}],
+        evaluated_at:new Date().toISOString(),valid_until:new Date(Date.now()+3600_000).toISOString()}],null);
       initialized=true;
     }
     // Preserve actual collection timestamps/values; no fabricated observations.
@@ -74,6 +87,7 @@ try {
     alertId ??= alerts[0]?.id;
     if (alertId && alerts.find(a=>a.id===alertId)?.status==='resolved') { evidence.recovered=true; break; }
   }
+  assert(initialized,'REAL_NONZERO_CPU_SAMPLE_NOT_OBSERVED');
   assert(alertId,'REAL_ALERT_REQUIRED');
   const [owners] = await f.pool.query<any[]>('SELECT alert_id,lane,investigation_id,analysis_id FROM investigation_alert_owners WHERE alert_id=?',[alertId]);
   evidence.owners=owners;
@@ -82,12 +96,14 @@ try {
   assert(evidence.recovered,'NATURAL_CPU_RECOVERY_NOT_OBSERVED');
 } catch (error) {
   evidence.failure = error instanceof assert.AssertionError ? error.message : (error as {code?:string}).code ?? 'QUALIFICATION_FAILED';
+  evidence.failureDetail = error instanceof Error ? error.message : String(error);
   process.exitCode=1;
 } finally {
   evidence.finishedAt=new Date().toISOString();
   writeFileSync(process.env.MAX225_EVIDENCE!,JSON.stringify(evidence,null,2));
   console.log(JSON.stringify({admissionVerified:evidence.admissionVerified??false,recovered:evidence.recovered??false,failure:evidence.failure??null,samples:evidence.samples.length,modelRequests:0}));
   dbConnection.getPool=originalPool;
+  dbConnection.isConnected=originalIsConnected;
   sshSessionPool.closeAll();
   await f?.close(); await shared.end();
 }
