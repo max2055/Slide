@@ -1,0 +1,694 @@
+{
+  "observedDate": "2026-10-04",
+  "timezone": "Asia/Shanghai",
+  "dockerContext": "desktop-linux",
+  "dockerVersion": "29.7.2",
+  "scope": "Read-only inspection; existing resources not deleted. Candidate selection is not deletion authorization.",
+  "attribution": "Strong batch attribution from creation times, audit task evidence and reproduced fixture cleanup leak. Original container-to-volume mapping unavailable; anonymous labels do not identify individual tasks.",
+  "selection": {
+    "createdUtcFrom": "2026-10-03T06:37:05Z",
+    "createdUtcTo": "2026-10-03T20:47:36Z",
+    "referenceCount": 0,
+    "anonymous": true
+  },
+  "candidateCount": 75,
+  "totalBytes": 16940362220,
+  "beforeFutureDeletion": "Revalidate every exact volume identity, creation time and zero references; do not replace this allowlist with global prune.",
+  "volumes": [
+    {
+      "name": "9daf32809e8d99e0fc846f4bcf1f964abdae720c1be7d00d8fa82bc28346cfad",
+      "created": "2026-10-03T06:37:05Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 55510664,
+      "refs": 0
+    },
+    {
+      "name": "3a01c86dbbccc820bf0eefb2400138602e3a9111b0abcc8ae376677b7fddbb52",
+      "created": "2026-10-03T06:37:05Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240105320,
+      "refs": 0
+    },
+    {
+      "name": "29fe317a4a924f10b513a087f7378b4bf218a22e4e4e8f3c1c5be28bbf72985c",
+      "created": "2026-10-03T07:51:56Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220035440,
+      "refs": 0
+    },
+    {
+      "name": "a45cc05b8a6e0ad78b04a4ce475780f2c6bde45e2a5b8256bc2d8647874162ad",
+      "created": "2026-10-03T08:34:30Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240158746,
+      "refs": 0
+    },
+    {
+      "name": "0e8f93aba3a1cac5450728379b256e2039b3740037cae2205dcc05e63d66fa8b",
+      "created": "2026-10-03T08:35:23Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240175148,
+      "refs": 0
+    },
+    {
+      "name": "d1801bb38926ffe3c8550493b6aeb01da20b327a610cb998b194507a24697b83",
+      "created": "2026-10-03T08:36:13Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240177792,
+      "refs": 0
+    },
+    {
+      "name": "7b99cc30a9ffc732e4012a7a6e903fe776ed0ae761815dd65314febe34209459",
+      "created": "2026-10-03T08:36:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 218560450,
+      "refs": 0
+    },
+    {
+      "name": "2b96d2b2b9452ebad78cbd25a3026f4a4e4649f659e0f94044dd8994dab97807",
+      "created": "2026-10-03T09:01:55Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 205177532,
+      "refs": 0
+    },
+    {
+      "name": "8370f87a520bf4bf91a3f26b7f0bed7ec284294e94d702b6e3a9195e6a214ef1",
+      "created": "2026-10-03T09:32:49Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 222990930,
+      "refs": 0
+    },
+    {
+      "name": "b92970eb325f9511a4ea38ffa78eae30549c5830c437236f8b18a4b6fa6b35e9",
+      "created": "2026-10-03T09:49:27Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240327811,
+      "refs": 0
+    },
+    {
+      "name": "fc0be58bc104bbf4f4ba4d15378f14065e4cda510bfd1831dd6723fa19a4c077",
+      "created": "2026-10-03T09:50:31Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240328808,
+      "refs": 0
+    },
+    {
+      "name": "3c6edce943cdca39a35f40beaef15dd79cbc3838d9c98ee1d5b840e6d3ea32fa",
+      "created": "2026-10-03T09:55:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240341981,
+      "refs": 0
+    },
+    {
+      "name": "0a887da279be0766f4fd3c1d8f167b82879b2e31bbe24bd7f9b636aa97473935",
+      "created": "2026-10-03T10:02:59Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 218833959,
+      "refs": 0
+    },
+    {
+      "name": "8a76123405495204524f6caae6c99d0e6aa242891173023da7648721d6469241",
+      "created": "2026-10-03T10:02:59Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240342021,
+      "refs": 0
+    },
+    {
+      "name": "635736842efcd59cbe742ab69f08a03a3e425635cbb1ae1cda9e744e4f77edca",
+      "created": "2026-10-03T10:15:28Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 196907605,
+      "refs": 0
+    },
+    {
+      "name": "8c2c998d938419aac345ce792786d985164d9a25ea3183d6b068d786b8f837c5",
+      "created": "2026-10-03T10:15:55Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 237173357,
+      "refs": 0
+    },
+    {
+      "name": "baa901c40d50f9779f52e294d77ccce1240b39e103dc19dcbb2e5a67f25e3dcd",
+      "created": "2026-10-03T11:00:24Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240310419,
+      "refs": 0
+    },
+    {
+      "name": "d3330f2eb97387aa21bd25f537b5c7a2f933ed318af1519445982e51f0e1181c",
+      "created": "2026-10-03T11:01:56Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240454776,
+      "refs": 0
+    },
+    {
+      "name": "1ea91a723838c63fba2ab272eeead9318b2a118efeeaa1c829d2909abf2d58ce",
+      "created": "2026-10-03T11:03:31Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240457437,
+      "refs": 0
+    },
+    {
+      "name": "46112d39e27395b57e7c3c1fe5c4819b1da5a217e1ff39145e6262399c07abf0",
+      "created": "2026-10-03T11:05:18Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240457425,
+      "refs": 0
+    },
+    {
+      "name": "efed4f555c7e5f7bc77e9810e949522fe1066af638354eb02db05926e0fe6b1c",
+      "created": "2026-10-03T11:07:38Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240495016,
+      "refs": 0
+    },
+    {
+      "name": "68f99588510da591eb8892fcde0816018753e056d34ef5ad0cf93f5aa52a183a",
+      "created": "2026-10-03T11:15:52Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240492518,
+      "refs": 0
+    },
+    {
+      "name": "cbf45be27b8175bd786d4e21fcefdc9f589f4bf6b165e5978a94e305071d951b",
+      "created": "2026-10-03T11:23:01Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240543963,
+      "refs": 0
+    },
+    {
+      "name": "79d59f7c268837d6cc64e10c337f9ebc816be97dddbf7bb81ebdeae1bf833d44",
+      "created": "2026-10-03T11:50:12Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240919407,
+      "refs": 0
+    },
+    {
+      "name": "354f5237cbd1818cf2d987f364461021b1095f5e90ddf8fabc6d247c694c866d",
+      "created": "2026-10-03T12:06:34Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 218509912,
+      "refs": 0
+    },
+    {
+      "name": "6882c91664aff5fd6ee3a54509554f8d6e14641cb4483c1cf78924f48842a0d0",
+      "created": "2026-10-03T12:45:51Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 227888313,
+      "refs": 0
+    },
+    {
+      "name": "383fd1b11770013b489336f25fcf8e3c1901bf468d553fb978bdfc44ec4f0a5c",
+      "created": "2026-10-03T13:29:12Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220483512,
+      "refs": 0
+    },
+    {
+      "name": "433688980d5f97465bab5ef46ad865b5c98a938f08ce2444533eaf6b075db755",
+      "created": "2026-10-03T14:17:34Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220558607,
+      "refs": 0
+    },
+    {
+      "name": "a0be713a090cbd0750d39cfc44bdd0df1de1a39a6468358ea3eb1354f4abca24",
+      "created": "2026-10-03T14:24:40Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220559736,
+      "refs": 0
+    },
+    {
+      "name": "551be6fc18ad58e74cf9b14a8e445f20e87c1fc0a80bf1f53358fa3c1395f125",
+      "created": "2026-10-03T14:26:59Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220564424,
+      "refs": 0
+    },
+    {
+      "name": "9f1707912f335ba47be46db763f801119c767c4b169cd693358da23d62ed6066",
+      "created": "2026-10-03T14:33:05Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224758218,
+      "refs": 0
+    },
+    {
+      "name": "fdbf1a3ac756aa49722d86321341a896326e2413bf68f0438155a4b4aa06755b",
+      "created": "2026-10-03T14:34:24Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220589547,
+      "refs": 0
+    },
+    {
+      "name": "6953e6bf6726159a2cc0247b0ead483f07ff84bb6e76b0daf85ae5bd8be8b4a5",
+      "created": "2026-10-03T14:35:36Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220584131,
+      "refs": 0
+    },
+    {
+      "name": "f927164dd05fb0ac68b051d39f01927ad19c905d9fc2ccb849286094616f54b9",
+      "created": "2026-10-03T14:38:21Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220593501,
+      "refs": 0
+    },
+    {
+      "name": "f2321226405d97f65baf8b4153837567da7927102b501e77329513c8afa82ad8",
+      "created": "2026-10-03T15:02:23Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220595239,
+      "refs": 0
+    },
+    {
+      "name": "5bfb9afed6c8105cd2bd13a161e75b12db7b33e245600c8bbca03fe3115fa587",
+      "created": "2026-10-03T15:03:09Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220606764,
+      "refs": 0
+    },
+    {
+      "name": "c49c2a82ed6b3e7de78a082a26bc528d7fe549be7f4f16065b803029b045d747",
+      "created": "2026-10-03T15:06:20Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220617804,
+      "refs": 0
+    },
+    {
+      "name": "085bf6eee837b6ed5b4b60b4755e62096e93ff378daafe115a4dc2b6d9915ad7",
+      "created": "2026-10-03T15:07:54Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220657441,
+      "refs": 0
+    },
+    {
+      "name": "7334223d682a3d1580330aa0184cad7915d7b1343df20f209f5389aba73b119a",
+      "created": "2026-10-03T15:11:42Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224851518,
+      "refs": 0
+    },
+    {
+      "name": "b9fe354b1bd1355d5a9f312fa00a356feab828ea9af8f9fb9576ead85d84eafb",
+      "created": "2026-10-03T15:57:10Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 226628682,
+      "refs": 0
+    },
+    {
+      "name": "016c2430acb51123e4283fa7c3176a3ecb4a2459aa0d47bd9eb11e1afae4577b",
+      "created": "2026-10-03T16:04:12Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 226641751,
+      "refs": 0
+    },
+    {
+      "name": "998c27c76935db9d6f2a90bf5df6791fac68bcb74fe523f8c4c527e47fa3b266",
+      "created": "2026-10-03T16:46:54Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220060544,
+      "refs": 0
+    },
+    {
+      "name": "8f5f9da40590587b7786e43bb0d5b0f7ff847d17107f74108893ecb8d245203a",
+      "created": "2026-10-03T17:37:51Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224137517,
+      "refs": 0
+    },
+    {
+      "name": "325bbb13fe6b7d065834af570f6619172ba51df7ca90995bba054ecdeddb6c13",
+      "created": "2026-10-03T17:39:11Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224137465,
+      "refs": 0
+    },
+    {
+      "name": "44adcbb5047781bf9a2bdc7981cc077dbfc552212169452d41dcb99baff79889",
+      "created": "2026-10-03T17:40:02Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224168915,
+      "refs": 0
+    },
+    {
+      "name": "66ffc17d3d6724c0d82bf19aa35d4512b4c55c0d3080f411b9039413dd45a0c6",
+      "created": "2026-10-03T17:41:10Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224168897,
+      "refs": 0
+    },
+    {
+      "name": "94e2eda2f5dfec3be6cce0d0125fe481ef8259323bc1b8d777a103b509820048",
+      "created": "2026-10-03T17:43:09Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224166258,
+      "refs": 0
+    },
+    {
+      "name": "d3903b4ee0adc20bc1389636011d918bb6dec4ce778660e064824a0afa91113d",
+      "created": "2026-10-03T17:44:20Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224169297,
+      "refs": 0
+    },
+    {
+      "name": "a77e91e22aa1826b77b67b1c0fe33d10da3ee02a11e6fc2d3cf061160eecfa65",
+      "created": "2026-10-03T17:46:58Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224174269,
+      "refs": 0
+    },
+    {
+      "name": "03e06f8af096555de4f231d1faa26fcee7639a007107e6b3353721d3e2b6e148",
+      "created": "2026-10-03T17:48:25Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224182949,
+      "refs": 0
+    },
+    {
+      "name": "d4d472158770e9a25bb7f12fc4d1a3706221a330b408c42e28df362baf700623",
+      "created": "2026-10-03T17:53:44Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224182947,
+      "refs": 0
+    },
+    {
+      "name": "29a26aabd7051e0fc216cc0a3113c4b3764fef7acc584cbf9fbdd3ca161eb172",
+      "created": "2026-10-03T18:05:07Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224182739,
+      "refs": 0
+    },
+    {
+      "name": "9d77a1b31b856ffc2e45d48c65c47038062767e6c54e97e1979bec7c18082974",
+      "created": "2026-10-03T18:47:25Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240913706,
+      "refs": 0
+    },
+    {
+      "name": "5dcf6bd4287f79e565f57dfad023d19b76c26ef0ea031b269bf3fe2b3f036d6e",
+      "created": "2026-10-03T18:48:26Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240916499,
+      "refs": 0
+    },
+    {
+      "name": "30b1db3b2a83bd2bc04b20b460be967513439b9f441aafa04f2ea66cb8f1a517",
+      "created": "2026-10-03T19:11:57Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240920919,
+      "refs": 0
+    },
+    {
+      "name": "81a41a849140220311d7529eb84417300634df507961dec219ff891d4d1f84f1",
+      "created": "2026-10-03T19:13:29Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240934427,
+      "refs": 0
+    },
+    {
+      "name": "71f603cbeba89b47f24d025625a4bd7cd101b2d4a82042a600823f69dfadd482",
+      "created": "2026-10-03T19:16:03Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 241030817,
+      "refs": 0
+    },
+    {
+      "name": "1bfe9e91b60901472736ea3f6598d9a5fcafffbe3184ae039fa0b57ad1892a44",
+      "created": "2026-10-03T19:18:29Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 241029985,
+      "refs": 0
+    },
+    {
+      "name": "a58d0792583902878783f927c7f8756dcb887e76394abcde051c3267007ec636",
+      "created": "2026-10-03T20:34:34Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 250321828,
+      "refs": 0
+    },
+    {
+      "name": "cbba509ba3cf096ca1342fb6c7e0157dc21d47a59a7c42a801915cbf48496ef6",
+      "created": "2026-10-03T20:37:08Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 245267489,
+      "refs": 0
+    },
+    {
+      "name": "c0376d4c3e7812fd8cb958b0b554d47efd4f54c0864eede9a2ce4900dfddaaa7",
+      "created": "2026-10-03T20:40:55Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 250321835,
+      "refs": 0
+    },
+    {
+      "name": "f374c4e7025c63bc22d9622e5124304c04bfabed2d376102be1fc320031669f9",
+      "created": "2026-10-03T20:41:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240902368,
+      "refs": 0
+    },
+    {
+      "name": "e4904a97caca90f665a77bcd375c0d303b298245e76e060c1f7b81fa283f4900",
+      "created": "2026-10-03T20:41:28Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 241097173,
+      "refs": 0
+    },
+    {
+      "name": "142f5aadee9b11165d659449d5eda24a2193086dbc0fa5673a2672d85033491d",
+      "created": "2026-10-03T20:42:55Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 218509958,
+      "refs": 0
+    },
+    {
+      "name": "6b467be02604874408d2113edddc4a5b6b2be37f4062d5322b0c3bd7cac6de49",
+      "created": "2026-10-03T20:43:09Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220663278,
+      "refs": 0
+    },
+    {
+      "name": "aaff75b3e3d4008ace5ea61fac550cfd3a4a5b5ed39ab297b65637e6f335d6eb",
+      "created": "2026-10-03T20:43:27Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 226656877,
+      "refs": 0
+    },
+    {
+      "name": "0c2db3bdafe263c93fadc4ccc527fab2ec9e73fa77375c1c0ddbeede3250a578",
+      "created": "2026-10-03T20:43:47Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220062563,
+      "refs": 0
+    },
+    {
+      "name": "8643bc20535cec286cb100fe76d0dbd9c3d0943bf373670350fc79bd89be1ae2",
+      "created": "2026-10-03T20:44:01Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224182928,
+      "refs": 0
+    },
+    {
+      "name": "dfddb6d57d177cd6fc86f71b0ceb196c79b10fd9c64971bab03be6a5e556d80a",
+      "created": "2026-10-03T20:44:15Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 266325857,
+      "refs": 0
+    },
+    {
+      "name": "77c9db4386b89a4ac53505acb6b22c08b9370175d99aab52793c692cad35ed12",
+      "created": "2026-10-03T20:44:29Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 241031643,
+      "refs": 0
+    },
+    {
+      "name": "e7e4aaab41330eafb319523907f1531dd74f02c93edabbd34bb93666aee32dcd",
+      "created": "2026-10-03T20:45:29Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 55510664,
+      "refs": 0
+    },
+    {
+      "name": "35e1da505bdd81d957330c77036c6bb9bb11ebf2955a639dcc83685ab279234e",
+      "created": "2026-10-03T20:45:29Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240871136,
+      "refs": 0
+    },
+    {
+      "name": "43ea2f8d86d17ca029e0a86a5f640ed69af7abf55d57b8ab5cc325acd423ccae",
+      "created": "2026-10-03T20:45:40Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 225237801,
+      "refs": 0
+    },
+    {
+      "name": "8944794d127a5423b53e623e8e24b1ce4f9019660c41d995cdc7641ab0f5dded",
+      "created": "2026-10-03T20:46:35Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220648697,
+      "refs": 0
+    },
+    {
+      "name": "6962c3cfabda27fef21c800394257559a2ad10c41ca8ab84c388c89295c13a4b",
+      "created": "2026-10-03T20:47:36Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 248304350,
+      "refs": 0
+    }
+  ]
+}
