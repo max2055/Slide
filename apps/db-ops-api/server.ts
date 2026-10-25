@@ -870,8 +870,16 @@ async function start() {
       const existing = await llmDatabaseService.getProviderById(Number(id));
       if (!existing) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.configureProvider({ ...existing, ...data, id: Number(id) });
-      await reloadChatProvider();
-      reply.send(result);
+      if (!result.success) return reply.send(result);
+      // Persistence and runtime application are separate outcomes: the row is
+      // already written, so never report an opaque 500 that hides that fact.
+      let applied = true;
+      try { await reloadChatProvider(); }
+      catch (error: any) {
+        applied = false;
+        request.log.warn({ code: 'LLM_CONFIGURATION_UNAVAILABLE' }, 'Provider reload failed after save');
+      }
+      return reply.send({ ...result, applied, ...(applied ? {} : { reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' }) });
     } catch (error: any) {
       reply.code(500).send({ error: '更新 LLM 配置失败：' + error.message });
     }
