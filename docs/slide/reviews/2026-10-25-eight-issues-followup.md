@@ -12,7 +12,7 @@
 | 1 | attempt 不保存 evidenceCode | **已修**：契约新增可选 `evidence_code`，runner 在错误时持久化生产者原因码；历史记录兼容（可选字段） | `a1e9f5b16` |
 | 2 | InnoDB 死锁指标导致每轮 partial | **已修**：MySQL status 读取中服务端未返回的声明变量落成 null 观测 + `capability: unknown`，不再产生 parse_error / partial | `a1e9f5b16` |
 | 8 | 部署配置漂移 | **部分修复**：新增 `deploy/compose.investigation.example.yaml` 与文档，说明变量必须在 compose 中映射、空值被拒绝、示例值非最小证明、密钥不入库。Provider 仍按既有架构由数据库管理，需配套备份/脱敏清单流程 | `129fef207` |
-| 5 | 默认调查配置跑不通 | **测量已完成**（见 `2026-10-25-investigation-context-budget.md`）：工具结果占 88% 字节，4 个 FS 结果约 42k tokens；16k/32k 不够、65k 只够 4 个结果、294,912 才容纳整轮。`CONTEXT_UNRECOVERABLE` 也带上了投影值与预算。下一步先削工具结果再定默认值 |  + 测量文档 |
+| 5 | 默认调查配置跑不通 | **测量已完成**（见 `2026-10-25-investigation-context-budget.md`）：工具结果占 88% 字节，4 个 FS 结果约 42k tokens；16k/32k 不够、65k 只够 4 个结果、294,912 才容纳整轮。`CONTEXT_UNRECOVERABLE` 也带上了投影值与预算。下一步先削工具结果再定默认值 | `2368ea3f6` + 测量文档 |
 | 6 | 遗留迁移未完成 | **已给出处置决定**（见下）；旧定义保持 blocked，新指标与告警阈值需按决定逐项上线 | 本次文档 |
 | 7 | inode 9/11 | **已实现**：`df -i` 的 `-` 行标记 `inodeSupported:false`，观测质量记为 `unknown/not_applicable`，与 source_error 区分 | 本分支 |
 
