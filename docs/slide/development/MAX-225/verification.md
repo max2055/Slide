@@ -24,7 +24,7 @@
 - 父账本：每次发送前写入唯一 reservation（input 上界＝请求字节+1024，output 上界＝请求内 `max_tokens`≤4096）并回读确认后才发送；响应后按实测结算。累计 settled 57,478/10,000,000，无未结算预留；1 条未拿到响应的发送保留为 unknown（15,367 预留额，`MODEL_TRANSPORT_UNKNOWN`），按策略不重放。
 - 逐次可追溯性：**只有最终成功运行的 3 次发送**保留了完整 Provider requestID、请求哈希、上下界与逐次 usage；此前 16 次响应的逐次明细在父账本 8KB 压缩时只留下总量，现有产物中仅能恢复其中 5 个 reservation id、2 个 Provider requestID 及若干尝试级用量聚合。这两组 ID **可能指向同一次发送**，不能相加作为互斥计数，因此只能确认“至少 9 次没有任何已恢复标识”，无法精确到 9 或 11。恢复范围与缺失项见 `model-budget-journal-20261026.md` / `.json`；不声称全部 19 次响应均逐次可追溯。
 - 汇总口径：57,478 settled 只来自 19 次有响应并已结算的发送；未知发送的 15,367 预留额单独保留、不包含在 settled 内（含 unknown 的总占用 72,845，但 15,367 是上界）。
-- 尝试 M 的 `Connection error` 只按已有运行记录解释：其 4 次已记录发送全部结算，M 之后 reservations 为空且 unknown 仍只有 G 的 `a37ad0e6`，因此产生该错误的 fetch 调用在 reservation 持久化前即被拒绝、没有进入 HTTP，不构成新的未知发送；具体是哪项预发送检查失败已不可恢复（SDK 用通用消息替换了原始异常）。完整推理与限制见 journal 的“尝试 M 的 Connection error”一节。
+- 尝试 M 的 `Connection error` 只按已有运行记录解释：seq 444 直接可见的是 sends 4、reservations 为空、累计 settled 46,187、unknown 仍只有 G 的 `a37ad0e6`。这些事实与“预发送失败”一致，但包装器也可能在 HTTP usage 结算之后因 finishReason 校验抛错，且 SDK 同样把该异常包装成通用 `Connection error.`，所以**无法确定异常位置，也不能断言未进入 HTTP 或不存在计量缺口**；原始异常不可恢复，该次尝试无法独立逐次审计。完整推理与限制见 journal 的“尝试 M 的 Connection error”一节。
 
 ### 发送前约束（脚本内强制）
 
