@@ -751,8 +751,8 @@ const TEMPLATE_TARGETS = {
   'mysql-replica': { family: 'mysql', kind: 'database', min: [8, 0], maxMajor: 8 },
   'pg-basic': { family: 'postgresql', kind: 'database', min: [14, 0] },
   'dm-basic': { family: 'dameng', kind: 'database', min: [8, 0], maxMajor: 8 },
-  'linux-basic': { family: 'linux', kind: 'server', os: LINUX_OS },
-  'linux-minimal': { family: 'linux', kind: 'server', os: LINUX_OS },
+  'linux-basic': { family: 'linux', kind: 'server', os: LINUX_OS, requireVersion: true },
+  'linux-minimal': { family: 'linux', kind: 'server', os: LINUX_OS, requireVersion: true },
   'huawei-snmp': { family: 'huawei', kind: 'switch', platform: 'v200' },
   'cisco-snmp': { family: 'cisco', kind: 'switch' },
   'huawei-fw-snmp': { family: 'huawei', kind: 'firewall', platform: 'v600' },
@@ -790,6 +790,7 @@ function constraintLabel(target) {
   if (target.os) parts.push(`系统 ${target.os.join('/')}`);
   if (target.platform) parts.push(`平台 ${target.platform.toUpperCase()}`);
   if (target.min) parts.push(`版本 ${rangeLabel(target)}`);
+  else if (target.requireVersion) parts.push('版本需可确认');
   return parts.join(' · ');
 }
 
@@ -852,11 +853,11 @@ function compatResult(row) {
     return reject(`${resource.label} 与 ${tplLabel} 的平台不符`,
       `模板 ${tplLabel} 面向 ${target.platform.toUpperCase()} 平台，而 ${resource.label} 为 ${resource.platform === 'unknown' ? '未知平台' : resource.platform.toUpperCase()}，不兼容，不能绑定`);
   }
-  if (target.min) {
+  if (target.min || target.requireVersion) {
     if (!resource.version) {
       return reject(`${resource.label} 的版本未知`, `无法确认 ${resource.label} 的版本，不能判定与 ${tplLabel} 兼容`);
     }
-    if (!versionInRange(resource.version, target)) {
+    if (target.min && !versionInRange(resource.version, target)) {
       return reject(`${resource.label} 与 ${tplLabel} 的版本不兼容`,
         `模板 ${tplLabel} 要求版本 ${rangeLabel(target)}，而 ${resource.label} 为 ${resource.version.join('.')}，不兼容，不能绑定`);
     }
