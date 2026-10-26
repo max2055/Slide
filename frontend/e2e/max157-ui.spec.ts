@@ -8,6 +8,38 @@ const admissionPolicy = { maxConcurrent:4,manualReserved:1,maxPerResourceConcurr
 const group = { state:'settled',mode:'manual',currency:'USD',count:2,knownUsageCount:2,unknownUsageCount:0,pendingUsageCount:0,knownInputTokens:12000,knownCachedInputTokens:4000,knownOutputTokens:6000,reservedTokens:64000,outstandingTokens:0,settledTokens:18000,reservedCostMicros:200000,outstandingCostMicros:0,estimatedSettledCostMicros:140000,unknownCostCount:0 };
 const groups = [group,{...group,state:'unknown',knownUsageCount:0,unknownUsageCount:2,knownInputTokens:0,knownCachedInputTokens:0,knownOutputTokens:0,settledTokens:0,outstandingTokens:64000,outstandingCostMicros:200000,estimatedSettledCostMicros:0},...Array.from({length:4},(_,i) => ({...group,currency:i % 2 ? 'EUR':'USD',state:['sent','reserved','cancelled','settled'][i]}))];
 const manifest = {releaseId:'source-acceptance',commitSha:'8bdd8a3c09ae5d9f5e5436f6f26153bdcddb6737',treeDigest:'a'.repeat(64),signature:'acceptance-signature',repository:{origin:'https://github.com',ref:'main'},completeness:'partial',verification:{status:'repository-unbound',reason:'SOURCE_DEPLOYMENT_UNKNOWN'},files:Array.from({length:1971},(_,i) => ({path:`packages/agent-core/src/collectors/group-${Math.floor(i/50)+1}/resource-collector-${i+1}.ts`,bytes:1248+i*13,digest:'b'.repeat(64)})),skippedFiles:Array.from({length:123},(_,i) => ({path:`config/group-${i+1}/config-${i+1}.json`,reason:i % 2 ? 'SOURCE_BINARY_FILE':'SOURCE_SYMLINK_SKIPPED'})),warnings:[{path:'src/retained.ts',reason:'SOURCE_LARGE_FILE'}]};
+// Controlled policy facts only; the real API/UI contract is exercised by the
+// T06 Playwright spec against an isolated MySQL service.
+const coverage = (type: string, extra: Record<string, unknown> = {}) => ({type,status:'not_configured',configuredCount:0,existingCount:0,permittedCount:0,typePermission:false,...extra});
+const policyFacts = (mode: string) => mode === 'empty' ? {
+  schemaVersion:3,source:'production_composition',originBoundary:'investigation_engine_persist_only',
+  policy:{id:'database-alert-pilot',version:1,profileId:'ops',source:'database-alert-engine',readonly:true},
+  configurationStatus:'not_configured',automaticAnalysisStatus:'blocked',
+  masterSwitch:{source:'defaults',status:'defaulted',enabled:true,severityLevels:['warning','error','critical'],timeWindowStart:'00:00',timeWindowEnd:'23:59',instanceWhitelistCount:0},
+  investigationSwitch:{enabled:false,manualEnabled:false,legacyEnabled:false,source:'environment'},
+  serviceIdentity:{status:'not_configured',permissionsSufficient:false,missingPermissions:[],instanceScopeSufficient:true},
+  resourceCoverage:[coverage('database'),coverage('server'),coverage('network_device')],
+  entry:{status:'not_connected',observedReceiptCount:0,lastObservedAt:null,witnessTypes:[]},
+  receipts:{total:0,accepted:0,suppressed:0,pending:0,unknown:0,lastStatus:null,lastReason:null,lastAttemptAt:null},
+  execution:{observed:0,accepted:0,running:0,completed:0,failed:0,partial:0,timed_out:0,cancelled:0,suppressed:0,unknown:0,lastStatus:null,lastAt:null},
+  budget:{status:'uninitialized',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
+  blockers:[{code:'SERVICE_IDENTITY_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
+    {code:'RESOURCE_SCOPE_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
+    {code:'INVESTIGATION_SWITCH_DISABLED',layer:'switch',remediation:'deployment_environment'}],
+} : {
+  schemaVersion:3,source:'production_composition',originBoundary:'investigation_engine_persist_only',
+  policy:{id:'database-alert-pilot',version:1,profileId:'ops',source:'database-alert-engine',readonly:true},
+  configurationStatus:'configured',automaticAnalysisStatus:'available',
+  masterSwitch:{source:'system_config',status:'persisted',enabled:true,severityLevels:['warning','error','critical'],timeWindowStart:'00:00',timeWindowEnd:'23:59',instanceWhitelistCount:0},
+  investigationSwitch:{enabled:true,manualEnabled:false,legacyEnabled:false,source:'environment'},
+  serviceIdentity:{status:'ready',permissionsSufficient:true,missingPermissions:[],instanceScopeSufficient:true},
+  resourceCoverage:[coverage('database',{status:'covered',configuredCount:1,existingCount:1,permittedCount:1,typePermission:true}),coverage('server'),coverage('network_device')],
+  entry:{status:'connected',observedReceiptCount:1,lastObservedAt:'2026-10-25T00:00:00.000Z',witnessTypes:['database']},
+  receipts:{total:1,accepted:1,suppressed:0,pending:0,unknown:0,lastStatus:'accepted',lastReason:null,lastAttemptAt:'2026-10-25T00:00:00.000Z'},
+  execution:{observed:1,accepted:0,running:0,completed:1,failed:0,partial:0,timed_out:0,cancelled:0,suppressed:0,unknown:0,lastStatus:'completed',lastAt:'2026-10-25T00:05:00.000Z'},
+  budget:{status:'matching',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
+  blockers:[],
+};
 
 async function fixture(page: Page, mode = 'normal', theme = 'dark', accent = '#409eff') {
   let calls = 0;
@@ -28,7 +60,7 @@ async function fixture(page: Page, mode = 'normal', theme = 'dark', accent = '#4
     if (path === '/api/platform/source/config') body = {config:{provider:'github',baseUrl:'https://github.com',repositoryPath:'slide/acceptance',allowedPaths:[],allowModelContent:false}};
     if (path === '/api/platform/source/manifest') body = manifest;
     if (path === '/api/investigation-profiles') body = {items:Object.values(INVESTIGATION_PROFILES).map(profile => ({profile,profileHash:investigationProfileHash(profile),toolAvailability:'not_evaluated',outputSchemaId:'InvestigationResult'}))};
-    if (path === '/api/investigation-policies') body = {configurationStatus:mode === 'empty'?'not_configured':'configured',integrationStatus:mode === 'empty'?'not_connected':'connected',source:'production_composition',originBoundary:'investigation_engine_persist_only',items:mode === 'empty'?[]:[{id:'database-alert-pilot',version:1,enabled:false}]};
+    if (path === '/api/investigation-policies') body = policyFacts(mode);
     if (path === '/api/investigation-budget') body = {source:'investigationBudgetConfiguration',policy,reserveCostMicros:100000,persistedPolicy:mode === 'empty'?null:{...policy,maxTotalTokensPerDay:mode === 'conflict'?800000:policy.maxTotalTokensPerDay},admissionStatus:mode === 'empty'?'uninitialized':mode === 'conflict'?'conflict':'matching',automaticTriggerStatus:'connected',domain:'investigation-v1',admissionRevision:1,policySource:'configuration'};
     if (path === '/api/investigation-budget/effective') {
       const runtime = {contextWindowTokens:1000000,outputTokens:16384,summaryOutputTokens:16384,maxExecutionTokens:1000000};
@@ -122,7 +154,7 @@ for (const mode of ['empty','loading','failed','forbidden']) test(`all four gove
     await page.goto(`/settings/ai/${kind}`);
     const view = page.locator(kind === 'profiles' ? 'investigation-profiles-page' : 'investigation-governance-page');
     if (mode === 'loading') await expect(view.getByRole('status')).toContainText('正在加载');
-    else if (mode === 'empty') await expect(view).toContainText({profiles:'尚未配置 Profiles',policies:'尚未配置调查策略',budget:'尚未初始化冻结预算',usage:'暂无持久用量'}[kind]!);
+    else if (mode === 'empty') await expect(view).toContainText({profiles:'尚未配置 Profiles',policies:'尚未配置专用服务身份',budget:'尚未初始化冻结预算',usage:'暂无持久用量'}[kind]!);
     else { await expect(view.getByRole('alert')).toBeVisible(); await expect(view.locator('app-data-table')).toHaveCount(0); }
     await capture(page,`${kind}-${mode}-390-dark-controlled`);
   }

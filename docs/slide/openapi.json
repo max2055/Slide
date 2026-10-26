@@ -8103,10 +8103,267 @@
         "$id": "InvestigationPoliciesResponse",
         "additionalProperties": false,
         "properties": {
+          "automaticAnalysisStatus": {
+            "anyOf": [
+              {
+                "const": "available",
+                "type": "string"
+              },
+              {
+                "const": "unverified",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              }
+            ]
+          },
+          "blockers": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "const": "MASTER_CONFIG_INVALID",
+                      "type": "string"
+                    },
+                    {
+                      "const": "MASTER_SWITCH_DISABLED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "INVESTIGATION_SWITCH_DISABLED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SERVICE_IDENTITY_NOT_CONFIGURED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SERVICE_IDENTITY_NOT_FOUND",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SERVICE_IDENTITY_INVALID",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SERVICE_IDENTITY_DISABLED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "SERVICE_PERMISSIONS_MISSING",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_SCOPE_NOT_CONFIGURED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_SCOPE_INVALID",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_UNAVAILABLE",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_PERMISSION_MISSING",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_INSTANCE_SCOPE_MISSING",
+                      "type": "string"
+                    },
+                    {
+                      "const": "BUDGET_UNAVAILABLE",
+                      "type": "string"
+                    },
+                    {
+                      "const": "BUDGET_UNINITIALIZED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "BUDGET_CONFLICT",
+                      "type": "string"
+                    },
+                    {
+                      "const": "BUDGET_QUOTA_REACHED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "BUDGET_CAPACITY_REACHED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "ENTRY_NOT_OBSERVED",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "layer": {
+                  "anyOf": [
+                    {
+                      "const": "configuration",
+                      "type": "string"
+                    },
+                    {
+                      "const": "switch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "wiring",
+                      "type": "string"
+                    },
+                    {
+                      "const": "authorization",
+                      "type": "string"
+                    },
+                    {
+                      "const": "budget",
+                      "type": "string"
+                    },
+                    {
+                      "const": "resources",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "remediation": {
+                  "anyOf": [
+                    {
+                      "const": "analysis_settings",
+                      "type": "string"
+                    },
+                    {
+                      "const": "budget_settings",
+                      "type": "string"
+                    },
+                    {
+                      "const": "user_permissions",
+                      "type": "string"
+                    },
+                    {
+                      "const": "deployment_environment",
+                      "type": "string"
+                    },
+                    {
+                      "const": "alert_engine",
+                      "type": "string"
+                    },
+                    {
+                      "const": "none",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "code",
+                "layer",
+                "remediation"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "budget": {
+            "additionalProperties": false,
+            "properties": {
+              "admissionReasons": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "AUTOMATIC_DAILY_TOKENS",
+                      "type": "string"
+                    },
+                    {
+                      "const": "TOTAL_DAILY_TOKENS",
+                      "type": "string"
+                    },
+                    {
+                      "const": "DAILY_COST",
+                      "type": "string"
+                    },
+                    {
+                      "const": "AUTOMATIC_FREQUENCY",
+                      "type": "string"
+                    },
+                    {
+                      "const": "GLOBAL_CONCURRENCY",
+                      "type": "string"
+                    },
+                    {
+                      "const": "MANUAL_CAPACITY_RESERVED",
+                      "type": "string"
+                    },
+                    {
+                      "const": "RESOURCE_CONCURRENCY",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 7,
+                "type": "array"
+              },
+              "capacityReached": {
+                "type": "boolean"
+              },
+              "quotaReached": {
+                "type": "boolean"
+              },
+              "reserveCostMicros": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reserveTokens": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "uninitialized",
+                    "type": "string"
+                  },
+                  {
+                    "const": "matching",
+                    "type": "string"
+                  },
+                  {
+                    "const": "conflict",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unavailable",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "quotaReached",
+              "capacityReached",
+              "reserveTokens",
+              "reserveCostMicros",
+              "admissionReasons"
+            ],
+            "type": "object"
+          },
           "configurationStatus": {
             "anyOf": [
               {
                 "const": "not_configured",
+                "type": "string"
+              },
+              {
+                "const": "invalid",
                 "type": "string"
               },
               {
@@ -8115,66 +8372,550 @@
               }
             ]
           },
-          "integrationStatus": {
-            "anyOf": [
-              {
-                "const": "not_connected",
-                "type": "string"
+          "entry": {
+            "additionalProperties": false,
+            "properties": {
+              "lastObservedAt": {
+                "anyOf": [
+                  {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              {
-                "const": "connected",
+              "observedReceiptCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "not_connected",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unverified",
+                    "type": "string"
+                  },
+                  {
+                    "const": "connected",
+                    "type": "string"
+                  }
+                ]
+              },
+              "witnessTypes": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "database",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 3,
+                "type": "array"
+              }
+            },
+            "required": [
+              "status",
+              "observedReceiptCount",
+              "lastObservedAt",
+              "witnessTypes"
+            ],
+            "type": "object"
+          },
+          "execution": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "cancelled": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "completed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "failed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "lastAt": {
+                "anyOf": [
+                  {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastStatus": {
+                "anyOf": [
+                  {
+                    "const": "accepted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timed_out",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cancelled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "suppressed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "partial": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "running": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "suppressed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "timed_out": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unknown": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "observed",
+              "accepted",
+              "running",
+              "completed",
+              "failed",
+              "partial",
+              "timed_out",
+              "cancelled",
+              "suppressed",
+              "unknown",
+              "lastStatus",
+              "lastAt"
+            ],
+            "type": "object"
+          },
+          "investigationSwitch": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "legacyEnabled": {
+                "type": "boolean"
+              },
+              "manualEnabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "const": "environment",
                 "type": "string"
               }
-            ]
-          },
-          "items": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "id": {
-                  "const": "database-alert-pilot",
-                  "type": "string"
-                },
-                "profileId": {
-                  "const": "ops",
-                  "type": "string"
-                },
-                "readonly": {
-                  "const": true,
-                  "type": "boolean"
-                },
-                "source": {
-                  "const": "database-alert-engine",
-                  "type": "string"
-                },
-                "version": {
-                  "const": 1,
-                  "type": "number"
-                }
-              },
-              "required": [
-                "id",
-                "version",
-                "profileId",
-                "source",
-                "enabled",
-                "readonly"
-              ],
-              "type": "object"
             },
-            "maxItems": 1,
-            "type": "array"
+            "required": [
+              "enabled",
+              "manualEnabled",
+              "legacyEnabled",
+              "source"
+            ],
+            "type": "object"
+          },
+          "masterSwitch": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "instanceWhitelistCount": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "severityLevels": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "info",
+                      "type": "string"
+                    },
+                    {
+                      "const": "warning",
+                      "type": "string"
+                    },
+                    {
+                      "const": "error",
+                      "type": "string"
+                    },
+                    {
+                      "const": "critical",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 4,
+                "type": "array"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "system_config",
+                    "type": "string"
+                  },
+                  {
+                    "const": "defaults",
+                    "type": "string"
+                  }
+                ]
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "persisted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "defaulted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "invalid",
+                    "type": "string"
+                  }
+                ]
+              },
+              "timeWindowEnd": {
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              "timeWindowStart": {
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "status",
+              "enabled",
+              "severityLevels",
+              "timeWindowStart",
+              "timeWindowEnd",
+              "instanceWhitelistCount"
+            ],
+            "type": "object"
           },
           "originBoundary": {
             "const": "investigation_engine_persist_only",
             "type": "string"
           },
+          "policy": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "const": "database-alert-pilot",
+                "type": "string"
+              },
+              "profileId": {
+                "const": "ops",
+                "type": "string"
+              },
+              "readonly": {
+                "const": true,
+                "type": "boolean"
+              },
+              "source": {
+                "const": "database-alert-engine",
+                "type": "string"
+              },
+              "version": {
+                "const": 1,
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "profileId",
+              "source",
+              "readonly"
+            ],
+            "type": "object"
+          },
+          "receipts": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "lastAttemptAt": {
+                "anyOf": [
+                  {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastReason": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastStatus": {
+                "anyOf": [
+                  {
+                    "const": "accepted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "suppressed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pending": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "suppressed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "unknown": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "accepted",
+              "suppressed",
+              "pending",
+              "unknown",
+              "lastStatus",
+              "lastReason",
+              "lastAttemptAt"
+            ],
+            "type": "object"
+          },
+          "resourceCoverage": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "configuredCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "existingCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "permittedCount": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "not_configured",
+                      "type": "string"
+                    },
+                    {
+                      "const": "covered",
+                      "type": "string"
+                    },
+                    {
+                      "const": "partial",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": {
+                  "anyOf": [
+                    {
+                      "const": "database",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "typePermission": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "status",
+                "configuredCount",
+                "existingCount",
+                "permittedCount",
+                "typePermission"
+              ],
+              "type": "object"
+            },
+            "maxItems": 3,
+            "type": "array"
+          },
           "schemaVersion": {
-            "const": 1,
+            "const": 3,
             "type": "number"
+          },
+          "serviceIdentity": {
+            "additionalProperties": false,
+            "properties": {
+              "instanceScopeSufficient": {
+                "type": "boolean"
+              },
+              "missingPermissions": {
+                "items": {
+                  "pattern": "^[a-z][a-z_]*:[a-z*]+$",
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "permissionsSufficient": {
+                "type": "boolean"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "not_configured",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_found",
+                    "type": "string"
+                  },
+                  {
+                    "const": "invalid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ready",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "permissionsSufficient",
+              "missingPermissions",
+              "instanceScopeSufficient"
+            ],
+            "type": "object"
           },
           "source": {
             "const": "production_composition",
@@ -8183,11 +8924,20 @@
         },
         "required": [
           "schemaVersion",
-          "configurationStatus",
-          "integrationStatus",
           "source",
-          "items",
-          "originBoundary"
+          "originBoundary",
+          "policy",
+          "configurationStatus",
+          "masterSwitch",
+          "investigationSwitch",
+          "serviceIdentity",
+          "resourceCoverage",
+          "entry",
+          "receipts",
+          "execution",
+          "budget",
+          "automaticAnalysisStatus",
+          "blockers"
         ],
         "type": "object"
       },
@@ -25640,7 +26390,7 @@
     },
     "/api/investigation-budget": {
       "get": {
-        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Effective admission policy from the durable effective-budget setting (falling back to investigationBudgetConfiguration) plus persisted domain-policy matching/conflict for the domain revision new admissions target; reading does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status reflects the database pilot configuration and flag.",
+        "description": "Readonly governance facts. Requires live ai:view AND config:manage (global configuration management, not resource-scoped access). Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Effective admission policy from the durable effective-budget setting (falling back to investigationBudgetConfiguration) plus persisted domain-policy matching/conflict for the domain revision new admissions target; reading does not initialize domains. Profile ceilings are at /api/investigation-profiles; automatic trigger status requires both enabled switches plus durable automatic ownership for the currently configured resources, never configuration or alert tags alone.",
         "operationId": "getInvestigationBudget",
         "responses": {
           "200": {
@@ -25675,7 +26425,7 @@
     },
     "/api/investigation-policies": {
       "get": {
-        "description": "Readonly governance facts. Requires live ai:view. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Actual operator-owned database alert pilot configuration/flag status only; no principal or resource identifiers. Configuration never implies live authority or budget. investigation_engine persists only.",
+        "description": "Readonly governance facts. Requires live ai:view. Same-connection live identity reload before count/page; bounded delegated and service identities denied. All responses private, no-store. Separates persisted total switch, investigation lane switch, dedicated service identity, per-type resource coverage, durable entry wiring, historical alert receipts, durable execution outcomes and admission budget readiness. Configuration completeness never implies live authority, wiring or a successful model run; alert tags are observations only and durable owners/requests/jobs carry execution results. No principal or resource identifiers. investigation_engine persists only.",
         "operationId": "getInvestigationPolicies",
         "responses": {
           "200": {

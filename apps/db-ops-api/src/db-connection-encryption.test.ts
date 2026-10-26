@@ -21,7 +21,10 @@ describe('versioned credential encryption', () => {
   it('fails closed when ciphertext or authentication tag is modified', () => {
     const encrypted = encryptData('credential-value', key);
     const parts = encrypted.split(':');
-    parts[4] = `${parts[4].slice(0, -2)}00`;
+    // Flip the last ciphertext byte instead of overwriting it with a fixed
+    // value: a randomly drawn 0x00 ending would otherwise make the tamper a
+    // no-op and fail the assertion for a correct decrypt.
+    parts[4] = `${parts[4].slice(0, -2)}${(Number.parseInt(parts[4].slice(-2), 16) ^ 0xff).toString(16).padStart(2, '0')}`;
     expect(() => decryptData(parts.join(':'), key)).toThrow();
   });
 
