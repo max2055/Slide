@@ -12,8 +12,24 @@ const decode = <T>(value: string | T): T => typeof value === 'string' ? JSON.par
 /** Reconcile persisted, real measurement evidence. Never trusts a caller-supplied all-zero shadow gate.
  * Runs outside collection transactions, taking publication fences BEFORE the policy lock. */
 export class MetricFormalization {
+  // A restart deliberately revalidates once. This is only a work-elision hint:
+  // every changed batch/policy/migration still passes the fenced transaction.
+  private readonly reconciled = new Map<string, string>();
   constructor(private pool: Pool, private registry: PackageRegistry, private clock = () => new Date()) {}
+  private async fingerprint(c: Pick<Pool | PoolConnection, 'execute'>, ref: Ref, revision: number): Promise<string | null> {
+    const [rows] = await c.execute<RowDataPacket[]>(`SELECT SHA2(CAST(JSON_ARRAY(b.payload,s.payload,
+      r.phase,r.revision,r.generation,r.gate_json) AS CHAR),256) AS fingerprint
+      FROM metric_policy_bindings b
+      JOIN metric_source_checks s ON s.resource_key=b.resource_key AND s.revision=?
+      LEFT JOIN metric_rollout_resources r ON r.resource_key=b.resource_key
+      WHERE b.resource_key=?`, [revision,refKey(ref)]);
+    return rows[0]?.fingerprint ?? null;
+  }
   async reconcile(ref: Ref, revision: number): Promise<void> {
+    const key = refKey(ref);
+    if (!await assetCollectionEnabled(this.pool, ref)) { this.reconciled.delete(key); return; }
+    const fingerprint = await this.fingerprint(this.pool, ref, revision);
+    if (!fingerprint || this.reconciled.get(key) === fingerprint) return;
     const c = await this.pool.getConnection(), held: string[] = [];
     let transaction = false, reusable = true;
     try {
@@ -27,8 +43,18 @@ export class MetricFormalization {
       const [lock] = await c.execute<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
       rule(lock.length === 1, 'SOURCE_POLICY_LOCK_UNAVAILABLE', 503);
       if (!await assetCollectionEnabled(c, ref, true)) { await c.commit(); transaction = false; return; }
-      await this.accept(c, ref, revision, initial.map(r=>String(r.series_hash)));
+      // Re-read under the policy lock: collection/configuration may have changed
+      // while waiting for fences, or another local caller may have reconciled it.
+      const current = await this.fingerprint(c, ref, revision);
+      if (current && this.reconciled.get(key) !== current) await this.accept(c, ref, revision, initial.map(r=>String(r.series_hash)));
+      const completed = await this.fingerprint(c, ref, revision);
       await c.commit(); transaction = false;
+      if (completed) {
+        // Keep at most one digest per resource and bound inactive/deleted entries.
+        this.reconciled.delete(key);
+        if (this.reconciled.size >= 10000) this.reconciled.delete(this.reconciled.keys().next().value!);
+        this.reconciled.set(key, completed);
+      }
     } catch(e) { if (transaction) await c.rollback(); throw e; }
     finally {
       for (const name of held.reverse()) {
@@ -54,10 +80,13 @@ export class MetricFormalization {
     if (!captures[0]) return;
     const snapshot = decode<{sample_ids:string[]}>(captures[0].payload);
     if (!Array.isArray(snapshot.sample_ids) || !snapshot.sample_ids.length) return;
+    rule(snapshot.sample_ids.length <= 10000 && snapshot.sample_ids.every(id=>typeof id==='string'), 'SOURCE_SERIES_LIMIT');
+    // The committed capture already identifies the batch. PRIMARY lookups keep
+    // work proportional to that batch rather than all retained normalized rows.
     const [rows] = await c.execute<RowDataPacket[]>(`SELECT payload FROM metric_observations WHERE stage = 'normalized' AND payload IS NOT NULL
-      AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.resource_type')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.resource_id')) = ?
-      AND JSON_EXTRACT(payload, '$.versions.config_revision') = ? AND observed_at >= ? ORDER BY observed_at DESC LIMIT 10001`,
-    [ref.type,String(ref.id),revision,new Date(this.clock().getTime() - policy.resolved.settings.stale_after_ms)]);
+      AND id IN (${snapshot.sample_ids.map(()=>'?').join(',')})
+      AND observed_at >= ? ORDER BY observed_at DESC, id DESC`,
+    [...snapshot.sample_ids,new Date(this.clock().getTime() - policy.resolved.settings.stale_after_ms)]);
     if (!rows.length) return;
     rule(rows.length <= 10000, 'SOURCE_SERIES_LIMIT');
     const samples = new Map<string, NormalizedObservation>();
