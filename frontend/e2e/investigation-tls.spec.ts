@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startInvestigationServer } from './fixtures/investigation-server.ts';
 
+// The Edge critical-path config sets this so the trusted scenario runs in
+// Microsoft Edge itself; unset keeps the default browser matrix on Chromium.
+const channel = process.env.SLIDE_TLS_BROWSER_CHANNEL;
+
 test('trusted HTTPS same-origin WSS authenticates, resumes without replay and withdraws revoked content', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'slide-investigation-tls-'));
   let env: Awaited<ReturnType<typeof startInvestigationServer>> | undefined;
@@ -22,8 +26,9 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
       '-CAcreateserial', '-days', '1', '-extfile', 'extensions', '-out', 'server.crt']);
     env = await startInvestigationServer({ syntheticPromptTokens: 20,
       tls: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')) } });
-    // Chromium on Linux reads NSS from $HOME/.pki/nssdb. Give each profile its own
-    // HOME; never disable certificate checks.
+    // Chromium-family browsers on Linux (including Edge) read NSS from
+    // $HOME/.pki/nssdb. Give each profile its own HOME; never disable
+    // certificate checks.
     const nss = async (name: string, withCa: boolean) => {
       const home = join(directory, name);
       const database = join(home, '.pki', 'nssdb');
@@ -32,28 +37,22 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
       if (withCa) command('certutil', ['-A', '-d', `sql:${database}`, '-n', 'Slide isolated test CA', '-t', 'C,,', '-i', 'ca.crt']);
       return { home, database };
     };
+    const launch = (profile: string, home: string) => chromium.launchPersistentContext(join(directory, profile), {
+      headless: true, timeout: 20_000, ignoreHTTPSErrors: false,
+      ...(channel ? { channel } : {}),
+      env: { ...process.env, HOME: home, NSS_DEFAULT_DB_TYPE: 'sql' },
+    });
     // Negative control: same browser and endpoint, no imported CA.
     const untrustedProfile = await nss('untrusted', false);
-    context = await chromium.launchPersistentContext(join(directory, 'untrusted-profile'), {
-      headless: true, timeout: 20_000, ignoreHTTPSErrors: false,
-      env: { ...process.env, HOME: untrustedProfile.home, NSS_DEFAULT_DB_TYPE: 'sql' },
-    });
+    context = await launch('untrusted-profile', untrustedProfile.home);
     const untrusted = await context.newPage();
     await expect(untrusted.goto(env.url)).rejects.toThrow(/ERR_CERT_AUTHORITY_INVALID|SEC_ERROR_UNKNOWN_ISSUER|SSL|certificate/i);
     await context.close(); context = undefined;
     const trustedProfile = await nss('trusted', true);
-    context = await chromium.launchPersistentContext(join(directory, 'trusted-profile'), {
-      headless: true, timeout: 20_000, ignoreHTTPSErrors: false,
-      env: { ...process.env, HOME: trustedProfile.home, NSS_DEFAULT_DB_TYPE: 'sql' },
-    });
-    // Keep the original JWT even when WS authority revocation clears browser auth.
-    const originalToken = env.token();
-    await context.addInitScript(({ token, actor }) => {
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify({ id: actor.userId, username: actor.username }));
-      localStorage.setItem('permissions', JSON.stringify(actor.permissions));
+    context = await launch('trusted-profile', trustedProfile.home);
+    await context.addInitScript(() => {
       localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
-    }, { token: originalToken, actor: env.owner });
+    });
     const page = await context.newPage(), errors: string[] = [];
     const sockets: Array<{ url: string; sent: number; received: number }> = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -63,6 +62,34 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     });
     const session = await (await import('../../apps/db-ops-api/src/chat-database-service.js')).chatDatabaseService
       .createSession(env.owner, { title: '可信 TLS 普通对话' });
+    // Real REST login in the browser over the trusted https origin: the login
+    // gate exchanges the fixture user's password for a JWT, which the app then
+    // presents to the same-origin WSS endpoint.
+    await page.goto(env.url);
+    expect(page.url()).toMatch(/^https:\/\//);
+    expect(await page.evaluate(() => isSecureContext)).toBe(true);
+    await page.locator('.login-gate input[autocomplete="username"]').fill('t06-owner');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(env.ownerPassword);
+    const loginResponse = page.waitForResponse(response =>
+      response.url().endsWith('/api/auth/login') && response.request().method() === 'POST');
+    await page.locator('.login-gate__connect').click();
+    expect((await loginResponse).status()).toBe(200);
+    await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
+    await expect(page.locator('.nav-item').first()).toBeVisible({ timeout: 15_000 });
+    // The gate resolves permissions asynchronously; navigation must not race it.
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('permissions'))).not.toBeNull();
+    // Keep the JWT issued to the browser even when WS authority revocation clears browser auth.
+    const originalToken = (await page.evaluate(() => localStorage.getItem('token')))!;
+    expect(originalToken).toBeTruthy();
+    // An Edge project label alone would still run bundled Chromium; prove the engine.
+    const identity = await page.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      brands: ((navigator as any).userAgentData?.brands ?? []).map((brand: any) => brand.brand as string),
+    }));
+    if (channel === 'msedge') {
+      expect(identity.userAgent).toMatch(/Edg\//);
+      if (identity.brands.length) expect(identity.brands).toContain('Microsoft Edge');
+    }
     await page.goto(`${env.url}/chat?session=${session.session_id}`);
     await page.locator('.agent-chat__input textarea').fill('验证可信 WSS 普通对话');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
@@ -110,12 +137,17 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     })).status, { id, token: originalToken })).toBe(404);
     expect(errors).toEqual([]); expect(env.workerErrors).toEqual([]); expect(env.observationErrors).toEqual([]);
     await writeFile(test.info().outputPath('trusted-tls.json'), JSON.stringify({
-      trust: 'isolated Chromium NSS CA; certificate errors enabled; untrusted profile rejected',
+      browser: { channel: channel ?? 'bundled-chromium', userAgent: identity.userAgent,
+        edgeBrand: identity.brands.includes('Microsoft Edge') },
+      login: 'REST /api/auth/login 200 from the login gate; real user row, bcrypt and JWT',
+      trust: 'isolated NSS CA in per-profile HOME; certificate errors enabled; untrusted profile rejected',
       secureContext: true, sameOriginWssConnections: bidirectional.length, attemptedConnections: agentSockets.length,
       ordinaryChatReply: true,
       completedResults: 2, offlineSeconds: 5, reconnectReplayed: false,
       sameJwtRevokedHttpStatus: 404, provider: 'synthetic; zero real model calls',
-      topology: 'Vite TLS proxy → real Fastify/MySQL and DirectAdapter; not production Edge qualification',
+      topology: channel === 'msedge'
+        ? 'Microsoft Edge (msedge channel) → Vite TLS proxy → real Fastify/MySQL and DirectAdapter; not a production deployment'
+        : 'Bundled Chromium → Vite TLS proxy → real Fastify/MySQL and DirectAdapter; not production Edge qualification',
     }, null, 2));
   } finally {
     try { await context?.close(); } finally {

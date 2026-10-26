@@ -19,6 +19,7 @@ import { ActorContextService, signAccessToken } from '../../../apps/db-ops-api/s
 import { createVerifyToken } from '../../../apps/db-ops-api/src/auth-middleware.js';
 import { dbConnection } from '../../../apps/db-ops-api/src/db-connection.js';
 import { chatDatabaseService } from '../../../apps/db-ops-api/src/chat-database-service.js';
+import { authDatabaseService } from '../../../apps/db-ops-api/src/auth-database-service.js';
 import { registerChatRoutes } from '../../../apps/db-ops-api/src/chat-routes.js';
 import { InvestigationAuthorization } from '../../../apps/db-ops-api/src/investigations/authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from '../../../apps/db-ops-api/src/investigations/session-bridge.js';
@@ -53,7 +54,9 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
   const mysql = require('mysql2/promise');
+  const bcrypt = require('bcrypt');
   const Fastify = require('fastify');
+  const ownerPassword = 't06-owner-password';
   const schema = `t06_workspace_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const secret = randomUUID();
   process.env.JWT_SECRET_KEY = secret; process.env.AGENT_WS_HOST = '127.0.0.1'; process.env.AGENT_WS_PORT = '0';
@@ -98,7 +101,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     await new MigrationRunner(pool).run();
     // The historical migration catalog does not seed the existing ai:view code.
     await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('ai:view','AI settings read','ai','view')");
-    await pool.query("INSERT INTO users (id, username, password_hash) VALUES (101,'t06-owner','no-login'),(102,'t06-viewer','no-login')");
+    await pool.query("INSERT INTO users (id, username, password_hash) VALUES (101,'t06-owner',?),(102,'t06-viewer','no-login')", [bcrypt.hashSync(ownerPassword, 10)]);
     await pool.query("INSERT INTO roles (id,name) VALUES (101,'t06-readonly')");
     await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('chat:view','chat:send','instance:view','metric:view','alert:view','config:view')");
     await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,101),(102,101)');
@@ -284,6 +287,20 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     await registerInvestigationProfileRoutes(app, verify);
     await registerInvestigationGovernanceRoutes(app, verify, new InvestigationGovernanceStore(() => governanceAvailable ? pool : null, investigationBudgetConfiguration, contexts));
     await registerChatRoutes(app, { verifyToken: verify, service: chatDatabaseService, handleChatSend: async () => { throw new Error('USE_REAL_WS_CHAT'); } });
+    // Same credential → JWT contract as the production login route, against the
+    // real user row and bcrypt verifier; audit/refresh bookkeeping stays in the
+    // real server. Only the trusted TLS browser path uses this endpoint.
+    app.post('/api/auth/login', async (request: any, reply: any) => {
+      const { username, password } = (request.body ?? {}) as { username?: string; password?: string };
+      if (!username || !password) return reply.code(400).send({ error: '用户名和密码不能为空' });
+      const user = await authDatabaseService.getUserByUsername(username);
+      if (!user || !await authDatabaseService.verifyPassword(username, password)) {
+        return reply.code(401).send({ error: '用户名或密码错误' });
+      }
+      const actor = await contexts.loadActiveActor(user.id);
+      return { token: signAccessToken(actor, secret), expiresIn: 3600,
+        user: { id: actor.userId, username: actor.username } };
+    });
     app.get('/api/auth/permissions', { preHandler: verify }, async (request: any) => request.user.permissions);
     app.get('/api/agents', { preHandler: verify }, async () => ({ defaultId: 'main', agents: [{ id: 'main', name: 'Fixture' }] }));
     app.get('/api/models', { preHandler: verify }, async () => ({ models: [] }));
@@ -307,7 +324,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
     return { url: `${optionsInput.tls ? 'https' : 'http'}://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
       bridgeFlags, rca, alertBridge: pilotBridge,
-      system,systemServiceId,apiUrl,promptObservations,systemConsumption,
+      system,systemServiceId,apiUrl,promptObservations,systemConsumption,ownerPassword,
       token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       governanceStorage: (available: boolean) => governanceAvailable = available,
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },
