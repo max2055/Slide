@@ -766,9 +766,35 @@ function engineFamily(text) {
   return 'unknown';
 }
 
+/* 版本只能取自描述本身的版本号：架构（x86_64/aarch64/amd64…）、内核号、构建号以及括号内的
+   代号/位数补充都不是版本；描述明确 unknown/未知或清理后没有数字时，版本不可确认。 */
+const VERSION_METADATA = [
+  /[（(]\s*(?!v?\d+(?:\.\d+)*\s*[）)])[^）)]*[）)]/g,
+  /\b(?:x86_?64|amd64|x64|aarch64|arm64|armv\d+\w*|i[3-6]86|ppc64\w*|s390x|riscv\w*|mips\w*)\b/gi,
+  /\b\d+-bit\b/gi,
+  /\b(?:kernel|build|内核|构建)\s*[:#]?\s*v?\d+(?:[.\-_+]\d+)*/gi,
+];
+const VERSION_UNKNOWN = /unknown|未知|未确认|待确认|n\/a\b/i;
+
+function versionSourceText(text) {
+  let value = String(text ?? '');
+  for (const pattern of VERSION_METADATA) value = value.replace(pattern, ' ');
+  return value.trim();
+}
+
 const parseVersion = (text) => {
-  const m = String(text ?? '').match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  const value = versionSourceText(text);
+  if (!value || VERSION_UNKNOWN.test(value)) return null;
+  const m = value.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
   return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
+};
+
+/* 展示用版本号：保留系统描述中的原始写法（如 22.04、V10），不归一化。 */
+const versionLabel = (text) => {
+  const value = versionSourceText(text);
+  if (!value || VERSION_UNKNOWN.test(value)) return null;
+  const m = value.match(/\d+(?:\.\d+)?(?:\.\d+)?/);
+  return m ? m[0] : null;
 };
 
 function versionInRange(version, target) {
@@ -790,7 +816,7 @@ function constraintLabel(target) {
   if (target.os) parts.push(`系统 ${target.os.join('/')}`);
   if (target.platform) parts.push(`平台 ${target.platform.toUpperCase()}`);
   if (target.min) parts.push(`版本 ${rangeLabel(target)}`);
-  else if (target.requireVersion) parts.push('版本需可确认');
+  else if (target.requireVersion) parts.push('系统版本需可从系统描述确认（架构/内核/构建号不作为版本）');
   return parts.join(' · ');
 }
 
@@ -801,7 +827,7 @@ function resourceEngine(row) {
     const found = SERVER_OS_FAMILIES.find(([pattern]) => pattern.test(os));
     const osFamily = found ? found[1] : 'unknown';
     return {
-      label: os || '未知系统', kind: 'server', osFamily, version: parseVersion(os),
+      label: os || '未知系统', kind: 'server', osFamily, version: parseVersion(os), versionLabel: versionLabel(os),
       family: LINUX_OS.includes(osFamily) ? 'linux' : osFamily,
     };
   }
@@ -855,14 +881,19 @@ function compatResult(row) {
   }
   if (target.min || target.requireVersion) {
     if (!resource.version) {
-      return reject(`${resource.label} 的版本未知`, `无法确认 ${resource.label} 的版本，不能判定与 ${tplLabel} 兼容`);
+      return reject(`${resource.label} 的${target.kind === 'server' ? '系统版本' : '版本'}未知`,
+        target.kind === 'server'
+          ? `无法确认 ${resource.label} 的系统版本：系统描述中的架构、内核、构建号不作为系统版本，需明确系统版本后才能判定与 ${tplLabel} 兼容`
+          : `无法确认 ${resource.label} 的版本，不能判定与 ${tplLabel} 兼容`);
     }
     if (target.min && !versionInRange(resource.version, target)) {
       return reject(`${resource.label} 与 ${tplLabel} 的版本不兼容`,
         `模板 ${tplLabel} 要求版本 ${rangeLabel(target)}，而 ${resource.label} 为 ${resource.version.join('.')}，不兼容，不能绑定`);
     }
   }
-  return { ok: true, detail: `${resource.label} 满足 ${tplLabel} 的适配约束（${constraintLabel(target)}）` };
+  /* 兼容时说明版本来源：系统版本取自资源描述，架构/内核/构建号不参与判定。 */
+  const versionSource = target.requireVersion ? `，系统版本 ${resource.versionLabel} 取自系统描述` : '';
+  return { ok: true, detail: `${resource.label} 满足 ${tplLabel} 的适配约束（${constraintLabel(target)}${versionSource}）` };
 }
 
 /* 试采证据：本轮试采优先，其次是该资源显式绑定的历史快照；没有就是未试采。 */
@@ -1682,6 +1713,18 @@ function update() {
   syncControls();
   syncUrl();
 }
+
+// 仅用于设计评审/自动化检查覆盖演示服务器的系统描述，验证"系统版本来源"判定；
+// 只改内存中的演示数据并重绘，不是产品 API，不读写后端。
+window.__max241Review = {
+  setServerOs(id, os) {
+    const row = RESOURCE_ROWS.server.find((r) => r.id === Number(id));
+    if (!row) return false;
+    row.os = String(os ?? '');
+    update();
+    return true;
+  },
+};
 
 /* ---------------- 评审控制条 ---------------- */
 

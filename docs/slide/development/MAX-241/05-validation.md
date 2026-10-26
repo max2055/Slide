@@ -227,3 +227,60 @@ MAX241_CDP_PORT=19354 node docs/slide/development/MAX-241/verify/run-checks.mjs 
 - `prototype/app.js` sha256 `4943aa136f3d565f3b89437bcf1f2698c6758f6eccd8f98b6a45b0bc0e0704e4`
 - `verify/version-checks.mjs` sha256 `b3a291f29d496a5f81deafc9a7c2b279c0674336b6cff562ca5db9dab373dc44`
 - 机器结果：GREEN 23/23、Chrome 103/103、Edge 103/103；RED 20/23（同一脚本指向 `4d47407e1` 的 `app.js` 副本）。
+
+## 11. F1 系统版本来源修复（2026-10-26，对应 Chief review5）
+
+review5 接受纯 `unknown`/无版本拒绝，但指出新缺口：`parseVersion` 无条件取系统描述里的第一个数字，把架构号当成了系统版本。`CentOS unknown (x86_64)`、`Kylin OS unknown (aarch64)`、`Linux x86_64` 因此被判兼容，且检查、页头试采、配置试采、发布都按同一错误结论放行。
+
+### 11.1 修复
+
+| 项 | 根因 | 修复 |
+|---|---|---|
+| 架构号被当作系统版本 | 取数前没有区分系统版本与非版本元数据 | 新增 `VERSION_METADATA` 清洗：括号补充说明（括号内是纯版本号时保留）、架构标识（`x86_64`/`amd64`/`x64`/`aarch64`/`arm64`/`i386`/`ppc64*`/`s390x`/`riscv*`/`mips*`）、`<n>-bit`、`kernel|build|内核|构建` 及其编号 |
+| 描述写明 unknown 仍取到数字 | 只判断能否解析出数字 | 清洗后命中 `unknown|未知|未确认|待确认|n/a` 即判定版本不可确认，返回 `null` |
+| 展示版本不忠实 | 直接打印归一化数组（`22.04` → `22.4`） | 新增 `versionLabel`，按描述原样显示（`V10`、`22.04`、`9.4`） |
+| 未知语义不可见 | 拒绝原因只说“版本未知” | 服务器拒绝原因明确“系统描述中的架构、内核、构建号不作为系统版本”；通过时注明“系统版本 X 取自系统描述” |
+
+- 判定入口不变：检查（`runCompat`）、页头试采（`headerTrial`）、配置试采（`runTrial`）、发布（`publishConfig`）仍各自调用同一个 `compatResult`，没有新增第二套判定，也没有放行旁路。
+- 不发明版本下界或支持矩阵，不删除已支持操作系统；数据库/设备版本字符串同样先剔除架构等元数据，保留原有版本范围判定。
+- 新增评审用内存钩子 `window.__max241Review.setServerOs(id, os)`（仅覆盖演示数据并重绘，不是产品 API，不写后端），使反例可在浏览器中复现。
+
+### 11.2 证据（合成输入，绑定本轮源码）
+
+| 检查 | 修复前（RED） | 修复后（GREEN） |
+|---|---|---|
+| `verify/version-checks.mjs`（41 项） | 32/41 —— 9 项失败，含 review5 的 3 反例 × 2 模板 | **41/41** |
+| `verify/run-checks.mjs` 完整检查，Chrome 156.0.8078.48 | — | **130/130** |
+| 同一脚本，Microsoft Edge 156.0.4314.42（`Browser.getVersion` = `Edg/156.0.4314.42`） | — | **130/130** |
+
+- RED 复现：先只新增用例、不改源码，同一脚本 32/41；失败项恰为 `CentOS unknown (x86_64)`、`Kylin OS unknown (aarch64)`、`Linux x86_64`（各 2 模板）、`CentOS (x86_64)`、`Linux kernel 5.14`、`CentOS build 19042`；其余 32 项（含 Kylin V10、CentOS 7.9、MySQL/PostgreSQL/达梦、网络子类型）行为不变。
+- 新增 GREEN 用例 18 项：3 反例 × 2 模板、仅架构无版本、内核号、构建号、`CentOS 7.9 (x86_64)`、`Kylin OS V10 SP3 (aarch64)`、`Ubuntu 22.04 amd64`、`Red Hat Enterprise Linux 9.4 (x86_64)`、`Linux 6.1 (x86_64)`、`CentOS Linux 7 (Core)`、`Ubuntu 22.04.3 LTS (Jammy)`、Windows 带架构负例 × 2。
+- 浏览器新增 27 项（103 → 130）：
+  - 3 反例 × 3 档尺寸（1440×900 / 1366×768 / 1920×1080）：检查以 `role=alert` 拒绝并显示未知语义、试采与发布禁用、检查按钮仍可聚焦、无整页横向溢出；页头试采同样未通过且不产生试采结果（9 + 9 项）。
+  - `CentOS 7.9 (x86_64)` 三档尺寸：检查通过并注明“系统版本 7.9 取自系统描述”，试采 3 项、发布进入“等待应用”（3 项）。
+  - `Kylin OS V10 SP3 (aarch64)` / `Ubuntu 22.04 amd64` / `Red Hat Enterprise Linux 9.4 (x86_64)` 跨两个 Linux 模板仍通过（3 项）。
+  - 合法检查后把系统改为 `Linux x86_64`：配置试采、页头试采、发布三个入口各自独立拒绝，界面仍保留旧的“兼容”结论但入口不放行（3 项）。
+- 截图：`/Users/max/Coding/40-Slide/outputs/MAX-241-f1-os-provenance-20261026/screenshots-chrome|screenshots-edge/`（`server-os-provenance-*`）。
+- 浏览器身份：`browser-chrome.json`（`Chrome/156.0.8078.48`）、`browser-edge.json`（`Edg/156.0.4314.42`）。
+
+### 11.3 复现
+
+```bash
+# 1) 原型服务（仓库根目录）
+frontend/node_modules/.bin/vite --config docs/slide/development/MAX-241/prototype/vite.config.mjs
+# 2) 判定函数（合成输入）
+node docs/slide/development/MAX-241/verify/version-checks.mjs
+# 3) 浏览器（Chrome / 实际 Edge）
+node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" MAX241_CDP_PORT=9344 \
+  node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+# 4) 浏览器身份
+node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执行文件>" 9356 <输出JSON>
+```
+
+### 11.4 边界与绑定
+
+- 合成系统描述只证明判定函数与原型呈现；**不代表真实服务器/采集验收**，也没有连接后端、真实资源或共享服务。
+- 生产模板目录、真实资源的系统版本字段来源与未知语义仍需实施阶段按真实契约验证；本轮不改生产 frontend/API/导航/共享组件。
+- 未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
+- SHA 绑定见 §11.5。

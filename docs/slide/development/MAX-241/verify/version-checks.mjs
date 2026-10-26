@@ -47,6 +47,25 @@ const cases = [
   { name: 'CentOS 版本未知 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'CentOS unknown' }, expect: false },
   { name: 'Linux 仅有系统名无版本 × Linux 最小模板 → 不宣称兼容', cls: 'server', template: 'linux-minimal', row: { os: 'Linux' }, expect: false },
   { name: 'Kylin 版本缺失 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'Kylin OS' }, expect: false },
+  /* review5 反例：架构/内核/构建号不是系统版本；两个 Linux 模板分别验证。 */
+  { name: 'CentOS unknown (x86_64) × Linux 模板 → 架构数字不是版本', cls: 'server', template: 'linux-basic', row: { os: 'CentOS unknown (x86_64)' }, expect: false },
+  { name: 'CentOS unknown (x86_64) × Linux 最小模板 → 架构数字不是版本', cls: 'server', template: 'linux-minimal', row: { os: 'CentOS unknown (x86_64)' }, expect: false },
+  { name: 'Kylin OS unknown (aarch64) × Linux 模板 → 架构数字不是版本', cls: 'server', template: 'linux-basic', row: { os: 'Kylin OS unknown (aarch64)' }, expect: false },
+  { name: 'Kylin OS unknown (aarch64) × Linux 最小模板 → 架构数字不是版本', cls: 'server', template: 'linux-minimal', row: { os: 'Kylin OS unknown (aarch64)' }, expect: false },
+  { name: 'Linux x86_64 无系统版本 × Linux 模板 → 只有架构不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'Linux x86_64' }, expect: false },
+  { name: 'Linux x86_64 无系统版本 × Linux 最小模板 → 只有架构不宣称兼容', cls: 'server', template: 'linux-minimal', row: { os: 'Linux x86_64' }, expect: false },
+  { name: 'CentOS 只有架构括号无版本 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'CentOS (x86_64)' }, expect: false },
+  { name: 'Linux 内核号 × Linux 模板 → 内核号不是系统版本', cls: 'server', template: 'linux-basic', row: { os: 'Linux kernel 5.14' }, expect: false },
+  { name: 'CentOS 构建号 × Linux 最小模板 → 构建号不是系统版本', cls: 'server', template: 'linux-minimal', row: { os: 'CentOS build 19042' }, expect: false },
+  { name: 'CentOS 7.9 (x86_64) × Linux 模板 → 合法版本带架构仍兼容', cls: 'server', template: 'linux-basic', row: { os: 'CentOS 7.9 (x86_64)' }, expect: true },
+  { name: 'Kylin OS V10 SP3 (aarch64) × Linux 最小模板 → 合法版本带架构仍兼容', cls: 'server', template: 'linux-minimal', row: { os: 'Kylin OS V10 SP3 (aarch64)' }, expect: true },
+  { name: 'Ubuntu 22.04 amd64 × Linux 模板 → 合法版本带架构仍兼容', cls: 'server', template: 'linux-basic', row: { os: 'Ubuntu 22.04 amd64' }, expect: true },
+  { name: 'Red Hat Enterprise Linux 9.4 (x86_64) × Linux 最小模板 → 合法版本带架构仍兼容', cls: 'server', template: 'linux-minimal', row: { os: 'Red Hat Enterprise Linux 9.4 (x86_64)' }, expect: true },
+  { name: 'Linux 6.1 (x86_64) × Linux 模板 → 合法版本带架构仍兼容', cls: 'server', template: 'linux-basic', row: { os: 'Linux 6.1 (x86_64)' }, expect: true },
+  { name: 'CentOS Linux 7 (Core) × Linux 模板 → 括号代号不误判版本', cls: 'server', template: 'linux-basic', row: { os: 'CentOS Linux 7 (Core)' }, expect: true },
+  { name: 'Ubuntu 22.04.3 LTS (Jammy) × Linux 最小模板 → 括号代号不干扰版本', cls: 'server', template: 'linux-minimal', row: { os: 'Ubuntu 22.04.3 LTS (Jammy)' }, expect: true },
+  { name: 'Windows Server 2019 (x86_64) × Linux 模板 → 操作系统不符', cls: 'server', template: 'linux-basic', row: { os: 'Windows Server 2019 (x86_64)' }, expect: false },
+  { name: 'Windows Server 2019 amd64 × Linux 最小模板 → 操作系统不符', cls: 'server', template: 'linux-minimal', row: { os: 'Windows Server 2019 amd64' }, expect: false },
 ];
 
 const results = cases.map((c) => {
