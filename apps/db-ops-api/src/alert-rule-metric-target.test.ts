@@ -113,4 +113,36 @@ describe('alert rule save checks threshold units (#256)', () => {
     expect(result.status).toBe(400);
     expect(result.body.code).toBe('ALERT_THRESHOLD_RATIO_RANGE');
   });
+
+  it('accepts the ratio values on update', async () => {
+    const result = await request('PUT', { threshold_template: { warning: 0.8, error: 0.9, critical: 0.95 } },
+      'server', { ...ratioRule, threshold: 0.8 });
+    expect(result.status).toBe(200);
+    expect(result.service.updateAlertRule).toHaveBeenCalled();
+  });
+
+  // unit=1 is not a ratio: load averages and link states keep their own ranges.
+  it('accepts an unbounded load average on create and update', async () => {
+    const created = await request('POST', { target_type: 'server', metric_name: 'linux.load.one_minute', threshold: 4 });
+    expect(created.status).toBe(200);
+    expect(created.service.createAlertRule).toHaveBeenCalled();
+
+    const updated = await request('PUT', { threshold: 4 }, 'server',
+      { metric_name: 'linux.load.one_minute', target_type: 'server', threshold: 8, threshold_template: null });
+    expect(updated.status).toBe(200);
+    expect(updated.service.updateAlertRule).toHaveBeenCalledWith(99, { threshold: 4 });
+  });
+
+  it('accepts the down state 0 on a network interface on create and update', async () => {
+    const created = await request('POST', {
+      target_type: 'network_device', metric_name: 'network.interface.oper_up', operator: '=', threshold: 0,
+    });
+    expect(created.status).toBe(200);
+    expect(created.service.createAlertRule).toHaveBeenCalled();
+
+    const updated = await request('PUT', { operator: '=', threshold: 0 }, 'network_device',
+      { metric_name: 'network.interface.oper_up', target_type: 'network_device', threshold: 1, threshold_template: null });
+    expect(updated.status).toBe(200);
+    expect(updated.service.updateAlertRule).toHaveBeenCalledWith(99, { operator: '=', threshold: 0 });
+  });
 });

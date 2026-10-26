@@ -2,19 +2,24 @@ import type { AlertLevel } from './compiled-rule.js';
 
 /**
  * MAX-232 / issue #256: an alert threshold is only meaningful together with the
- * unit of the metric it is attached to.
+ * meaning of the metric it is attached to.
  *
- * `linux.filesystem.used_ratio` has `unit=1` and a 0..1 range, so the legacy
- * 80/90/95 percent values must be written as 0.80/0.90/0.95. A rule saved with
- * 80 can never fire on a ratio metric. Byte metrics (`unit=By`) keep absolute
- * integer thresholds and must not receive the filesystem ratio.
+ * `linux.filesystem.used_ratio` is a 0..1 ratio, so the legacy 80/90/95 percent
+ * values must be written as 0.80/0.90/0.95. A rule saved with 80 can never fire
+ * on that metric. Byte metrics (`unit=By`) keep absolute integer thresholds and
+ * must not receive the filesystem ratio.
+ *
+ * `unit=1` alone is not enough: `linux.load.one_minute` is an unbounded load
+ * average and `network.interface.oper_up` is a 0/1 link state (down=0). The
+ * 0..1 check is therefore keyed off the ratio metric itself, so those metrics
+ * keep their own ranges, operators and legitimate zero values.
  */
 export type AlertThresholdLevel = AlertLevel | 'threshold';
 
-export type AlertThresholdCode =
-  | 'ALERT_THRESHOLD_RATIO_RANGE'
-  | 'ALERT_THRESHOLD_BYTES_ABSOLUTE'
-  | 'ALERT_THRESHOLD_MACRO_NOT_ALLOWED';
+export type AlertThresholdCode = 'ALERT_THRESHOLD_RATIO_RANGE' | 'ALERT_THRESHOLD_BYTES_ABSOLUTE';
+
+/** Metrics whose value is used bytes divided by total bytes (0..1). */
+const RATIO_METRIC_IDS = new Set(['linux.filesystem.used_ratio']);
 
 export interface AlertThresholdViolation {
   code: AlertThresholdCode;
@@ -68,42 +73,34 @@ function thresholdEntries(input: AlertThresholdInput): ThresholdEntry[] {
 }
 
 /**
- * Returns the first violation, or null when the thresholds match the metric unit.
- * Metrics in other units (%, count/s, bytes in the legacy registry, ...) are left
- * to the rule editor's existing numeric validation.
+ * Returns the first violation, or null when the thresholds match the metric.
+ * Other dimensionless metrics (`unit=1`), legacy units and counters are left to
+ * the rule editor's existing validation. Unresolved macros on byte metrics keep
+ * their existing behaviour; only the ratio metric requires an explicit value
+ * because a macro could otherwise resolve to the legacy 80/90/95.
  */
 export function validateAlertThresholdUnits(input: AlertThresholdInput): AlertThresholdViolation | null {
   const { metricId, unit } = input;
-  if (unit !== '1' && unit !== 'By') return null;
   const entries = thresholdEntries(input);
+  if (entries.length === 0) return null;
 
-  const macro = entries.find(entry => entry.macro);
-  if (macro) {
-    const target = unit === '1' ? '0.80/0.90/0.95 等 0–1 比率' : '绝对字节数';
-    return {
-      code: 'ALERT_THRESHOLD_MACRO_NOT_ALLOWED',
-      message: `指标 ${metricId} 的 unit=${unit} 不接受未解析的告警宏 ${macro.macro}；请按单位显式填写${target}。`,
-      threshold_level: macro.level,
-      value: null,
-    };
-  }
-
-  if (unit === '1') {
-    const bad = entries.find(entry => !(entry.value !== null && entry.value > 0 && entry.value <= 1));
+  if (RATIO_METRIC_IDS.has(metricId)) {
+    const bad = entries.find(entry => entry.value === null || entry.value <= 0 || entry.value > 1);
     if (!bad) return null;
     return {
       code: 'ALERT_THRESHOLD_RATIO_RANGE',
-      message: `指标 ${metricId} 的 unit=1 是 0–1 比率，${bad.level} 阈值 ${bad.value} 超出范围；80%/90%/95% 应写作 0.80/0.90/0.95，不能直接填 80/90/95。`,
+      message: `指标 ${metricId} 是 0–1 比率，${bad.level} 阈值 ${bad.macro ?? bad.value} 超出范围；80%/90%/95% 应写作 0.80/0.90/0.95，不能直接填 80/90/95。`,
       threshold_level: bad.level,
       value: bad.value,
     };
   }
 
-  const bad = entries.find(entry => !(entry.value !== null && Number.isInteger(entry.value) && entry.value > 0));
+  if (unit !== 'By') return null;
+  const bad = entries.find(entry => entry.value !== null && !Number.isInteger(entry.value));
   if (!bad) return null;
   return {
     code: 'ALERT_THRESHOLD_BYTES_ABSOLUTE',
-    message: `指标 ${metricId} 的 unit=By 需要绝对字节阈值（正整数），${bad.level} 阈值 ${bad.value} 不是绝对字节；文件系统使用率请改用 linux.filesystem.used_ratio 与 0.80/0.90/0.95。`,
+    message: `指标 ${metricId} 的 unit=By 需要绝对字节阈值（整数），${bad.level} 阈值 ${bad.value} 不是绝对字节；文件系统使用率请改用 linux.filesystem.used_ratio 与 0.80/0.90/0.95。`,
     threshold_level: bad.level,
     value: bad.value,
   };

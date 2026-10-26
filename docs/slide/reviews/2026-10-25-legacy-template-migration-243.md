@@ -42,7 +42,7 @@
   - 允许派生速率/估算指标的 `partial` + `estimated` 证据；`unknown`/`invalid` 和 null 仍然拒绝，计数器重置不会被当作 0。
   - 查询窗口多取一个 bucket，并只裁掉查询边缘没有样本的尾 bucket；真实停采会让最后一个有值 bucket 变 `stale`，中间缺桶仍是 `gap`。
 - `apps/db-ops-api/src/metrics/alert-metric-catalog.ts` + `server.ts`：告警规则 API 先查旧注册表，再查已审核语义指标；新规则可以通过既有 API 编辑，而不是复制一份旧的 `metric_definitions`。
-- `apps/db-ops-api/src/alerts/threshold-units.ts` + `server.ts`：告警规则保存时按指标单位校验阈值语义。`unit=1` 只接受 (0, 1]（80/90/95 直接返回 `ALERT_THRESHOLD_RATIO_RANGE` 并提示 0.80/0.90/0.95）；`unit=By` 只接受正整数绝对字节（比率返回 `ALERT_THRESHOLD_BYTES_ABSOLUTE`）；这两类指标上的旧告警宏（如 `${disk_warning}`）被拒绝（`ALERT_THRESHOLD_MACRO_NOT_ALLOWED`），避免只改指标名后继续沿用旧百分比。迁移 `plan`（预览）仍由 `validateReplacementDefinition` 先行校验，`disable/delete --apply` 复用同一份计划。
+- `apps/db-ops-api/src/alerts/threshold-units.ts` + `server.ts`：告警规则保存时校验阈值语义，作用于 `POST` 和 `PUT`。比率校验只针对 `linux.filesystem.used_ratio`：阈值必须是 (0, 1] 的显式数值，80/90/95 返回 `ALERT_THRESHOLD_RATIO_RANGE` 并提示 0.80/0.90/0.95，未解析宏也拒绝（宏可能解析成旧百分比）。`unit=By` 只接受整数绝对字节（0.8/0.9/0.95 返回 `ALERT_THRESHOLD_BYTES_ABSOLUTE`），真实 0 与操作符语义保留。`unit=1` 不等于比率：`linux.load.one_minute`（load average，可 > 1）和 `network.interface.oper_up`（down=0）不受比率限制。迁移 `plan`（预览）仍由 `validateReplacementDefinition` 先行校验，`disable/delete --apply` 复用同一份计划。
 - 文档：`2026-10-25-eight-issues-followup.md` 的 #6 表已把 80/90/95 修正为 ratio 0.80/0.90/0.95；本文件补充了换算公式和保存校验。
 
 ## 迁移步骤（实际执行）
@@ -86,14 +86,16 @@ ORDER BY timestamp_ms;
 
 ## 边界与独立恢复验证（#256）
 
-真实基线最高 `/` 为 0.371783，未达到 0.80，因此 0.79/0.81 边界不能从生产观测直接取得。`apps/db-ops-api/src/alerts/filesystem-ratio-boundary.test.ts` 以 server:3 的 11 个真实挂载容量（2026-10-25T13:24:52Z）为分母，把 used 分别设为 `floor(size × 0.79)` 与 `ceil(size × 0.81)`：
+真实基线最高 `/` 为 0.371783，未达到 0.80，因此 0.79/0.81 边界不能从生产观测直接取得。`apps/db-ops-api/src/alerts/filesystem-ratio-boundary.test.ts` 使用 server:3 的 11 个真实 used_bytes/size_bytes 配对（2026-10-25T13:24:52Z）：真实配对经 `executeDerived` 得到的 ratio 与采集值一致（14 位小数内），全部 healthy；边界用例保留真实 size 作分母，把 used 分别设为 `floor(size × 0.79)` 与 `ceil(size × 0.81)`：
 
 - 11/11 挂载：0.79 侧 < 0.80 → healthy；0.81 侧 > 0.80 → warning。
 - 0.89 → warning、0.90 → error、0.94 → error、0.95 → critical。
-- 三个挂载同时为 0.81、其余为 0.79 时只有这三个 firing；把其中一个恢复到 0.79 后只有该挂载恢复，其余保持 firing。
-- used 缺失 → `value=null` / `quality=unknown`；size 缺失 → `missing_input`；真实 0（`/dev`）→ `value=0` / `quality=good`。
-- 旧 80/90/95 直接用于 ratio（0.371783…0.999999）永不触发，复现了原指引的漏报风险。
+- 真实 `executeDerived` 产出逐挂载 ratio 后，经生产消费者评估入口 `evaluateOperationalRule` → `evaluateMetric` 判定：三个挂载为 0.81、其余 0.79 时规则 firing；只恢复其中一个后规则仍 firing；全部恢复到 0.79 才 `recovery=true`。告警按规则/服务器去重，不存在“单挂载告警行各自恢复”的持久化语义。
+- used 缺失 → `value=null` / `quality=unknown`，评估为 unknown，不 resolve 也不当作 0；size 缺失 → `missing_input`；真实 0（`/dev`）→ `value=0` / `quality=good`。
+- 旧 80/90/95 直接用于 ratio（0.371783…0.999999）永不触发，复现了原指引的漏报风险；在 `ServerAlertEvaluator` 状态机 replay 中，这类规则遇到 >0.80 的真实比率会走 `resolveAlert` 而不是 `createAlert`。
 - 库大小规则在真实 1,278,853,120 By 为 healthy；101/501/1001 GiB 分别为 warning/error/critical。
+
+`ServerAlertEvaluator` 的 create/touch/resolve replay 只替换了采集查询与 MySQL 支撑的 `alertDatabaseService`/`serverDatabaseService`，派生、规则编译和触发/恢复判定都是生产实现。**未完成**：真实 MySQL 中的告警行创建/更新/恢复（SQL fixture）需与 MAX-225 串行交接后执行，不能在报告中宣称已持久化验证。
 
 这些是真实挂载分母上的边界构造，不是生产已达到 0.79/0.81 的观测，报告里不得表述为真实高使用率事件。
 
