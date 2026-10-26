@@ -1,0 +1,22 @@
+import { spawn } from 'node:child_process';
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const PORT = 9334;
+const url = process.argv[2];
+const profile = `/tmp/max241-probe-${process.pid}`;
+const chrome = spawn(CHROME, ['--headless=new','--disable-gpu','--no-first-run',`--remote-debugging-port=${PORT}`,`--user-data-dir=${profile}`,'--window-size=1440,900','about:blank'], { stdio: 'ignore' });
+async function wait() { for (let i=0;i<80;i++){ try { const r = await fetch(`http://127.0.0.1:${PORT}/json/list`); const t = await r.json(); const p = t.find(x=>x.type==='page'); if (p) return p.webSocketDebuggerUrl; } catch {} await new Promise(r=>setTimeout(r,200)); } throw new Error('no chrome'); }
+const ws = new WebSocket(await wait());
+await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;});
+let id=0; const pending=new Map(); const logs=[];
+ws.onmessage=(ev)=>{const m=JSON.parse(ev.data); if(m.id&&pending.has(m.id)){const{res,rej}=pending.get(m.id);pending.delete(m.id);m.error?rej(new Error(m.error.message)):res(m.result);} else if(m.method==='Runtime.consoleAPICalled'){logs.push('console.'+m.params.type+': '+m.params.args.map(a=>a.value??a.description??a.type).join(' '));} else if(m.method==='Runtime.exceptionThrown'){logs.push('EXCEPTION: '+(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text));}};
+const send=(method,params={})=>{const i=++id;ws.send(JSON.stringify({id:i,method,params}));return new Promise((res,rej)=>pending.set(i,{res,rej}));};
+await send('Runtime.enable'); await send('Page.enable');
+await send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+const loaded=new Promise(r=>{const h=(ev)=>{const m=JSON.parse(ev.data); if(m.method==='Page.loadEventFired'){ws.removeEventListener('message',h);r();}};ws.addEventListener('message',h);});
+await send('Page.navigate',{url});
+await loaded; await new Promise(r=>setTimeout(r,1200));
+const out=await send('Runtime.evaluate',{expression:`({ text: document.body.innerText.slice(0,600), cards: document.querySelectorAll('app-card').length, tables: document.querySelectorAll('app-data-table').length, badges: document.querySelectorAll('app-badge').length, h1: document.querySelector('h1')?.textContent })`,returnByValue:true});
+console.log(JSON.stringify(out.result.value,null,2));
+console.log('--- LOGS ---'); console.log(logs.join('\n'));
+ws.close(); chrome.kill('SIGTERM');
+process.exit(0);

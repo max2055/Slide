@@ -1,0 +1,24 @@
+import { spawn } from 'node:child_process';
+const CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'; const PORT=9337;
+const profile=`/tmp/max241-probe4-${process.pid}`;
+const chrome=spawn(CHROME,['--headless=new','--disable-gpu','--no-first-run',`--remote-debugging-port=${PORT}`,`--user-data-dir=${profile}`,'--window-size=1100,800','about:blank'],{stdio:'ignore'});
+async function wait(){for(let i=0;i<80;i++){try{const r=await fetch(`http://127.0.0.1:${PORT}/json/list`);const t=await r.json();const p=t.find(x=>x.type==='page');if(p)return p.webSocketDebuggerUrl;}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error('no');}
+const ws=new WebSocket(await wait()); await new Promise((res,rej)=>{ws.onopen=res;ws.onerror=rej;});
+let id=0;const pending=new Map();
+ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);if(m.id&&pending.has(m.id)){const{res,rej}=pending.get(m.id);pending.delete(m.id);m.error?rej(new Error(m.error.message)):res(m.result);}};
+const send=(method,params={})=>{const i=++id;ws.send(JSON.stringify({id:i,method,params}));return new Promise((res,rej)=>pending.set(i,{res,rej}));};
+const ev=async(e)=>{const r=await send('Runtime.evaluate',{expression:e,returnByValue:true,awaitPromise:true});return r.result.value;};
+await send('Runtime.enable');await send('Page.enable');
+await send('Emulation.setDeviceMetricsOverride',{width:1100,height:800,deviceScaleFactor:1,mobile:false});
+const loaded=new Promise(r=>{const h=(x)=>{const m=JSON.parse(x.data);if(m.method==='Page.loadEventFired'){ws.removeEventListener('message',h);r();}};ws.addEventListener('message',h);});
+await send('Page.navigate',{url:process.argv[2]});await loaded;await new Promise(r=>setTimeout(r,700));
+await ev(`(()=>{const f=[...document.querySelectorAll('[data-action="filter"]')].find(b=>b.dataset.filter==='warning');f.click();})()`);
+await new Promise(r=>setTimeout(r,300));
+console.log('scroll set', await ev(`(()=>{const s=document.querySelector('.list-table');s.scrollLeft=120;return {left:s.scrollLeft,max:s.scrollWidth-s.clientWidth};})()`));
+await ev(`document.querySelector('.list-table tbody tr .actions [data-action="open-detail"]').click()`);
+await new Promise(r=>setTimeout(r,400));
+console.log('ctx after open', await ev(`JSON.stringify(window.__max241.listContext)`));
+await ev(`document.querySelector('[data-action="back-list"]').click()`);
+await new Promise(r=>setTimeout(r,900));
+console.log('after back', await ev(`(()=>{const s=document.querySelector('.list-table');return {left:s.scrollLeft,ctx:window.__max241.listContext,view:window.__max241.view,active:document.activeElement.dataset?.action??document.activeElement.tagName,rows:document.querySelectorAll('.list-table tbody tr').length};})()`));
+ws.close();chrome.kill('SIGTERM');process.exit(0);
