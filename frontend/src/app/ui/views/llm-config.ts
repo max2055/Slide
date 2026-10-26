@@ -84,6 +84,14 @@ interface SceneConfig {
 const SCENE_LABELS: Record<string, string> = { default: '全局默认', chat: '智能对话', sql_analysis: 'SQL 分析', fault_diagnosis: '故障诊断', health_check: '健康检查' };
 type ViewMode = "placeholder" | "picker" | "form";
 
+/** Provider mutations persist first and reach the runtime second; both outcomes must stay visible. */
+interface LLMConfigMutationResult { success?: boolean; error?: string; applied?: boolean; reloadError?: string }
+interface ApplyWarning { message: string; retry?: () => void }
+
+const APPLY_ERROR_REASONS: Record<string, string> = {
+  LLM_CONFIGURATION_UNAVAILABLE: '运行时未能建立可用的模型客户端，请检查凭据和模型配置；运行时继续使用上一份可用配置。',
+};
+
 function blankForm(): FormData {
   return { name: "", display_name: "", api_base_url: "", default_model: "", deployment_type: "api", api_format: "", api_key: "", enabled: true, is_default: false, models: [] };
 }
@@ -109,6 +117,8 @@ export class LLMConfigPage extends LitElement {
   @state() private testResult: string | null = null;
   @state() private formMsg: string | null = null;
   @state() private savedOk = false;
+  @state() private applyWarning: ApplyWarning | null = null;
+  @state() private mutationOk: string | null = null;
   @state() private showKey = false;
   @state() private modelSuggestions: string[] = [];
   @state() private modelsLoading = false;
@@ -312,7 +322,7 @@ export class LLMConfigPage extends LitElement {
   _selectProvider(p: LLMProvider) {
     this.modelDraft = null;
     this.modelFeedback = '';
-    this.savedOk = false;
+    this._beginMutation();
     this._resetTest();
     this._resetDiscovery();
     const selectedModel = p.models_supported?.find(m => m.id === p.default_model);
@@ -346,7 +356,7 @@ export class LLMConfigPage extends LitElement {
   _openAddPicker() {
     this.modelDraft = null;
     this.modelFeedback = '';
-    this.savedOk = false;
+    this._beginMutation();
     this._resetDiscovery();
     this._resetTest();
     this.selectedId = null;
@@ -357,6 +367,7 @@ export class LLMConfigPage extends LitElement {
   }
 
   _selectTemplate(tpl: ProviderTemplate) {
+    this._beginMutation();
     this._resetTest();
     this._resetDiscovery();
     this.editing = null;
@@ -388,9 +399,35 @@ export class LLMConfigPage extends LitElement {
 
   // ── CRUD ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Each mutation and navigation starts from a clean slate: a previous success
+   * banner, warning or error must never sit next to the outcome of a new action.
+   */
+  private _beginMutation() {
+    if (this._savedOkTimer) { clearTimeout(this._savedOkTimer); this._savedOkTimer = null; }
+    this.savedOk = false;
+    this.formMsg = null;
+    this.applyWarning = null;
+    this.mutationOk = null;
+  }
+
+  /**
+   * Persistence and runtime application are separate outcomes. Only code-shaped
+   * reload signals are shown; free-form server text could carry provider credentials.
+   */
+  private _reportApplyOutcome(savedLabel: string, result: LLMConfigMutationResult, retry?: () => void): boolean {
+    const code = typeof result.reloadError === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(result.reloadError) ? result.reloadError : null;
+    if (result.applied !== false) return false;
+    this.applyWarning = {
+      message: `${savedLabel}，但尚未应用到运行时。${(code && APPLY_ERROR_REASONS[code]) || '运行时未能确认应用结果。'}${code ? `（${code}）` : ''}`,
+      retry,
+    };
+    return true;
+  }
+
   private async _save() {
     if (this.saving || this.modelSaving) return;
-    this.saving = true; this.formMsg = null; this.savedOk = false;
+    this.saving = true; this._beginMutation();
     try {
       const window = this.form.context_window;
       const output = this.form.max_tokens;
@@ -419,19 +456,16 @@ export class LLMConfigPage extends LitElement {
         modelsSupported: models,
       };
       if (!body.apiKey) delete body.apiKey;
-      if (this.editing) {
-        const result = await apiClient.put<{ success: boolean; error?: string }>(`/llm/configs/${this.editing.id}`, body);
-        if (result?.success === false) throw new Error(result.error || '保存失败');
-      } else {
-        const result = await apiClient.post<{ success: boolean; error?: string }>("/llm/configs", body);
-        if (result?.success === false) throw new Error(result.error || '保存失败');
-      }
+      const result = this.editing
+        ? await apiClient.put<LLMConfigMutationResult>(`/llm/configs/${this.editing.id}`, body)
+        : await apiClient.post<LLMConfigMutationResult>("/llm/configs", body);
+      if (result?.success === false) throw new Error(result.error || '保存失败');
       this.form = { ...this.form, api_key: '', models };
       this.savedForm = JSON.stringify(this.form);
       this._resetTest();
-      this.savedOk = true;
-      if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
-      this._savedOkTimer = setTimeout(() => { this.savedOk = false; }, 2500);
+      const unapplied = this._reportApplyOutcome('配置已保存', result ?? {}, () => this._save());
+      this.savedOk = !unapplied;
+      if (!unapplied) this._savedOkTimer = setTimeout(() => { this.savedOk = false; }, 2500);
       await this._load(true);
       // Keep the form open but update editing ref
       if (!this.editing) {
@@ -451,7 +485,9 @@ export class LLMConfigPage extends LitElement {
 
   private async _toggle(p: LLMProvider) {
     try {
-      await apiClient.post(`/llm/configs/${p.id}/toggle`);
+      this._beginMutation();
+      const result = await apiClient.post<LLMConfigMutationResult>(`/llm/configs/${p.id}/toggle`);
+      if (result?.success === false) throw new Error(result.error || "操作失败");
       await this._load(true);
       // 刷新 editing 引用，否则 toggle 开关显示旧状态
       if (this.editing && this.editing.id === p.id) {
@@ -461,12 +497,17 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
+      // Re-toggling would invert the persisted state, so retry stays on the next save.
+      const unapplied = this._reportApplyOutcome('启用状态已保存', result ?? {});
+      if (!unapplied) this.mutationOk = '启用状态已保存，并已应用到运行时。';
     } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
 
   private async _setDefault(p: LLMProvider) {
     try {
-      await apiClient.post(`/llm/configs/${p.id}/default`);
+      this._beginMutation();
+      const result = await apiClient.post<LLMConfigMutationResult>(`/llm/configs/${p.id}/default`);
+      if (result?.success === false) throw new Error(result.error || "操作失败");
       await this._load(true);
       // 刷新 editing 引用以保持 UI 同步
       if (this.editing && this.editing.id === p.id) {
@@ -476,6 +517,8 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
+      const unapplied = this._reportApplyOutcome('默认提供商已保存', result ?? {}, () => this._setDefault(p));
+      if (!unapplied) this.mutationOk = '默认提供商已更新，并已应用到运行时。';
     } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
 
@@ -963,6 +1006,19 @@ export class LLMConfigPage extends LitElement {
           `}
         </div>
       ` : ''}
+
+      ${this.mutationOk ? html`
+        <div role="status" aria-label="操作结果">
+          <app-notice severity="info">${this.mutationOk}</app-notice>
+        </div>` : ''}
+
+      ${this.applyWarning ? html`
+        <div role="alert" aria-label="运行时应用结果">
+          <app-notice severity="warning">
+            <span>${this.applyWarning.message}</span>
+            ${this.applyWarning.retry ? html`<button class="btn btn-sm" style="margin-inline-start:var(--space-md)" @click=${() => this.applyWarning?.retry?.()}>重试应用</button>` : ''}
+          </app-notice>
+        </div>` : ''}
 
       ${this.formMsg ? html`<div class="msg msg-err" role="alert">${this.formMsg}</div>` : ''}
 

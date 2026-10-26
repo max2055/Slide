@@ -167,6 +167,7 @@ import { CronExecutor } from './src/cron/cron-executor';
 import { CronJob } from 'cron';
 import { registerCronRoutes } from './src/cron/cron-routes.js';
 import { createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry, resumeAgentEngine, disposeAgentEngine } from './src/adapter/get-agent-engine.js';
+import { reloadOutcome } from './src/llm-config-reload.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
 import { agentManagementService } from './src/agent-management-service.js';
@@ -857,8 +858,8 @@ async function start() {
       const data = request.body as any;
       const result = await llmDatabaseService.configureProvider(data)
       warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
-      await reloadChatProvider();
-      reply.send(result);
+      if (!result.success) return reply.send(result);
+      return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
       reply.code(500).send({ error: '创建 LLM 配置失败：' + error.message });
     }
@@ -873,15 +874,7 @@ async function start() {
       if (!existing) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.configureProvider({ ...existing, ...data, id: Number(id) });
       if (!result.success) return reply.send(result);
-      // Persistence and runtime application are separate outcomes: the row is
-      // already written, so never report an opaque 500 that hides that fact.
-      let applied = true;
-      try { await reloadChatProvider(); }
-      catch (error: any) {
-        applied = false;
-        request.log.warn({ code: 'LLM_CONFIGURATION_UNAVAILABLE' }, 'Provider reload failed after save');
-      }
-      return reply.send({ ...result, applied, ...(applied ? {} : { reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' }) });
+      return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
       reply.code(500).send({ error: '更新 LLM 配置失败：' + error.message });
     }
@@ -908,8 +901,8 @@ async function start() {
       const provider = await llmDatabaseService.getProviderById(Number(id));
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.toggleProvider(provider.name, !provider.enabled);
-      await reloadChatProvider();
-      reply.send(result);
+      if (!result.success) return reply.send(result);
+      return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
       reply.code(500).send({ error: '切换状态失败：' + error.message });
     }
@@ -922,8 +915,8 @@ async function start() {
       const provider = await llmDatabaseService.getProviderById(Number(id));
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.setDefaultProvider(provider.name);
-      await llmService.reloadConfig();
-      reply.send(result);
+      if (!result.success) return reply.send(result);
+      return reply.send({ ...result, ...await reloadOutcome(request.log, () => llmService.reloadConfig()) });
     } catch (error: any) {
       reply.code(500).send({ error: '设置默认失败：' + error.message });
     }
