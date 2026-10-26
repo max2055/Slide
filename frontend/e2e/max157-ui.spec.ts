@@ -21,7 +21,7 @@ const policyFacts = (mode: string) => mode === 'empty' ? {
   resourceCoverage:[coverage('database'),coverage('server'),coverage('network_device')],
   entry:{status:'not_connected',observedReceiptCount:0,lastObservedAt:null,witnessTypes:[]},
   receipts:{total:0,accepted:0,suppressed:0,pending:0,unknown:0,lastStatus:null,lastReason:null,lastAttemptAt:null},
-  execution:{observed:0,accepted:0,running:0,completed:0,failed:0,cancelled:0,suppressed:0,unknown:0,lastStatus:null,lastAt:null},
+  execution:{observed:0,accepted:0,running:0,completed:0,failed:0,partial:0,timed_out:0,cancelled:0,suppressed:0,unknown:0,lastStatus:null,lastAt:null},
   budget:{status:'uninitialized',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
   blockers:[{code:'SERVICE_IDENTITY_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
     {code:'RESOURCE_SCOPE_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
@@ -36,7 +36,7 @@ const policyFacts = (mode: string) => mode === 'empty' ? {
   resourceCoverage:[coverage('database',{status:'covered',configuredCount:1,existingCount:1,permittedCount:1,typePermission:true}),coverage('server'),coverage('network_device')],
   entry:{status:'connected',observedReceiptCount:1,lastObservedAt:'2026-10-25T00:00:00.000Z',witnessTypes:['database']},
   receipts:{total:1,accepted:1,suppressed:0,pending:0,unknown:0,lastStatus:'accepted',lastReason:null,lastAttemptAt:'2026-10-25T00:00:00.000Z'},
-  execution:{observed:1,accepted:0,running:0,completed:1,failed:0,cancelled:0,suppressed:0,unknown:0,lastStatus:'completed',lastAt:'2026-10-25T00:05:00.000Z'},
+  execution:{observed:1,accepted:0,running:0,completed:1,failed:0,partial:0,timed_out:0,cancelled:0,suppressed:0,unknown:0,lastStatus:'completed',lastAt:'2026-10-25T00:05:00.000Z'},
   budget:{status:'matching',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
   blockers:[],
 };

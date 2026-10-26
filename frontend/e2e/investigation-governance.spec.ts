@@ -291,17 +291,24 @@ test('real durable wiring, execution outcomes and receipt history stay separate 
     await env.pool.query("REPLACE INTO system_config (config_key,config_value) VALUES ('auto_analysis_config',?)", [JSON.stringify({
       enabled: true, cronExpression: '*/30 * * * *', severityLevels: ['warning', 'error', 'critical'],
       instanceWhitelist: [], timeWindowStart: '00:00', timeWindowEnd: '23:59' })]);
-    // Durable automatic ownership, an accepted request and a real workflow job.
+    // Durable automatic ownership, an accepted request, its canonical Agent
+    // Run and a completed workflow job. The canonical terminal transaction
+    // (proven in governance.mysql.test.ts) leaves active_request_id NULL, so
+    // this is the exact retained relation the page must resolve.
     await env.pool.query("INSERT INTO chat_sessions (session_id,user_id,title) VALUES (?,101,'wiring fixture')", [investigation]);
     await env.pool.query(`INSERT INTO investigations (id,title,goal,profile_id,profile_version,session_id,owner_kind,owner_id,
-      scope_version,active_request_id) VALUES (?, 'wiring fixture','wiring goal','ops',1,?,'service',?,?,?)`,
-    [investigation, investigation, serviceId, 'c'.repeat(64), request]);
+      scope_version,active_request_id) VALUES (?, 'wiring fixture','wiring goal','ops',1,?,'service',?,?,NULL)`,
+    [investigation, investigation, serviceId, 'c'.repeat(64)]);
     await env.pool.query("INSERT INTO investigation_resources VALUES (?,'instance',101,'primary')", [investigation]);
     await env.pool.query(`INSERT INTO investigation_requests (id,investigation_id,actor_kind,actor_id,idempotency_key,
-      request_hash,request_snapshot,job_id,accepted_version) VALUES (?,?,'service',?,?,?,?,?,1)`,
-    [request, investigation, serviceId, request, 'd'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1 }), job]);
+      request_hash,request_snapshot,message_id,job_id,accepted_version) VALUES (?,?,'service',?,?,?,?,?,?,1)`,
+    [request, investigation, serviceId, request, 'd'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1 }),
+      `wiring-turn-${request}`, job]);
     await env.pool.query(`INSERT INTO workflow_jobs (id,job_type,schema_version,payload,idempotency_key,state)
       VALUES (?, 'investigation.execute',1,?,?,'completed')`, [job, JSON.stringify({ investigationId: investigation, requestId: request }), `wiring:${request}`]);
+    await env.pool.query(`INSERT INTO agent_runs (id,actor_id,session_id,message_id,idempotency_key,state,finished_at,expires_at)
+      VALUES (?,?,?,?,?,'completed',NOW(),DATE_ADD(NOW(),INTERVAL 24 HOUR))`,
+    [randomUUID(), serviceId, investigation, `wiring-turn-${request}`, `investigation:${request}`]);
     await env.pool.query("DELETE FROM alerts WHERE id = 9501");
     await env.pool.query(`INSERT INTO alerts (id,instance_id,alert_type,level,title,message,source,tags)
       VALUES (9501,101,'performance','warning','wiring alert','fixture','alert-engine',?)`,
@@ -341,6 +348,7 @@ test('real durable wiring, execution outcomes and receipt history stay separate 
     await env.pool.query('DELETE FROM investigation_resources WHERE investigation_id=?', [investigation]);
     await env.pool.query('DELETE FROM investigations WHERE id=?', [investigation]);
     await env.pool.query('DELETE FROM chat_sessions WHERE session_id=?', [investigation]);
+    await env.pool.query('DELETE FROM agent_runs WHERE session_id=?', [investigation]);
     await env.pool.query('DELETE FROM workflow_jobs WHERE id=?', [job]);
     await env.pool.query('UPDATE alerts SET tags=? WHERE id=9501', [JSON.stringify({
       auto_analysis: { status: 'suppressed', reason: 'RESOURCE_ALERT_PILOT_UNCONFIGURED', attemptedAt: '2020-01-01T00:00:00.000Z' } })]);
@@ -348,7 +356,7 @@ test('real durable wiring, execution outcomes and receipt history stay separate 
     await refresh.click(); await stale;
     await expect(view(page)).toContainText('未观察到持久入口证据');
     await expect(view(page)).toContainText('尚无持久执行');
-    await expect(view(page).getByRole('alert')).toContainText('自动分析待验证入口');
+    await expect(view(page).getByRole('status')).toContainText('自动分析待验证入口');
     await expect(view(page)).not.toContainText('已确认入口接线');
     const [remainingAlerts] = await env.pool.query('SELECT id FROM alerts WHERE id = 9501');
     expect(remainingAlerts).toHaveLength(1);
@@ -362,6 +370,7 @@ test('real durable wiring, execution outcomes and receipt history stay separate 
     await env.pool.query('DELETE FROM investigation_resources WHERE investigation_id=?', [investigation]);
     await env.pool.query('DELETE FROM investigations WHERE id=?', [investigation]);
     await env.pool.query('DELETE FROM chat_sessions WHERE session_id=?', [investigation]);
+    await env.pool.query('DELETE FROM agent_runs WHERE session_id=?', [investigation]);
     await env.pool.query('DELETE FROM workflow_jobs WHERE id=?', [job]);
     if (serviceId) {
       await env.pool.query('DELETE FROM instance_permissions WHERE user_id=?', [serviceId]);

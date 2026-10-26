@@ -19,7 +19,7 @@ const policies = {
   resourceCoverage: [coverage('database'), coverage('server'), coverage('network_device')],
   entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null, witnessTypes: [] },
   receipts: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
-  execution: { observed: 0, accepted: 0, running: 0, completed: 0, failed: 0, cancelled: 0, suppressed: 0, unknown: 0,
+  execution: { observed: 0, accepted: 0, running: 0, completed: 0, failed: 0, partial: 0, timed_out: 0, cancelled: 0, suppressed: 0, unknown: 0,
     lastStatus: null, lastAt: null },
   budget: { status: 'uninitialized', quotaReached: false, capacityReached: false, reserveTokens: 32000,
     reserveCostMicros: 1000000, admissionReasons: [] },
@@ -44,7 +44,7 @@ const wired = { ...unwired, automaticAnalysisStatus: 'available', entry: { statu
     lastObservedAt: '2026-10-26T00:00:00.000Z', witnessTypes: ['database'] },
   receipts: { total: 3, accepted: 1, suppressed: 2, pending: 0, unknown: 0, lastStatus: 'accepted', lastReason: null,
     lastAttemptAt: '2026-10-26T00:00:00.000Z' },
-  execution: { observed: 2, accepted: 0, running: 0, completed: 1, failed: 0, cancelled: 1, suppressed: 1, unknown: 0,
+  execution: { observed: 2, accepted: 0, running: 0, completed: 1, failed: 0, partial: 0, timed_out: 0, cancelled: 1, suppressed: 1, unknown: 0,
     lastStatus: 'cancelled', lastAt: '2026-10-26T00:01:00.000Z' },
   budget: { ...unwired.budget, capacityReached: false, admissionReasons: [] }, blockers: [] };
 
@@ -89,6 +89,18 @@ it('keeps durable execution outcomes separate from historical receipts', async (
   expect(text).toContain('准入抑制');
   expect(text).toContain('数据库');
   expect(element.shadowRoot!.querySelectorAll('[data-blocker]')).toHaveLength(0);
+});
+
+it('shows non-completed canonical Run terminals without claiming success', async () => {
+  const terminal = { ...wired, execution: { ...wired.execution, completed: 0, partial: 1, timed_out: 1,
+    lastStatus: 'timed_out', lastAt: '2026-10-26T00:02:00.000Z' } };
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(terminal)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const text = element.shadowRoot!.textContent!;
+  expect(text).toContain('执行超时');
+  expect(text).toContain('部分完成');
+  expect(text).toContain('工作流任务完成不代表调查成功');
 });
 
 it('shows the real automatic reserve and instantaneous admission reasons', async () => {

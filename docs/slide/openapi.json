@@ -8489,6 +8489,14 @@
                     "type": "string"
                   },
                   {
+                    "const": "partial",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timed_out",
+                    "type": "string"
+                  },
+                  {
                     "const": "cancelled",
                     "type": "string"
                   },
@@ -8510,12 +8518,22 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "partial": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
               "running": {
                 "maximum": 9007199254740991,
                 "minimum": 0,
                 "type": "integer"
               },
               "suppressed": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "timed_out": {
                 "maximum": 9007199254740991,
                 "minimum": 0,
                 "type": "integer"
@@ -8532,6 +8550,8 @@
               "running",
               "completed",
               "failed",
+              "partial",
+              "timed_out",
               "cancelled",
               "suppressed",
               "unknown",

@@ -85,14 +85,17 @@ export const InvestigationPoliciesResponseSchema = Type.Object({
     lastReason: Type.Union([Type.String({ pattern: '^[A-Z][A-Z0-9_]{0,63}$' }), Type.Null()]),
     lastAttemptAt: Type.Union([Type.String({ pattern: isoInstant }), Type.Null()]),
   }, strict),
-  // Durable execution outcomes from automatic owners, investigation requests
-  // and workflow jobs. Mutually exclusive per owned alert.
+  // Durable execution outcomes: the latest request per owned alert and its
+  // canonical Agent Run. A completed workflow job never substitutes for the
+  // business terminal state, which may be partial or timed out.
   execution: Type.Object({
     observed: count, accepted: count, running: count, completed: count, failed: count,
-    cancelled: count, suppressed: count, unknown: count,
+    partial: count, timed_out: count, cancelled: count, suppressed: count, unknown: count,
     lastStatus: Type.Union([Type.Literal('accepted'), Type.Literal('running'), Type.Literal('completed'),
-      Type.Literal('failed'), Type.Literal('cancelled'), Type.Literal('suppressed'),
-      Type.Literal('unknown'), Type.Null()]),
+      Type.Literal('failed'), Type.Literal('partial'), Type.Literal('timed_out'),
+      Type.Literal('cancelled'), Type.Literal('suppressed'), Type.Literal('unknown'), Type.Null()]),
+    // Run terminal time, otherwise Run start / request acceptance / ownership
+    // time. It is never presented as the end time of a non-terminal attempt.
     lastAt: Type.Union([Type.String({ pattern: isoInstant }), Type.Null()]),
   }, strict),
   budget: Type.Object({

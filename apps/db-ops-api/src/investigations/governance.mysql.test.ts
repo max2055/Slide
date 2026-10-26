@@ -6,8 +6,11 @@ import { Value } from '@sinclair/typebox/value';
 import { MigrationRunner } from '../migrations/runner.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { createVerifyToken } from '../auth-middleware.js';
-import { provisionInvestigationServiceIdentity, type AuthorityExecutor } from './authorization.js';
-import { investigationBudgetConfiguration } from './session-bridge.js';
+import { provisionInvestigationServiceIdentity, InvestigationAuthorization, type AuthorityExecutor } from './authorization.js';
+import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
+import { AgentRunService } from '../adapter/agent-run-service.js';
+import { CanonicalStore } from '../adapter/canonical-store.js';
+import { MysqlWorkflowStore } from '../workflows/worker-runtime.js';
 import { INVESTIGATION_PROFILES, INVESTIGATION_PROMPTS, investigationProfileHash } from './profiles.js';
 import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { InvestigationGovernanceStore } from './governance-store.js';
@@ -25,6 +28,7 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
   let admin: Pool;
   let pool: Pool;
   let contexts: ActorContextService;
+  let authorization: InvestigationAuthorization;
   let store: InvestigationGovernanceStore;
   let app: FastifyInstance;
   let address: string;
@@ -59,6 +63,7 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     roleId = Number(role.insertId);
     serviceId = await provisionInvestigationServiceIdentity(pool as unknown as AuthorityExecutor, 't07c');
     contexts = new ActorContextService(() => pool as never);
+    authorization = new InvestigationAuthorization(contexts);
     store = new InvestigationGovernanceStore(() => pool, () => currentConfig, contexts,
       new InvestigationEffectiveBudgetService(() => pool, async () => ({ model: 'fixture-model', contextWindowTokens: 1_000_000,
         maxOutputTokens: 393_216, preferredOutputTokens: 393_216, source: 'configuration' }), () => '2026-10-25T00:00:00.000Z',
@@ -77,8 +82,11 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     // Dependent facts are cleaned only inside this run-owned database.
     await pool.execute('DELETE FROM investigation_alert_owners');
     await pool.execute('DELETE FROM alerts WHERE id >= 9500');
-    for (const table of ['investigation_budget_resources', 'investigation_budget_ledger', 'investigation_budget_domains',
-      'investigation_requests', 'investigation_resources', 'investigations', 'chat_sessions']) await pool.execute(`DELETE FROM ${table}`);
+    for (const table of ['investigation_event_links', 'investigation_results', 'investigation_evidence', 'investigation_stream_events',
+      'investigation_stream_heads', 'investigation_observed_sources', 'investigation_admission_keys', 'investigation_create_keys',
+      'investigation_members', 'agent_canonical_facts', 'agent_runs', 'chat_messages', 'investigation_budget_resources',
+      'investigation_budget_ledger', 'investigation_budget_domains', 'investigation_requests', 'investigation_resources',
+      'investigations', 'chat_sessions', 'workflow_jobs', 'outbox_events', 'operational_events']) await pool.execute(`DELETE FROM ${table}`);
     await pool.execute('DELETE FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
     await pool.execute("DELETE FROM system_config WHERE config_key = 'auto_analysis_config'");
     await pool.execute('DELETE FROM audit_log_entries WHERE action = \'investigation.effective_budget.update\'');
@@ -124,36 +132,72 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     const result: Record<string, unknown> = {};
     for (const table of ['investigation_budget_domains', 'investigation_budget_ledger', 'investigation_budget_resources',
       'investigation_alert_owners', 'investigation_requests', 'investigations', 'investigation_resources', 'chat_sessions',
-      'chat_messages', 'workflow_jobs', 'outbox_events', 'operational_events']) {
+      'chat_messages', 'agent_runs', 'investigation_results', 'workflow_jobs', 'outbox_events', 'operational_events']) {
       result[table] = (await pool.query(`SELECT * FROM ${table}`))[0];
     }
     return result;
   }
-  /** Durable automatic evidence: ownership row, accepted request and real job
-   * state. No receipt is synthesized here beyond the explicit alert tag. */
-  async function autoExecution(alertId: number, instanceId: number, state: 'queued' | 'running' | 'completed' | 'dead_letter' | 'cancelled') {
-    const investigation = randomUUID(), request = randomUUID(), job = randomUUID();
-    await pool.execute("INSERT INTO chat_sessions (session_id, user_id, title) VALUES (?, 102, 'auto-alert-session')", [investigation]);
-    await pool.execute(`INSERT INTO investigations (id, title, goal, profile_id, profile_version, session_id, owner_kind, owner_id,
-      scope_version, active_request_id) VALUES (?, 'auto alert', 'auto goal', 'ops', 1, ?, 'service', ?, ?, ?)`,
-    [investigation, investigation, serviceId, 'c'.repeat(64), request]);
-    await pool.execute("INSERT INTO investigation_resources VALUES (?, 'instance', ?, 'primary')", [investigation, instanceId]);
-    await pool.execute(`INSERT INTO investigation_requests (id, investigation_id, actor_kind, actor_id, idempotency_key,
-      request_hash, request_snapshot, job_id, accepted_version) VALUES (?, ?, 'service', ?, ?, ?, ?, ?, 1)`,
-    [request, investigation, serviceId, request, 'd'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1 }), job]);
-    await pool.execute(`INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, state)
-      VALUES (?, 'investigation.execute', 1, ?, ?, ?)`, [job, JSON.stringify({ investigationId: investigation, requestId: request }), `auto:${request}`, state]);
+  const rows = async (sql: string, values: unknown[] = []) => (await pool.query<RowDataPacket[]>(sql, values))[0];
+  const tx = async <T>(work: (connection: any) => Promise<T>) => {
+    const connection = await pool.getConnection();
+    try { await connection.beginTransaction(); const value = await work(connection); await connection.commit(); return value; }
+    catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  };
+  /** Durable automatic evidence executed through the REAL canonical terminal
+   * transactions: bridge admission, claimed job, claimed Agent Run, then
+   * stage+recover for completed or terminate for every other terminal state.
+   * The job is completed afterwards exactly as the worker does, so a completed
+   * job can coexist with a partial/failed/timed-out/cancelled Run. No model or
+   * provider is called. */
+  async function autoExecution(alertId: number, instanceId: number,
+    terminal: 'completed' | 'failed' | 'partial' | 'timed_out' | 'cancelled') {
+    const live = await contexts.loadInvestigationActorFrom(pool as never, serviceId, 'service');
+    const actor = { ...live, resourceBoundary: { instanceIds: [instanceId], serverIds: [], networkDeviceIds: [] } };
+    const bridge = new InvestigationSessionBridge(() => pool, authorization);
+    const created = await bridge.create(actor, { idempotencyKey: randomUUID(), title: 'auto alert', goal: 'auto goal',
+      profileId: 'ops', profileVersion: 1, resources: [{ type: 'instance', id: instanceId, role: 'primary' }],
+      context: { subject: { kind: 'resource', resource: { type: 'instance', id: instanceId } } } },
+    { message: 'auto alert', idempotencyKey: randomUUID() });
+    const acceptance = created.acceptance!;
+    const jobs = new MysqlWorkflowStore(() => pool as never);
+    const job = await jobs.claim('t07c-terminal', 60, { types: ['investigation.execute'], exclude: false });
+    const [request] = await rows('SELECT message_id, job_id FROM investigation_requests WHERE id = ?', [acceptance.requestId]);
+    if (!job || job.id !== request.job_id) throw new Error('TERMINAL_JOB_CLAIM_MISMATCH');
+    const runs = new AgentRunService(() => pool as never, authorization);
+    const canonical = new CanonicalStore(() => pool as never, authorization);
+    const { run } = await runs.claim(actor.userId, created.investigation.sessionId, request.message_id,
+      `investigation:${acceptance.requestId}`);
+    const binding = { investigationId: created.investigation.id, requestId: acceptance.requestId, runId: run.id,
+      jobId: job.id, workerId: 't07c-terminal', fencingToken: job.fencingToken };
+    if (terminal === 'completed') {
+      await tx(c => runs.stageInvestigationCompletion(c, canonical, actor, binding,
+        { type: 'complete', stopReason: 'completed', finalContent: 'Terminal proof answer.' }));
+      await tx(c => runs.recoverInvestigationCompletion(c, canonical, actor, binding));
+    } else {
+      await tx(c => runs.terminateInvestigation(c, actor, binding, terminal, `FIXTURE_${terminal.toUpperCase()}`));
+    }
+    // The worker completes the job regardless of the business terminal state.
+    await jobs.complete(job.id, 't07c-terminal', job.fencingToken);
     await pool.execute("INSERT INTO investigation_alert_owners (alert_id, lane, command_snapshot, investigation_id) VALUES (?, 'investigation', ?, ?)",
-      [alertId, JSON.stringify({ trigger: 'auto' }), investigation]);
-    return { investigation, request, job };
+      [alertId, JSON.stringify({ trigger: 'auto' }), created.investigation.id]);
+    return { investigation: created.investigation.id, request: acceptance.requestId, run: run.id, job: job.id };
   }
-  async function clearExecution(record: { investigation: string; job: string }) {
+  async function clearExecution(record: { investigation: string; job: string; run?: string }) {
     await pool.execute('DELETE FROM investigation_alert_owners WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_results WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_evidence WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_stream_events WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_stream_heads WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_observed_sources WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM agent_canonical_facts WHERE session_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM agent_runs WHERE session_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM chat_messages WHERE session_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM investigation_requests WHERE investigation_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM investigation_resources WHERE investigation_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM investigations WHERE id = ?', [record.investigation]);
     await pool.execute('DELETE FROM chat_sessions WHERE session_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM workflow_jobs WHERE id = ?', [record.job]);
+    await pool.execute('DELETE FROM outbox_events WHERE aggregate_id = ?', [record.investigation]);
   }
 
   it('reports no production policy registration rather than fake presets; reading initializes nothing', async () => {
@@ -212,11 +256,19 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
         instanceWhitelist: [], timeWindowStart: '00:00', timeWindowEnd: '23:59' })]);
       await reserve('settled');
       // The receipt is only the observation; durable ownership plus the real
-      // investigation request and workflow job carry the execution outcome.
+      // canonical investigation request, Agent Run and workflow job carry the
+      // execution outcome.
       const execution = await autoExecution(9501, 9181, 'completed');
       await pool.execute(`INSERT INTO alerts (id, instance_id, alert_type, level, title, message, source, tags)
         VALUES (9501, 9181, 'performance', 'warning', 'pilot alert', 'fixture', 'alert-engine', ?)`,
         [JSON.stringify({ auto_analysis: { status: 'accepted', reason: null, attemptedAt: '2026-10-25T00:00:00.000Z' } })]);
+      // A canonical completed terminal clears active_request_id, so finding the
+      // result through requests/Runs is the only durable relation.
+      const [completedTerminal] = (await pool.query<RowDataPacket[]>(`SELECT i.active_request_id, j.state AS job_state, r.state AS run_state
+        FROM investigations i JOIN investigation_requests q ON q.investigation_id = i.id
+        JOIN workflow_jobs j ON j.id = q.job_id JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
+        WHERE i.id = ?`, [execution.investigation]))[0];
+      expect(completedTerminal).toMatchObject({ active_request_id: null, job_state: 'completed', run_state: 'completed' });
       const before = await snapshot();
       const alertsBefore = (await pool.query<RowDataPacket[]>('SELECT * FROM alerts ORDER BY id'))[0];
       const response = await read('policies');
@@ -230,8 +282,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
           witnessTypes: ['database'] },
         receipts: { total: 1, accepted: 1, suppressed: 0, pending: 0, unknown: 0, lastStatus: 'accepted',
           lastReason: null, lastAttemptAt: '2026-10-25T00:00:00.000Z' },
-        execution: { observed: 1, accepted: 0, running: 0, completed: 1, failed: 0, cancelled: 0, suppressed: 0, unknown: 0,
-          lastStatus: 'completed' },
+        execution: { observed: 1, accepted: 0, running: 0, completed: 1, failed: 0, partial: 0, timed_out: 0,
+          cancelled: 0, suppressed: 0, unknown: 0, lastStatus: 'completed' },
         budget: { status: 'matching', quotaReached: false, capacityReached: false, reserveTokens: 32_000,
           reserveCostMicros: currentConfig.reserveCostMicros, admissionReasons: [] },
         resourceCoverage: [
@@ -245,19 +297,38 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
       expect(await snapshot()).toEqual(before);
       expect((await pool.query<RowDataPacket[]>('SELECT * FROM alerts ORDER BY id'))[0]).toEqual(alertsBefore);
 
-      // Durable terminal states are reported separately from the receipt.
-      await pool.execute("UPDATE workflow_jobs SET state = 'dead_letter' WHERE id = ?", [execution.job]);
-      const failed = await (await read('policies')).json() as InvestigationPoliciesResponse;
-      expect(failed).toMatchObject({ automaticAnalysisStatus: 'available',
-        execution: { observed: 1, completed: 0, failed: 1, lastStatus: 'failed' } });
-      await pool.execute("UPDATE workflow_jobs SET state = 'cancelled' WHERE id = ?", [execution.job]);
-      const cancelled = await (await read('policies')).json() as InvestigationPoliciesResponse;
-      expect(cancelled.execution).toMatchObject({ observed: 1, failed: 0, cancelled: 1, lastStatus: 'cancelled' });
-      await pool.execute("UPDATE workflow_jobs SET state = 'completed' WHERE id = ?", [execution.job]);
+      // Real canonical terminals that still complete the workflow job must not
+      // be reported as success: the Run state wins over job.state.
+      const extras = [{ alert: 9502, state: 'failed' as const, expected: 'failed' },
+        { alert: 9503, state: 'partial' as const, expected: 'partial' },
+        { alert: 9504, state: 'timed_out' as const, expected: 'timed_out' },
+        { alert: 9505, state: 'cancelled' as const, expected: 'cancelled' }];
+      const records: Array<{ investigation: string; job: string }> = [execution];
+      for (const [index, extra] of extras.entries()) {
+        await pool.execute(`INSERT INTO alerts (id, instance_id, alert_type, level, title, message, source, tags)
+          VALUES (?, 9181, 'performance', 'warning', 'pilot alert', 'fixture', 'alert-engine', ?)`,
+          [extra.alert, JSON.stringify({ auto_analysis: { status: 'accepted', reason: null, attemptedAt: '2026-10-25T00:00:00.000Z' } })]);
+        const record = await autoExecution(extra.alert, 9181, extra.state);
+        records.push(record);
+        const [terminal] = (await pool.query<RowDataPacket[]>(`SELECT i.active_request_id, j.state AS job_state, r.state AS run_state
+          FROM investigations i JOIN investigation_requests q ON q.investigation_id = i.id
+          JOIN workflow_jobs j ON j.id = q.job_id JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
+          WHERE i.id = ?`, [record.investigation]))[0];
+        expect(terminal).toMatchObject({ active_request_id: null, job_state: 'completed', run_state: extra.expected });
+        const facts = await (await read('policies')).json() as InvestigationPoliciesResponse;
+        expect(facts.execution).toMatchObject({ observed: index + 2, completed: 1, [extra.expected]: 1, lastStatus: extra.expected });
+        expect(facts.automaticAnalysisStatus).toBe('available');
+      }
+      // The last observed state is the latest request's Run terminal time.
+      const latest = (await (await read('policies')).json() as InvestigationPoliciesResponse).execution;
+      const [latestRun] = await pool.query<RowDataPacket[]>(
+        "SELECT DATE_FORMAT(finished_at, '%Y-%m-%dT%H:%i:%s.000Z') AS finished FROM agent_runs WHERE state = 'cancelled'");
+      expect(latest.lastAt).toBe(latestRun[0].finished);
 
       // Counterexample: an arbitrary old suppressed receipt on a configured
       // resource, with no durable ownership, must stay unverified.
-      await clearExecution(execution);
+      for (const record of records) await clearExecution(record);
+      for (const extra of extras) await pool.execute('DELETE FROM alerts WHERE id = ?', [extra.alert]);
       await pool.execute('UPDATE alerts SET tags = ? WHERE id = 9501', [JSON.stringify({
         auto_analysis: { status: 'suppressed', reason: 'RESOURCE_ALERT_PILOT_UNCONFIGURED', attemptedAt: '2020-01-01T00:00:00.000Z' } })]);
       const stale = await (await read('policies')).json() as InvestigationPoliciesResponse;

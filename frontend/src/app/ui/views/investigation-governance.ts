@@ -52,7 +52,7 @@ const receiptStatusLabels: Record<NonNullable<PolicyFacts['receipts']['lastStatu
   accepted: '已受理', suppressed: '已抑制', pending: '待处理', unknown: '未知' };
 const executionLabels: Record<NonNullable<PolicyFacts['execution']['lastStatus']>, string> = {
   accepted: '已受理待执行', running: '执行中', completed: '已完成', failed: '执行失败',
-  cancelled: '已取消', suppressed: '准入抑制', unknown: '结果未知' };
+  partial: '部分完成', timed_out: '执行超时', cancelled: '已取消', suppressed: '准入抑制', unknown: '结果未知' };
 const admissionReasonLabels: Record<PolicyFacts['budget']['admissionReasons'][number], string> = {
   AUTOMATIC_FREQUENCY: '自动每小时请求已达上限',
   AUTOMATIC_DAILY_TOKENS: '自动每日 Token 余额不足以容纳一次预留',
@@ -377,7 +377,7 @@ export class InvestigationGovernancePage extends LitElement {
         ${stat('自动分析', headline, headlineHint)}
       </div>
       ${facts.blockers.length
-        ? html`<div class="notice" role="alert"><div><strong>${facts.automaticAnalysisStatus === 'unverified' ? '自动分析待验证入口' : '自动分析尚不可用'}</strong><ul class="rules">${facts.blockers.map(blocker => html`<li data-blocker=${blocker.code}>${blockerLabels[blocker.code]} · ${this.remediationAction(blocker)}</li>`)}</ul></div></div>`
+        ? html`<div class="notice" role="status"><div><strong>${facts.automaticAnalysisStatus === 'unverified' ? '自动分析待验证入口' : '自动分析尚不可用'}</strong><ul class="rules">${facts.blockers.map(blocker => html`<li data-blocker=${blocker.code}>${blockerLabels[blocker.code]} · ${this.remediationAction(blocker)}</li>`)}</ul></div></div>`
         : html`<div class="notice neutral" role="status"><div><strong>${headline}</strong>配置、入口、权限与预算均为当前读取事实；历史回执与曾成功的执行都不代表下次一定成功。</div></div>`}
       <div class="section-head"><h2>总开关与调查开关</h2><span class="caption">两个开关分别控制不同入口，必须同时开启</span></div>
       <app-card><div class="definitions-grid">
@@ -426,10 +426,11 @@ export class InvestigationGovernancePage extends LitElement {
           ${facts.execution.observed ? badge(executionLabels[facts.execution.lastStatus!], facts.execution.lastStatus === 'completed' ? 'ok' : ['failed', 'cancelled'].includes(facts.execution.lastStatus!) ? 'danger' : 'warn') : badge('尚无持久执行', 'muted')}
           ${pairs([['已观察到接管', `${fmt(facts.execution.observed)} 次`], ['已受理待执行', fmt(facts.execution.accepted)],
             ['执行中', fmt(facts.execution.running)], ['已完成', fmt(facts.execution.completed)], ['执行失败', fmt(facts.execution.failed)],
+            ['部分完成', fmt(facts.execution.partial)], ['执行超时', fmt(facts.execution.timed_out)],
             ['已取消', fmt(facts.execution.cancelled)], ['准入抑制', fmt(facts.execution.suppressed)],
             ['结果未知', fmt(facts.execution.unknown)]])}
-          <p class="caption">最近状态 ${facts.execution.lastStatus ? executionLabels[facts.execution.lastStatus] : '无'} · ${facts.execution.lastAt ?? '无时间'}</p></div>
-        <div><h3>口径</h3><p class="caption">回执观察与执行结果互不替代：入口回执不等于执行，执行成功也不证明此刻的权限与预算仍充足。</p></div>
+          <p class="caption">最近状态 ${facts.execution.lastStatus ? executionLabels[facts.execution.lastStatus] : '无'} · ${facts.execution.lastAt ?? '无时间'}（终结取结束时间；待执行或执行中取受理/开始时间）</p></div>
+        <div><h3>口径</h3><p class="caption">终态来自持久的调查 Run，工作流任务完成不代表调查成功；回执观察与执行结果互不替代：入口回执不等于执行，执行成功也不证明此刻的权限与预算仍充足。</p></div>
       </div></app-card>
       <div class="section-head"><h2>预算与准入</h2>${badge(budgetLabels[facts.budget.status], facts.budget.status === 'matching' ? 'ok' : facts.budget.status === 'conflict' ? 'danger' : facts.budget.status === 'unavailable' ? 'danger' : 'warn')}</div>
       <app-card><div class="definitions-grid"><div>${pairs([['冻结策略', budgetLabels[facts.budget.status]],

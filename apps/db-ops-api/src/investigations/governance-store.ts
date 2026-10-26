@@ -83,16 +83,20 @@ function resourceTypeCase(ids: ResourceIds): { sql: string; values: unknown[] } 
   return { sql: `CASE ${branches.join(' ')} ELSE NULL END`, values };
 }
 type ExecutionOutcome = NonNullable<InvestigationPoliciesResponse['execution']['lastStatus']>;
-/** Durable state mapping: owners without an investigation were suppressed at
- * admission; otherwise the workflow job carries the real terminal outcome. */
-function executionStatus(investigationId: unknown, jobState: unknown): ExecutionOutcome {
+const RUN_STATES = ['running', 'completed', 'failed', 'partial', 'timed_out', 'cancelled'] as const;
+/** Durable state mapping. The canonical Agent Run is the business outcome: a
+ * workflow job may complete while its Run is partial, timed out, failed or
+ * cancelled. Job state only describes work that has not produced a Run yet. */
+function executionStatus(investigationId: unknown, requestId: unknown, jobState: unknown, runState: unknown): ExecutionOutcome {
   if (investigationId == null) return 'suppressed';
+  if (requestId == null) return 'unknown';
+  const run = typeof runState === 'string' ? runState : null;
+  if (run) return (RUN_STATES as readonly string[]).includes(run) ? run as ExecutionOutcome : 'unknown';
   const job = typeof jobState === 'string' ? jobState : null;
-  return job === 'queued' ? 'accepted'
-    : job === 'running' || job === 'retry' ? 'running'
-      : job === 'completed' ? 'completed'
-        : job === 'dead_letter' ? 'failed'
-          : job === 'cancelled' ? 'cancelled' : 'unknown';
+  return job === 'queued' || job === 'retry' ? 'accepted'
+    : job === 'running' ? 'running'
+      : job === 'dead_letter' ? 'failed'
+        : job === 'cancelled' ? 'cancelled' : 'unknown';
 }
 const masterDefaults = (): InvestigationPoliciesResponse['masterSwitch'] => ({
   source: 'defaults', status: 'defaulted', enabled: DEFAULT_CONFIG.enabled,
@@ -342,48 +346,66 @@ export class InvestigationGovernanceStore {
       lastAttemptAt: typeof row?.attempted_at === 'string' && ISO_INSTANT.test(row.attempted_at) ? row.attempted_at : null };
   }
 
-  /** Durable automatic executions: the owner row froze the lane before any
-   * admission, the investigation request accepted the work, and the workflow
-   * job carries the real terminal state. Reads never create any of them. */
+  /** Durable automatic executions. The owner row froze the lane before any
+   * admission; its latest request is joined through its canonical Agent Run and
+   * workflow job. Canonical terminal transactions clear
+   * investigations.active_request_id, so that column is never the join key.
+   * Reads never create any of these rows. */
   private async executionFacts(c: PoolConnection, ids: ResourceIds): Promise<{
     facts: InvestigationPoliciesResponse['execution']; witnessTypes: ResourceType[];
   }> {
     const result: InvestigationPoliciesResponse['execution'] = { observed: 0, accepted: 0, running: 0, completed: 0,
-      failed: 0, cancelled: 0, suppressed: 0, unknown: 0, lastStatus: null, lastAt: null };
+      failed: 0, partial: 0, timed_out: 0, cancelled: 0, suppressed: 0, unknown: 0, lastStatus: null, lastAt: null };
     const scope = scopePredicate(ids);
     if (!scope) return { facts: result, witnessTypes: [] };
     const typeCase = resourceTypeCase(ids);
+    // Latest request per investigation, not the mutable active pointer.
     const joins = `FROM investigation_alert_owners o
       JOIN alerts a ON a.id = o.alert_id
-      LEFT JOIN investigations i ON i.id = o.investigation_id
-      LEFT JOIN investigation_requests r ON r.id = i.active_request_id
+      LEFT JOIN investigation_requests r ON r.id = (
+        SELECT q.id FROM investigation_requests q WHERE q.investigation_id = o.investigation_id
+        ORDER BY q.accepted_version DESC, q.created_at DESC, q.id DESC LIMIT 1)
       LEFT JOIN workflow_jobs j ON j.id COLLATE utf8mb4_unicode_ci = r.job_id
+      LEFT JOIN investigations i ON i.id = o.investigation_id
+      LEFT JOIN agent_runs run ON run.idempotency_key = CONCAT('investigation:', r.id)
+        AND run.actor_id = r.actor_id AND run.session_id = i.session_id
       WHERE o.lane = 'investigation' AND JSON_UNQUOTE(JSON_EXTRACT(o.command_snapshot, '$.trigger')) = 'auto'
         AND ${scope.sql}`;
     // Aggregate in SQL so a long history cannot silently undercount behind a
     // JS row cap; the latest row is read separately for the most recent state.
     const groups = await rows(c, `SELECT ${typeCase.sql} AS resource_type, COUNT(*) AS observed,
       SUM(o.investigation_id IS NULL) AS suppressed,
-      SUM(o.investigation_id IS NOT NULL AND j.id IS NULL) AS unknown,
-      SUM(o.investigation_id IS NOT NULL AND j.state = 'queued') AS accepted,
-      SUM(o.investigation_id IS NOT NULL AND j.state IN ('running','retry')) AS running,
-      SUM(o.investigation_id IS NOT NULL AND j.state = 'completed') AS completed,
-      SUM(o.investigation_id IS NOT NULL AND j.state = 'dead_letter') AS failed,
-      SUM(o.investigation_id IS NOT NULL AND j.state = 'cancelled') AS cancelled
+      SUM(o.investigation_id IS NOT NULL AND r.id IS NULL) AS no_request,
+      SUM(r.id IS NOT NULL AND (run.state = 'running' OR run.id IS NULL AND j.state = 'running')) AS running,
+      SUM(run.state = 'completed') AS completed,
+      SUM(run.state = 'failed' OR run.id IS NULL AND j.state = 'dead_letter') AS failed,
+      SUM(run.state = 'partial') AS partial,
+      SUM(run.state = 'timed_out') AS timed_out,
+      SUM(run.state = 'cancelled' OR run.id IS NULL AND j.state = 'cancelled') AS cancelled,
+      SUM(r.id IS NOT NULL AND run.id IS NULL AND j.state IN ('queued','retry')) AS accepted,
+      SUM(r.id IS NOT NULL AND run.id IS NULL
+        AND (j.id IS NULL OR j.state IS NULL OR j.state NOT IN ('queued','retry','running','cancelled','dead_letter'))) AS indeterminate
       ${joins} GROUP BY resource_type`, [...typeCase.values, ...scope.values]);
     const witness = new Set<ResourceType>();
     for (const group of groups) {
       const type = String(group.resource_type ?? '') as ResourceType;
       if (type in ALERT_COLUMN) witness.add(type);
-      for (const key of ['observed', 'suppressed', 'unknown', 'accepted', 'running', 'completed', 'failed', 'cancelled'] as const)
+      // A request-less acceptance and a job without a usable Run are both
+      // unknown; they are summed separately only to keep aliases unique.
+      result.unknown = number(result.unknown + number(group.no_request) + number(group.indeterminate));
+      for (const key of ['observed', 'suppressed', 'accepted', 'running', 'completed', 'failed',
+        'partial', 'timed_out', 'cancelled'] as const)
         result[key] = number(result[key] + number(group[key]));
     }
-    const [last] = await rows(c, `SELECT o.investigation_id, j.state AS job_state,
-      DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s.000Z') AS owned_at
-      ${joins} ORDER BY o.created_at DESC, o.alert_id DESC LIMIT 1`, scope.values);
+    // Order by the latest request (follow-ups and recovery attempts win over the
+    // original ownership time); report the Run terminal time when one exists.
+    const [last] = await rows(c, `SELECT o.investigation_id, r.id AS request_id, j.state AS job_state,
+      run.state AS run_state,
+      DATE_FORMAT(COALESCE(run.finished_at, run.created_at, r.created_at, o.created_at), '%Y-%m-%dT%H:%i:%s.000Z') AS observed_at
+      ${joins} ORDER BY COALESCE(r.created_at, o.created_at) DESC, o.created_at DESC, o.alert_id DESC LIMIT 1`, scope.values);
     if (last) {
-      result.lastStatus = executionStatus(last.investigation_id, last.job_state);
-      result.lastAt = typeof last.owned_at === 'string' && ISO_INSTANT.test(last.owned_at) ? last.owned_at : null;
+      result.lastStatus = executionStatus(last.investigation_id, last.request_id, last.job_state, last.run_state);
+      result.lastAt = typeof last.observed_at === 'string' && ISO_INSTANT.test(last.observed_at) ? last.observed_at : null;
     }
     return { facts: result, witnessTypes: [...witness] };
   }
