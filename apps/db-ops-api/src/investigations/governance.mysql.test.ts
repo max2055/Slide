@@ -266,7 +266,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
       // result through requests/Runs is the only durable relation.
       const [completedTerminal] = (await pool.query<RowDataPacket[]>(`SELECT i.active_request_id, j.state AS job_state, r.state AS run_state
         FROM investigations i JOIN investigation_requests q ON q.investigation_id = i.id
-        JOIN workflow_jobs j ON j.id = q.job_id JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
+        JOIN workflow_jobs j ON j.id COLLATE utf8mb4_unicode_ci = q.job_id
+        JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
         WHERE i.id = ?`, [execution.investigation]))[0];
       expect(completedTerminal).toMatchObject({ active_request_id: null, job_state: 'completed', run_state: 'completed' });
       const before = await snapshot();
@@ -312,7 +313,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
         records.push(record);
         const [terminal] = (await pool.query<RowDataPacket[]>(`SELECT i.active_request_id, j.state AS job_state, r.state AS run_state
           FROM investigations i JOIN investigation_requests q ON q.investigation_id = i.id
-          JOIN workflow_jobs j ON j.id = q.job_id JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
+          JOIN workflow_jobs j ON j.id COLLATE utf8mb4_unicode_ci = q.job_id
+          JOIN agent_runs r ON r.idempotency_key = CONCAT('investigation:', q.id)
           WHERE i.id = ?`, [record.investigation]))[0];
         expect(terminal).toMatchObject({ active_request_id: null, job_state: 'completed', run_state: extra.expected });
         const facts = await (await read('policies')).json() as InvestigationPoliciesResponse;
