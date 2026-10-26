@@ -220,3 +220,10 @@ MAX241_CDP_PORT=19354 node docs/slide/development/MAX-241/verify/run-checks.mjs 
 - 复现：`node docs/slide/development/MAX-241/verify/version-checks.mjs`；完整检查命令同 §2，服务只读同一工作树文件。
 - 合成输入只证明判定函数与原型呈现，**不代表真实服务器/数据库或设备验收**；生产模板目录、兼容性判定、试采/发布接口仍需实施阶段用真实环境验证。
 - 本轮未改生产代码、共享组件、后端或导航；未发模型请求、未写 224 账本、未操作真实资源或共享服务。
+
+### 10.4 SHA 绑定
+
+- 修复与验证同属提交 `f6fb341df`（分支 `agent/15coder1/max-241`，起始 `4d47407e1` 保留；其后仅本文档追加本节，代码不变）。
+- `prototype/app.js` sha256 `4943aa136f3d565f3b89437bcf1f2698c6758f6eccd8f98b6a45b0bc0e0704e4`
+- `verify/version-checks.mjs` sha256 `b3a291f29d496a5f81deafc9a7c2b279c0674336b6cff562ca5db9dab373dc44`
+- 机器结果：GREEN 23/23、Chrome 103/103、Edge 103/103；RED 20/23（同一脚本指向 `4d47407e1` 的 `app.js` 副本）。
