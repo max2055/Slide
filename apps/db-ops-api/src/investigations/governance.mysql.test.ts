@@ -192,6 +192,18 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     await pool.execute('DELETE FROM agent_canonical_facts WHERE session_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM agent_runs WHERE session_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM chat_messages WHERE session_id = ?', [record.investigation]);
+    // The real automatic admission reserves before dispatch, so the request
+    // outlives its admission key and budget ledger rows; both reference it with
+    // ON DELETE RESTRICT and must be cleared first.
+    const requests = (await rows('SELECT id FROM investigation_requests WHERE investigation_id = ?', [record.investigation]))
+      .map(row => String(row.id));
+    const marks = requests.map(() => '?').join(', ');
+    if (requests.length) {
+      await pool.execute(`DELETE FROM investigation_budget_resources WHERE reservation_id IN
+        (SELECT id FROM investigation_budget_ledger WHERE request_id IN (${marks}))`, requests);
+      await pool.execute(`DELETE FROM investigation_budget_ledger WHERE request_id IN (${marks})`, requests);
+      await pool.execute(`DELETE FROM investigation_admission_keys WHERE request_id IN (${marks})`, requests);
+    }
     await pool.execute('DELETE FROM investigation_requests WHERE investigation_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM investigation_resources WHERE investigation_id = ?', [record.investigation]);
     await pool.execute('DELETE FROM investigations WHERE id = ?', [record.investigation]);
