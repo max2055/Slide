@@ -1,13 +1,13 @@
 # 原型浏览器验证记录（设计修复 R1–R6）
 
-日期：2026-10-26｜验证提交：任务分支 `a8ab8d17f`（发布分支为同内容的设计专用提交，见 PR）｜对象：[prototype/](prototype/) 独立原型（演示数据，不连后端）。生产详情页未修改。
+日期：2026-10-26｜验证提交：任务分支 `a4996163a`（R4/R6 再修复轮；发布分支为同内容的设计专用提交，见 PR）｜对象：[prototype/](prototype/) 独立原型（演示数据，不连后端）。生产详情页未修改。
 
 ## 1. 环境
 
 | 项 | 值 |
 |---|---|
 | 系统 | macOS 27.0.1（Darwin 27.0.0），Apple Silicon |
-| 浏览器 | Google Chrome 155.0.8059.85（headless new） |
+| 浏览器 | Google Chrome 156.0.8078.48（headless new） |
 | 驱动 | Node v24.18.0 + Chrome DevTools Protocol（零第三方依赖） |
 | 原型服务 | Vite 5.4.21，`127.0.0.1:8971`，只读复用 `frontend/src` 共享组件 |
 | 依赖 | `pnpm install --frozen-lockfile --offline`（使用本机 store） |
@@ -32,9 +32,12 @@ node docs/slide/development/MAX-241/verify/run-checks.mjs \
 node docs/slide/development/MAX-241/verify/run-checks.mjs <base> <out> --counterexamples --label old|new
 ```
 
-## 3. 完整检查：79/79 通过
+R4/R6 再修复轮另用 Chief 复审脚本（`chief-edge-checks.mjs`，外部附件、不入库）做独立复核：
+修复前 20/23、修复后 23/23，同样只读原型、不连后端、不调用模型。
 
-机器可读结果：`/Users/max/Coding/40-Slide/outputs/MAX-241-2026-10-26/repair/checks.json`。
+## 3. 完整检查：88/88 通过（R4/R6 再修复轮）
+
+机器可读结果：`checks.json`（本轮输出目录），绑定提交见文末。本轮新增 9 项配置负例与试采单元格断言，沿用其余 79 项。
 
 | 分组 | 检查 | 结果 |
 |---|---|---|
@@ -47,13 +50,16 @@ node docs/slide/development/MAX-241/verify/run-checks.mjs <base> <out> --counter
 | 权限 | 只读禁用写操作；监控配置只读且有原因；数据库 `manage≠update/delete`；网络备份读/写分离 | 通过（6/6） |
 | 反例（GREEN） | 选中行身份 ×3、页面 403 ×3、可编辑配置 ×3、非数据库模板流程 ×2 | 通过（11/11） |
 | 配置流程 | 参数修改更新最终值并重置流程；检查→试采→发布→应用→等待正式样本；绑定随资源变化 | 通过（7/7） |
+| 配置兼容性拒绝（R4） | MySQL 资源 × PostgreSQL 模板：第一步阻断、提示不兼容原因、试采/发布按钮禁用、点击不推进 | 通过（3/3） |
+| 页头试采门控（R4） | 页头“试采”先执行兼容性检查；不兼容模板同样被拒绝，不产生“试采完成” | 通过（2/2） |
+| 试采明细单元格（R6） | 三类各 3 行采集项/结果/说明非空；数据库含部分失败 + `ER_TABLEACCESS_DENIED` 与未全部成功汇总 | 通过（4/4） |
 | 上下文 | 指标页使用所选资源 id；返回恢复筛选/横滚/焦点；旧深链接可用 | 通过（4/4） |
 | 三档宽度 | 1440/1366/1920 列表与关键详情无整页溢出、主操作可达（含容器内滚动后） | 通过（12/12） |
 | 长名称 / 窄窗口 | 1366×768 长名换行不溢出；1100×800 降级为表格内横滚 | 通过（2/2） |
 
-## 4. 反例 RED → GREEN（11/11）
+## 4. 反例 RED → GREEN（20/20）
 
-同一组断言分别运行在修复前原型（`d53fbc20c`，RED）与本轮原型（GREEN）：
+1–11 项为早期修复的断言，12–20 项为 R4/R6 再修复新增；同一脚本分别运行在修复前原型（RED）与本轮原型（GREEN）：
 
 | # | 反例 | 修复前 | 修复后 |
 |---|---|---|---|
@@ -69,7 +75,17 @@ node docs/slide/development/MAX-241/verify/run-checks.mjs <base> <out> --counter
 | 10 | 服务器检查/启用流程不出现 MySQL | 失败：弹窗硬编码“MySQL 基础采集 v2.4.1” | 通过（无 MySQL） |
 | 11 | 网络设备检查/启用流程不出现 MySQL | 失败：同上 | 通过 |
 
-RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11）；GREEN 产物：`.../repair/green-new/counterexamples-new.json`（11/11）。
+| 12 | 不兼容模板（MySQL 资源 × PostgreSQL 模板）检查未通过并阻止试采/发布 | 失败：提示“MySQL 8.0.34 与模板兼容”，试采/发布均可用 | 通过（首步标 ✕ 阻断，两按钮禁用） |
+| 13 | 不兼容时展示最近试采明细（3 项非空、含部分失败与错误码）并标注已失效 | 失败：无试采表 | 通过（核心指标/慢查询/会话快照 + `ER_TABLEACCESS_DENIED`） |
+| 14 | 不兼容状态下点击试采/发布均不推进、不进入已发布 | 失败：进入“已发布，等待应用” | 通过（状态停留在拒绝态） |
+| 15 | 页头“试采”先完成兼容性检查再试采（不跳过前置检查） | 失败：直接置“试采完成”，无检查结果 | 通过（先检查后试采） |
+| 16 | 页头“试采”对不兼容模板同样拒绝，不产生试采完成 | 失败：仍显示试采完成 | 通过（拒绝态 + 发布禁用） |
+| 17 | 数据库试采表三项“采集项/结果/说明”均非空 | 失败：三行全空（数组被当对象字段读取） | 通过 |
+| 18 | 数据库试采展示部分失败与错误码，并提示未全部成功 | 失败：无结果、无错误码 | 通过（部分失败 · `ER_TABLEACCESS_DENIED`） |
+| 19 | 服务器试采表三项非空 | 失败：三行全空 | 通过（含“待验证”项） |
+| 20 | 网络设备试采表三项非空 | 失败：三行全空 | 通过（含“模板未覆盖”项） |
+
+RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11，早期 11 项）；本轮新增 9 项 RED 为完整检查 79/88（旧原型 + 新脚本）。GREEN 产物：`.../repair/green-new/counterexamples-new.json`（11/11）与完整检查 88/88。Chief 独立脚本同一路径：20/23 → 23/23。
 
 ## 5. 权限与状态证据（原型级）
 
@@ -78,6 +94,8 @@ RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11）；GREEN 产
 - 数据库 `manager` 预设：`instance:manage` 不含 `update/delete` → 编辑/删除禁用，监控配置仍可编辑（与 06 §1 一致）。
 - 网络设备 `manager`：备份写禁用（原因 `network_devices:backup`）、备份列表仍可读；`backup` 预设下保存定时可用。
 - 配置流程不伪造：试采“不写正式历史”，发布后“等待应用”，应用后“等待首个正式样本，不代表已健康”；P1 前不显示触发器数量。
+- 配置兼容性：资源引擎族与模板引擎族不一致时（MySQL × PostgreSQL）明确拒绝，首步阻断、试采/发布禁用；页头“试采”与四步引用同一检查，不绕过。
+- 试采明细：三类逐项显示成功 / 部分失败（含错误码）/ 待验证 / 模板未覆盖；部分失败旁给出“未全部成功”汇总，空白结果与“试采完成”不再并存。
 
 ## 6. 截图索引（`.../repair/screenshots/`，44 张）
 
@@ -88,6 +106,8 @@ RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11）；GREEN 产
 | `db-detail-overview-1440x900.png` / `server-detail-overview-1440x900.png` / `network-detail-overview-1440x900.png` | 详情共享框架 |
 | `db-detail-collection-full-1440x900.png` | 监控配置：绑定、有效参数、四步、触发器未接入、覆盖、事件 |
 | `db-config-edited-flow-1440x900.png` | 参数修改后的检查/试采/发布/应用状态 |
+| `db-config-incompatible-blocked-1440x900.png` | MySQL 资源选 PostgreSQL 模板：阻断、试采/发布禁用、最近试采标注已失效 |
+| `{db,server,network}-config-trial-results-1440x900.png` | 三类试采明细单元格（含部分失败与错误码、待验证/未覆盖） |
 | `server-detail-diagnostics-1440x900.png`（及 1366/1920） | 诊断证据条、分区部分失败、唯一采集操作 |
 | `network-detail-backups-1440x900.png`（及 1366/1920） | 定时备份 + 备份列表 |
 | `network-backups-backup-permission-1440x900.png` | `backup` 预设下写可用 |
@@ -107,3 +127,10 @@ RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11）；GREEN 产
 - 未做移动/平板、暗色、多语言专项（项目范围排除）。
 - 原型复用共享组件，但生产实施仍以现有 `instance-detail` / `server-detail` / `network-device-detail` 为基线修改，不复制原型代码。
 - 本记录只覆盖设计修复（R1–R6）；整单生产 UI 实施与 P1 数据能力仍未放行。
+- R4 的配置业务组件仍是**独立演示状态机**，不等于已完成生产 `metric-configuration` 接入；真实模板目录、兼容性判定、试采与发布接口仍需实施阶段验证。
+- 本轮只修配置原型（R4）与其验证（R6），未重做已接受设计，未改生产 frontend/API/导航/共享组件。
+
+## 8. 提交绑定
+
+- R4/R6 再修复轮验证对象为任务分支提交 `a4996163a`（原型、验证脚本与本文档同属该提交；其后仅新增本文档的 SHA 绑定提交，代码不变）；验证时 Vite 服务只读同一工作树文件，未缓存旧模块。
+- 机器结果：完整 88/88、反例 11/11、Chief 独立脚本 23/23；RED 分别为 79/88、旧 11 项 0/11（历史）、Chief 20/23。
