@@ -99,13 +99,22 @@ export async function autoCompact(
   // The summary request and complete resulting projection must still fit their
   // actual windows; neither a token count nor the target proves that fit.
   // Summary output is independent of ordinary-answer output. Never silently
-  // clamp an allocation: the capability/window gates must admit it in full.
-  const maxTokens = spec.contextPolicy?.summaryMaxTokens ?? 10240;
-  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid summary output budget');
+  // clamp an explicit allocation: the capability/window gates must admit it in
+  // full. Shared runtimes (chat and other entry points) configure no summary
+  // allocation, so they keep the historical compatible default rather than
+  // inheriting the larger investigation-only ceiling, and never exceed a
+  // verified model output limit.
   const capability = provider.getModelCapabilities?.(spec.model);
-  if (maxTokens > 4096 && (!capability || capability.source === 'conservative-fallback' || capability.maxOutputTokens === undefined)) {
+  const verifiedOutput = capability?.source === 'conservative-fallback' ? undefined : capability?.maxOutputTokens;
+  const configured = spec.contextPolicy?.summaryMaxTokens;
+  if (configured !== undefined && verifiedOutput !== undefined && configured > verifiedOutput) {
+    throw new RuntimeError('CONTEXT_UNRECOVERABLE', `Summary output ${configured} exceeds model output limit ${verifiedOutput}`);
+  }
+  if (configured !== undefined && configured > 4096 && verifiedOutput === undefined) {
     throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Summary output requires verified model capacity');
   }
+  const maxTokens = configured ?? Math.min(2048, spec.maxTokens ?? 4096, verifiedOutput ?? Infinity);
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid summary output budget');
   // Project receipts before enclosing history in a synthetic message. Once
   // wrapped as JSON, a provider cannot recognize individual tool results.
   // Summary input preserves accepted planning/history; optional numerical

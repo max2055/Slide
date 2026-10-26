@@ -8,7 +8,7 @@ import {ToolRegistry} from '../tool-registry.js';
 import {NoopHook} from '../runner.js';
 import type {AgentRunSpec, Message} from '../types.js';
 
-function fixture(maxTokens=4096, summaryMaxTokens?:number) {
+function fixture(maxTokens=4096, summaryMaxTokens=10240) {
   const raw:Message[]=[{id:'policy',role:'system',content:'Read only.'},{id:'goal',role:'user',content:'inspect db-42'},
     {id:'history',role:'assistant',content:'observations '.repeat(1000)},{id:'latest',role:'user',content:'report evidence'}];
   const provider=new OpenAIProvider({apiKey:'fixture',model:'gpt-4.1'});
