@@ -1,0 +1,5 @@
+{"kind":"init","schemaVersion":1,"batchId":"AI-Operations-V23","tokenLimit":10000000,"at":"2026-10-25T13:50:06.751Z"}
+{"kind":"send","sequence":1,"inputUpperBound":9904,"outputCeiling":1024,"at":"2026-10-25T13:50:07.216Z"}
+{"kind":"usage","sequence":1,"usage":{"inputTokens":100,"cachedInputTokens":0,"outputTokens":20},"at":"2026-10-25T13:50:07.231Z"}
+{"kind":"send","sequence":2,"inputUpperBound":11209,"outputCeiling":1024,"at":"2026-10-25T13:50:07.461Z"}
+{"kind":"usage","sequence":2,"usage":{"inputTokens":100,"cachedInputTokens":0,"outputTokens":20},"at":"2026-10-25T13:50:07.476Z"}
