@@ -2,8 +2,10 @@
 
 隔离 API/Worker 可通过 `INVESTIGATION_CONTEXT_WINDOW_TOKENS` 和
 `INVESTIGATION_OUTPUT_TOKENS` 设置调查上下文窗口及单次输出上限。
-`INVESTIGATION_SUMMARY_OUTPUT_TOKENS` 独立设置压缩摘要输出上限，新执行默认
-10,240，不受普通回答的 4,096/8,192 上限截断；显式较小摘要配置仍生效。
+`INVESTIGATION_SUMMARY_OUTPUT_TOKENS` 独立设置压缩摘要输出上限，不受普通回答的
+4,096/8,192 上限截断。未配置时默认取 10,240 与已核实 Provider 最大输出中的较小
+值；能力未核实时不继承该调查额度，回落到 `min(2048, 普通输出)` 的兼容默认。
+显式配置保持原值，不因默认解析被裁剪。
 这些服务端环境配置不接受客户端或模型参数，不修改 Provider 全局配置。
 未配置时保留 16,000 窗口和现有 Provider 输出限制；显式配置必须在当前模型的
 已知 capability 范围内，并为输出之外保留 1,024 token 余量，否则发送前拒绝。
