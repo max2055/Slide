@@ -1,6 +1,6 @@
 # 三类完整资源详情现状盘点
 
-盘点对象：`frontend/src/app/ui/`（代码基线 `9979d1b0c`）。只记录**当前真实实现**；未实现能力统一标注“拟建”，不因原型或类型声明写成现状。
+盘点对象：`frontend/src/app/ui/` 与 `apps/db-ops-api`。基线为已验证 main `e11f6ba2`；权限相关文件与本次工作树逐字节一致。只记录**当前真实实现**；未实现能力统一标注“拟建”，不因原型或类型声明写成现状。完整权限/资源门禁逐项对照见 [06-permission-gates.md](06-permission-gates.md)。
 
 相关入口：`frontend/src/app/ui/navigation.ts:3`（资源管理四菜单顺序）、`frontend/src/app/ui/app-render.ts:784`（三类详情渲染）、各详情视图文件。
 
@@ -46,12 +46,12 @@
 
 **四操作（当前业务真实语义，三类一致）**：
 
-| 操作 | 行为 | 权限 | 备注 |
-|---|---|---|---|
-| 详情 | 进入完整详情页 | 仅需 `:view` | 数据库/服务器/网络设备均直接可点 |
-| 编辑 | 打开资源编辑（数据库为整页编辑器，含“基本信息 / 监控与采集”两页签） | `instance:manage` / `servers:manage` / `network_devices:manage`；无权限时 `disabled` + title 提示 | 数据库编辑器含“查看资源详情 ↗” |
-| 测试 | 连接测试；数据库弹出输入密码的测试对话框 | 同上 `:manage` | 服务器/网络设备为端点连通与认证测试 |
-| 删除 | 确认后删除 | 同上 `:manage` | 二次确认对话框 |
+| 操作 | 行为 | 前端门控（现状） | 服务端实际要求 | 备注 |
+|---|---|---|---|---|
+| 详情 | 进入完整详情页 | 无（始终可点） | `instance:view` / `servers:view` / `network_devices:view`（数据库另需资源 read-only 范围） | 四操作中只有详情不需要写权限 |
+| 编辑 | 打开资源编辑（数据库为整页编辑器，含“基本信息 / 监控与采集”两页签） | 数据库 `instance:manage`；服务器/网络设备 `:manage`；无权限时 `disabled` + title | 数据库 **`instance:update`** + 资源 read-write；服务器/网络设备 `:manage` | **数据库前后端不一致**：manage 不含 update |
+| 测试 | 连接测试；数据库弹出输入密码的测试对话框 | 数据库/服务器 `:manage`；网络设备**无门控** | 三类均为 `:manage`（stateless，接收 host/凭据） | 网络设备前端缺少禁用（详见 06） |
+| 删除 | 确认后删除 | 数据库 `instance:manage`；服务器/网络设备 `:manage` | 数据库 **`instance:delete`** + 资源 admin；服务器/网络设备 `:manage` | 数据库前后端不一致 |
 
 > V4 原型列表示意动作为“详情 / 监控配置 / 测试连接 / 编辑”（`outputs/.../prototype/main.ts:96`）。按 Issue 要求以**当前业务语义**为准，不删现有“删除”，也不机械照搬原型四按钮。差异与建议见 [02-diff-table.md](02-diff-table.md) D-05。
 
@@ -71,9 +71,11 @@
 | 列表/详情可见 | `instance:view`（`navigation.ts:144`） | `servers:view` | `network_devices:view`（详情页在 `navigation.ts:147` 有独立门禁） |
 | 编辑/测试/删除 | `instance:manage` | `servers:manage` | `network_devices:manage` |
 | 只读查询 | `instance:query`（SQL 控制台） | — | — |
-| 采集配置管理 | `CollectionStatus.can_manage`（服务端返回） | 同 | 同 |
+| 采集配置管理 | `CollectionStatus.can_manage`（服务端返回，`/api/metrics/config/resources/:type/:id/access`） | 同 | 同 |
+| 配置备份读取 | — | — | `network_devices:view`（列表/摘要/差异/定时设置读取） |
+| 配置备份写入 | — | — | `network_devices:backup`（立即备份、保存定时设置、原始内容） |
 
-已知现状风险（本次只记录，不在设计前置内修复）：`TAB_REQUIRED_PERMISSIONS` 未登记 `instance-detail` / `server-detail`（`navigation.ts:129-152`），仅登记了 `network-device-detail`；直接输入 URL 时页面依靠接口 401/403 兜底，而非导航层隐藏。实施阶段需实测并在回归清单 R-33 验证。
+已知现状风险（本次只记录，不在设计前置内修复）：`TAB_REQUIRED_PERMISSIONS` 未登记 `instance-detail` / `server-detail`（`navigation.ts:127-152`），仅登记了 `network-device-detail`；直接输入 URL 时页面依靠接口 401/403 兜底，而非导航层隐藏。实施阶段需实测并在回归清单 **R-22** 验证（原文误写 R-33）。网络设备详情“立即备份 / 保存定时设置”未按 `network_devices:backup` 门控，数据库编辑/删除前端使用 `instance:manage` 而服务端要求 `instance:update` / `instance:delete`，均见 [06](06-permission-gates.md)。
 
 ## 1. 数据库完整详情（13 页签）
 
@@ -133,6 +135,6 @@
 
 1. **三类专业能力集中在详情页签**，不能在“详情”入口换成简化弹窗或通用页；V4 `resource-detail` 弹窗只是入口占位。
 2. 列表八列的框架（序号、采集状态、最近采集时间）**已存在**；数据库列表多出的“数据量”是唯一超出八列口径的常驻业务列。
-3. 列表四操作的真实语义是“详情 / 编辑 / 测试 / 删除”，均带 `:manage` 门控；原型示意的“监控配置”在当前实现中位于详情页签与资源编辑器。
+3. 列表四操作的真实语义是“详情 / 编辑 / 测试 / 删除”；**只有编辑/测试/删除需要写权限，详情只需 `:view`**，且数据库编辑/删除的服务端权限码是 `instance:update` / `instance:delete` 而非 `instance:manage`。原型示意的“监控配置”在当前实现中位于详情页签与资源编辑器。
 4. 详情缺少三项信息职责：**有效触发器、资源事件、操作审计**；触发器 / 事件 / 审计的新增依赖 P1 与契约 Issue，本轮只做设计占位。
 5. 返回列表不保留筛选与位置，是现有真实缺口（数据库/服务器/网络设备均如此）。

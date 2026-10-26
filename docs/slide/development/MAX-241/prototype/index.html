@@ -4,10 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MAX-241 三类完整资源详情原型</title>
+  <!-- 只读复用生产共享样式与 token，不复制按钮/卡片/徽章/弹窗外观。 -->
+  <link rel="stylesheet" href="/frontend/src/app/styles/base.css" />
+  <link rel="stylesheet" href="/frontend/src/app/styles/shared-btn-styles.css" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <!-- 设计评审控制条：不属于产品界面，仅用于切换类型/页签/状态与宽度检查。 -->
+  <!-- 设计评审控制条：不属于产品界面，仅用于切换类型/页签/状态/权限与宽度检查。 -->
   <div class="review-bar" role="region" aria-label="设计评审控制">
     <strong>MAX-241 设计原型</strong>
     <span class="review-note">演示数据 · 不连后端 · 非生产界面</span>
@@ -34,7 +37,17 @@
         <option value="loading">加载中</option>
         <option value="error">加载失败</option>
         <option value="partial">部分失败</option>
-        <option value="forbidden">无权限</option>
+        <option value="forbidden">页面 403</option>
+        <option value="module403">模块 403</option>
+      </select>
+    </label>
+    <label>权限
+      <select id="ctl-perm">
+        <option value="full">全部（view/update/delete/manage/backup）</option>
+        <option value="view">只读（view）</option>
+        <option value="manager">管理无备份/无实例更新删除</option>
+        <option value="backup">只读 + 配置备份写</option>
+        <option value="none">无任何权限</option>
       </select>
     </label>
     <label class="review-check"><input type="checkbox" id="ctl-long" /> 长名称</label>
@@ -42,9 +55,6 @@
   </div>
 
   <div id="app" class="app-shell"></div>
-
-  <div id="dialog-root"></div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script type="module" src="./app.js"></script>
 </body>
