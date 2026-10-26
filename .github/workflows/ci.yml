@@ -305,15 +305,25 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Chromium and Microsoft Edge
+      - name: Install Chromium, Microsoft Edge and the isolated NSS trust tooling
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
           pnpm --filter slide-frontend exec playwright install --with-deps chromium
           pnpm --filter slide-frontend exec playwright install --with-deps msedge
-      - name: "Edge critical paths: login, investigation terminal state and WSS"
+      - name: "Edge critical paths: login, investigation terminal state, trusted HTTPS/WSS"
         env:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
+          SLIDE_TLS_BROWSER_CHANNEL: msedge
         run: pnpm --filter slide-frontend exec playwright test --config playwright.edge-ci.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edge-critical-paths-${{ github.sha }}
+          path: frontend/test-results-edge-critical/
+          include-hidden-files: true
+          retention-days: 30
       - name: Instance query states with live MySQL and permissions
         env:
           MAX163_TEST_MYSQL_PORT: ${{ env.DB_PORT }}
