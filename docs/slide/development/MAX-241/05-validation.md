@@ -284,3 +284,12 @@ node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执
 - 生产模板目录、真实资源的系统版本字段来源与未知语义仍需实施阶段按真实契约验证；本轮不改生产 frontend/API/导航/共享组件。
 - 未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
 - SHA 绑定见 §11.5。
+
+### 11.5 SHA 绑定
+
+- 修复与验证同属提交 `2f27450d1`（分支 `agent/15coder1/max-241`，起始 `08d249008` 保留，未 amend/rebase；本节为随后的文档追加，代码不变）。
+- `prototype/app.js` sha256 `57eba64c0d88add0de096dc17239ee16ff6f254b93e0befa8128d1f9060639d4`
+- `verify/version-checks.mjs` sha256 `a92ded99a8e9d763e693a9ec9c9d450f14f28a62d8c2a95addbade13c17687fe`
+- `verify/run-checks.mjs` sha256 `3bb85f57ba505d700194783f8df80dfe45cf89c1ded0a9d8731d89c0ee1c651d`
+- `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`
+- 机器结果：GREEN 41/41、Chrome 130/130、Edge 130/130；RED 32/41（同一脚本、同一 18 项新增用例，修复前源码）。
