@@ -7,6 +7,7 @@ vi.mock('./operational.js', () => ({ evaluateOperationalRule: m.evaluate }));
 vi.mock('../../alert-database-service.js', () => ({ alertDatabaseService: {
   getAlertRules: m.rules, createAlert: m.create, resolveAlert: m.resolve,
   findActiveServerAlert: async () => null, findActiveNetworkDeviceAlert: async () => null,
+  findActiveServerAlerts: async () => [],
   getActiveAlerts: async () => [],
 } }));
 import { serverAlertEvaluator } from '../../server-alert-evaluator.js';
