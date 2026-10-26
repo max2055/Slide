@@ -349,3 +349,12 @@ MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" 
 - 合成系统描述只证明判定函数与原型呈现；**不代表真实服务器/采集验收**，未连接后端、真实资源或共享服务；生产系统版本字段来源与未知语义仍须实施阶段按真实契约验证。
 - 本轮只改 `docs/slide/development/MAX-241/**`（原型、验证脚本与设计说明），生产 frontend/API/导航/共享组件只读；未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
 - SHA 绑定见 §12.5。
+
+### 12.5 SHA 绑定
+
+- 修复与验证同属提交 `761f74d3d`（分支 `agent/15coder1/max-241`，起始 `f48f873355f1a23a23eb0aefb97faa6233fe5c9f` 保留，未 amend/rebase；本节为随后的文档追加，代码不变）。
+- `prototype/app.js` sha256 `46740c79930c2f31e2ccf89be8029bb9033e616d51ffa14ac3425be12b0ca8ab`
+- `verify/version-checks.mjs` sha256 `5825360ce3c0914858abc333c09907410375350b1ef96099fbcb79c69073b4e9`
+- `verify/run-checks.mjs` sha256 `3ee1a42ccdf850d0257bce71d40dd1737e68249688fec96ce5ac049cbbb6c9bc`
+- `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`（本轮未改）
+- 机器结果：GREEN 56/56、Chrome 166/166、Edge 166/166；RED 46/56（同一脚本、同一 15 项新增用例，修复前源码）。
