@@ -90,12 +90,12 @@ ORDER BY timestamp_ms;
 
 - 11/11 挂载：0.79 侧 < 0.80 → healthy；0.81 侧 > 0.80 → warning。
 - 0.89 → warning、0.90 → error、0.94 → error、0.95 → critical。
-- 真实 `executeDerived` 产出逐挂载 ratio 后，经生产消费者评估入口 `evaluateOperationalRule` → `evaluateMetric` 判定：三个挂载为 0.81、其余 0.79 时规则 firing；只恢复其中一个后规则仍 firing；全部恢复到 0.79 才 `recovery=true`。告警按规则/服务器去重，不存在“单挂载告警行各自恢复”的持久化语义。
+- 真实 `executeDerived` 产出逐挂载 ratio 后，经生产消费者评估入口 `evaluateOperationalRule` → `evaluateMetric` 判定：三个挂载为 0.81、其余 0.79 时规则 firing；只恢复其中一个时，该挂载的活跃告警行按自身完整维度（mount/device/fs_type）独立 `recovery=true` 并 resolve，其余仍 firing 的挂载保持 open 并 touch（#226 逐维度隔离）；逐个恢复到 0.79 后各自的告警行分别 resolve。
 - used 缺失 → `value=null` / `quality=unknown`，评估为 unknown，不 resolve 也不当作 0；size 缺失 → `missing_input`；真实 0（`/dev`）→ `value=0` / `quality=good`。
-- 旧 80/90/95 直接用于 ratio（0.371783…0.999999）永不触发，复现了原指引的漏报风险；在 `ServerAlertEvaluator` 状态机 replay 中，这类规则遇到 >0.80 的真实比率会走 `resolveAlert` 而不是 `createAlert`。
+- 旧 80/90/95 直接用于 ratio（0.371783…0.999999）永不触发，复现了原指引的漏报风险；在 `ServerAlertEvaluator` 状态机 replay 中，这类规则遇到 >0.80 的真实比率会把它当作恢复证据，走 `resolveAlert` 而不是 `createAlert`。
 - 库大小规则在真实 1,278,853,120 By 为 healthy；101/501/1001 GiB 分别为 warning/error/critical。
 
-`ServerAlertEvaluator` 的 create/touch/resolve replay 只替换了采集查询与 MySQL 支撑的 `alertDatabaseService`/`serverDatabaseService`，派生、规则编译和触发/恢复判定都是生产实现。**未完成**：真实 MySQL 中的告警行创建/更新/恢复（SQL fixture）需与 MAX-225 串行交接后执行，不能在报告中宣称已持久化验证。
+`apps/db-ops-api/src/alerts/filesystem-ratio-alert-lifecycle.mysql.test.ts` 在一次性 MySQL（`bridgeTestFixture`，迁移完成后关闭删除）上执行真实 SQL：只替换采集查询与策略绑定，派生、消费者评估、`ServerAlertEvaluator` 与 `alerts` 行读写都是生产实现。已验证：firing 挂载创建带完整维度和 ratio 快照的告警行；一个挂载恢复时仅其告警行 `status=resolved`，另一 firing 挂载的告警行保持 `unread` 并被 touch；unknown 挂载不 resolve、不 create、不当作 0；同一 server/metric/mount 上不同规则的阈值快照（0.80 / 0.90）互不串用；旧 80/90/95 规则在 0.81 比率下把自己的活跃告警行误判为恢复。
 
 这些是真实挂载分母上的边界构造，不是生产已达到 0.79/0.81 的观测，报告里不得表述为真实高使用率事件。
 

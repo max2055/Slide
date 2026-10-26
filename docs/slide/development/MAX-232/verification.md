@@ -1,22 +1,30 @@
 # MAX-232：文件系统 ratio 阈值迁移指引修正（GitHub #256）
 
-日期：2026-10-26。任务分支 `agent/15coder1/max-232`（本轮基线 `0dcbfa6fa`），PR
-[#350](https://github.com/max2055/Slide/pull/350)。
+日期：2026-10-26。任务分支 `agent/15coder1/max-232`（`e73dc8be2` 之上合并当前 main
+`0148688b5`），PR [#350](https://github.com/max2055/Slide/pull/350)。
 
-## 本轮修复（Chief review `97bfc2553` 的 changes requested）
+## 本轮修复（Chief review：publication `68c04d956` 41 passed / 4 failed）
 
-上一版把 `unit=1` 一律当作比率，引入两个真实回归：
+根因：PR 发布在**当前 main** 上，而 #226 已把 `ServerAlertEvaluator` 的恢复路径改成
+`alertDatabaseService.findActiveServerAlerts()`（复数，按告警自身完整维度逐条恢复）。
+任务分支旧的测试 fixture 只 mock 了单数 `findActiveServerAlert`，于是评估器在
+`findActiveServerAlerts is not a function` 处抛错并被自身 `try/catch` 吞掉：
 
-| 指标 | 既有语义 | 上一版保存结果 | 本轮 |
-| --- | --- | --- | --- |
-| `linux.load.one_minute` | load average，可 > 1 | 400 拒绝 | 接受（`>= 4` 等） |
-| `network.interface.oper_up` | up=1 / down=0 | 400 拒绝（0 不在 (0,1]） | 接受（`= 0`） |
-| `linux.filesystem.used_ratio` | used/size，0–1 | 80 拒绝 / 0.8 接受 | 保持 |
+- 4 个状态链用例直接失败（预期 create/touch/resolve 都没有发生）；
+- 更严重的是 **unknown 不写用例在异常路径下也会“通过”**——它只断言“没有写”，没证明评估真的完成。
 
-修复方式：比率校验按指标语义收窄到 `linux.filesystem.used_ratio`，不再按 `unit=1` 判断；
-`unit=By` 仍要求整数绝对字节（拒绝 0.8/0.9/0.95，保留真实 0 与操作符语义）；
-上一版额外加的“所有 `unit=1`/`By` 指标拒绝未解析宏”属于范围外产品限制，已移除，
-仅在比率指标上保留（宏可能解析成旧百分比）。`POST` 与 `PUT` 两条保存路径都覆盖。
+本轮以当前 main 的依赖为准修正：
+
+- 任务分支合并 `origin/main`（`0148688b5`），不再用任务分支里的旧评估器快照做验证。
+- fixture 的 `findActiveServerAlerts` 返回**带完整维度**（mount/device/fs_type）的活跃告警行列表；
+  恢复按每条告警自己的维度独立判定：一个挂载恢复只 resolve 它自己的行，其他 firing 挂载保持
+  open 并 touch（不回退到 #226 之前的“全部挂载健康才恢复”聚合语义）。
+- unknown 用例把真实 `evaluateOperationalRule` 包一层 spy 记录调用结果，断言至少发生一次恢复
+  评估和一次语义评估、最后一次结果为 `{state:'unknown', value:null, recovery:false}`、
+  `metricQuery` 已调用且 `console.error` 未被调用——证明走的是有效评估而不是异常退出。
+- 变异校验：把 fixture 的复数方法删掉后，5/5 状态链用例全部失败（此前只有 4 个失败）。
+
+同时按 Chief 授予的串行 SQL 授权补做了真实 MySQL 持久化验证（见验收 2）。
 
 ## 目标与范围
 
@@ -27,16 +35,16 @@
 排除项：
 
 - 不重新执行 #243 的生产迁移，不改动已上线规则与旧规则 85/104 的审计记录。
-- 不新建/重启 MySQL 容器，不改动共享数据库；SQL fixture 属 MAX-225，待串行交接。
+- 不重启共享 MySQL、不使用平台数据库配置；SQL 验证只用一次性容器（迁移完成后删除）。
 - 不改动 MAX-225 负责的 `alert-database-service` / `rca-investigation-bridge` /
-  `event-aggregator` / `qualify-automatic-alert`。
+  `event-aggregator` / `qualify-automatic-alert` 实现；本轮只读取其真实 SQL 行为。
 
 关键假设：
 
 - “预览/保存”分别指迁移 CLI 的 `plan`（预览）/ `disable|delete --apply`（保存），
   以及 `/api/alert-rules` 的 `POST`/`PUT` 保存接口；前者由 `validateReplacementDefinition`
   校验，后者由本轮新增的 `validateAlertThresholdUnits` 校验。
-- 真实基线最高比率为 `/` 0.371783，0.79/0.81 只能在与真实挂载分母配对的隔离 replay 中验证，
+- 真实基线最高比率为 `/` 0.371783，0.79/0.81 只能在与真实挂载分母配对的 replay 中验证，
   不能表述为生产已发生的使用率事件。
 
 ## 改动
@@ -47,9 +55,10 @@
 | `apps/db-ops-api/server.ts` | `POST/PUT /api/alert-rules` 保存前调用上述校验，返回 400 + `code`；PUT 仅在写入阈值相关字段时校验 |
 | `apps/db-ops-api/src/metrics/alert-metric-catalog.ts` | 目录条目补充 `unit`（旧注册表与语义指标都返回） |
 | `apps/db-ops-api/src/alerts/threshold-units.test.ts` | 比率边界、load/oper_up 非回归、宏语义、字节绝对阈值 |
-| `apps/db-ops-api/src/alerts/filesystem-ratio-boundary.test.ts` | 真实挂载分母边界 + 生产消费者评估 + `ServerAlertEvaluator` 状态机 replay |
+| `apps/db-ops-api/src/alerts/filesystem-ratio-boundary.test.ts` | 真实挂载分母边界 + 生产消费者评估 + 当前 main（#226 逐维度）状态机 replay |
+| `apps/db-ops-api/src/alerts/filesystem-ratio-alert-lifecycle.mysql.test.ts` | 一次性 MySQL 上的真实告警行 create/touch/resolve、逐挂载独立恢复、unknown、规则/快照隔离、旧 80/90/95 误恢复 |
 | `apps/db-ops-api/src/alert-rule-metric-target.test.ts` | 复用真实路由处理器，覆盖 `POST`/`PUT` 的拒绝与接受路径 |
-| `docs/slide/reviews/2026-10-25-legacy-template-migration-243.md` | 单位换算、保存校验、边界与状态链证据、未完成项 |
+| `docs/slide/reviews/2026-10-25-legacy-template-migration-243.md` | 单位换算、保存校验、逐维度恢复与真实 SQL 证据 |
 | `docs/slide/reviews/2026-10-25-eight-issues-followup.md` | #6 表补充保存校验说明 |
 
 ## 验收逐条
@@ -69,28 +78,29 @@
 数据来源：server:3，2026-10-25T13:24:52Z，11 个挂载的真实 used_bytes/size_bytes 配对
 （`outputs/legacy-template-migration-243/verify-final.json`，证据目录不入库）。
 
-隔离 replay 使用上述真实配对为输入、真实维度（mount/device/fs_type），经生产
-`executeDerived` 计算 ratio（逐挂载与采集时记录的 ratio 一致到 14 位小数，真实值全部 < 0.80），
-再走生产消费者评估入口 `evaluateOperationalRule` → `evaluateMetric` 与真实
-`ServerAlertEvaluator` 状态机：
+派生与评估（生产实现，只替换采集查询）：
 
-- 真实配对：11/11 挂载 derived ratio 与采集值一致，评估为 healthy。
-- 边界（真实分母 + 构造分子）：`floor(size × 0.79)` → < 0.80 → healthy；`ceil(size × 0.81)` → > 0.80 → warning。
-- 0.89 → warning、0.90 → error、0.94 → error、0.95 → critical。
-- 三个挂载 0.81、其余 0.79：规则 firing；只恢复其中一个仍 firing；全部恢复才 `recovery=true`。
-  告警按规则/服务器去重，不存在“单挂载告警行各自恢复”的持久化语义。
-- `ServerAlertEvaluator` replay：首次 firing → `createAlert`（含 mount 维度）；部分恢复 →
-  `touchAlert`；全部恢复 → `resolveAlert`；其余挂载健康但有一个 unknown 时不 create/touch/resolve
-  （unknown 不当作 0 或 healthy）。
+- 11/11 挂载经 `executeDerived` 得到的 ratio 与采集值一致（14 位小数内），真实值全部 < 0.80、healthy。
+- 边界（真实分母 + 构造分子）：`floor(size × 0.79)` → < 0.80 → healthy；
+  `ceil(size × 0.81)` → > 0.80 → warning；0.89 warning、0.90 error、0.94 error、0.95 critical。
 - used 缺失 → `value=null` / `quality=unknown`（unknown，不当作 0/healthy）；size 缺失 →
   `missing_input`；真实 0（`/dev`）→ `value=0` / `quality=good`。
-- 旧 80/90/95 直接用于 ratio（0.371783–0.999999）永不触发；在状态机 replay 中，这类旧规则遇到
-  >0.80 的比率会 `resolveAlert` 而不是 `createAlert`，复现原指引的漏报风险。
-- 真实已观测比率（0–0.371783）全部 healthy。
 
-证据等级（不得混用）：派生计算与阈值分级是生产实现；消费者评估与告警状态机 replay 只替换了
-采集查询与 MySQL 支撑的 `alertDatabaseService`/`serverDatabaseService`。**真实 MySQL 告警行的
-创建/更新/恢复尚未执行**，见“未完成”。
+真实 MySQL 告警行（`filesystem-ratio-alert-lifecycle.mysql.test.ts`，一次性容器，只替换采集查询与
+策略绑定；派生、消费者评估、`ServerAlertEvaluator`、`alerts` 行读写均为生产实现）：
+
+- firing 挂载 `/boot/efi` 创建 1 条 `alerts` 行：`status=unread`、`threshold_value='0.80'`、
+  `metric_value` 为该挂载真实分母下的 0.81 比率、`tags.dimensions` 为完整
+  `{mount, device, fs_type}`。
+- 逐挂载独立恢复：`/boot/efi` 恢复（0.79）而 `/` 仍 firing（0.81）时，`/boot/efi` 的告警行
+  `status=resolved` 且写入 `resolved_at`；`/` 的告警行保持 `unread`、`resolved_at` 为空并被
+  touch 到新值。这是 #226 的逐维度恢复语义，不是“全部挂载健康才恢复”。
+- unknown 不当 0：`/` 缺失 used 时，其活跃告警行保持 `unread`、`metric_value` 不变、不 resolve，
+  也不产生新行；同时采集查询确实执行且 `console.error` 未被调用（有效评估，不是异常退出）。
+- 规则与快照隔离：同一 server/metric/mount 上规则 42（0.80）与规则 43（0.90）各自持有
+  `threshold_value='0.80'` / `'0.90'`；比率 0.85 时规则 42 继续 touch、规则 43 只 resolve 自己的行。
+- 旧 80/90/95 规则：在 0.81 比率下把自己的活跃告警行判为恢复（`status=resolved`）而不是触发，
+  复现原指引的漏报风险。
 
 ### 3. 库分配字节使用 By 绝对值；旧规则处置保留审计
 
@@ -109,40 +119,29 @@ pnpm --filter slide-api exec vitest run \
   src/metrics/alert-metric-catalog.test.ts
 # 4 files / 48 tests passed
 
+pnpm --filter slide-api exec vitest run src/alerts/filesystem-ratio-alert-lifecycle.mysql.test.ts
+# 1 file / 5 tests passed（一次性 MySQL，容器随 fixture 关闭删除）
+
 pnpm --filter slide-api exec vitest run \
   src/alerts src/metrics/consumers src/metrics/alert-metric-catalog.test.ts \
   src/alert-evaluator.test.ts src/server-alert-evaluator.test.ts \
-  src/alert-rule-metric-target.test.ts src/alert-rule-template-service.test.ts
-# 12 passed | 2 skipped files，107 passed | 3 skipped tests
+  src/alert-rule-metric-target.test.ts src/alert-rule-template-service.test.ts \
+  src/server-alert-isolation.mysql.test.ts
+# 14 passed | 2 skipped files，121 passed | 3 skipped tests
 
 pnpm --filter slide-api typecheck
 pnpm contracts:check
-pnpm lint
-
-pnpm --filter slide-api test
-# 首次全量（源码改动后）：4251 passed | 1113 skipped，449 files passed
+pnpm lint   # 0 errors（既有 296 warnings）
 ```
 
-全量重跑时 Docker 并发的 T07/T08 MySQL 套件出现 `Connection lost` / `STACK_TRACE_ERROR`
-超时（`investigations/alert-bridge*`、`legacy-analysis-bridge`、`resource-event-bridge`、
-`trigger-concurrency.mysql`、`network-device-alert-evaluator.mysql`）。这 6 个文件用
-`--no-file-parallelism` 串行重跑为 6 files / 62 tests passed，与本改动无关；
-告警/指标相关套件在多轮运行中始终通过。
+变异校验：从 fixture 移除 `findActiveServerAlerts` 后，本轮 5 个状态链用例全部失败；
+恢复后 19/19 通过。说明新增断言能捕获“异常被吞掉导致假通过”。
 
-## 未完成（需串行 SQL 交接）
+## 未完成与限制
 
-真实 MySQL 中的告警状态持久化未验证：`alerts` 行在 ratio 规则 firing 时创建、部分挂载恢复时更新、
-全部恢复时 resolve，以及 unknown 挂载不 resolve 的库内结果。需在 MAX-225 释放 SQL fixture 后，
-用与 `server-alert-evaluator.test.ts` 相同的最小 fixture 执行一次迁移 + 评估 + 查询断言，
-并记录精确版本/提交与输出。本报告不宣称该项通过。
-
-## 风险与限制
-
-- 边界验证是“真实分母 + 构造分子”的隔离 replay，不是生产已达到 0.79/0.81 的观测；
-  交付说明必须保持这一措辞。
-- 保存校验只覆盖数值/宏阈值语义；其他单位（`%`、legacy `bytes`、`state`）保持原有行为。
-- 未重新查询实时 MySQL 数据（避免与 MAX-225 的 SQL 使用冲突）；如需当日实时复核，
-  可在串行交接后执行 243 的 `verify`。
+- 0.79/0.81 是“真实分母 + 构造分子”的边界 replay，不是生产已发生的高使用率事件。
+- 未部署生产，未重跑 #243 生产迁移；生产规则与旧规则审计保持不变。
+- 本地未再跑全量 `pnpm --filter slide-api test`；完整 gate 由本次 exact HEAD 的 CI 执行。
 - 前端规则编辑器仍只有数值顺序校验；单位错误由保存接口返回的 `error` 展示。
 
 ## 回滚

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn(), connected: vi.fn(),
-  getAlertRules: vi.fn(), getServers: vi.fn(), findActive: vi.fn(), createAlert: vi.fn(), touchAlert: vi.fn(),
-  resolveAlert: vi.fn() }));
+  getAlertRules: vi.fn(), getServers: vi.fn(), findActive: vi.fn(), findActiveAlerts: vi.fn(), createAlert: vi.fn(),
+  touchAlert: vi.fn(), resolveAlert: vi.fn() }));
 vi.mock('../db-connection.js', () => ({ dbConnection: { isConnected: mocks.connected } }));
 vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
 vi.mock('../metrics/consumers/runtime.js', () => ({
@@ -11,9 +11,16 @@ vi.mock('../metrics/consumers/runtime.js', () => ({
 vi.mock('../server-database-service.js', () => ({ serverDatabaseService: { getCollectionEnabledServers: mocks.getServers } }));
 vi.mock('../alert-database-service.js', () => ({ alertDatabaseService: {
   getAlertRules: mocks.getAlertRules, findActiveServerAlert: mocks.findActive,
+  findActiveServerAlerts: mocks.findActiveAlerts,
   createAlert: mocks.createAlert, touchAlert: mocks.touchAlert, resolveAlert: mocks.resolveAlert,
 } }));
 vi.mock('../workflows/execution-context.js', () => ({ assertWorkflowActive: () => {} }));
+// Delegates to the real consumer; the wrapper only records calls so a no-write
+// assertion can prove a completed evaluation rather than a caught exception.
+vi.mock('../metrics/consumers/operational.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../metrics/consumers/operational.js')>();
+  return { ...actual, evaluateOperationalRule: vi.fn(actual.evaluateOperationalRule) };
+});
 
 import { definitions, derived, identify, sample } from '../contracts/metrics/fixtures.js';
 import { executeDerived } from '../metrics/derived.js';
@@ -277,12 +284,13 @@ describe('production consumer evaluation per mount (MAX-232, isolated replay)', 
 });
 
 /**
- * Isolated replay of the real ServerAlertEvaluator state machine
- * (create -> touch -> resolve / stay open on unknown). The derived ratio, rule
- * compilation and fire/recovery decision are real; the collector query and the
- * MySQL-backed alertDatabaseService/serverDatabaseService are replaced. This
- * proves the evaluator's transition logic, not a persisted MySQL alert row;
- * that SQL fixture is checkpointed for the serialized handoff.
+ * Isolated replay of the current ServerAlertEvaluator state machine (MAX-226
+ * per-dimension isolation): every active alert is recovered against its own
+ * complete dimension set, then the currently firing dimension is created or
+ * touched. The derived ratio, rule compilation, consumer evaluation and
+ * fire/recovery decision are real; the collector query and the MySQL-backed
+ * alertDatabaseService/serverDatabaseService are replaced. Persisted rows are
+ * proven separately in filesystem-ratio-alert-lifecycle.mysql.test.ts.
  */
 describe('server alert state chain per mount (MAX-232, isolated replay)', () => {
   const WINDOW = { from: '2026-10-25T13:24:52.000Z', to: '2026-10-25T13:24:52.000Z' };
@@ -291,6 +299,7 @@ describe('server alert state chain per mount (MAX-232, isolated replay)', () => 
     threshold_template: { warning: 0.8, error: 0.9, critical: 0.95 }, duration_seconds: 0, recovery_seconds: 0,
     severity: 'warning', enabled: true, silence_minutes: 5, notification_channels: null, server_id: null,
     db_types: null, instance_ids: null, template_id: null };
+  interface ActiveRow { id: number; tags: { dimensions: Record<string, string> } }
   let current: Array<[Mount, string | null]> = [];
   const results = (entries: Array<[Mount, string | null]>) => ({ metrics: [{
     definition: { id: 'linux.filesystem.used_ratio', semantic_version: '1.0.0', unit: '1', kind: 'gauge' },
@@ -302,6 +311,9 @@ describe('server alert state chain per mount (MAX-232, isolated replay)', () => 
     }) }] });
   const mountsAt = (firing: Set<string>, recovered?: string): Array<[Mount, string]> => MOUNTS.map(mount =>
     [mount, String(boundaryUsed(mount, firing.has(mount.mount) && mount.mount !== recovered ? 0.81 : 0.79))]);
+  const mountNamed = (name: string) => MOUNTS.find(mount => mount.mount === name)!;
+  const activeRow = (id: number, mount: Mount): ActiveRow => ({ id,
+    tags: { dimensions: { mount: mount.mount, device: mount.device, fs_type: mount.fs_type } } });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -313,51 +325,68 @@ describe('server alert state chain per mount (MAX-232, isolated replay)', () => 
     mocks.getServers.mockResolvedValue([{ id: 3, label: 'server-3', host: '10.0.0.3' }]);
     mocks.getAlertRules.mockResolvedValue([baseRule]);
     mocks.query.mockImplementation(async () => results(current));
+    mocks.findActiveAlerts.mockResolvedValue([]);
     mocks.findActive.mockResolvedValue(null);
     mocks.createAlert.mockResolvedValue({ success: true });
   });
 
-  it('creates one alert with the firing mount dimensions while another mount stays healthy', async () => {
+  it('creates one alert with the complete firing-mount dimensions when no alert is active', async () => {
     current = mountsAt(new Set(['/boot/efi', '/', '/boot']));
     await serverAlertEvaluator.evaluateServerRules();
+    expect(mocks.findActiveAlerts).toHaveBeenCalledWith(3, 'linux.filesystem.used_ratio', 42);
     expect(mocks.createAlert).toHaveBeenCalledTimes(1);
-    expect(mocks.createAlert).toHaveBeenCalledWith(expect.objectContaining({
-      server_id: 3, level: 'warning', metric_name: 'linux.filesystem.used_ratio',
-      tags: expect.objectContaining({ dimensions: expect.objectContaining({ mount: expect.any(String) }) }),
-    }));
-    const created = mocks.createAlert.mock.calls[0][0] as { tags: { dimensions: { mount: string } } };
-    expect(['/boot/efi', '/', '/boot']).toContain(created.tags.dimensions.mount);
-  });
-
-  it('keeps the alert open when only one of the firing mounts recovers', async () => {
-    mocks.findActive.mockResolvedValue({ id: 99 });
-    current = mountsAt(new Set(['/boot/efi', '/', '/boot']), '/boot/efi');
-    await serverAlertEvaluator.evaluateServerRules();
-    expect(mocks.resolveAlert).not.toHaveBeenCalled();
-    expect(mocks.touchAlert).toHaveBeenCalledWith(99, expect.any(Number), expect.anything());
-  });
-
-  it('resolves only after every mount is back under 0.80', async () => {
-    mocks.findActive.mockResolvedValue({ id: 99 });
-    current = mountsAt(new Set());
-    await serverAlertEvaluator.evaluateServerRules();
-    expect(mocks.resolveAlert).toHaveBeenCalledWith(99);
-    expect(mocks.createAlert).not.toHaveBeenCalled();
-  });
-
-  it('neither creates, touches nor resolves while a mount is unknown', async () => {
-    mocks.findActive.mockResolvedValue({ id: 99 });
-    current = MOUNTS.map(mount => [mount, mount.mount === '/' ? null : String(boundaryUsed(mount, 0.79))]);
-    await serverAlertEvaluator.evaluateServerRules();
-    expect(mocks.createAlert).not.toHaveBeenCalled();
+    const created = mocks.createAlert.mock.calls[0][0] as { tags: { dimensions: Record<string, string> } };
+    expect(created.tags.dimensions).toEqual({ mount: '/boot/efi', device: '/dev/nvme0n1p1', fs_type: 'vfat' });
     expect(mocks.touchAlert).not.toHaveBeenCalled();
     expect(mocks.resolveAlert).not.toHaveBeenCalled();
+  });
+
+  it('resolves the recovered mount independently while another mount keeps firing', async () => {
+    mocks.findActiveAlerts.mockResolvedValue([activeRow(99, mountNamed('/boot/efi')), activeRow(100, mountNamed('/'))]);
+    mocks.findActive.mockImplementation(async (_server, _metric, _rule, dimensions) =>
+      dimensions?.mount === '/' ? { id: 100 } : null);
+    current = mountsAt(new Set(['/boot/efi', '/', '/boot']), '/boot/efi');
+    await serverAlertEvaluator.evaluateServerRules();
+    expect(mocks.resolveAlert.mock.calls).toEqual([[99]]);
+    expect(mocks.touchAlert).toHaveBeenCalledWith(100, expect.any(Number), expect.anything());
+    expect(mocks.createAlert).not.toHaveBeenCalled();
+  });
+
+  it('resolves each active mount-specific alert once every mount is back under 0.80', async () => {
+    mocks.findActiveAlerts.mockResolvedValue([activeRow(99, mountNamed('/boot/efi')), activeRow(100, mountNamed('/'))]);
+    current = mountsAt(new Set());
+    await serverAlertEvaluator.evaluateServerRules();
+    expect(mocks.resolveAlert.mock.calls).toEqual([[99], [100]]);
+    expect(mocks.createAlert).not.toHaveBeenCalled();
+    expect(mocks.touchAlert).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing while the alerted mount is unknown, after a completed evaluation', async () => {
+    mocks.findActiveAlerts.mockResolvedValue([activeRow(99, mountNamed('/'))]);
+    mocks.findActive.mockResolvedValue({ id: 99 });
+    current = MOUNTS.map(mount => [mount, mount.mount === '/' ? null : String(boundaryUsed(mount, 0.79))]);
+    const failure = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await serverAlertEvaluator.evaluateServerRules();
+      const evaluations = await Promise.all((evaluateOperationalRule as unknown as
+        { mock: { results: Array<{ value: unknown }> } }).mock.results.map(result => result.value));
+      // One recovery evaluation for "/" plus one semantic evaluation over every mount.
+      expect(evaluations.length).toBeGreaterThanOrEqual(2);
+      expect(evaluations.at(-1)).toMatchObject({ handled: true, state: 'unknown', level: null, value: null, recovery: false });
+      expect(mocks.query).toHaveBeenCalled();
+      expect(failure).not.toHaveBeenCalled();
+      expect(mocks.createAlert).not.toHaveBeenCalled();
+      expect(mocks.touchAlert).not.toHaveBeenCalled();
+      expect(mocks.resolveAlert).not.toHaveBeenCalled();
+    } finally {
+      failure.mockRestore();
+    }
   });
 
   it('shows the legacy 80/90/95 rule would resolve instead of firing above 0.80', async () => {
     mocks.getAlertRules.mockResolvedValue([{ ...baseRule, threshold: 80,
       threshold_template: { warning: 80, error: 90, critical: 95 } }]);
-    mocks.findActive.mockResolvedValue({ id: 99 });
+    mocks.findActiveAlerts.mockResolvedValue([activeRow(99, mountNamed('/'))]);
     current = mountsAt(new Set(['/boot/efi', '/', '/boot']));
     await serverAlertEvaluator.evaluateServerRules();
     expect(mocks.createAlert).not.toHaveBeenCalled();
