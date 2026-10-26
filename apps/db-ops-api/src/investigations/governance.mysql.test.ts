@@ -13,7 +13,7 @@ import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { InvestigationGovernanceStore } from './governance-store.js';
 import { registerInvestigationGovernanceRoutes } from './governance-routes.js';
 import { INVESTIGATION_EFFECTIVE_BUDGET_KEY, InvestigationEffectiveBudgetService } from './effective-budget.js';
-import { InvestigationGovernanceSchemas, type InvestigationUsageResponse } from './governance-contracts.js';
+import { InvestigationGovernanceSchemas, type InvestigationPoliciesResponse, type InvestigationUsageResponse } from './governance-contracts.js';
 import { buildClientTypes, buildOpenApiDocument } from '../contracts/generate-public-api.js';
 
 const port = Number(process.env.AUTH_TEST_MYSQL_PORT);
@@ -78,7 +78,11 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     for (const table of ['investigation_budget_resources', 'investigation_budget_ledger', 'investigation_budget_domains',
       'investigation_requests', 'investigation_resources', 'investigations', 'chat_sessions']) await pool.execute(`DELETE FROM ${table}`);
     await pool.execute('DELETE FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
-    await pool.execute("DELETE FROM audit_log_entries WHERE action = 'investigation.effective_budget.update'");
+    await pool.execute("DELETE FROM system_config WHERE config_key = 'auto_analysis_config'");
+    await pool.execute('DELETE FROM audit_log_entries WHERE action = \'investigation.effective_budget.update\'');
+    // Operator switches must not leak between scenarios in this process.
+    for (const key of ['INVESTIGATION_OPS_AUTO_ENABLED', 'INVESTIGATION_OPS_SERVICE_USER_ID', 'INVESTIGATION_OPS_INSTANCE_IDS',
+      'INVESTIGATION_OPS_SERVER_IDS', 'INVESTIGATION_OPS_NETWORK_DEVICE_IDS']) delete process.env[key];
   });
   afterAll(async () => {
     await app?.close(); await pool?.end();
@@ -128,10 +132,119 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(response.headers.get('etag')).toBeNull();
-    const body = await response.json();
+    const body = await response.json() as InvestigationPoliciesResponse;
     expect(Value.Check(InvestigationGovernanceSchemas.InvestigationPoliciesResponse, body)).toBe(true);
-    expect(body).toMatchObject({ configurationStatus: 'not_configured', integrationStatus: 'not_connected', items: [] });
+    expect(body).toMatchObject({
+      schemaVersion: 2, configurationStatus: 'not_configured', automaticAnalysisStatus: 'blocked',
+      policy: { id: 'database-alert-pilot', version: 1, profileId: 'ops', source: 'database-alert-engine', readonly: true },
+      masterSwitch: { source: 'defaults', status: 'defaulted', enabled: true, instanceWhitelistCount: 0 },
+      investigationSwitch: { enabled: false, manualEnabled: false, legacyEnabled: false, source: 'environment' },
+      serviceIdentity: { status: 'not_configured', permissionsSufficient: false, missingPermissions: [], instanceScopeSufficient: true },
+      entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null },
+      budget: { status: 'uninitialized', quotaReached: false },
+      latestOutcome: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+      resourceCoverage: [
+        { type: 'database', status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false },
+        { type: 'server', status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false },
+        { type: 'network_device', status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false }],
+    });
+    expect(body.blockers.map((blocker: { code: string }) => blocker.code)).toEqual(expect.arrayContaining([
+      'SERVICE_IDENTITY_NOT_CONFIGURED', 'RESOURCE_SCOPE_NOT_CONFIGURED', 'INVESTIGATION_SWITCH_DISABLED', 'BUDGET_UNINITIALIZED']));
+    expect(body.blockers.map((blocker: { code: string }) => blocker.code)).not.toContain('ENTRY_NOT_OBSERVED');
     expect(await snapshot()).toEqual(before);
+  });
+  it('separates configuration, switches, entry receipts, identity permissions and per-type coverage without writes', async () => {
+    const serviceRole = Number((await pool.execute<ResultSetHeader>("INSERT INTO roles (name) VALUES ('t07c-pilot-service')"))[0].insertId);
+    await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [serviceId, serviceRole]);
+    const grantService = async (...codes: string[]) => {
+      await pool.execute('DELETE FROM role_permissions WHERE role_id = ?', [serviceRole]);
+      for (const code of codes)
+        await pool.execute('INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE code = ?', [serviceRole, code]);
+    };
+    const servicePermissions = ['chat:view', 'instance:view', 'servers:view', 'network_devices:view'];
+    await grantService(...servicePermissions);
+    await pool.execute("INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (9181, 'pilot-db', 'pilot.invalid', 3306, 'fixture', 'unused')");
+    await pool.execute("INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, 9181, 'read-only')", [serviceId]);
+    await pool.execute(`INSERT INTO servers (id, host, label, port, os_type, credential_type, credential_encrypted, status)
+      VALUES (9182, 'pilot-server.invalid', 'pilot server', 22, 'linux', 'password', 'unused', 'online')`);
+    await pool.execute("INSERT INTO network_devices (id, name, host, vendor, status) VALUES (9183, 'pilot-net', 'pilot-net.invalid', 'huawei', 'online')");
+    for (const [key, value] of [['INVESTIGATION_OPS_AUTO_ENABLED', 'true'], ['INVESTIGATION_OPS_SERVICE_USER_ID', String(serviceId)],
+      ['INVESTIGATION_OPS_INSTANCE_IDS', '9181'], ['INVESTIGATION_OPS_SERVER_IDS', '9182'],
+      ['INVESTIGATION_OPS_NETWORK_DEVICE_IDS', '9183']] as const) process.env[key] = value;
+    try {
+      // The master switch is the persisted total switch, not a second config.
+      await pool.execute("REPLACE INTO system_config (config_key, config_value) VALUES ('auto_analysis_config', ?)", [JSON.stringify({
+        enabled: true, cronExpression: '*/30 * * * *', severityLevels: ['warning', 'error', 'critical'],
+        instanceWhitelist: [], timeWindowStart: '00:00', timeWindowEnd: '23:59' })]);
+      await reserve('settled');
+      // A real entry receipt is represented by the durable alert observation.
+      await pool.execute(`INSERT INTO alerts (id, instance_id, alert_type, level, title, message, source, tags)
+        VALUES (9501, 9181, 'performance', 'warning', 'pilot alert', 'fixture', 'alert-engine', ?)`,
+        [JSON.stringify({ auto_analysis: { status: 'accepted', reason: null, attemptedAt: '2026-10-25T00:00:00.000Z' } })]);
+      const before = await snapshot();
+      const alertsBefore = (await pool.query<RowDataPacket[]>('SELECT * FROM alerts ORDER BY id'))[0];
+      const response = await read('policies');
+      expect(response.status).toBe(200);
+      const body = await response.json() as InvestigationPoliciesResponse;
+      expect(Value.Check(InvestigationGovernanceSchemas.InvestigationPoliciesResponse, body)).toBe(true);
+      expect(body).toMatchObject({ configurationStatus: 'configured', automaticAnalysisStatus: 'available',
+        blockers: [],
+        serviceIdentity: { status: 'ready', permissionsSufficient: true, missingPermissions: [], instanceScopeSufficient: true },
+        entry: { status: 'connected', observedReceiptCount: 1, lastObservedAt: '2026-10-25T00:00:00.000Z' },
+        budget: { status: 'matching', quotaReached: false },
+        latestOutcome: { total: 1, accepted: 1, suppressed: 0, pending: 0, unknown: 0, lastStatus: 'accepted',
+          lastReason: null, lastAttemptAt: '2026-10-25T00:00:00.000Z' },
+        resourceCoverage: [
+          { type: 'database', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true },
+          { type: 'server', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true },
+          { type: 'network_device', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true }] });
+      expect(JSON.stringify(body)).not.toMatch(/9181|9182|9183|pilot-db|pilot-server|pilot-net|serviceUserId/);
+      // The budget page shares the same entry fact rather than claiming a
+      // connected trigger from configuration alone.
+      expect(await (await read('budget')).json()).toMatchObject({ automaticTriggerStatus: 'connected', admissionStatus: 'matching' });
+      expect(await snapshot()).toEqual(before);
+      expect((await pool.query<RowDataPacket[]>('SELECT * FROM alerts ORDER BY id'))[0]).toEqual(alertsBefore);
+
+      // Revoking live service permissions removes coverage instead of stale status.
+      await grantService('chat:view', 'instance:view');
+      const revoked = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(revoked).toMatchObject({ automaticAnalysisStatus: 'blocked',
+        serviceIdentity: { status: 'ready', permissionsSufficient: false },
+        resourceCoverage: [{ permittedCount: 1 }, { status: 'partial', permittedCount: 0 }, { status: 'partial', permittedCount: 0 }] });
+      expect(revoked.blockers.map((blocker: { code: string }) => blocker.code)).toEqual(expect.arrayContaining([
+        'SERVICE_PERMISSIONS_MISSING', 'RESOURCE_PERMISSION_MISSING']));
+
+      // The instance grant is required even when the type permission exists.
+      await grantService(...servicePermissions);
+      await pool.execute('DELETE FROM instance_permissions WHERE user_id = ?', [serviceId]);
+      const unscoped = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(unscoped).toMatchObject({ serviceIdentity: { instanceScopeSufficient: false },
+        resourceCoverage: [{ status: 'partial', permittedCount: 0 }, { status: 'covered' }, { status: 'covered' }] });
+      expect(unscoped.blockers.map((blocker: { code: string }) => blocker.code)).toContain('RESOURCE_INSTANCE_SCOPE_MISSING');
+
+      // A configured but unwired/missing resource is not covered.
+      await pool.execute('DELETE FROM network_devices WHERE id = 9183');
+      const missing = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(missing.resourceCoverage[2]).toMatchObject({ status: 'unavailable', configuredCount: 1, existingCount: 0 });
+      expect(missing.blockers.map((blocker: { code: string }) => blocker.code)).toContain('RESOURCE_UNAVAILABLE');
+
+      // Suppressed-only receipts prove the entry fired, but never a success.
+      await pool.execute('UPDATE alerts SET tags = ? WHERE id = 9501', [JSON.stringify({
+        auto_analysis: { status: 'suppressed', reason: 'BUDGET_QUOTA', attemptedAt: '2026-10-25T01:00:00.000Z' } })]);
+      const suppressed = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(suppressed).toMatchObject({ entry: { status: 'connected' },
+        latestOutcome: { total: 1, suppressed: 1, lastStatus: 'suppressed', lastReason: 'BUDGET_QUOTA' } });
+      expect(suppressed.automaticAnalysisStatus).not.toBe('available');
+    } finally {
+      await pool.execute("DELETE FROM system_config WHERE config_key = 'auto_analysis_config'");
+      await pool.execute('DELETE FROM alerts WHERE id = 9501');
+      await pool.execute('DELETE FROM instance_permissions WHERE user_id = ?', [serviceId]);
+      await pool.execute('DELETE FROM network_devices WHERE id = 9183');
+      await pool.execute('DELETE FROM servers WHERE id = 9182');
+      await pool.execute('DELETE FROM database_instances WHERE id = 9181');
+      await pool.execute('DELETE FROM user_roles WHERE user_id = ?', [serviceId]);
+      await pool.execute('DELETE FROM roles WHERE id = ?', [serviceRole]);
+    }
   });
   it('reads the existing effective loader and marks uninitialized/matching/conflict without writes', async () => {
     let response = await read('budget');

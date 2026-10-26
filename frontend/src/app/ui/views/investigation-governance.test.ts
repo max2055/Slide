@@ -5,8 +5,80 @@ import { canAccessSettingsItem, settingsItemById } from '../settings-navigation.
 import { showToast } from '../components/app-toast-container.js';
 vi.mock('../../../api/index.ts', () => ({ authFetch: vi.fn() }));
 vi.mock('../components/app-toast-container.js', () => ({ showToast: vi.fn() }));
-afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
-const policies = { schemaVersion: 1, configurationStatus: 'not_configured', integrationStatus: 'not_connected', source: 'production_composition', items: [], originBoundary: 'investigation_engine_persist_only' };
+afterEach(() => { document.body.replaceChildren(); window.history.replaceState({}, '', '/'); vi.resetAllMocks(); });
+const coverage = (type: 'database' | 'server' | 'network_device', extra: Record<string, unknown> = {}) =>
+  ({ type, status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false, ...extra });
+const policies = {
+  schemaVersion: 2, source: 'production_composition', originBoundary: 'investigation_engine_persist_only',
+  policy: { id: 'database-alert-pilot', version: 1, profileId: 'ops', source: 'database-alert-engine', readonly: true },
+  configurationStatus: 'not_configured',
+  masterSwitch: { source: 'defaults', status: 'defaulted', enabled: true, severityLevels: ['critical', 'error', 'warning'],
+    timeWindowStart: '00:00', timeWindowEnd: '23:59', instanceWhitelistCount: 0 },
+  investigationSwitch: { enabled: false, manualEnabled: false, legacyEnabled: false, source: 'environment' },
+  serviceIdentity: { status: 'not_configured', permissionsSufficient: false, missingPermissions: [], instanceScopeSufficient: true },
+  resourceCoverage: [coverage('database'), coverage('server'), coverage('network_device')],
+  entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null },
+  budget: { status: 'uninitialized', quotaReached: false },
+  latestOutcome: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+  automaticAnalysisStatus: 'blocked',
+  blockers: [
+    { code: 'SERVICE_IDENTITY_NOT_CONFIGURED', layer: 'configuration', remediation: 'deployment_environment' },
+    { code: 'RESOURCE_SCOPE_NOT_CONFIGURED', layer: 'configuration', remediation: 'deployment_environment' },
+    { code: 'INVESTIGATION_SWITCH_DISABLED', layer: 'switch', remediation: 'deployment_environment' },
+    { code: 'BUDGET_UNINITIALIZED', layer: 'budget', remediation: 'budget_settings' },
+  ],
+} as const;
+const unwired = { ...policies, configurationStatus: 'configured', automaticAnalysisStatus: 'unverified',
+  masterSwitch: { ...policies.masterSwitch, source: 'system_config', status: 'persisted' },
+  investigationSwitch: { ...policies.investigationSwitch, enabled: true },
+  serviceIdentity: { ...policies.serviceIdentity, status: 'ready', permissionsSufficient: true },
+  resourceCoverage: [coverage('database', { status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true }),
+    coverage('server'), coverage('network_device')],
+  entry: { status: 'unverified', observedReceiptCount: 0, lastObservedAt: null },
+  budget: { status: 'matching', quotaReached: false },
+  blockers: [{ code: 'ENTRY_NOT_OBSERVED', layer: 'wiring', remediation: 'alert_engine' }] };
+
+it('renders unconfigured switches, identity and entry as separate facts', async () => {
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(policies)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const text = element.shadowRoot!.textContent!;
+  expect(text).toContain('尚未配置');
+  expect(text).toContain('尚未接入');
+  expect(text).toContain('尚未配置专用服务身份');
+  expect(text).toContain('数据库');
+  expect(text).toContain('服务器');
+  expect(text).toContain('网络设备');
+  expect(element.shadowRoot!.querySelectorAll('[data-blocker]')).toHaveLength(4);
+  expect(element.shadowRoot!.querySelector('app-data-table')).not.toBeNull();
+});
+
+it('does not claim automatic analysis is available before an entry receipt exists', async () => {
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(unwired)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const text = element.shadowRoot!.textContent!;
+  const stats = [...element.shadowRoot!.querySelectorAll('stat-card')].map(card => (card as any).value);
+  expect(stats).toContain('待验证入口');
+  expect(text).toContain('自动分析待验证入口');
+  expect(text).toContain('未观察到入口回执');
+  expect(text).not.toContain('自动分析已就绪');
+  expect(element.shadowRoot!.querySelector('[data-blocker="ENTRY_NOT_OBSERVED"]')).not.toBeNull();
+});
+
+it('routes missing items to the existing configuration pages', async () => {
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(policies)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const navigated = vi.fn();
+  window.addEventListener('popstate', navigated, { once: true });
+  (element.shadowRoot!.querySelector('[data-remediation="analysis_settings"]') as HTMLButtonElement).click();
+  expect(window.location.pathname).toBe('/settings/monitoring/analysis');
+  expect(new URLSearchParams(window.location.search).get('view')).toBe('automatic');
+  expect(navigated).toHaveBeenCalledTimes(1);
+  (element.shadowRoot!.querySelector('[data-remediation="budget_settings"]') as HTMLButtonElement).click();
+  expect(window.location.pathname).toBe('/settings/ai/budget');
+});
 async function mount(kind: 'policies' | 'budget' | 'usage' = 'policies', permissions = ['ai:view', 'config:manage']) {
   const element = new InvestigationGovernancePage(); element.kind = kind; element.permissions = new Set(permissions);
   document.body.append(element); await element.updateComplete;
