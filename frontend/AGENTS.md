@@ -26,7 +26,7 @@
 ## 样式与 Lit
 
 - 使用主题 token：颜色 `--accent`、`--text`、`--text-strong`、`--muted`、`--border`；圆角 `--radius-sm/md/lg`；间距 `--space-xs` 至 `--space-xl`。业务组件不硬编码同类颜色、圆角和间距。
-- 默认浅色主色为蓝色，具体值由 [tokens.css](src/app/styles/tokens.css) 及外观配置决定；深色和用户主题可以改变值，不把 `--accent` 固定为某个色值，也不自行切成紫色品牌。
+- 当前版本只设计和验收浅色蓝色主题，消费 [tokens.css](src/app/styles/tokens.css)；不新增深色、换肤或用户配色适配。保留既有 token 机制，不自行硬编码同类色值或更换品牌色，也不为本次范围收敛清理未触达的旧主题代码。
 - 保持组件现有 DOM 封装。`app-card`、`app-dialog` 等使用 Shadow DOM；`app-badge`、`app-data-table`、`app-empty-state` 使用 Light DOM，不为统一形式迁移现有组件。
 - Shadow DOM 组件沿用已有样式机制（如 render 内 `<style>` 或 `static styles`）。Light DOM 组件不能依赖 Lit 的 `static styles` 自动应用；视图子组件按现有模式在 render 开头注入 `<style>`，选择器限定组件范围。
 - 自定义组件 Boolean property 用 `.open=${value}` 等 property binding；布尔 attribute 用 `?disabled=${value}` 等 boolean attribute binding。不要用 `open=${false}` 生成字符串属性；原生 `disabled` 也可通过 `.disabled` 绑定 DOM property。
@@ -34,4 +34,4 @@
 
 ## 验证
 
-按改动检查组件复用、主题兼容、响应式、Boolean 语义、空/加载/失败状态及键盘交互。运行相关单测和浏览器检查；功能原型需标明演示数据及未接入能力，不能把原型交互通过当作业务后端验收。
+按[当前版本项目范围](../docs/slide/requirements/current-version-scope.md)检查组件复用、浅色桌面布局、Boolean 语义、空/加载/失败状态及基本键盘交互。以 1440×900 为主，检查 1366×768 与 1920×1080；不新增手机/平板断点、不做深色或听读顺序专项验收。仍保留表单名称、弹窗焦点管理和清晰状态反馈。运行与改动相关的检查；功能原型需标明演示数据及未接入能力，不能把原型交互通过当作业务后端验收。

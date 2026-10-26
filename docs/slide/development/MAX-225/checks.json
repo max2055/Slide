@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 2,
+  "issue": "MAX-225",
+  "sourceCommit": "34b964a03",
+  "date": "2026-10-26 Asia/Shanghai",
+  "round": "third, real provider segment",
+  "checks": [
+    {
+      "name": "admission SQL suite including new budget refusal case",
+      "files": 1,
+      "passed": 11,
+      "note": "previously 10; the budget-refusal case that could not run during the Docker outage now passes"
+    },
+    {
+      "name": "investigations module",
+      "filesPassed": 56,
+      "filesSkipped": 9,
+      "passed": 552,
+      "skipped": 362,
+      "workers": 2,
+      "note": "default parallelism produced 5s and hook timeouts from container contention; serial rerun green"
+    },
+    {
+      "name": "metrics module",
+      "filesPassed": 44,
+      "filesSkipped": 24,
+      "passed": 442,
+      "skipped": 121,
+      "workers": 2
+    },
+    {
+      "name": "alert files",
+      "files": 9,
+      "filesPassed": 8,
+      "filesSkipped": 1,
+      "passed": 47,
+      "skipped": 28,
+      "workers": 2
+    },
+    {
+      "name": "workflows module",
+      "filesPassed": 15,
+      "filesSkipped": 3,
+      "passed": 116,
+      "skipped": 45,
+      "workers": 2
+    },
+    {
+      "name": "API typecheck",
+      "result": "passed"
+    },
+    {
+      "name": "public contracts",
+      "result": "passed"
+    },
+    {
+      "name": "API typecheck after qualification-script change",
+      "result": "passed"
+    }
+  ],
+  "realAcceptance": {
+    "resource": "server #3 192.168.49.130 (kylin) via real SSH (loopback-free relay 192.168.49.1:2222 because Node had no scoped route to the VM bridge)",
+    "collectedMetric": "linux.cpu.user_system_percent",
+    "observedValue": 9.1,
+    "alertCreated": "critical, single, auto_generated",
+    "admission": "accepted, one investigation owner, lane=investigation, zero legacy calls",
+    "recoveredNaturally": true,
+    "sharedWrites": 0,
+    "modelRequests": 3,
+    "modelProvider": "deepseek/deepseek-flash, output ceiling 4096 enforced per request",
+    "modelRun": "agent_runs.state=completed; investigation_results 1 row; 7 claims each citing investigation_evidence ids (3 rows)",
+    "measuredUsage": {
+      "inputTokens": 7201,
+      "cachedInputTokens": 4736,
+      "outputTokens": 4090,
+      "totalTokens": 11291
+    },
+    "productBudgetLedger": "investigation_budget_ledger settled, charged_tokens=11291 equals measured usage",
+    "parentLedger": {
+      "revisionAtSettlement": 53,
+      "settledTotals": {
+        "input_tokens": 40976,
+        "cached_input_tokens": 24320,
+        "output_tokens": 16502,
+        "total_tokens": 57478
+      },
+      "activeReservations": 0,
+      "unknownRequests": 1,
+      "unknownNote": "one send without a response kept its 15367 reserved tokens and was never replayed"
+    },
+    "evidence": "docs/slide/development/MAX-225/vm-acceptance-model-20261026.json",
+    "notProven": [],
+    "discoveredLimitations": [
+      "default 16000 context window fails context governance when one turn makes two read-only tool calls (CONTEXT_UNRECOVERABLE / CONTEXT_GOVERNANCE_ERROR); qualification used INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000 and INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048 within the verified provider capability",
+      "parent issue metadata total sits at the 8KB server limit, so settlement writes can fail; historical per-send prose was compacted into totals plus evidence references without losing any number"
+    ]
+  },
+  "harnessDefectsFixed": [
+    "runPackage selection was missing overrides:{} and always failed with ZodError",
+    "dbConnection.isConnected stayed false so the evaluator skipped every run",
+    "no capability report was sent, so formal metric reads returned capability_unknown",
+    "an idle VM legitimately reports 0% CPU; the first zero sample aborted instead of continuing to a real nonzero sample"
+  ],
+  "modelBudget": {
+    "parentLedgerRevision": 53,
+    "limited": 10000000,
+    "settledTokens": 57478,
+    "outstandingReservations": 0,
+    "unknownReservedTokens": 15367,
+    "realModelSends": 19,
+    "note": "cumulative provider HTTP requests across every attempt in this issue (19 responses + 1 unknown), not only the final passing run; settled 57478 covers only the 19 responses, the 15367 unknown reservation is separate; cache tokens are a subset of input and are not added again",
+    "unknownRequests": 1,
+    "journal": "docs/slide/development/MAX-225/model-budget-journal-20261026.md",
+    "journalJson": "docs/slide/development/MAX-225/model-budget-journal-20261026.json",
+    "perSendCoverage": {
+      "fullyRetained": 3,
+      "partial": 16,
+      "providerRequestIdsRecoveredFromPriorSends": 2,
+      "reservationIdsRecoveredWithoutUsage": 5,
+      "priorSendsWithoutIdentifierAtLeast": 9,
+      "identifierSetsMayOverlap": true,
+      "note": "Only the final successful run has complete per-send provider request IDs and usage. The 16 earlier responses keep exact totals; per-send detail is partially recoverable from existing run output. The 2 provider request IDs and 5 reservation IDs are not known to be disjoint, so 9 is only a lower bound and the two counts must not be added as a mutually exclusive split. Explicit gaps are listed in the journal."
+    },
+    "recovery": "recovered from existing run messages and ledger revision 53 only; zero new model sends and zero ledger writes in this continuation"
+  }
+}

@@ -142,3 +142,37 @@ Deferred to future milestones.
 - [x] **SEC140-07**: 凭据采用版本化认证加密，现有 CBC 密文可无损迁移且篡改 fail-closed
 - [x] **SEC140-08**: refresh replay、SSRF、越权、审批伪造和限流产生去重的安全事件/告警
 - [x] **SEC140-09**: CI 强制 production audit、secret scan、安全负向测试和 finding evidence matrix
+
+## v0.11 Requirements (Planned 2026-10-25)
+
+**Milestone:** v0.11 调查可信闭环与预算可配置
+**Source:** `outputs/MAX222-takeover-NOTES.md` 未闭环清单 + 2026-10-25 预算配置化设计决定
+
+### 调查预算配置化（A+B）
+
+- [ ] **BUD-01**: 管理员可在“有效预算”设置中编辑每执行运行时分配（context window / output / summary / maxExecutionTokens），保存后仅对**新执行**生效，无需改代码、重启或 CI。
+- [ ] **BUD-02**: 管理员可编辑 Profile 限制（deadlineMs / maxToolCalls / maxProviderAttempts / maxRows / maxBytes / maxWindowMs），同样只影响新执行。
+- [ ] **BUD-03**: 保存和执行时都按当前 Provider 能力校验：window ≤ provider context、output/summary ≤ provider max output、window ≥ output+1025、maxExecutionTokens ≥ window；超限显式失败，不静默截断。
+- [ ] **BUD-04**: 默认值在模型允许范围内尽量放宽（window = min(provider context, 1,000,000)、output/summary = provider max_tokens、deadline 600s、maxToolCalls 36 等）。
+- [ ] **BUD-05**: `autoCompact` 摘要能力门禁在缺少 catalog `maxOutputTokens` 时接受 Provider 配置的 `max_tokens`，不再把未编目模型判成不可摘要。
+- [ ] **BUD-06**: “有效预算”页支持编辑/保存/审计（`config:manage`），展示当前值、模型上限、生效范围（仅新执行）和历史 revision。
+- [ ] **BUD-07**: 准入/每日策略（并发、每小时/每日请求、每日 token/成本）可编辑；策略变更通过域版本轮换，历史 ledger 只读保留。
+- [ ] **BUD-08**: 预算变更审计记录变更人、时间、旧/新值；在途 run 保持冻结 allocation。
+- [ ] **CTX-01**: 合并 PR #240 工具结果压缩，复验回放锚点与测试覆盖不变。
+
+### 旧模板迁移（#6）
+
+- [ ] **MIG-01**: qps 只上线带代次的 `mysql.queries.per_second`；旧 `qps` 名称/阈值保持 blocked。
+- [ ] **MIG-02**: disk_usage 拆为 `mysql.tables.estimated_allocated_bytes`（estimated）与 `linux.filesystem.used_ratio`（exact）。
+- [ ] **MIG-03**: 告警宏/规则按新指标和新阈值重建；旧规则先禁用后删除并保留审计。
+- [ ] **MIG-04**: 口径对不上保持 unknown / `CUSTOM_EXPRESSION_REVIEW_REQUIRED`；用真实基线复验。
+
+### Provider 配置备份/脱敏（#8）
+
+- [ ] **CFG-01**: Provider 配置备份/恢复演练（脱敏、校验和、回滚），产物不含密钥/密文/连接口令。
+- [ ] **CFG-02**: 脱敏清单、管理员流程与文档；备份产物不入仓库。
+- [ ] **CFG-03**: 恢复后连接与场景绑定验证，并产生审计记录。
+
+### 验收
+
+- [ ] **ACC-01**: 真实代表性调查（新鲜 FS used/size 配对 + 告警 + 关系）在放宽后的默认值下 `completed`；unknown 不重放；token 台账记录。

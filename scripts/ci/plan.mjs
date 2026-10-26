@@ -6,11 +6,18 @@ export const selections = ['api', 'browser', 'integration', 'recovery', 'sandbox
 
 // Markdown and planning notes cannot change runtime behaviour. Contract JSON under
 // docs/ is not documentation for this purpose: it is generated API/metrics output.
-const docOnly = /^(?:docs\/.*\.mdx?|(?:README|AGENTS|CLAUDE)\.md|LICENSE$|\.planning\/)/i;
+const docOnly = /^(?:docs\/.*\.mdx?$|(?:README|AGENTS|CLAUDE)\.md$|LICENSE$|\.planning\/)/i;
 // Shared boundaries: any change here keeps the complete candidate.
 const crossCutting = /(?:security|authorization|permission|credential|sandbox|approval|auth\/|adapter\/|websocket|(?:^|\/)ws\/|investigations\/|migrations\/|(?:^|\/)sql\/|contracts\/|db-connection|worker-startup|lifecycle\/)/i;
 // Metric data, quality and query-chain changes keep their end-to-end checks.
 const dataPath = /(?:metrics|metric-|quality|query)/i;
+// Worker and scheduling chains are exercised by the recovery qualification
+// (lease/failover, bounded queue, report and schedule recovery), so they keep it.
+const workerPath = /(?:worker|schedul)/i;
+// The recovery qualification runs the workflow assembly and report outbox
+// tests directly, so the whole workflows module keeps recovery even where a
+// file name mentions neither worker nor scheduling.
+const workflowPath = /^apps\/db-ops-api\/src\/workflows\//;
 
 export function planChecks(eventName, paths = []) {
   const plan = Object.fromEntries(selections.map(key => [key, false]));
@@ -28,9 +35,11 @@ export function planChecks(eventName, paths = []) {
     if (/^apps\/db-ops-api\//.test(path)) {
       // Package, entry point or unknown backend location: verify everything.
       if (/^apps\/db-ops-api\/(?:package\.json|[^/]+$)/.test(path)) return full();
-      plan.api = plan.code = true;
-      if (dataPath.test(path)) { plan.browser = plan.integration = plan.recovery = true; }
-      continue;
+      if (dataPath.test(path)) { plan.api = plan.code = plan.browser = plan.integration = plan.recovery = true; continue; }
+      if (workflowPath.test(path) || workerPath.test(path)) { plan.api = plan.code = plan.recovery = true; continue; }
+      // Anything not explicitly classified is an unknown backend module, so
+      // the conservative default keeps the complete candidate.
+      return full();
     }
     return full();
   }

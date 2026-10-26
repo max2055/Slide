@@ -1,0 +1,49 @@
+{
+  "startedAt": "2026-10-04T07:49:41.982Z",
+  "completedAt": "2026-10-04T07:50:47.172Z",
+  "plan": "cleanup2-plan.json",
+  "authorization": "用户明确授权本轮四类精确清理。",
+  "decisions": {
+    "oracleFreeRetained": [
+      "gvenzl/oracle-free:slim"
+    ],
+    "slideVersionsRetained": [
+      "20260924-07b3e6c",
+      "20260920-879347e"
+    ]
+  },
+  "preflight": "通过system/df RefCount以及containers/json?all=true的全部容器Mounts双重核验48个卷；待删除镜像无运行或停止容器引用。使用定向volume rm及image rm，无force，无全局prune。",
+  "volumeCommandExitCode": 0,
+  "imageCommandExitCode": 0,
+  "verification": {
+    "deletedVolumes": 48,
+    "deletedImages": 36,
+    "unexpectedMissingVolumes": [],
+    "unexpectedMissingImages": [],
+    "missingContainers": [],
+    "containerStateChanges": [],
+    "retainedRelease": [
+      "slide-release/frontend:20260924-07b3e6c",
+      "slide-release/api:20260924-07b3e6c",
+      "slide-release/sandbox-controller:20260924-07b3e6c",
+      "slide-release/sandbox-controller:20260920-879347e",
+      "slide-release/frontend:20260920-879347e",
+      "slide-release/api:20260920-879347e"
+    ],
+    "oracleSlimPreserved": true,
+    "imagesBefore": 73,
+    "imagesAfter": 37,
+    "volumesAfter": 18,
+    "imageLogicalReclaimedBytes": 18409528418,
+    "deletedVolumeBytes": 8444627023
+  },
+  "dockerLogicalReclaimedBytes": 26854155441,
+  "dockerRawAllocatedBytesBefore": 69230383104,
+  "dockerRawAllocatedBytesAfter": 45009829888,
+  "dockerRawAllocatedReductionBytes": 24220553216,
+  "dataDirectoryAllocatedBytesAfter": 45056581632,
+  "physicalSizeNote": "du/stat为清理前后观察值，活跃写入和Docker自动回收可能影响差值，区别于Docker逻辑释放量。",
+  "recoverability": "48个卷无Docker撤销机制；镜像可重新拉取或构建。",
+  "containersRetained": 23,
+  "runningContainersRetained": 8
+}

@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-04",
+  "scope": "同步主目录main到origin/main，更新既有运行目录并启动服务，验证运行身份、数据库迁移、就绪探针与网页。",
+  "commit": "c3195b46c81f6855bab32ee4e5b622575d7ce031",
+  "mainDirectory": "/Users/max/Coding/40-Slide",
+  "runtimeDirectory": "/Users/max/Coding/40-Slide-main-runtime",
+  "runtimeGitState": "detached origin/main；原codex/model-discovery-parameters分支保留",
+  "preservedLocalChanges": true,
+  "backups": {
+    "directory": "/Users/max/Coding/40-Slide/outputs/main-sync-backup.sTiKCQ",
+    "localDocuments": [
+      "audit-autonomous-implementation-plan.local.md",
+      "audit-remediation-plan.local.md"
+    ],
+    "database": "db-before-main-upgrade.sql.gz",
+    "databaseCompressedBytes": 28525404,
+    "gzipIntegrityCheck": "passed",
+    "fileMode": "0600"
+  },
+  "services": {
+    "backend": {
+      "pid": 49246,
+      "ports": [
+        3000,
+        28888
+      ],
+      "log": "/Users/max/Coding/40-Slide-main-runtime/.runtime/backend-20261004-c3195b46.log"
+    },
+    "frontend": {
+      "pid": 49002,
+      "port": 5173,
+      "log": "/Users/max/Coding/40-Slide-main-runtime/.runtime/frontend.log",
+      "note": "既有启动器自动恢复前端；确认cwd为新版runtime，复用此进程。单独启动尝试遇到端口占用后退出，没有留下第二个前端。"
+    }
+  },
+  "validation": {
+    "frozenLockfileInstall": [
+      "main passed",
+      "runtime passed"
+    ],
+    "mainMatchesOrigin": true,
+    "migrations105Through111": "completed",
+    "apiReadiness": {
+      "url": "http://localhost:3000/api/health/ready",
+      "status": 200,
+      "ready": true
+    },
+    "frontend": {
+      "url": "http://localhost:5173/dashboard",
+      "status": 200,
+      "browser": "Slide登录页可见"
+    },
+    "portsVerified": true
+  },
+  "knownUnavailableResources": [
+    "PostgreSQL 127.0.0.1:5432",
+    "MySQL 127.0.0.1:3308",
+    "达梦 127.0.0.1:5236"
+  ],
+  "resourceBudget": "未设定",
+  "actualTokenAndCostTelemetry": "不可用",
+  "subagents": 0
+}

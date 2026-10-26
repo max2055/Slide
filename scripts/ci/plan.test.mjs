@@ -32,8 +32,11 @@ test('metric data, quality and query-chain changes keep their end-to-end checks'
   assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/metrics/storage.ts'])), ['api', 'browser', 'code', 'integration', 'recovery']);
 });
 
-test('internal low-risk backend changes skip the browser qualification', () => {
-  assert.deepEqual(selected(planChecks('pull_request', ['apps/db-ops-api/src/notifications/email.ts'])), ['api', 'code']);
+test('unclassified backend modules keep the complete candidate', () => {
+  for (const path of ['apps/db-ops-api/src/new-module/code.ts', 'apps/db-ops-api/src/alert-evaluator.ts',
+    'apps/db-ops-api/src/report-database-service.ts', 'apps/db-ops-api/src/__tests__/unknown.test.ts']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), full, path);
+  }
 });
 
 test('generated contract JSON under docs is not treated as documentation', () => {
@@ -58,12 +61,44 @@ test('cross-cutting, unknown, deleted and mixed paths require the full candidate
   assert.deepEqual(selected(planChecks('pull_request', [])), full);
 });
 
+test('documentation matching is anchored to complete file names', () => {
+  for (const path of ['docs/x.md.ts', 'docs/x.mdx.ts', 'docs/nested/x.md.ts', 'README.md.ts', 'AGENTS.md.ts', 'CLAUDE.md.ts']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), full, path);
+  }
+  for (const path of ['docs/x.md', 'docs/nested/x.mdx', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', '.planning/notes.md']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), [], path);
+  }
+});
+
+test('contract JSON, unknown and shared boundaries keep their full gates', () => {
+  for (const path of ['docs/contracts/x.json', 'docs/metrics-v2/contracts/x.json', 'new-module/code.ts',
+    'apps/db-ops-api/src/lifecycle/worker-lease.ts', 'apps/db-ops-api/src/lifecycle/worker-recovery.test.ts']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), full, path);
+  }
+});
+
+test('worker and scheduling chains keep the recovery qualification', () => {
+  for (const path of ['apps/db-ops-api/src/workflows/worker-runtime.ts', 'apps/db-ops-api/src/workflows/bounded-worker.ts',
+    'apps/db-ops-api/src/collection-scheduler.ts', 'apps/db-ops-api/src/report-scheduler.ts']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), ['api', 'code', 'recovery'], path);
+  }
+});
+
+test('workflow modules keep the recovery qualification regardless of file name', () => {
+  for (const path of ['apps/db-ops-api/src/workflows/outbox-service.ts', 'apps/db-ops-api/src/workflows/report-occurrence-store.ts',
+    'apps/db-ops-api/src/workflows/report-recovery-child.ts', 'apps/db-ops-api/src/workflows/job-registry.ts',
+    'apps/db-ops-api/src/workflows/delivery-store.ts', 'apps/db-ops-api/src/workflows/execution-context.ts']) {
+    assert.deepEqual(selected(planChecks('pull_request', [path])), ['api', 'code', 'recovery'], path);
+  }
+});
+
 function results(plan) {
   return { plan: { result: 'success' }, ...Object.fromEntries(Object.entries(requiredJobs(plan)).map(([name, wanted]) => [name, { result: wanted ? 'success' : 'skipped' }])), 'release-artifact': { result: 'success' } };
 }
 
 test('the gate accepts only intentional skips and successful selected checks', () => {
-  for (const plan of [planChecks('push'), planChecks('pull_request', ['docs/guide.md']), planChecks('pull_request', ['frontend/src/app.ts'])]) {
+  for (const plan of [planChecks('push'), planChecks('pull_request', ['docs/guide.md']), planChecks('pull_request', ['docs/x.md.ts']),
+    planChecks('pull_request', ['apps/db-ops-api/src/workflows/worker-runtime.ts']), planChecks('pull_request', ['frontend/src/app.ts'])]) {
     const needs = results(plan);
     assert.doesNotThrow(() => validateResults(plan, needs));
     for (const name of Object.keys(needs)) {
@@ -72,6 +107,16 @@ test('the gate accepts only intentional skips and successful selected checks', (
         assert.throws(() => validateResults(plan, { ...needs, [name]: status ? { result: status } : undefined }), undefined, `${name}: ${status}`);
       }
     }
+  }
+});
+
+test('the gate rejects a skipped recovery qualification the selector requires', () => {
+  for (const path of ['apps/db-ops-api/src/workflows/outbox-service.ts', 'apps/db-ops-api/src/workflows/report-occurrence-store.ts',
+    'apps/db-ops-api/src/new-module/code.ts']) {
+    const plan = planChecks('pull_request', [path]), needs = results(plan);
+    assert.equal(requiredJobs(plan)['recovery-qualification'], true, path);
+    needs['recovery-qualification'] = { result: 'skipped' };
+    assert.throws(() => validateResults(plan, needs), /recovery-qualification/, path);
   }
 });
 

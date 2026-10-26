@@ -1,0 +1,1119 @@
+{
+  "observedAt": "2026-10-04T03:21:29.028Z",
+  "scope": "Read-only follow-up after authorized cleanup; no resources removed.",
+  "host": {
+    "directory": "/Users/max/Library/Containers/com.docker.docker/Data",
+    "allocatedBytesFromDu": 77253435392,
+    "dockerRawAllocatedBytesFromStat": 77207076864,
+    "dockerRawLogicalBytes": 494332280832,
+    "desktopLogsBytes": 46075904
+  },
+  "docker": {
+    "imageLayersBytes": 58363376147,
+    "volumeBytes": 14680387819,
+    "containerWritableBytes": 4756803584,
+    "buildCacheCount": 0
+  },
+  "imageGroups": {
+    "oracle": {
+      "count": 2,
+      "uniqueBytes": 15785554666,
+      "logicalBytes": 15785554666
+    },
+    "decorix": {
+      "count": 5,
+      "uniqueBytes": 8248648923,
+      "logicalBytes": 12950554596
+    },
+    "untagged": {
+      "count": 1,
+      "uniqueBytes": 2005651877,
+      "logicalBytes": 2245013420
+    },
+    "slideRelease": {
+      "count": 40,
+      "uniqueBytes": 1967656157,
+      "logicalBytes": 18131064206
+    },
+    "verification": {
+      "count": 1,
+      "uniqueBytes": 533316614,
+      "logicalBytes": 879681747
+    },
+    "unusedAll": {
+      "count": 60,
+      "uniqueBytes": 29859571584,
+      "logicalBytes": 52893393155
+    }
+  },
+  "imageSizeCaveat": "uniqueBytes excludes layers shared with other images. Deleting an entire group may release additional shared layers if no other images retain them; logical image sizes must not be summed as reclaimed bytes.",
+  "unusedImages": [
+    {
+      "id": "sha256:47f6805aafb3f239173153cf308633483f561cf9ca00bae72ebfa75f5e6bc885",
+      "tags": [
+        "slide-release/frontend:20260924-07b3e6c"
+      ],
+      "bytes": 80602830,
+      "shared": 75940423,
+      "refs": 0,
+      "uniqueBytes": 4662407
+    },
+    {
+      "id": "sha256:8ea25296a8ea4f1b124e348ba76111df6e6904a98fc2f5500ac3430561268c91",
+      "tags": [
+        "slide-release/api:20260924-07b3e6c"
+      ],
+      "bytes": 1076012567,
+      "shared": 1069805850,
+      "refs": 0,
+      "uniqueBytes": 6206717
+    },
+    {
+      "id": "sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5",
+      "tags": [
+        "quay.io/skopeo/stable:latest"
+      ],
+      "bytes": 339222572,
+      "shared": 0,
+      "refs": 0,
+      "uniqueBytes": 339222572
+    },
+    {
+      "id": "sha256:f2c7810c8441a3e71317919311f4b058befdef9ad7c0167f43eaebd65b807d7a",
+      "tags": [
+        "slide-release/frontend:20260920-cd52746"
+      ],
+      "bytes": 80672768,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4711105
+    },
+    {
+      "id": "sha256:eff2846a5c5c6b0ecc5540c17563b90db7b2fc2a28364d2993890ff2d7cc72c6",
+      "tags": [
+        "slide-release/sandbox-controller:20260924-07b3e6c"
+      ],
+      "bytes": 296017417,
+      "shared": 296002873,
+      "refs": 0,
+      "uniqueBytes": 14544
+    },
+    {
+      "id": "sha256:a674406b643a2438cefee6bd9c318f5ef29514019958cff9f946fa9b709ae6df",
+      "tags": [
+        "slide-release/sandbox-controller:20260920-879347e"
+      ],
+      "bytes": 296017420,
+      "shared": 296002873,
+      "refs": 0,
+      "uniqueBytes": 14547
+    },
+    {
+      "id": "sha256:c80deb3d69fa27df4faf683706dfc84376da95117a553b140b459b289876cf12",
+      "tags": [
+        "slide-release/api:20260920-879347e"
+      ],
+      "bytes": 1075876583,
+      "shared": 1069805850,
+      "refs": 0,
+      "uniqueBytes": 6070733
+    },
+    {
+      "id": "sha256:210ed229ab621dbed2de08f4b196e43670dd6d346d0f3227ac34d07d46b6d9ec",
+      "tags": [
+        "slide-release/frontend:20260920-879347e"
+      ],
+      "bytes": 80672614,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4710951
+    },
+    {
+      "id": "sha256:9b6e32605be832e1e3797b345ad7a4d1d0bd840592c68eff4b1a97d330af5a78",
+      "tags": [
+        "slide-release/api:20260917-67594cd"
+      ],
+      "bytes": 1075084261,
+      "shared": 760298462,
+      "refs": 0,
+      "uniqueBytes": 314785799
+    },
+    {
+      "id": "sha256:8bdfc50d6de9d8a0bc92d749dab48aad137bc51827edad86aa2d2705ba19ef01",
+      "tags": [
+        "slide-release/frontend:20260917-67594cd"
+      ],
+      "bytes": 80609985,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4648322
+    },
+    {
+      "id": "sha256:2e61627ae25614a16032061ae7caa436b25c605130b6c2712070be9d55720a90",
+      "tags": [
+        "slide-release/frontend:20260916-0e07740"
+      ],
+      "bytes": 80593219,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4631556
+    },
+    {
+      "id": "sha256:60ee4cb68d0f9b8742dc477443e0ff17f21312e256133b76d0147a03e0d56521",
+      "tags": [
+        "slide-release/api:20260916-0e07740"
+      ],
+      "bytes": 936844626,
+      "shared": 622102345,
+      "refs": 0,
+      "uniqueBytes": 314742281
+    },
+    {
+      "id": "sha256:56ef5eadcaea6e67a0a050eeac06bc8c7d47a7ac4d255108ee05f19a4c506874",
+      "tags": [
+        "slide-release/api:20260914-70fe110"
+      ],
+      "bytes": 936811110,
+      "shared": 622102345,
+      "refs": 0,
+      "uniqueBytes": 314708765
+    },
+    {
+      "id": "sha256:a9561ffb9bda8d9a13421fa2b5fef21e1955cb0fd4ace57a2f500e111d3f7ae9",
+      "tags": [
+        "slide-release/frontend:20260914-70fe110"
+      ],
+      "bytes": 80581650,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4619987
+    },
+    {
+      "id": "sha256:90a195b99545083af78b1c1dced1772f760cda97823735cd0fe7231304510d94",
+      "tags": [
+        "slide-release/sandbox-controller:20260916-0e07740"
+      ],
+      "bytes": 290102889,
+      "shared": 290088340,
+      "refs": 0,
+      "uniqueBytes": 14549
+    },
+    {
+      "id": "sha256:03e8103ee9bd2395c3ad8ca8131a8a92b88c80d81d136c9e93bf834b4780cf6f",
+      "tags": [
+        "slide-release/sandbox-controller:20260917-67594cd"
+      ],
+      "bytes": 290102889,
+      "shared": 290088340,
+      "refs": 0,
+      "uniqueBytes": 14549
+    },
+    {
+      "id": "sha256:66e5f3143a4060a016630481a872f38e621d85340fc7d236bb65d1f3d79d8587",
+      "tags": [
+        "slide-release/sandbox-controller:20260914-70fe110"
+      ],
+      "bytes": 290102958,
+      "shared": 290088340,
+      "refs": 0,
+      "uniqueBytes": 14618
+    },
+    {
+      "id": "sha256:d3d37dbbc66534df0458bad2a6cccab5490d8058cae1cec1ff1afcf8d835569f",
+      "tags": [
+        "slide-release/frontend:20260911-46fab46"
+      ],
+      "bytes": 80583695,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4622032
+    },
+    {
+      "id": "sha256:aa5e4a7160345428eec7a31c23093a3869192e98a5f193ebcd8027e7d6feed77",
+      "tags": [
+        "slide-release/api:20260911-46fab46"
+      ],
+      "bytes": 936795066,
+      "shared": 622102345,
+      "refs": 0,
+      "uniqueBytes": 314692721
+    },
+    {
+      "id": "sha256:67e6b5f1d70f0cb41d159c0fe5aaa6a828a70a214b303e012bf6cea19374772a",
+      "tags": [
+        "slide-verify/api-dependencies:51c3652"
+      ],
+      "bytes": 879681747,
+      "shared": 346365133,
+      "refs": 0,
+      "uniqueBytes": 533316614
+    },
+    {
+      "id": "sha256:f4fe19cd0489f719acfd11dd51aa9d42117c1846ab80292582391e86e46902fb",
+      "tags": [
+        "slide-release/frontend:20260911-6ad24a4"
+      ],
+      "bytes": 80544026,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4582363
+    },
+    {
+      "id": "sha256:cf4e04ad6c8fd137474ebc652467686031328c4310c01ca7878f97496147fe4f",
+      "tags": [
+        "slide-release/api:20260911-6ad24a4"
+      ],
+      "bytes": 1270021092,
+      "shared": 950038798,
+      "refs": 0,
+      "uniqueBytes": 319982294
+    },
+    {
+      "id": "sha256:b247023ebc6ce5d8af09341d9351cb5645fd31005bddd395792c983bbe2b9aae",
+      "tags": [
+        "slide-release/sandbox-controller:20260911-46fab46"
+      ],
+      "bytes": 290102965,
+      "shared": 290088348,
+      "refs": 0,
+      "uniqueBytes": 14617
+    },
+    {
+      "id": "sha256:8b194ad61c8dcd1555710b75b2d3ad545dca7a3ebd63ee47ea6fae44acd5c58b",
+      "tags": [
+        "slide-release/sandbox-controller:20260911-6ad24a4"
+      ],
+      "bytes": 290102964,
+      "shared": 290088348,
+      "refs": 0,
+      "uniqueBytes": 14616
+    },
+    {
+      "id": "sha256:e6a593707dc7ac6c8d05c408d4e4a3f8a80b15cd90a5d76f33646bac791f03f3",
+      "tags": [
+        "slide-release/frontend:20260911-dfef2f0"
+      ],
+      "bytes": 80544607,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4582944
+    },
+    {
+      "id": "sha256:ee09b060130b05489624f647cd6e5ee81097eabeb211f307a08665eca824a14c",
+      "tags": [
+        "slide-release/api:20260911-dfef2f0"
+      ],
+      "bytes": 1241634497,
+      "shared": 950038798,
+      "refs": 0,
+      "uniqueBytes": 291595699
+    },
+    {
+      "id": "sha256:1c9ff8ad7fff3658e3431173ab2bf0b5722bf57709b1117c9ee1515835ebe76f",
+      "tags": [
+        "slide-release/sandbox-controller:20260911-dfef2f0"
+      ],
+      "bytes": 290102809,
+      "shared": 269832881,
+      "refs": 0,
+      "uniqueBytes": 20269928
+    },
+    {
+      "id": "sha256:c5069de3e5768fdf00d771ccdeb8418708ae7b8704d92c7d40826db66e8bd2ba",
+      "tags": [
+        "slide-release/frontend:20260909-6f74a96"
+      ],
+      "bytes": 80477581,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4515918
+    },
+    {
+      "id": "sha256:81ffdf8936e08ce10f1b151ec0a27deac0fbcadaf13884192b9f6f123aafcbfd",
+      "tags": [
+        "slide-release/api:20260909-6f74a96"
+      ],
+      "bytes": 950074749,
+      "shared": 950034702,
+      "refs": 0,
+      "uniqueBytes": 40047
+    },
+    {
+      "id": "sha256:6c1b5c65d7a99e0788e6c2bc0d6202e027da7aceb8fa3845e3186a1535911818",
+      "tags": [
+        "slide-release/frontend:20260907-05be2ab"
+      ],
+      "bytes": 80477652,
+      "shared": 75961663,
+      "refs": 0,
+      "uniqueBytes": 4515989
+    },
+    {
+      "id": "sha256:707f02dba5bc1673af340ab147e07b4c9d61047251095adb5d8de88228c4781b",
+      "tags": [
+        "slide-release/api:20260907-05be2ab"
+      ],
+      "bytes": 940113693,
+      "shared": 940077255,
+      "refs": 0,
+      "uniqueBytes": 36438
+    },
+    {
+      "id": "sha256:80594e72e45179a4650b9135fe93cea9fc0315c77586cbc9704b398c8f8e361c",
+      "tags": [
+        "slide-release/frontend:20260906-d59fb7c"
+      ],
+      "bytes": 80477639,
+      "shared": 75961653,
+      "refs": 0,
+      "uniqueBytes": 4515986
+    },
+    {
+      "id": "sha256:405c1ec778d095ac4fbc47f7760168ad1d4cc8dc7aac0a38fb845fd89310e669",
+      "tags": [
+        "slide-release/api:20260906-d59fb7c"
+      ],
+      "bytes": 930162306,
+      "shared": 930129472,
+      "refs": 0,
+      "uniqueBytes": 32834
+    },
+    {
+      "id": "sha256:e3b99244acf1fcdf620dbae1464c289404a69408d30c20f276f73448e3e86240",
+      "tags": [
+        "slide-release/frontend:20260904-06de94d"
+      ],
+      "bytes": 80468337,
+      "shared": 75961653,
+      "refs": 0,
+      "uniqueBytes": 4506684
+    },
+    {
+      "id": "sha256:7576df86614bbee2794df2887a73038dba60c7d71313fc80f9d5ddd2ce16e5d7",
+      "tags": [
+        "slide-release/api:20260904-06de94d"
+      ],
+      "bytes": 920211081,
+      "shared": 920181855,
+      "refs": 0,
+      "uniqueBytes": 29226
+    },
+    {
+      "id": "sha256:112a2dbe7b0e314d02ee54bc3d4a3dcdb3046159dd4dcdea6063de7b11a25f77",
+      "tags": [
+        "slide-release/api:20260904-00189ad"
+      ],
+      "bytes": 914690959,
+      "shared": 914665442,
+      "refs": 0,
+      "uniqueBytes": 25517
+    },
+    {
+      "id": "sha256:f52801c4bd5c30583f617f153cbe87d805cce69b2ef5d13775da211dbc0398b2",
+      "tags": [
+        "slide-release/frontend:20260904-00189ad"
+      ],
+      "bytes": 80458124,
+      "shared": 75961653,
+      "refs": 0,
+      "uniqueBytes": 4496471
+    },
+    {
+      "id": "sha256:be8e7d65fc50d50d9152b4ca1c571a70d3f769d2eec906b08ec82b885008f29d",
+      "tags": [
+        "slide-release/sandbox-controller:20260907-05be2ab"
+      ],
+      "bytes": 293262916,
+      "shared": 293260435,
+      "refs": 0,
+      "uniqueBytes": 2481
+    },
+    {
+      "id": "sha256:dd42bc7349ce784f1f8a1bbd55869d83eca97d95a88efd341c75d4449125f1ec",
+      "tags": [
+        "slide-release/sandbox-controller:20260904-00189ad"
+      ],
+      "bytes": 293262916,
+      "shared": 293260435,
+      "refs": 0,
+      "uniqueBytes": 2481
+    },
+    {
+      "id": "sha256:4c7cc63b6ba1311692e99897edca5c8481f10969b916dfb8520b198d1d53b5cc",
+      "tags": [
+        "slide-release/sandbox-controller:20260904-06de94d"
+      ],
+      "bytes": 293262914,
+      "shared": 293260435,
+      "refs": 0,
+      "uniqueBytes": 2479
+    },
+    {
+      "id": "sha256:ee238c3862f82fc7529fdb9359ba268eee03dbc79429ffaa4eddcb797f207a49",
+      "tags": [
+        "slide-release/sandbox-controller:20260906-d59fb7c"
+      ],
+      "bytes": 293262916,
+      "shared": 293260435,
+      "refs": 0,
+      "uniqueBytes": 2481
+    },
+    {
+      "id": "sha256:e37f772d5057611797d9f66c58442c9eb232c5b22b91adfb5dc48338ca9c197a",
+      "tags": [
+        "slide-release/sandbox-controller:20260909-6f74a96"
+      ],
+      "bytes": 293262916,
+      "shared": 293260435,
+      "refs": 0,
+      "uniqueBytes": 2481
+    },
+    {
+      "id": "sha256:66cc5bdc9219878a68a7b5147eb42059267af055fd9f71046a89c387b649f501",
+      "tags": [
+        "slide-network-tools:1.0"
+      ],
+      "bytes": 246418226,
+      "shared": 228436404,
+      "refs": 0,
+      "uniqueBytes": 17981822
+    },
+    {
+      "id": "sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5",
+      "tags": [
+        "node:22-bookworm-slim"
+      ],
+      "bytes": 349044567,
+      "shared": 346365131,
+      "refs": 0,
+      "uniqueBytes": 2679436
+    },
+    {
+      "id": "sha256:28d4aef48e41ddcf9da643c94fa544e232d4ba533d435d6845d5c85e824e8775",
+      "tags": [
+        "decorix:goal-final"
+      ],
+      "bytes": 2973265399,
+      "shared": 1992126640,
+      "refs": 0,
+      "uniqueBytes": 981138759
+    },
+    {
+      "id": "sha256:899703762f4cc74735367fa91998c135c934330dbc4d5c0041aa7967baf4318e",
+      "tags": [
+        "decorix:goal-audit"
+      ],
+      "bytes": 3237144432,
+      "shared": 1992126640,
+      "refs": 0,
+      "uniqueBytes": 1245017792
+    },
+    {
+      "id": "sha256:8c0d193203cf41808a7d67bd58b58c5cc0857c5504bb3a3e5567049cbae3a3f4",
+      "tags": [
+        "decorix:latest",
+        "decorix:local-api-security"
+      ],
+      "bytes": 2248033758,
+      "shared": 239361351,
+      "refs": 0,
+      "uniqueBytes": 2008672407
+    },
+    {
+      "id": "sha256:b9457138be19cb71d71ea288c08aef755515642af318947d3e8e2e2c46a8be03",
+      "tags": [
+        "decorix:scene-data-integrity"
+      ],
+      "bytes": 2247084852,
+      "shared": 238929499,
+      "refs": 0,
+      "uniqueBytes": 2008155353
+    },
+    {
+      "id": "sha256:1d697674c4a1af424939a7b5ac04963c121c487e7a0174aca3becfd4959190d2",
+      "tags": [
+        "decorix:release-foundation"
+      ],
+      "bytes": 2245026155,
+      "shared": 239361543,
+      "refs": 0,
+      "uniqueBytes": 2005664612
+    },
+    {
+      "id": "sha256:dae84b979298979367a0320915bb5915e0e33e9c9c4ff143497d9227405c8fb0",
+      "tags": null,
+      "bytes": 2245013420,
+      "shared": 239361543,
+      "refs": 0,
+      "uniqueBytes": 2005651877
+    },
+    {
+      "id": "sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32",
+      "tags": [
+        "node:22-alpine",
+        "node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32"
+      ],
+      "bytes": 228836254,
+      "shared": 228436402,
+      "refs": 0,
+      "uniqueBytes": 399852
+    },
+    {
+      "id": "sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752",
+      "tags": [
+        "nginx:alpine"
+      ],
+      "bytes": 92849437,
+      "shared": 13493245,
+      "refs": 0,
+      "uniqueBytes": 79356192
+    },
+    {
+      "id": "sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce",
+      "tags": [
+        "alpine:3.22"
+      ],
+      "bytes": 13408336,
+      "shared": 0,
+      "refs": 0,
+      "uniqueBytes": 13408336
+    },
+    {
+      "id": "sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0",
+      "tags": [
+        "python:3.13-alpine",
+        "python@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0"
+      ],
+      "bytes": 74080406,
+      "shared": 13493245,
+      "refs": 0,
+      "uniqueBytes": 60587161
+    },
+    {
+      "id": "sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293",
+      "tags": [
+        "node:20-alpine"
+      ],
+      "bytes": 194160062,
+      "shared": 193751954,
+      "refs": 0,
+      "uniqueBytes": 408108
+    },
+    {
+      "id": "sha256:8a8084193724b95bc62247e3af4218b357e4f172c78925551b2181dbe2566232",
+      "tags": [
+        "container-registry.oracle.com/database/free:latest"
+      ],
+      "bytes": 13514092789,
+      "shared": 0,
+      "refs": 0,
+      "uniqueBytes": 13514092789
+    },
+    {
+      "id": "sha256:8f9a8225cc43d28f5b61e4b961734d3d798d4c2f058bed3f21498c03adee6141",
+      "tags": [
+        "gvenzl/oracle-free:slim"
+      ],
+      "bytes": 2271461877,
+      "shared": 0,
+      "refs": 0,
+      "uniqueBytes": 2271461877
+    },
+    {
+      "id": "sha256:7c3e797187e43738220462658f4586572cbd3bf009f728b21e34d9c5c06ce431",
+      "tags": [
+        "docker:28-dind-rootless"
+      ],
+      "bytes": 620868244,
+      "shared": 279402396,
+      "refs": 0,
+      "uniqueBytes": 341465848
+    },
+    {
+      "id": "sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d",
+      "tags": [
+        "docker:28-cli"
+      ],
+      "bytes": 279452653,
+      "shared": 279402396,
+      "refs": 0,
+      "uniqueBytes": 50257
+    },
+    {
+      "id": "sha256:f95ef7c317df21c1d70d4db7f0bcba18119762ea61a0e09d80b2193ebc31e7ba",
+      "tags": [
+        "mysql/mysql-server:5.6.33"
+      ],
+      "bytes": 463183763,
+      "shared": 0,
+      "refs": 0,
+      "uniqueBytes": 463183763
+    }
+  ],
+  "unusedVolumes": [
+    {
+      "name": "5d68426b48431dabb6f7cfcec0d69e82581f782ab0cbc61f7eec38cccca4355d",
+      "created": "2026-08-07T08:02:17Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "b8c22e9c99e75740ca04e162261950a4ce93674fac2e1365a1331fec507e70f7",
+      "created": "2026-09-18T08:32:26Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 234657748,
+      "refs": 0
+    },
+    {
+      "name": "c529456fd11ec8337578424eb6516f56584f2a3c98c8766c167cf0dae7f56d17",
+      "created": "2026-09-12T01:44:17Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 237088710,
+      "refs": 0
+    },
+    {
+      "name": "17358fa4a097e88671d2ddb94a8a68820fa138a422ebaa6c4d7869a29424f861",
+      "created": "2026-09-30T13:11:02Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224710662,
+      "refs": 0
+    },
+    {
+      "name": "3704034ecfba216128c2ce5693c1a0327c078e096824a7c70345794ef0fbf4f7",
+      "created": "2026-08-19T09:20:07Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "c59ea2a108d16812852db328911104f910a1ef0625509776f9fae610df86e38f",
+      "created": "2026-09-17T07:15:45Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 238021957,
+      "refs": 0
+    },
+    {
+      "name": "84f77ad2217e63acb32cb49a17294a37133fc4088b0017c86cebba105c4287a2",
+      "created": "2026-07-19T01:50:06Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232515820,
+      "refs": 0
+    },
+    {
+      "name": "14cd85889fba2b443c7587713ee69c8fa8d8900b593108b65ad0c52f495f989d",
+      "created": "2026-09-17T05:42:39Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 206199309,
+      "refs": 0
+    },
+    {
+      "name": "4147d27075459f0ccd6555910bb4b9ad40596e328214b12ebb59bcb67049bb45",
+      "created": "2026-07-19T01:53:23Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232518629,
+      "refs": 0
+    },
+    {
+      "name": "f35eaf804fb8765c615de2d7aacee99affea73a19105b025912ed9a7a7f93979",
+      "created": "2026-08-04T04:08:25Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 48348801,
+      "refs": 0
+    },
+    {
+      "name": "slide_mysql-data",
+      "created": "2026-08-18T12:43:23Z",
+      "labels": {
+        "com.docker.compose.config-hash": "7817de0e27e25df72ea40cc01dbc16f6f4c2516a6866e09279fb383d710d49cc",
+        "com.docker.compose.project": "slide",
+        "com.docker.compose.version": "5.3.1",
+        "com.docker.compose.volume": "mysql-data"
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "545af8bc8cbc6a2d61966345de660d500bd994a78f8105b2ee1e4f019e6b3d56",
+      "created": "2026-07-19T01:50:32Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232532201,
+      "refs": 0
+    },
+    {
+      "name": "95fe1b3350c86526f428ae674f53df78d113a8433062eff94f55544868be2811",
+      "created": "2026-09-18T13:50:34Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 236694536,
+      "refs": 0
+    },
+    {
+      "name": "993cc7bc71b0f4a84b6ceba73b2eacfc3f5ab768a8168968cab499b202ba5be7",
+      "created": "2026-09-17T05:06:24Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 205016977,
+      "refs": 0
+    },
+    {
+      "name": "b35cfe01ebb52af4ebef1a52bdd99800d3fa139ccce0b21c24dcbad1dc66d339",
+      "created": "2026-09-30T13:05:30Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 225351425,
+      "refs": 0
+    },
+    {
+      "name": "77ab4f484261de7296dddf6c17d884bf222c92b468d1650c4cd516a131656965",
+      "created": "2026-09-30T12:55:07Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224104843,
+      "refs": 0
+    },
+    {
+      "name": "1f52ba8583f49df1c5f8d2f5057d442570dd3f6c93711e66c6948aad3bbc4520",
+      "created": "2026-09-19T01:09:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 226357527,
+      "refs": 0
+    },
+    {
+      "name": "43da4ea3cef032a815fcab16a62f9f4dfd48e2c10324518f3f6b73e5b4040445",
+      "created": "2026-09-30T13:02:53Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 225342681,
+      "refs": 0
+    },
+    {
+      "name": "cbef1b6c471ffe91cda046f296a4b6e3aba2fd39040aa83ce4252a58ab3177a7",
+      "created": "2026-09-17T06:11:51Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 237756409,
+      "refs": 0
+    },
+    {
+      "name": "0367b4a94d0b2ecaeccfc04c778eceda32652d6c245ba5e45a638d6686382511",
+      "created": "2026-07-19T01:55:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 247694037,
+      "refs": 0
+    },
+    {
+      "name": "8e27b0833f99bd48d43864429172f29a59c1c54bd9a82932e06419945f19d870",
+      "created": "2026-07-19T01:49:30Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232515837,
+      "refs": 0
+    },
+    {
+      "name": "b16b1d9dec93b1e35156de63603e023a4639eb61c58ebfd4563a4215a1d45c14",
+      "created": "2026-09-17T07:16:19Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 238026053,
+      "refs": 0
+    },
+    {
+      "name": "dcb6bd0b3c715fbcc919f5b405031dd61582a9e153ef71324cfbabe7ab18a898",
+      "created": "2026-09-24T04:46:03Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 291795234,
+      "refs": 0
+    },
+    {
+      "name": "ebcf8905ac51d3f6326c2d6c48e9191c14a6d480a2cb59291c044c27b85c7d6d",
+      "created": "2026-09-30T08:02:30Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 240183367,
+      "refs": 0
+    },
+    {
+      "name": "f7747040d43f62c73ee324eeca4f7776b67e9845c9c997d13601f142808c219a",
+      "created": "2026-08-04T04:22:47Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 48219257,
+      "refs": 0
+    },
+    {
+      "name": "f0f53aaef8dfffb08f1dd74baabd4921026d54ceeeda5b260c3bd36f3dc98b05",
+      "created": "2026-07-19T01:52:03Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232516581,
+      "refs": 0
+    },
+    {
+      "name": "018b15b8a3839eaefc294d449551ac726f15fde3229ce19b1baa5e7342a3394e",
+      "created": "2026-07-19T01:58:28Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232500099,
+      "refs": 0
+    },
+    {
+      "name": "4fd216644b793d4128e099d2ac102b53f6e3de83bccb789c2c49f6bcc5206535",
+      "created": "2026-07-19T01:51:33Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232515342,
+      "refs": 0
+    },
+    {
+      "name": "f25ffba52f44aa11170e660a0f702b6c622487fb220d8a5a15da7392389b761c",
+      "created": "2026-09-17T06:11:10Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 237753226,
+      "refs": 0
+    },
+    {
+      "name": "67dfeaf77ed495ccc32f6ca101fef02f649638c182a875d4715c551a89e1ddaf",
+      "created": "2026-08-06T04:58:30Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 47991409,
+      "refs": 0
+    },
+    {
+      "name": "6ec4a7000d1f60916e9737e1396b313951c4a261bd269cd9c7273d8ca18fbd13",
+      "created": "2026-08-19T09:20:07Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 161385365,
+      "refs": 0
+    },
+    {
+      "name": "6aaeade5d644e348d9995819be5875a0a00f0a2197401818d7c6a3b61941e020",
+      "created": "2026-09-19T00:52:10Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 256189410,
+      "refs": 0
+    },
+    {
+      "name": "a0b0018f9ff02f9e9db55cad0e8a7b2fc754d9a88b22aba9c3afc51ebdd124af",
+      "created": "2026-08-04T04:17:21Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 47958641,
+      "refs": 0
+    },
+    {
+      "name": "2d456cdbc5a196a8274be8f04692a00797fa93de7f461c53e491e7857d1a9897",
+      "created": "2026-09-30T12:57:28Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 220504492,
+      "refs": 0
+    },
+    {
+      "name": "851ba303392bee0db7cb76af493c81e21f6a079a7769924928a10bcd5293d1e5",
+      "created": "2026-08-07T16:40:17Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "slide_agent-state",
+      "created": "2026-08-18T12:43:23Z",
+      "labels": {
+        "com.docker.compose.config-hash": "d27cefdd006afac3946ab270b7c482e44d4952fe0a58b8cb3ac9ce4dae2b72e8",
+        "com.docker.compose.project": "slide",
+        "com.docker.compose.version": "5.3.1",
+        "com.docker.compose.volume": "agent-state"
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "d3cdaded9d5aab607100bd08fc8a549be0da173914541eceeb4e76bd66ee60fb",
+      "created": "2026-09-30T12:56:53Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224104839,
+      "refs": 0
+    },
+    {
+      "name": "23d9b9a29462f07670dee6dc76671a8f68755155a8e4117068723f78a2cfbf81",
+      "created": "2026-08-07T16:40:17Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "5ce13869e8d9b9597b5d8c87cb91947338424af01b98820e7c49094915b22683",
+      "created": "2026-09-30T13:08:43Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 219911365,
+      "refs": 0
+    },
+    {
+      "name": "f2a3937c1224df77ab5ce88141c9743bf141815b987c5842b1c906e5af014d08",
+      "created": "2026-08-07T08:02:17Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 0,
+      "refs": 0
+    },
+    {
+      "name": "mysql_data",
+      "created": "2026-04-27T09:12:36Z",
+      "labels": null,
+      "bytes": 225146027,
+      "refs": 0
+    },
+    {
+      "name": "27def27cae8db13adc17950d12e6e49d5dcf353b71aa381a70b9a5f599760898",
+      "created": "2026-07-19T01:52:35Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232516601,
+      "refs": 0
+    },
+    {
+      "name": "fdc3ac778f03711cff0f73634d139212a0abe0fbadec10c8f06af0fcdc2fa67e",
+      "created": "2026-09-18T05:48:04Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 238031647,
+      "refs": 0
+    },
+    {
+      "name": "ed84009ec59a2c02d6aed8978c9e757c0ef4d60ad22234f37f8624064ebf4b54",
+      "created": "2026-09-17T01:16:46Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 218775690,
+      "refs": 0
+    },
+    {
+      "name": "19f1e9c571361ef4f9a7ab8570255659e02182ab7714b0e9bb5f9b404812fc1e",
+      "created": "2026-08-04T04:47:14Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 48381665,
+      "refs": 0
+    },
+    {
+      "name": "6403ad8787cd0542e6ac2dfa1ba53ba48ab0432a4c30f2bf862dbdc35d1eb19c",
+      "created": "2026-07-19T01:48:10Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232498771,
+      "refs": 0
+    },
+    {
+      "name": "da363508d10fc2c6f9d01698868ef681291bbfec1eca890d4cda37a456097474",
+      "created": "2026-08-04T05:11:36Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 47991409,
+      "refs": 0
+    },
+    {
+      "name": "f1d262e6750ce88f3353194d6d7c5a377a2ac50c39ee67c2ede289fcb6edd059",
+      "created": "2026-05-03T03:36:37Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 42467384,
+      "refs": 0
+    },
+    {
+      "name": "0e36997bcd7e37a0c404df3947d52f1f8f7192b8bad4529b5c67a58291a1f6e8",
+      "created": "2026-07-19T01:48:00Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 232498738,
+      "refs": 0
+    },
+    {
+      "name": "7abe58e2d5e4324629abfa0e5d24f0645cab6e790c6ad86710e98ff2ae34a296",
+      "created": "2026-09-30T07:58:33Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 224263072,
+      "refs": 0
+    },
+    {
+      "name": "907c6b1050d7a0f3988d2e7413b8a6bc351a603ab498f4915ac99d1ea1fbe0a4",
+      "created": "2026-08-04T04:27:11Z",
+      "labels": {
+        "com.docker.volume.anonymous": ""
+      },
+      "bytes": 48219257,
+      "refs": 0
+    }
+  ],
+  "deletionCondition": "Unused means no container reference, not permission to delete. Confirm continued offline/release/rollback needs for images and provenance/backup of database volumes before removal."
+}

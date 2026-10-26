@@ -1,0 +1,22 @@
+{
+  "observed_at": "2026-09-16 Asia/Shanghai",
+  "repository": "max2055/Slide",
+  "commit": "45259c040788239035126014a53bb695ee878f64",
+  "branch": {
+    "name": "main",
+    "protected": false
+  },
+  "branch_protection": {
+    "http_status": 404,
+    "message": "Branch not protected"
+  },
+  "effective_branch_rules": [],
+  "rulesets_including_parents": [],
+  "commands": [
+    "gh api repos/max2055/Slide/branches/main/protection",
+    "gh api repos/max2055/Slide/rules/branches/main",
+    "gh api 'repos/max2055/Slide/rulesets?includes_parents=true'",
+    "gh api repos/max2055/Slide/branches/main --jq '{name,protected,sha:.commit.sha}'"
+  ],
+  "scope": "Read-only API observations; no direct push or settings mutation attempted."
+}

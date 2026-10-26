@@ -21,4 +21,3 @@ apps/db-ops-api/.env
 !deploy/.env.production.example
 docs
 tmp
-nanobot-reference

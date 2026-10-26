@@ -29,10 +29,18 @@ export function resolveInvestigationRuntime(
   persisted?: InvestigationRuntimeContext,
 ): InvestigationRuntimeContext {
   // Old in-flight executions retain their original min(2048, answer) ceiling.
+  // The 10,240 investigation ceiling is a default, not a frozen allocation: it
+  // only applies when the Provider verifiably emits that much output. Unverified
+  // or smaller models keep the historical compatible default. Explicit and
+  // persisted allocations stay untouched; the runtime capability gate rejects an
+  // unsupported explicit allocation before any ordinary or summary send.
+  const verifiedOutput = capability?.source === 'conservative-fallback' ? undefined : capability?.maxOutputTokens;
+  const maxTokens = configured.maxTokens ?? Math.min(4096, capability?.preferredOutputTokens ?? 4096, capability?.maxOutputTokens ?? 4096);
   const selected = persisted ? {...persisted, summaryMaxTokens: persisted.summaryMaxTokens ?? Math.min(2048, persisted.maxTokens)} : {
     contextWindowTokens: configured.contextWindowTokens ?? Math.min(16_000, capability?.contextWindowTokens ?? 16_000),
-    maxTokens: configured.maxTokens ?? Math.min(4096, capability?.preferredOutputTokens ?? 4096, capability?.maxOutputTokens ?? 4096),
-    summaryMaxTokens: configured.summaryMaxTokens ?? 10240,
+    maxTokens,
+    summaryMaxTokens: configured.summaryMaxTokens ?? (verifiedOutput === undefined
+      ? Math.min(2048, maxTokens) : Math.min(10240, verifiedOutput)),
   };
   if (![selected.contextWindowTokens, selected.maxTokens, selected.summaryMaxTokens, selected.contextBlockLimit ?? 1].every(n => Number.isSafeInteger(n) && n > 0 && n <= 1_000_000)
     || selected.maxTokens + 1024 >= selected.contextWindowTokens) throw new Error('INVESTIGATION_CONTEXT_CONFIGURATION');

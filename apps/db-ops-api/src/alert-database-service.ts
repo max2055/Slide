@@ -3,6 +3,10 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { admitPersistedAlert } from './investigations/automatic-alert-admission.js';
+
+const dimensionKey = (dimensions?: Record<string, string> | null) =>
+  JSON.stringify(Object.fromEntries(Object.entries(dimensions ?? {}).sort(([a], [b]) => a.localeCompare(b))));
 
 export interface Alert {
   id: number;
@@ -147,10 +151,15 @@ class AlertDatabaseService {
           data.metric_name || null,
           data.metric_value || null,
           data.threshold_value || null,
-          data.tags ? JSON.stringify(data.tags) : null,
+          JSON.stringify({ ...(data.tags && typeof data.tags === 'object' && !Array.isArray(data.tags) ? data.tags : {}),
+            auto_analysis: { status: 'pending' } }),
         ]
       ) as any;
 
+      // Explicit transactions are recovered only after their commit is visible.
+      if (!connection) await admitPersistedAlert(Number(result.insertId)).catch(() => {
+        console.warn(`[AutomaticAlertAdmission] interrupted after persisted alert #${result.insertId}`);
+      });
       return { success: true, alertId: result.insertId };
     } catch (error: any) {
       console.error('创建告警失败:', error);
@@ -590,33 +599,39 @@ class AlertDatabaseService {
   /**
    * 查找未解决的服务器告警（去重用）
    */
-  async findActiveServerAlert(serverId: number, metricName: string, ruleId: number): Promise<Alert | null> {
+  async findActiveServerAlert(serverId: number, metricName: string, ruleId: number,
+    dimensions?: Record<string, string> | null): Promise<Alert | null> {
+    const candidates = await this.findActiveServerAlerts(serverId, metricName, ruleId);
+    return candidates.find(alert => dimensionKey(alert.tags?.dimensions) === dimensionKey(dimensions)) ?? null;
+  }
+
+  /** Recovery must evaluate each active dimension, never borrow another rule's row. */
+  async findActiveServerAlerts(serverId: number, metricName: string, ruleId: number): Promise<Alert[]> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) return [];
 
     try {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         `SELECT * FROM alerts
          WHERE server_id = ? AND metric_name = ?
-         AND JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
+         AND (JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
+           OR JSON_EXTRACT(tags, '$.rule_id') IS NULL
+           OR JSON_TYPE(JSON_EXTRACT(tags, '$.rule_id')) = 'NULL')
          AND status IN ('unread', 'read', 'acknowledged')
-         ORDER BY created_at DESC LIMIT 1`,
-        [serverId, metricName, ruleId]
+         ORDER BY (JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)) DESC,
+           created_at DESC, id DESC`,
+        [serverId, metricName, ruleId, ruleId]
       );
-      if (rows.length > 0) return this._rowToAlert(rows[0]);
-
-      // Fallback: match by server+metric without rule_id
-      const [fallbackRows] = await pool.query<mysql.RowDataPacket[]>(
-        `SELECT * FROM alerts
-         WHERE server_id = ? AND metric_name = ?
-         AND status IN ('unread', 'read', 'acknowledged')
-         ORDER BY created_at DESC LIMIT 1`,
-        [serverId, metricName]
-      );
-      return fallbackRows.length > 0 ? this._rowToAlert(fallbackRows[0]) : null;
+      // Prefer the exact rule over legacy rows separately for each dimension.
+      const seen = new Set<string>();
+      return rows.map(row => this._rowToAlert(row)).filter(alert => {
+        const key = dimensionKey(alert.tags?.dimensions);
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
     } catch (error) {
       console.error('查找活跃服务器告警失败:', error);
-      return null;
+      return [];
     }
   }
 
@@ -654,16 +669,16 @@ class AlertDatabaseService {
   /**
    * 更新已有告警的指标值和更新时间（去重 touch）
    */
-  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string }): Promise<void> {
+  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string; thresholdValue?: string }): Promise<void> {
     const pool = this.getPool();
     if (!pool) return;
 
     try {
       if (observation) await pool.execute(
-        `UPDATE alerts SET metric_value = ?, message = ?,
+        `UPDATE alerts SET metric_value = ?, message = ?, threshold_value = COALESCE(?, threshold_value),
           tags = JSON_MERGE_PATCH(CASE WHEN JSON_VALID(tags) THEN tags ELSE JSON_OBJECT() END, CAST(? AS JSON)),
           updated_at = NOW() WHERE id = ?`,
-        [metricValue, observation.message, JSON.stringify(observation.tags), alertId]
+        [metricValue, observation.message, observation.thresholdValue ?? null, JSON.stringify(observation.tags), alertId]
       );
       else await pool.execute(
         `UPDATE alerts SET metric_value = ?, updated_at = NOW() WHERE id = ?`,

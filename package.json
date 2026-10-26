@@ -20,6 +20,7 @@
     "release:security-gate": "pnpm security:audit && pnpm security:scan && pnpm security:test && pnpm security:deployment && pnpm security:sandbox",
     "contracts:generate": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts",
     "contracts:check": "pnpm --filter slide-api exec tsx src/contracts/generate-public-api.ts --check",
+    "provider-config": "pnpm --filter slide-api exec tsx src/llm/provider-config-backup-cli.ts",
     "release:artifact": "bash scripts/release/build-artifact.sh",
     "release:rollback-drill": "bash scripts/release/rollback-drill.sh",
     "lint": "oxlint",

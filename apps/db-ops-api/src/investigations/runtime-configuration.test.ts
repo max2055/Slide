@@ -9,6 +9,15 @@ it('keeps the existing default and selects a bounded task window without changin
  expect(resolveInvestigationRuntime(capability,investigationRuntimeConfiguration())).toEqual({contextWindowTokens:32768,maxTokens:4096,summaryMaxTokens:10240});
  expect(capability.contextWindowTokens).toBe(1048576);
 });
+it('resolves the default summary allocation within verified output and never rewrites explicit or frozen values',()=>{
+ expect(resolveInvestigationRuntime({...capability,maxOutputTokens:2048}).summaryMaxTokens).toBe(2048);
+ expect(resolveInvestigationRuntime({...capability,maxOutputTokens:8192}).summaryMaxTokens).toBe(8192);
+ expect(resolveInvestigationRuntime({...capability,maxOutputTokens:undefined,preferredOutputTokens:4096}).summaryMaxTokens).toBe(2048);
+ expect(resolveInvestigationRuntime({...capability,source:'conservative-fallback'}).summaryMaxTokens).toBe(2048);
+ expect(resolveInvestigationRuntime(capability).summaryMaxTokens).toBe(10240);
+ expect(resolveInvestigationRuntime(capability,{summaryMaxTokens:10240}).summaryMaxTokens).toBe(10240);
+ expect(resolveInvestigationRuntime({...capability,maxOutputTokens:2048},{},{contextWindowTokens:16000,maxTokens:2048,summaryMaxTokens:10240}).summaryMaxTokens).toBe(10240);
+});
 it('persists a separate summary allocation, including explicit smaller values and legacy recovery',()=>{
  vi.stubEnv('INVESTIGATION_SUMMARY_OUTPUT_TOKENS','6000');
  const configured=investigationRuntimeConfiguration();

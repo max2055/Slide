@@ -12,6 +12,7 @@ Slide v0.10 是一个 AI 原生的基础运维助手，覆盖数据库、Kylin/R
 | [OPERATIONS.md](./OPERATIONS.md) | 运维文档 — 面向运维人员，涵盖后端部署、Gateway 运行机制、前端构建部署、依赖服务配置和启停流程 |
 | [USER-GUIDE.md](./USER-GUIDE.md) | 用户手册 — 面向 DBA 和运维用户，按功能模块提供分步骤操作说明 |
 | [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md) | 项目结构说明 — 项目目录树和各模块文件分布 |
+| [development/quality-gates.md](./development/quality-gates.md) | 质量门与独立复核规则 — 验收证据、默认拒绝测试、文档入口核对与合并前检查 |
 
 ## 快速入门
 

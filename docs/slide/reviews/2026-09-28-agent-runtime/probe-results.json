@@ -1,0 +1,50 @@
+{
+  "baseline": "07b3e6ce458b0b4576d356a97d78ab17df3ddd66",
+  "defaultRunTimeoutMs": 120000,
+  "observations": [
+    {
+      "name": "repeated_text_accepted",
+      "requests": 1,
+      "stopReason": "completed",
+      "error": null,
+      "finalContent": "正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n",
+      "assistantMessages": [
+        "正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n正在分析数据库状态……\n"
+      ]
+    },
+    {
+      "name": "length_exhaustion_accepted",
+      "requests": 4,
+      "stopReason": "completed",
+      "error": null,
+      "finalContent": "截断片段4",
+      "assistantMessages": [
+        "截断片段1",
+        "截断片段2",
+        "截断片段3",
+        "截断片段4"
+      ]
+    },
+    {
+      "name": "continuation_final_drops_prefix",
+      "requests": 2,
+      "stopReason": "completed",
+      "error": null,
+      "finalContent": "第二部分结论。",
+      "assistantMessages": [
+        "第一部分结论。",
+        "第二部分结论。"
+      ]
+    },
+    {
+      "name": "empty_finalization_length_bypasses_recovery",
+      "requests": 3,
+      "stopReason": "completed",
+      "error": null,
+      "finalContent": "仍未完成的截断答案",
+      "assistantMessages": [
+        "仍未完成的截断答案"
+      ]
+    }
+  ]
+}
