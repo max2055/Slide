@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "sends": 2,
+  "result": {
+    "investigationId": "d4a16265-3b9c-4b2a-8eec-475499722448",
+    "requestId": "5cd747ed-c6f0-49f7-9b19-1318e020ed51",
+    "runId": "6c3d7b3e-8a8e-4b13-adfa-88026322777f",
+    "resultVersion": 2,
+    "evidence": [
+      {
+        "id": "9999ab7c-0a4e-4085-98a8-94c025e9beda",
+        "version": 1,
+        "hash": "79360ac6a3e58ad597d103754e79263cbbcc1a333efbf28f7ada669263616855",
+        "validUntil": "2026-11-01T13:51:53.080Z"
+      }
+    ]
+  },
+  "budget": {
+    "usedTokens": 240,
+    "measuredTokens": 240,
+    "conservativelyAccountedTokens": 0,
+    "reservedTokens": 0,
+    "remainingTokens": 9999760,
+    "requests": 2,
+    "pending": null,
+    "stopped": false,
+    "checkpoints": [],
+    "phase": "normal"
+  }
+}
