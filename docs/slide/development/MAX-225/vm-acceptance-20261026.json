@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "qualification": "MAX-225",
+  "startedAt": "2026-10-25T23:47:55.278Z",
+  "sharedWrites": 0,
+  "modelRequests": 0,
+  "samples": [
+    {
+      "attempts": [
+        {
+          "status": "succeeded",
+          "error": null
+        }
+      ],
+      "observation": {
+        "id": "sha256:31f10f956371761563cd3a30622e1b65271d42d75a7dcfbd9847254539ed045c",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "3",
+        "metric": {
+          "id": "linux.cpu.user_system_percent",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-10-25T23:48:02.938Z",
+        "collected_at": "2026-10-25T23:48:03.670Z",
+        "stored_at": null,
+        "unit": "%",
+        "value": {
+          "encoding": "float64",
+          "value": 9.1
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "server:3",
+          "metric_binding_id": "server:3:linux.cpu.user_system_percent",
+          "collector_id": "linux-host-gauges",
+          "attempt_id": "MAX225:682b4920-68dd-4a4a-9b25-a74b2dd7ba69:linux-host-gauges"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "linux-host",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:dac0f7eb7136310866b92233067e923bc451fb8ee75342b17e96b1cce0e1b251",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "attempts": [
+        {
+          "status": "succeeded",
+          "error": null
+        }
+      ],
+      "observation": {
+        "id": "sha256:f24d8aca8c254ebea59cc471d804f70c535d4478edd47f6ec7160aac70e2d2e3",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "3",
+        "metric": {
+          "id": "linux.cpu.user_system_percent",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-10-25T23:48:03.790Z",
+        "collected_at": "2026-10-25T23:48:04.229Z",
+        "stored_at": null,
+        "unit": "%",
+        "value": {
+          "encoding": "float64",
+          "value": 0
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "server:3",
+          "metric_binding_id": "server:3:linux.cpu.user_system_percent",
+          "collector_id": "linux-host-gauges",
+          "attempt_id": "MAX225:597769c7-fa02-42c7-9ac5-9c0ae05af91a:linux-host-gauges"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "linux-host",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:1d4200c294575aa3eed26fceea1576c2a3a67d24926c8c432d331793a21c9f39",
+            "stage": "raw"
+          }
+        ]
+      }
+    }
+  ],
+  "stage": "evaluate_and_admit",
+  "resource": {
+    "type": "server",
+    "id": 3
+  },
+  "threshold": 8.645,
+  "alerts": [
+    {
+      "id": 1,
+      "status": "resolved",
+      "metric_value": "9.1",
+      "tags": {
+        "quality": "good",
+        "rule_id": 9001,
+        "rule_name": "MAX225 real VM CPU",
+        "dimensions": {},
+        "observed_to": "2026-10-25T23:48:03.705Z",
+        "target_type": "server",
+        "collected_at": null,
+        "auto_analysis": {
+          "reason": "accepted",
+          "status": "pending",
+          "requestId": "311d9711-c90e-4dd2-a40b-10f8a149aa02",
+          "analysisId": null,
+          "attemptedAt": "2026-10-25T23:48:03.788Z",
+          "investigationId": "def6e7ac-fad7-4d2b-98f1-5545cf5e6c60"
+        },
+        "observed_from": "2026-10-25T23:47:03.705Z",
+        "auto_generated": true,
+        "semantic_migration": {
+          "old_id": "cpu_usage",
+          "reason": "Pinned definition; threshold and resource scope preserved",
+          "status": "mapped",
+          "version": "1.0.0",
+          "resource": {
+            "id": 3,
+            "type": "server"
+          },
+          "metric_id": "linux.cpu.user_system_percent",
+          "threshold_conversion": "none"
+        },
+        "rule_window_seconds": 0
+      },
+      "resolved_at": "2026-10-25T23:48:04.000Z"
+    }
+  ],
+  "recovered": true,
+  "owners": [
+    {
+      "alert_id": 1,
+      "lane": "investigation",
+      "investigation_id": "def6e7ac-fad7-4d2b-98f1-5545cf5e6c60",
+      "analysis_id": null
+    }
+  ],
+  "admissionVerified": true,
+  "finishedAt": "2026-10-25T23:48:04.260Z"
+}

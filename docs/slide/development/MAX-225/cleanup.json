@@ -1,0 +1,14 @@
+{
+  "ownFixtureContainers": [
+    "slide-t08-50981-14ef557d-935a-409d-89b9-be0fb5edddd6",
+    "slide-t08-50981-ce8a4c4a-f4de-47a0-aa0a-a8f4145c70dc",
+    "slide-t08-51112-334bbc06-e335-4630-85b5-a7351d96effa",
+    "slide-t08-51152-93b52cc6-8a1e-468d-a2c8-7858050d53b8"
+  ],
+  "cleanup": "verified absent on 2026-10-26",
+  "secondRoundContainers": [
+    "slide-t08-68672-f1221cf0-7cb8-444d-8b50-d9d7c72b4e11",
+    "slide-t08-68670-3fc61045-829e-4f94-b1ff-9b1b93ce1ecf"
+  ],
+  "secondRoundCleanup": "stopped by exact name after the parallel-timeout run; no prefix-wide cleanup performed"
+}

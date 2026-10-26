@@ -13,6 +13,7 @@ import { InvestigationStoreError, type AdmissionInvestigation } from './store.js
 import { InvestigationEffectiveBudgetService, resolveAdmissionConfiguration } from './effective-budget.js';
 import { alertResource, alertInvestigationInput } from './resource-event-bridge.js';
 import type { TriggerBinding } from './trigger-policy.js';
+import { automaticAlertSuppression } from './automatic-alert-policy.js';
 
 export interface DatabaseAlertSource {
   id: number; instance_id: number | null; server_id?: number | null; network_device_id?: number | null;
@@ -106,6 +107,15 @@ export class DatabaseAlertBridge {
       }
       const [owners] = await c.execute<RowDataPacket[]>('SELECT * FROM investigation_alert_owners WHERE alert_id=?', [alert.id]);
       let owner = owners[0];
+      // Existing accepted work keeps its owner; policy changes must never
+      // cause a second lane. Unsent/recovered automatic intents use live policy.
+      if (trigger === 'auto' && !owner?.investigation_id && !owner?.analysis_id) {
+        const reason = await automaticAlertSuppression(c, alert);
+        if (reason) return { success: false, status: 'suppressed', error: reason };
+        if (!this.flags().opsAuto) return { success: false, status: 'suppressed', error: 'AUTO_ANALYSIS_LANE_DISABLED' };
+        if (owner && parse(owner.command_snapshot).trigger !== 'auto')
+          return { success: false, status: 'suppressed', error: 'AUTO_ANALYSIS_MANUAL_OWNER' };
+      }
       if (!owner) {
         const [historical] = await c.execute<RowDataPacket[]>(`SELECT a.id FROM ai_analysis a LEFT JOIN analysis_dispatches d ON d.analysis_id=a.id
           WHERE a.analysis_type='alert_rca' AND a.related_id=? AND a.${field}=?
@@ -138,7 +148,7 @@ export class DatabaseAlertBridge {
           const row = old[0], request = row && parse(row.request_snapshot);
           if (row?.trigger_type !== 'auto' && Number(request?.actor?.userId) !== caller?.userId)
             throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
-          if (row && ['pending','running','unknown'].includes(row.status) && retryOf !== Number(owner.analysis_id))
+          if (row && (trigger === 'auto' || ['pending','running','unknown'].includes(row.status)) && retryOf !== Number(owner.analysis_id))
             return { success: row.status !== 'unknown', analysisId: Number(owner.analysis_id), sessionKey: row.session_key ?? undefined,
               status: row.status, ...(row.status === 'unknown' ? { error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN' } : {}) };
         }
@@ -148,6 +158,18 @@ export class DatabaseAlertBridge {
       }
       const command = parse(owner.command_snapshot) as FrozenCommand;
       if (!command.actor) throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
+      if (command.trigger === 'auto') {
+        if (!owner.investigation_id) {
+          const reason = await automaticAlertSuppression(c, command.alert);
+          if (reason) return { success: false, status: 'suppressed', error: reason };
+          if (!this.flags().opsAuto) return { success: false, status: 'suppressed', error: 'AUTO_ANALYSIS_LANE_DISABLED' };
+        }
+        const pilot = this.pilot();
+        const allowed = resource.type === 'instance' ? pilot.instanceIds : resource.type === 'server' ? pilot.serverIds ?? [] : pilot.networkDeviceIds ?? [];
+        if (!pilot.configured || pilot.serviceUserId !== command.actor.userId || !allowed.includes(resource.id))
+          return { success: false, status: 'suppressed', error: 'RESOURCE_ALERT_PILOT_UNCONFIGURED' };
+        await this.authorizeSubject(authorityConnection, command.actor, command.alert);
+      }
       const input = alertInvestigationInput(command.alert);
       // Recover pre-T10 durable database intents with their ORIGINAL payload/hash.
       const modern = command.version === 2;

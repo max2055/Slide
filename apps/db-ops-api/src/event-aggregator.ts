@@ -6,8 +6,7 @@ import { assertWorkflowActive } from './workflows/execution-context.js';
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
-import { alertRCAService } from './alert-rca-service';
-import { aiAnalysisConfigService } from './ai-analysis-config-service';
+import { recoverAutomaticAlertAdmissions } from './investigations/automatic-alert-admission.js';
 
 class EventAggregator {
   private getPool(): mysql.Pool | null {
@@ -36,6 +35,15 @@ class EventAggregator {
     if (!pool) return { eventsCreated: 0, alertsAggregated: 0 };
 
     try {
+      // Recovery is an independent sweep over persisted alerts. Admission for
+      // each alert is owned by its persistence path; a failed sweep must not
+      // suppress display aggregation of the same batch.
+      try { await recoverAutomaticAlertAdmissions(); }
+      catch (error) {
+        assertWorkflowActive();
+        // Codes only: never echo SQL or provider payloads from the sweep.
+        console.warn(`[EventAggregator] 自动分析恢复失败，继续事件聚合 (${(error as {code?: string}).code ?? 'UNKNOWN'})`);
+      }
       // Phase 1: 查找候选已有事件
       // 查找 10 分钟内还有活动的 open/investigating 事件，
       // 新告警如果属于同一 instance+type+metric 则可能被吸收
@@ -73,6 +81,7 @@ class EventAggregator {
         `SELECT a.id, a.instance_id, a.alert_type, a.metric_name, a.level, a.created_at
          FROM alerts a
          WHERE a.status IN ('unread', 'read')
+           AND a.instance_id IS NOT NULL AND a.server_id IS NULL AND a.network_device_id IS NULL
            AND a.created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
            AND NOT EXISTS (SELECT 1 FROM alert_event_members m WHERE m.alert_id = a.id)
          ORDER BY a.instance_id, a.alert_type, a.metric_name, a.created_at ASC`
@@ -235,13 +244,8 @@ class EventAggregator {
             })]
           );
 
-          // 自动触发首个告警的 RCA（两种路径共用）
-          assertWorkflowActive();
-          const analysisConfig = await aiAnalysisConfigService.getConfig();
-          if (analysisConfig.enabled) {
-            assertWorkflowActive();
-            await alertRCAService.analyzeAlert(group.alert_ids[0], 'auto');
-          }
+          // RCA admission is owned by persisted alerts, independently of
+          // whether two database alerts happen to form a display event.
 
           if (isNewEvent) eventsCreated++;
           alertsAggregated += group.alert_ids.length;
