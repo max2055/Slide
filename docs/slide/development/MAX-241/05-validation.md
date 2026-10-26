@@ -188,3 +188,35 @@ MAX241_CDP_PORT=19354 node docs/slide/development/MAX-241/verify/run-checks.mjs 
 - 合成输入只证明判定函数，**不代表真实数据库或真实设备验收**；生产模板目录、兼容性判定、试采/发布接口仍需实施阶段用真实环境验证。
 - 配置业务组件仍是独立演示状态机，不等于已完成生产 `metric-configuration` 接入；生产 ACL、采集、幂等与审计闭环未验证。
 - 未发送模型请求、未写 224 账本、未操作真实资源或共享服务；人工听读不设门禁。
+
+## 10. F1 未知版本判定再修复（2026-10-26，对应 Chief review4）
+
+复审在已接受的 F1 修复上保留一项：**已知 Linux 族但版本不可确认**的资源（如 `CentOS unknown` 对 `linux-basic`）仍返回兼容并可试采/发布。根因是 Linux 模板只声明操作系统系列、没有版本约束，而 `compatResult` 仅在 `target.min` 存在时校验版本；缺 `min` 的模板直接跳过版本判定，`parseVersion` 返回 `null` 也被放过。
+
+### 10.1 修复
+
+| 项 | 根因 | 修复 |
+|---|---|---|
+| F1 未知版本误兼容 | Linux 模板无 `min`，版本判定被整体跳过 | `TEMPLATE_TARGETS` 的 `linux-basic` / `linux-minimal` 增加 `requireVersion: true`；`compatResult` 版本判定改为 `target.min` 或 `target.requireVersion` 时执行，无 `min` 时只要求版本可解析，不虚构版本下界 |
+
+- 与 `03-detail-design.md` "任一维度不可验证（未知引擎、未知型号、未知版本、未声明适配范围的模板）都不得宣称兼容" 一致。
+- 兼容性说明（`constraintLabel`）在没有版本区间时追加"版本需可确认"，检查通过时同样如实展示约束。
+- 未知引擎/未知型号/未知平台/未声明适配范围、MySQL 8.0–8.x、PostgreSQL 14+、达梦 DM8、Huawei V600 × V200 子类型等既有判定不变。
+
+### 10.2 证据
+
+| 检查 | 修复前（RED，`4d47407e1` 的 `app.js`） | 修复后（GREEN） |
+|---|---|---|
+| `verify/version-checks.mjs`（23 项） | 20/23 —— `CentOS unknown`、仅有系统名 `Linux`、`Kylin OS` 无版本三项被误判兼容 | **23/23** |
+| `verify/run-checks.mjs` 完整检查，Chrome 156.0.8078.48 | — | **103/103** |
+| 同一脚本，Microsoft Edge 156.0.4314.42 | — | **103/103** |
+
+- RED 复现：把同一 `verify/version-checks.mjs` 指向 `4d47407e1` 的 `app.js` 副本运行，失败项恰为上述三项；原有 Kylin V10 / CentOS 7.9 演示资源仍判兼容。
+- 浏览器全套断言未改动，用于证明本次判定改动没有回归（Chrome 与 Edge 结果一致）。
+
+### 10.3 绑定与边界
+
+- 验证对象：本轮提交的 `prototype/app.js` 与 `verify/version-checks.mjs`（SHA 绑定见 §10.4），起始提交 `4d47407e1`。
+- 复现：`node docs/slide/development/MAX-241/verify/version-checks.mjs`；完整检查命令同 §2，服务只读同一工作树文件。
+- 合成输入只证明判定函数与原型呈现，**不代表真实服务器/数据库或设备验收**；生产模板目录、兼容性判定、试采/发布接口仍需实施阶段用真实环境验证。
+- 本轮未改生产代码、共享组件、后端或导航；未发模型请求、未写 224 账本、未操作真实资源或共享服务。

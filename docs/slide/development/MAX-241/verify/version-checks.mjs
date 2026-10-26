@@ -44,6 +44,9 @@ const cases = [
   { name: 'CentOS 7.9 服务器 × Linux 最小模板 → 兼容', cls: 'server', template: 'linux-minimal', row: { os: 'CentOS 7.9' }, expect: true },
   { name: 'Windows Server 2019 × Linux 模板 → 操作系统不符', cls: 'server', template: 'linux-basic', row: { os: 'Windows Server 2019' }, expect: false },
   { name: '服务器系统未知 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: '' }, expect: false },
+  { name: 'CentOS 版本未知 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'CentOS unknown' }, expect: false },
+  { name: 'Linux 仅有系统名无版本 × Linux 最小模板 → 不宣称兼容', cls: 'server', template: 'linux-minimal', row: { os: 'Linux' }, expect: false },
+  { name: 'Kylin 版本缺失 × Linux 模板 → 不宣称兼容', cls: 'server', template: 'linux-basic', row: { os: 'Kylin OS' }, expect: false },
 ];
 
 const results = cases.map((c) => {
