@@ -262,3 +262,139 @@ describe('initial provider selection', () => {
     if (selectedId !== null) expect(element.form.default_model).toBe('base');
   });
 });
+
+describe('save outcome separates persistence from runtime application', () => {
+  const provider = {
+    id: 11, name: 'step', display_name: 'Step', enabled: true, is_default: true,
+    api_base_url: 'https://example.test/v1', default_model: 'model', context_window: 64000, max_tokens: 2048,
+    models_supported: [{ id: 'model', contextWindow: 64000, maxTokens: 2048 }],
+  };
+  beforeEach(() => {
+    get.mockReset(); put.mockReset(); post.mockReset();
+    get.mockImplementation(async (url: string) => url === '/llm/configs' ? [provider] : []);
+  });
+  afterEach(() => document.querySelectorAll('llm-config-page').forEach(el => el.remove()));
+  async function page() {
+    const element = document.createElement('llm-config-page') as any;
+    document.body.append(element); await element._load(); await element.updateComplete;
+    return element;
+  }
+  const warning = (element: any) => element.shadowRoot.querySelector('[aria-label="运行时应用结果"]');
+  const confirmed = (element: any) => element.shadowRoot.querySelector('[aria-label="操作结果"]');
+
+  it('does not present a persisted but unapplied provider as effective, and exposes the reason', async () => {
+    const element = await page();
+    put.mockResolvedValue({ success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await element._save(); await element.updateComplete;
+    expect(element.savedOk).toBe(false);
+    expect(warning(element)).not.toBeNull();
+    expect(warning(element).textContent).toContain('已保存');
+    expect(warning(element).textContent).toContain('尚未应用');
+    expect(warning(element).textContent).toContain('LLM_CONFIGURATION_UNAVAILABLE');
+    expect(element.shadowRoot.querySelector('.btn-primary').textContent).not.toContain('已保存配置');
+  });
+
+  it('keeps a free-form reloadError out of the message so credentials cannot leak', async () => {
+    const element = await page();
+    put.mockResolvedValue({ success: true, applied: false, reloadError: 'upstream said key sk-ant-secret rejected' });
+    await element._save(); await element.updateComplete;
+    const text = element.shadowRoot.textContent;
+    expect(text).not.toContain('sk-ant-secret');
+    expect(warning(element).textContent).toContain('尚未应用');
+  });
+
+  it('retries application from the warning and reports success once the runtime applies it', async () => {
+    const element = await page();
+    put.mockResolvedValueOnce({ success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await element._save(); await element.updateComplete;
+    const retry = warning(element).querySelector('button');
+    expect(retry.textContent).toContain('重试应用');
+    put.mockResolvedValueOnce({ success: true, applied: true });
+    retry.click();
+    await vi.waitFor(() => expect(element.savedOk).toBe(true));
+    await element.updateComplete;
+    expect(warning(element)).toBeNull();
+    expect(element.shadowRoot.querySelector('.btn-primary').textContent).toContain('已保存配置');
+  });
+
+  it('reports a normal applied save and a rejected save distinctly', async () => {
+    const element = await page();
+    put.mockResolvedValueOnce({ success: true, applied: true });
+    await element._save(); await element.updateComplete;
+    expect(element.savedOk).toBe(true);
+    expect(warning(element)).toBeNull();
+    put.mockRejectedValueOnce(new Error('保存失败'));
+    await element._save(); await element.updateComplete;
+    expect(element.savedOk).toBe(false);
+    expect(warning(element)).toBeNull();
+    expect(element.shadowRoot.querySelector('[role="alert"]').textContent).toContain('保存失败');
+  });
+
+  it.each([
+    ['启停', (element: any) => element._toggle(element.editing), '/llm/configs/11/toggle'],
+    ['默认切换', (element: any) => element._setDefault(element.editing), '/llm/configs/11/default'],
+  ])('reports the same unapplied outcome for %s', async (_label, action, endpoint) => {
+    const element = await page();
+    post.mockResolvedValueOnce({ success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await action(element); await element.updateComplete;
+    expect(post).toHaveBeenCalledWith(endpoint);
+    expect(warning(element).textContent).toContain('尚未应用');
+    expect(warning(element).textContent).toContain('LLM_CONFIGURATION_UNAVAILABLE');
+  });
+
+  it('reports the same unapplied outcome when creating a provider', async () => {
+    const element = await page();
+    element._openCustomForm();
+    element.form = { ...element.form, name: 'new-provider', default_model: 'new-model', context_window: 64000, max_tokens: 2048 };
+    post.mockResolvedValueOnce({ success: true, providerId: 12, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await element._save(); await element.updateComplete;
+    expect(post).toHaveBeenCalledWith('/llm/configs', expect.objectContaining({ name: 'new-provider' }));
+    expect(element.savedOk).toBe(false);
+    expect(warning(element).textContent).toContain('尚未应用');
+  });
+
+  it('drops the earlier save success when a following toggle is saved but unapplied', async () => {
+    const element = await page();
+    put.mockResolvedValueOnce({ success: true, applied: true });
+    await element._save(); await element.updateComplete;
+    expect(element.savedOk).toBe(true);
+
+    post.mockResolvedValueOnce({ success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await element._toggle(element.editing); await element.updateComplete;
+    expect(element.savedOk).toBe(false);
+    expect(element.shadowRoot.querySelector('.btn-primary').textContent).toContain('保存配置');
+    expect(element.shadowRoot.querySelector('.btn-primary').textContent).not.toContain('已保存配置');
+    expect(warning(element).textContent).toContain('启用状态已保存');
+    expect(confirmed(element)).toBeNull();
+  });
+
+  it.each([
+    ['启停', (element: any) => element._toggle(element.editing), '启用状态'],
+    ['默认切换', (element: any) => element._setDefault(element.editing), '默认提供商'],
+  ])('replaces a failed %s with an applied success instead of leaving the stale error', async (_label, action, subject) => {
+    const element = await page();
+    post.mockRejectedValueOnce(new Error(`${_label}失败`));
+    await action(element); await element.updateComplete;
+    expect(element.shadowRoot.querySelector('[role="alert"]').textContent).toContain(`${_label}失败`);
+
+    post.mockResolvedValueOnce({ success: true, applied: true });
+    await action(element); await element.updateComplete;
+    expect(element.formMsg).toBeNull();
+    expect(element.shadowRoot.querySelector('[role="alert"]')).toBeNull();
+    expect(warning(element)).toBeNull();
+    expect(confirmed(element).textContent).toContain(subject);
+    expect(confirmed(element).textContent).toContain('已应用到运行时');
+  });
+
+  it('drops a save warning once a following toggle applies successfully', async () => {
+    const element = await page();
+    put.mockResolvedValueOnce({ success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' });
+    await element._save(); await element.updateComplete;
+    expect(warning(element)).not.toBeNull();
+
+    post.mockResolvedValueOnce({ success: true, applied: true });
+    await element._toggle(element.editing); await element.updateComplete;
+    expect(warning(element)).toBeNull();
+    expect(confirmed(element).textContent).toContain('已应用到运行时');
+  });
+});
