@@ -123,6 +123,11 @@ pnpm --filter slide-api exec vitest run src/alerts/filesystem-ratio-alert-lifecy
 # 1 file / 5 tests passed（一次性 MySQL，容器随 fixture 关闭删除）
 
 pnpm --filter slide-api exec vitest run \
+  src/alerts/filesystem-ratio-alert-lifecycle.mysql.test.ts \
+  src/server-alert-isolation.mysql.test.ts --no-file-parallelism
+# 2 files / 14 tests passed，串行执行时同一时刻只有一个一次性 MySQL
+
+pnpm --filter slide-api exec vitest run \
   src/alerts src/metrics/consumers src/metrics/alert-metric-catalog.test.ts \
   src/alert-evaluator.test.ts src/server-alert-evaluator.test.ts \
   src/alert-rule-metric-target.test.ts src/alert-rule-template-service.test.ts \
