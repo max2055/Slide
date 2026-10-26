@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
   "issue": "MAX-225",
-  "sourceCommit": "442ad300c",
+  "sourceCommit": "34b964a03",
   "date": "2026-10-26 Asia/Shanghai",
-  "round": "second, after Docker/MySQL recovery",
+  "round": "third, real provider segment",
   "checks": [
     {
       "name": "admission SQL suite including new budget refusal case",
@@ -52,23 +52,48 @@
     {
       "name": "public contracts",
       "result": "passed"
+    },
+    {
+      "name": "API typecheck after qualification-script change",
+      "result": "passed"
     }
   ],
   "realAcceptance": {
-    "resource": "server #3 192.168.49.130 (kylin) via real SSH",
+    "resource": "server #3 192.168.49.130 (kylin) via real SSH (loopback-free relay 192.168.49.1:2222 because Node had no scoped route to the VM bridge)",
     "collectedMetric": "linux.cpu.user_system_percent",
     "observedValue": 9.1,
     "alertCreated": "critical, single, auto_generated",
     "admission": "accepted, one investigation owner, lane=investigation, zero legacy calls",
     "recoveredNaturally": true,
     "sharedWrites": 0,
-    "modelRequests": 0,
-    "evidence": "docs/slide/development/MAX-225/vm-acceptance-20261026.json",
-    "notProven": [
-      "valid model conclusion with evidence citations",
-      "auditable provider usage"
-    ],
-    "notProvenReason": "this child cannot write the parent authoritative model_test_budget_ledger (no CLI metadata write); policy forbids model sends without reliable reservation and settlement"
+    "modelRequests": 3,
+    "modelProvider": "deepseek/deepseek-flash, output ceiling 4096 enforced per request",
+    "modelRun": "agent_runs.state=completed; investigation_results 1 row; 7 claims each citing investigation_evidence ids (3 rows)",
+    "measuredUsage": {
+      "inputTokens": 7201,
+      "cachedInputTokens": 4736,
+      "outputTokens": 4090,
+      "totalTokens": 11291
+    },
+    "productBudgetLedger": "investigation_budget_ledger settled, charged_tokens=11291 equals measured usage",
+    "parentLedger": {
+      "revisionAtSettlement": 53,
+      "settledTotals": {
+        "input_tokens": 40976,
+        "cached_input_tokens": 24320,
+        "output_tokens": 16502,
+        "total_tokens": 57478
+      },
+      "activeReservations": 0,
+      "unknownRequests": 1,
+      "unknownNote": "one send without a response kept its 15367 reserved tokens and was never replayed"
+    },
+    "evidence": "docs/slide/development/MAX-225/vm-acceptance-model-20261026.json",
+    "notProven": [],
+    "discoveredLimitations": [
+      "default 16000 context window fails context governance when one turn makes two read-only tool calls (CONTEXT_UNRECOVERABLE / CONTEXT_GOVERNANCE_ERROR); qualification used INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000 and INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048 within the verified provider capability",
+      "parent issue metadata total sits at the 8KB server limit, so settlement writes can fail; historical per-send prose was compacted into totals plus evidence references without losing any number"
+    ]
   },
   "harnessDefectsFixed": [
     "runPackage selection was missing overrides:{} and always failed with ZodError",
@@ -77,10 +102,13 @@
     "an idle VM legitimately reports 0% CPU; the first zero sample aborted instead of continuing to a real nonzero sample"
   ],
   "modelBudget": {
-    "parentLedgerRevision": 3,
-    "settledTokens": 0,
+    "parentLedgerRevision": 53,
+    "limited": 10000000,
+    "settledTokens": 57478,
     "outstandingReservations": 0,
-    "unknownRequests": 0,
-    "realModelSends": 0
+    "unknownReservedTokens": 15367,
+    "realModelSends": 19,
+    "note": "cumulative provider HTTP requests across every attempt in this issue (19 responses + 1 unknown), not only the final passing run; cache tokens are a subset of input and are not added again",
+    "unknownRequests": 1
   }
 }

@@ -1,8 +1,37 @@
 # MAX-225：三类资源自动告警准入检查点
 
-2026-10-26（第二轮，Docker/MySQL 恢复后）；真实 VM 采集→告警→自动受理→自然恢复已验证。真实模型结论与可审计用量仍未完成，不能视为全部验收通过。
+2026-10-26（第三轮）：真实 VM 采集→critical 告警→自动受理→真实模型有引用结论→自然恢复已全部跑通，用量在父单唯一账本中预留、回读并实测结算。
 
-## 目标和实现
+## 第三轮：真实模型结论与可审计用量
+
+`apps/db-ops-api/scripts/qualify-automatic-alert.ts` 增加显式模型段（只有 `MAX225_REAL_MODEL=authorized` 才执行，默认不发送）。它复用同一隔离 schema 中已受理的 `investigation.execute` 作业，用既有 `InvestigationExecutor`、既有 Provider 配置（共享库仅 SELECT）和真实 DeepSeek 路由执行，结果见 `vm-acceptance-model-20261026.json`。
+
+| 原验收 | 本轮证据 | 状态 |
+|---|---|---|
+| 真实 VM → 告警 → 自动受理 → 有引用有效结论 → 恢复/实测用量 | 见下 | 已验证 |
+
+- 采集：真实 SSH 读到 `linux.cpu.user_system_percent`=9.1%（quality good / exact / measured），据此设阈值 8.645；下一次真实采样 0% 自然恢复（`resolved_at` 有值）。
+- 受理：单条 critical 告警 `tags.auto_analysis`=accepted，`investigation_alert_owners` 恰好 1 行、`lane='investigation'`，旧 lane 0 次。
+- 真实模型：3 次 HTTP200（序列 1/2 为 `tool_calls`，3 为 `stop`），模型各轮调用 `get_resource_observations`、`get_server_alerts`；`agent_runs.state=completed`，`investigation_results` 1 行，7 条 claims 全部引用本次 `investigation_evidence`（3 行）中的 evidenceId，结论明确写单位/口径未知与证据缺口，未宣称根因或恢复。
+- 用量：Provider 实测 input 7201（其中缓存 4736，作为子集不重复计入）+ output 4090 = 11291；产品侧 `investigation_budget_ledger` 同时为 `settled`、`charged_tokens=11291`，与实测一致。
+- 父账本：每次发送前写入唯一 reservation（input 上界＝请求字节+1024，output 上界＝请求内 `max_tokens`≤4096）并回读确认后才发送；响应后按实测结算。累计 settled 57,478/10,000,000，无未结算预留；1 条未拿到响应的发送保留为 unknown（15,367 预留额，`MODEL_TRANSPORT_UNKNOWN`），按策略不重放。全部模型请求均在 DeepSeek 计费口径下可追溯 requestID。
+
+### 发送前约束（脚本内强制）
+
+- 端点/方法/model/非流式/`max_tokens≤4096`/请求体不含密钥任一不符即不发；
+- reservation 写不进去就不发（失败会以 `MODEL_LEDGER_RESERVE_FAILED_*` 明确报错，不会被 SDK 的通用 "Connection error" 掩盖）；
+- 响应无 usage 或非 200 时保留全额 unknown，不重试、不重放。
+
+### 本轮发现的既有运行限制（未在本单修改产品代码）
+
+1. 生产默认上下文窗口 16000 时，模型一轮发起两个只读工具调用后，下一轮触发上下文治理并失败（`CONTEXT_UNRECOVERABLE` / `CONTEXT_GOVERNANCE_ERROR`），本次验收因此把限定运行设为 `INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000`（在 provider 实测 capability 1048576 之内）与 `INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048`（`summaryMaxTokens` 默认 10240 超过该 provider `maxOutputTokens` 4096，本就无法通过校验）。生产默认值未改，是否调整属另外范围。
+2. 父单 metadata 总量已接近 8KB 服务端上限（三个 key 合计约 5.8KB 后仍会随发送记录增长），单次结算写入曾因超限失败并留下一条 reservation；已按授权把静态说明与历史逐次事件收敛为总量+证据引用，账本数值未丢失。
+
+### 环境说明
+
+本机 Node 进程到 VM 桥接网段缺少可用 scoped route（`EHOSTUNREACH`，而系统 `ssh`/`nc` 可达），因此采集阶段使用本机 `192.168.49.1:2222 → 192.168.49.130:22` 的临时 TCP 转发；SSH 会话仍终结在真实 VM，凭据、操作系统与指标均来自真实主机。转发信息记录在证据 `sshRelay` 字段，转发进程在验收后停止。该偏差不影响告警/受理/模型/恢复各环节的真实性，但不宣称本机网络路径等价于生产。
+
+## 目标和实现（第一、二轮，保留为历史）
 
 源码候选 `442ad300c`，任务分支保留起点 `e004b772a`。已复用父候选中 MAX-226 的规则/维度隔离与 MAX-227 的指标修复，未搬入其运行时快照。本单新增源码提交为 `5c73b1d01`（RED）和 `442ad300c`（修复）。
 
@@ -31,21 +60,23 @@
 | 三类单条 critical 自动且仅创建一次 | 真实隔离 MySQL + 正式迁移，三类均从共享保存入口创建 owner/request/job；重复恢复不加 job（本轮 11 项通过） | 已验证准入 |
 | 不满足配置/身份/权限/范围/预算时抑制且不发模型 | 总开关/通道/级别/范围/配置无效检查通过；真实权限撤回回归通过；时窗边界/跨夜单测通过；**此前未执行的预算拒绝专项本轮已执行并通过** | 已验证 |
 | 重复/重启零重派，unknown 不重放 | 桥实例重建后同 investigation/job；事务提交/回滚恢复；既有 unknown owner 回归与连接池检查 | 已验证 |
-| 真实 VM → 告警 → 自动受理 → 有引用有效结论 → 恢复/实测用量 | **采集→告警→自动受理→自然恢复已验证**（`vm-acceptance-20261026.json`）；有效引用结论与实测用量未完成 | 部分完成 |
+| 真实 VM → 告警 → 自动受理 → 有引用有效结论 → 恢复/实测用量 | **全链路已验证**（`vm-acceptance-model-20261026.json`）：采集→告警→自动受理→真实模型 7 条引用结论→自然恢复，父账本实测结算 11,291 tokens | 已验证 |
 
-### 真实 VM 段（2026-10-26 本轮）
+### 真实 VM 段（2026-10-26 第三轮）
 
 脚本 `apps/db-ops-api/scripts/qualify-automatic-alert.ts` 以真实 SSH 采集 server #3（192.168.49.130，kylin）：
 
 - 真实观测 `linux.cpu.user_system_percent` = 9.1%（质量 good，exact，measured，SSH 尝试 succeeded），据实设阈值 8.645。
-- 规则触发后创建单条 critical 告警，`tags.auto_analysis` = `{status:"pending", reason:"accepted", investigationId:def6e7ac-…}`。
+- 规则触发后创建单条 critical 告警，`tags.auto_analysis` = `{status:"pending", reason:"accepted", investigationId:d554fd8c-…}`。
 - `investigation_alert_owners` 恰好 1 行，`lane='investigation'`，同一 investigation_id；旧 lane 调用 0 次。
 - 下一次真实采样回落到 0%，告警自然恢复（`resolved_at` 有值），无人工写入观测、无伪造数值。
-- 全程 sharedWrites=0、modelRequests=0，共享库仅 SELECT。
+- 共享库仅 SELECT（sharedWrites=0）；本轮模型请求 3 次，全部经父账本预留与结算。
 
-脚本本轮修复了三处使其无法越过采集的真实缺陷（此前被误判为纯环境阻塞）：`runPackage` 选择项缺 `overrides:{}`、评估器健康门 `dbConnection.isConnected()` 未指向隔离池、以及从未上报采集能力导致正式指标读取 `capability_unknown`。另外空载 VM 合法返回 0%，改为继续观察真实非零样本而非断言失败。
+脚本前两轮修复了三处使其无法越过采集的真实缺陷（此前被误判为纯环境阻塞）：`runPackage` 选择项缺 `overrides:{}`、评估器健康门 `dbConnection.isConnected()` 未指向隔离池、以及从未上报采集能力导致正式指标读取 `capability_unknown`。另外空载 VM 合法返回 0%，改为继续观察真实非零样本而非断言失败。
 
-### 本轮完整受影响模块 gate
+### 受影响模块 gate（第二轮，产品源码自那之后未再改动）
+
+本轮（第三轮）只改验收脚本 `qualify-automatic-alert.ts`，未改产品源码；脚本改动后 `tsc --noEmit` 通过，因此沿用第二轮针对同一产品源码的完整 gate 结果：
 
 并行运行时出现 5s 超时/钩子超时（容器并发争用），以 `--maxWorkers=2` 串行复跑后全绿：
 
@@ -58,15 +89,15 @@
 
 并行失败属环境争用（同一容器并发启动），串行复跑全绿；不据此宣称任意并发度下稳定。
 
-## 未完成项与原因
+## 未完成项与限制
 
-- **真实模型结论（有证据引用）与可审计 provider 用量未完成**。本单子代理无法写入父单权威 `model_test_budget_ledger`（CLI 无 metadata 写入能力），按父策略"无法可靠计量时停止模型发送"，本轮不发起真实模型请求，model sends 仍为 0。
-- 若需完成该段，需由持有账本写入能力的 Chief 在预留/回读后授权一次真实调查运行。
+- 无未完成验收项。第一、二轮记录的"CLI 无 metadata 写入能力"为旧版 CLI（`/opt/homebrew/bin/multica` 0.6.5）导致；当前生效的 0.7.0 CLI 具备 `issue metadata get/set`，本轮据此完成预留与结算。
+- 生产默认上下文窗口 16000 下的多工具轮次治理失败（见上）属于本次验收暴露的既有运行限制，未在本单修改产品代码，也未在生产配置上验证修复。
 
 ## 环境状态
 
-Docker 已恢复：`docker ps` 正常，共享 MySQL 3306 可达，正式迁移可执行。本轮产生的两个遗留测试容器（`slide-t08-68670-…`、`slide-t08-68672-…`）已按名精确停止，未按前缀批量清理其他服务；`cleanup.json` 中上一轮的 4 个容器已不存在。
+Docker 正常，共享 MySQL 3306 可达，正式迁移可执行。本轮验收用的隔离 schema 由 `bridgeTestFixture` 创建并在结束时删除；未停止任何非本任务容器（验收结束时另有 `slide-t08-*` 容器由并行任务创建，未触碰）。
 
 ## 真实模型发送前的约束（沿用）
 
-真实模型发送前，仍必须按父单唯一 `model_test_budget_ledger` 预留并回读，再以 Provider/Runtime 实测结算；不复用历史测试账本。本轮未修改账本、未生成 token 或费用估算。
+真实模型发送前，仍必须按父单唯一 `model_test_budget_ledger` 预留并回读，再以 Provider 实测结算；不复用历史测试账本。本轮全部发送均遵循该流程，账本累计 settled 57,478/10,000,000，1 条未知响应保留预留且未重放。
