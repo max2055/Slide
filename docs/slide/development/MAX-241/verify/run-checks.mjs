@@ -785,6 +785,97 @@ async function main() {
     await shot(`server-os-provenance-metadata-span-entry-${entry}`);
   }
 
+  /* review9：系统版本必须有肯定式来源。元数据词（build/ID、kernel: version）一旦先出现，
+     后面的数字属于元数据，检查、页头试采、配置试采、发布都不得放行；三档尺寸全部覆盖。 */
+  const OS_SOURCE_GAPS = ['Linux build ID 19042', 'Linux kernel: version 6.1'];
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    for (const os of OS_SOURCE_GAPS) {
+      await openConfigRow('server', 21, w, h);
+      await setServerOs(os);
+      await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+      const gapBlocked = await serverFlow();
+      check(`F1r9 ${sizeLabel} 「${os}」检查拒绝：元数据词后的数字不是系统版本`,
+        gapBlocked.alert === 'alert' && gapBlocked.compat.includes('系统版本') && gapBlocked.compat.includes('架构')
+          && gapBlocked.flow.includes('未通过') && gapBlocked.items === 0
+          && gapBlocked.trialDisabled === true && gapBlocked.publishDisabled === true
+          && gapBlocked.checkFocusable === true && gapBlocked.page === true,
+        JSON.stringify({ compat: gapBlocked.compat.trim().slice(0, 110), flow: gapBlocked.flow, items: gapBlocked.items, page: gapBlocked.page }));
+      const headerEnabled = gapBlocked.headerTrialDisabled === false;
+      if (headerEnabled) { await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300); }
+      const gapHeader = await serverFlow();
+      check(`F1r9 ${sizeLabel} 「${os}」页头试采同样未通过，不产生试采结果`,
+        headerEnabled && gapHeader.flow.includes('未通过') && !gapHeader.flow.includes('试采完成')
+          && gapHeader.items === 0 && !gapHeader.apply.includes('已发布'),
+        JSON.stringify({ headerEnabled, flow: gapHeader.flow, items: gapHeader.items }));
+      await shot(`server-os-positive-source-blocked-${sizeLabel}-${os.replace(/[^\w]+/g, '-')}`);
+    }
+  }
+
+  /* 版本 token 在元数据之前时来源可证明：后续 build 号不影响，三档尺寸均可推进。 */
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    await openConfigRow('server', 21, w, h);
+    await setServerOs('Linux 6.1 build 20261026');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+    const sourceCheck = await serverFlow();
+    await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+    await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(250);
+    const sourceFlow = await serverFlow();
+    check(`F1r9 ${sizeLabel} 「Linux 6.1 build 20261026」版本在前，检查/试采/发布均可推进`,
+      sourceCheck.compat.includes('满足') && sourceCheck.compat.includes('系统版本 6.1 取自系统描述')
+        && sourceFlow.items === 3 && sourceFlow.apply.includes('已发布') && sourceFlow.page === true,
+      JSON.stringify({ compat: sourceCheck.compat.trim().slice(0, 120), items: sourceFlow.items, apply: sourceFlow.apply.trim() }));
+    await shot(`server-os-positive-source-legal-${sizeLabel}`);
+  }
+
+  /* 来源不变量：不使用枚举词表，非通名词一旦打断锚定即拒绝，不取后面任意数字。 */
+  await openConfigRow('server', 21);
+  await setServerOs('Linux abc 6.1');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const brokenChain = await serverFlow();
+  check('F1r9 「Linux abc 6.1」来源链被打断时拒绝，不取后面任意数字',
+    brokenChain.alert === 'alert' && brokenChain.flow.includes('未通过') && brokenChain.items === 0
+      && brokenChain.trialDisabled === true && brokenChain.publishDisabled === true,
+    JSON.stringify({ compat: brokenChain.compat.trim().slice(0, 110), flow: brokenChain.flow }));
+  await shot('server-os-positive-source-broken-chain');
+
+  /* 合法检查后改为仅元数据描述：配置试采、页头试采、发布三个入口各自独立拒绝。 */
+  for (const [entry, label] of [['run-trial', '配置试采'], ['trial', '页头试采'], ['publish', '发布']]) {
+    await openConfigRow('server', 21);
+    await setServerOs('CentOS 7.9 kernel 5.14.0-427.13.1.el9');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    if (entry === 'publish') { await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250); }
+    const beforeSwitch = await serverFlow();
+    await setServerOs('Linux kernel: version 6.1');
+    const entryEnabled = await evaluate(`!document.querySelector('[data-action="${entry}"]').disabled`);
+    const staleCompatible = (await serverFlow()).compat.includes('满足');
+    await evaluate(`document.querySelector('[data-action="${entry}"]').click()`); await wait(300);
+    const afterEntry = await serverFlow();
+    const blocked = entry === 'publish'
+      ? !afterEntry.apply.includes('已发布')
+      : afterEntry.items === 0 && !afterEntry.flow.includes('试采完成');
+    check(`F1r9 合法检查后系统改为 kernel: version 元数据：${label}入口独立拒绝`,
+      beforeSwitch.compat.includes('满足') && staleCompatible && entryEnabled && blocked,
+      JSON.stringify({ entry, entryEnabled, staleCompatible, blocked, flow: afterEntry.flow, items: afterEntry.items, apply: afterEntry.apply.trim() }));
+    await shot(`server-os-positive-source-entry-${entry}`);
+  }
+
+  /* 配置修改使旧证据失效；合法重查→试采→发布仍可推进。 */
+  await openConfigRow('server', 21);
+  await setServerOs('Linux 6.1 build 20261026');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+  await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+  await evaluate(`(() => { const input = document.querySelector('[data-param="interval"]'); input.value = '30s'; input.dispatchEvent(new Event('input', { bubbles: true })); })()`); await wait(200);
+  const editedFlow = await serverFlow();
+  const republishBlocked = editedFlow.flow.includes('草稿已修改') && editedFlow.publishDisabled === true && !editedFlow.apply.includes('已发布');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+  await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+  await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(250);
+  const rechecked = await serverFlow();
+  check('F1r9 修改参数使旧证据失效，合法重查→试采→发布仍可推进',
+    republishBlocked && rechecked.items === 3 && rechecked.apply.includes('已发布'),
+    JSON.stringify({ republishBlocked, flow: editedFlow.flow, items: rechecked.items, apply: rechecked.apply.trim() }));
+  await shot('server-os-positive-source-config-edit-recheck');
+
   // 10. 详情内指标使用所选资源 id（R2 上下文）
   await open('class=db&view=detail&id=9&tab=metrics&state=normal&perm=full', 1440, 900);
   const metricContext = await evaluate(`(() => {
