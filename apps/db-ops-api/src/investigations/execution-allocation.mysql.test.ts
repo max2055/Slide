@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import Fastify from 'fastify';
-import { ToolRegistry, OpenAIProvider, estimateWithProvider, type LLMProvider } from '@slide/agent-core';
+import { ToolRegistry, OpenAIProvider, estimateWithProvider, projectProviderMessages, type LLMProvider } from '@slide/agent-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner, loadMigrations, splitSqlStatements } from '../migrations/runner.js';
 import { ActorContextService, signAccessToken } from '../auth/actor-context.js';
@@ -21,7 +21,7 @@ import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { INVESTIGATION_PROFILES } from './profiles.js';
 import { MAX222_OFFLINE_EXECUTION, allocationHash, type TaskExecutionConfiguration } from './execution-allocation.js';
-import { planned, batches, toolReply, syntheticAnalysisFromWire, sha, bytes } from './execution-allocation.fixture.js';
+import { planned, script, batches, toolReply, syntheticAnalysisFromWire, referenceOnlyMetricCalls, sha, bytes } from './execution-allocation.fixture.js';
 
 // Opt-in integration gate. The runner owns a fresh container and schema; it
 // never uses DB_* or the application's .env/real provider credentials.
@@ -106,7 +106,7 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     const {requestId,id}=accepted.body;
     const request=decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[requestId]))[0].request_snapshot);
     expect(request.executionAllocation.configuration).toEqual(taskExecution);
-    const wires:any[]=[],responses:any[]=[],executed:string[]=[],estimates:number[]=[];
+    const wires:any[]=[],responses:any[]=[],executed:string[]=[],estimates:number[]=[],summaryRequests:any[]=[];
     let nextInput=0;
     let oracle:ReturnType<typeof syntheticAnalysisFromWire>|undefined, error:unknown;
     const receiver=createServer(async(req,res)=>{try{
@@ -124,7 +124,7 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     const tools=new ToolRegistry();
     for(const name of new Set(planned.map(p=>p.call.function.name)))tools.register({name,description:'Synthetic local readonly receipt',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:false,exclusive:true,
       execute:async(args:any)=>{
-        const p=planned[executed.length];expect(p.call.function.name).toBe(name);
+        const p=script[executed.length];expect(p.call.function.name).toBe(name);
         const expected=JSON.parse(p.call.function.arguments);
         for(const [k,v]of Object.entries(expected))expect(args[k]).toEqual(v);
         executed.push(p.call.id);return structuredClone(p.receipt);
@@ -134,20 +134,43 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     const provider:LLMProvider={getDefaultModel:()=>actual.getDefaultModel(),...projection,
       chat:async(messages,defs,options)=>{
         nextInput=estimateWithProvider(projection.projectMessages(messages),defs??[],'deepseek-flash',provider).tokens;
+        // Every ordinary request, including the answer after compaction, must
+        // fit the frozen input budget; compaction is not a bypass.
         expect(nextInput).toBeLessThanOrEqual(285696);estimates.push(nextInput);
         return actual.chat(messages,defs,options);
-      },chatStream:async()=>{throw Error('UNPLANNED_SUMMARY');}};
+      },chatStream:async(messages,defs,callbacks)=>{
+        // The 36 scripted receipts exceed one 294,912-token window, so the
+        // runtime compacts the oldest receipts before the answer request. The
+        // planned summary is what a real provider would return for that request.
+        const estimate=estimateWithProvider(messages,defs??[],'deepseek-flash',provider).tokens;
+        summaryRequests.push({estimate,messages,definitions:defs?.length??0});
+        const content=JSON.stringify({goal:['synthetic frozen allocation joint qualification'],
+          constraints:['read-only synthetic loopback receipts'],done:['oldest scripted receipts returned'],
+          pending:['final scripted answer from the current request'],
+          evidence:batches[0].map(p=>p.call.id),
+          uncertain:['synthetic usage and selections; no live provider']});
+        await callbacks?.onContentDelta?.(content);
+        return {content,finishReason:'stop',hasToolCalls:false,shouldExecuteTools:false,toolCalls:[],
+          usage:{prompt_tokens:estimate,completion_tokens:256,cached_tokens:0}};
+      }};
     let result:any;
     try{result=await execute(provider,tools);}finally{await new Promise<void>(r=>receiver.close(()=>r()));}
+    save('joint-attempt',{accepted,wires,responses,executed,estimates,summaryRequests,run:result.run});
     if(error)throw error;
-    save('joint-attempt',{accepted,wires,responses,executed,run:result.run});
     expect(result.run.state).toBe('completed');expect(wires).toHaveLength(4);expect(executed).toHaveLength(36);
     expect(wires[3].tools??[]).toHaveLength(0);
     const state=result.run.result.investigationExecution;
     expect(state.executionAllocation).toEqual(request.executionAllocation);expect(state.allocationRunId).toBe(result.run.id);
     expect(state.reservedTokens).toBe(1200000);expect(state.runtimeContext).toMatchObject({contextWindowTokens:294912,maxTokens:8192,summaryMaxTokens:10240});
+    // The natural summary is a real provider attempt: it is durable, accepted,
+    // bound to the summarized source range and settled with the same ledger.
+    expect(summaryRequests).toHaveLength(1);
+    expect(state.lastSummaryReceipt).toMatchObject({status:'accepted',purpose:'summary'});
+    expect(state.lastSummaryReceipt.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(state.lastSummaryReceipt.response.usage).toMatchObject({prompt_tokens:summaryRequests[0].estimate,completion_tokens:256});
     const [entry]=await rows('SELECT * FROM investigation_budget_ledger WHERE request_id=?',[requestId]);
-    expect(entry.state).toBe('settled');expect(Number(entry.reserved_tokens)).toBe(1200000);expect(Number(entry.charged_tokens)).toBe(estimates.reduce((n,x)=>n+x+8192,0));
+    expect(entry.state).toBe('settled');expect(Number(entry.reserved_tokens)).toBe(1200000);
+    expect(Number(entry.charged_tokens)).toBe(estimates.reduce((n,x)=>n+x+8192,0)+summaryRequests.reduce((n:number,r:any)=>n+r.estimate+256,0));
     expect(Number(entry.charged_tokens)).toBeGreaterThan(128000);
     expect(decode(entry.reservation_snapshot).executionAllocation.hash).toBe(request.executionAllocation.hash);
     const frozen=decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[requestId]))[0].request_snapshot);
@@ -162,9 +185,19 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
       expect(fs.rows).toHaveLength(6);return {...fs,sources:pair};
     });
     expect(audit).toHaveLength(11);
+    // All 36 scripted reads keep durable SQL evidence even though this request
+    // cannot carry every value. The oldest metric receipts stay identity-only
+    // references and are never promoted back into observations.
+    expect(byCall.size).toBe(36);
+    const evidenceIndex=JSON.parse(String(wires[3].messages.find((m:any)=>typeof m.content==='string'
+      && m.content.startsWith('[Untrusted observations returned in this execution')).content.replace(/^\[[^\n]*\]\n/,'')));
+    for(const callId of referenceOnlyMetricCalls){
+      const indexed:any=evidenceIndex.receipts.find((r:any)=>r.toolCallId===callId);
+      expect(indexed.valuesProvided).toBe(false);expect(indexed.observation).toBeUndefined();
+    }
     const published=await http(`/${id}/results`);expect(published.status).toBe(200);
     expect(published.body.items[0].result.summary).toBe(oracle!.answer.summary);
-    expect(published.body.items[0].result.claims[3].supportingEvidenceIds).toEqual(oracle!.filesystems[0].toolCallIds.map((c:string)=>byCall.get(c)!.id));
+    expect(published.body.items[0].result.claims.at(-1).supportingEvidenceIds).toEqual(oracle!.filesystems[0].toolCallIds.map((c:string)=>byCall.get(c)!.id));
     const debugBridge=new InvestigationSessionBridge(()=>pool,authorization,budget);
     const debugActor=await contexts.loadActiveActor(101);
     for(const [stage,work]of Object.entries({detail:()=>debugBridge.storeFor(debugActor).detail({kind:'user',id:101},id),stream:()=>debugBridge.observationServices().stream.snapshot(debugActor,id),legacy:()=>new LegacyAnalysisBridge(()=>pool,authorization,debugBridge).read(debugActor,id)})){
@@ -199,7 +232,72 @@ describe.skipIf(process.env.FROZEN_ALLOCATION_MYSQL !== '1')('frozen task alloca
     await startAPI();
     expect(wires).toHaveLength(4);expect(executed).toHaveLength(36);
     const tables:Record<string,any>={};for(const table of ['investigation_requests','agent_runs','agent_canonical_facts','investigation_budget_domains','investigation_budget_ledger','investigation_evidence','investigation_results','workflow_jobs'])tables[table]=await rows(`SELECT * FROM ${table}`);
-    save('joint-success',{scope:'synthetic responses/usage, actual JWT HTTP SDK Worker SQL; NOT autonomous model/live collectors',accepted,wires,responses,estimates,executed,fsAudit:audit,tables,published,before,recoveryProcesses,summaryRequests:0,restarts:2,newSendsOnRecovery:0});
+    save('joint-success',{scope:'synthetic responses/usage, actual JWT HTTP SDK Worker SQL; NOT autonomous model/live collectors',accepted,wires,responses,estimates,executed,fsAudit:audit,tables,published,before,recoveryProcesses,summaryRequests,restarts:2,newSendsOnRecovery:0});
+  },60000);
+
+  it('keeps a failed natural summary durable and never replays its unknown send',async()=>{
+    // Same frozen plan and same natural summary point as the successful run:
+    // the 36 receipts exceed one window, so the runtime must request a summary.
+    // Here that provider attempt fails, which is exactly the historical
+    // UNPLANNED_SUMMARY trace. The durable outcome, not the fixture, must prove
+    // the reference: sent-but-unknown is never resent or rewritten.
+    const accepted=await admit();expect(accepted.status).toBe(202);
+    const executed:string[]=[],sent:any[]=[];
+    const tools=new ToolRegistry();
+    for(const name of new Set(planned.map(p=>p.call.function.name)))tools.register({name,description:'Synthetic local readonly receipt',parameters:{type:'object',properties:{}},readOnly:true,concurrencySafe:false,exclusive:true,
+      execute:async(args:any)=>{
+        const p=script[executed.length];expect(p.call.function.name).toBe(name);
+        const expected=JSON.parse(p.call.function.arguments);
+        for(const [k,v]of Object.entries(expected))expect(args[k]).toEqual(v);
+        executed.push(p.call.id);return structuredClone(p.receipt);
+      }});
+    let summaries=0;
+    const provider:LLMProvider={getDefaultModel:()=>'synthetic-frozen-allocation',
+      getModelCapabilities:()=>({model:'synthetic-frozen-allocation',contextWindowTokens:1048576,maxOutputTokens:393216,source:'configuration',version:'synthetic-frozen-allocation/v1'}),
+      // Same provider projection as a loopback SDK: message parts stay valid so
+      // the failure below is provably the summary attempt, not a fixture defect.
+      projectMessages:(m:any[])=>projectProviderMessages(m,{supportsVision:false,reasoning:'omit'}),
+      chat:async()=>{
+        const batch=batches[sent.length];sent.push(batch.map(p=>p.call.id));
+        if(!batch)throw Error('UNPLANNED_ANSWER');
+        // SDK-shaped ToolCallRequest, not the wire object: the runtime derives
+        // the persisted assistant fact from name/arguments.
+        return {content:null,finishReason:'tool_calls',hasToolCalls:true,shouldExecuteTools:true,
+          toolCalls:batch.map(p=>({id:p.call.id,name:p.call.function.name,arguments:JSON.parse(p.call.function.arguments)})),
+          usage:{prompt_tokens:1000,completion_tokens:100}};
+      },chatStream:async()=>{summaries++;throw Error('SUMMARY_PROVIDER_FAILED');}};
+    const {run}=await execute(provider,tools);
+    save('summary-failure',{run,sent,executed,summaries});
+
+    // The summary is requested once the first two batches overflow the frozen
+    // input budget; the third batch is never dispatched after it fails.
+    expect(summaries).toBe(1);expect(sent).toHaveLength(2);expect(executed).toHaveLength(batches[0].length+batches[1].length);
+    expect(run.state).toBe('partial');
+    // The failed summary was sent but never answered: the provider receipt stays
+    // unknown and no accepted summary may be persisted or reused.
+    expect(run.error.reasonCode).toBe('INVESTIGATION_PROVIDER_UNKNOWN');
+    const state=run.result.investigationExecution;
+    expect(state.terminal).toMatchObject({reasonCode:'CONTEXT_GOVERNANCE_ERROR'});
+    expect(state.provider).toMatchObject({status:'sent',purpose:'summary'});expect(state.lastSummaryReceipt).toBeUndefined();
+    // Budget settlement charges the whole frozen reservation because the send is
+    // unknown; the reservation itself is never rewritten or released early.
+    const [entry]=await rows('SELECT * FROM investigation_budget_ledger');
+    expect(entry).toMatchObject({state:'unknown'});expect(Number(entry.reserved_tokens)).toBe(1200000);
+    expect(Number(entry.charged_tokens)).toBe(1200000);
+    expect(decode(entry.reservation_snapshot).executionAllocation.hash).toBe(
+      decode((await rows('SELECT request_snapshot FROM investigation_requests WHERE id=?',[accepted.body.requestId]))[0].request_snapshot).executionAllocation.hash);
+    // Replaying the identical job adds no provider request, no tool execution,
+    // no summary and leaves the run receipt and ledger row byte-identical.
+    const before={run:await rows('SELECT * FROM agent_runs WHERE id=?',[run.id]),ledger:await rows('SELECT * FROM investigation_budget_ledger')};
+    await pool.query("UPDATE workflow_jobs SET state='retry',lease_owner=NULL,lease_expires_at=NULL,available_at=(NOW() - INTERVAL 1 SECOND)");
+    const replay=await execute(provider,tools);
+    // The unknown send is refused, not retried: the same terminal Run comes back
+    // with no additional provider request, tool handler or summary attempt.
+    expect(replay.run.id).toBe(run.id);expect(replay.run.state).toBe('partial');
+    expect(summaries).toBe(1);expect(sent).toHaveLength(2);expect(executed).toHaveLength(batches[0].length+batches[1].length);
+    expect(await rows('SELECT * FROM agent_runs WHERE id=?',[run.id])).toEqual(before.run);
+    expect(await rows('SELECT * FROM investigation_budget_ledger')).toEqual(before.ledger);
+    save('summary-failure-replay',{run:replay.run,sent,executed,summaries,ledger:before.ledger});
   },60000);
 
   it.each(['hash','request','domain','configuration',...(formal?['source','gate','owner','startup','missing','missing-startup','binding']:[])])('rejects corrupted admission %s durably before SDK and handlers',async(kind)=>{
