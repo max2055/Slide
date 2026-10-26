@@ -436,6 +436,88 @@ async function main() {
   }))()`);
   check('监控配置绑定随所选资源变化（第二行模板非首行）', perRowConfig.name.includes('MySQL 只读副本采集') && perRowConfig.group.includes('只读副本标准'), JSON.stringify(perRowConfig));
 
+  // 9b. R4：不兼容模板必须被阻止；试采明细必须渲染真实单元格并含部分失败/错误码（R6）
+  const openConfigRow = async (clsName, id) => {
+    await open(`class=${clsName}&view=detail&id=${id}&tab=collection&state=normal&perm=full`, 1440, 900);
+    await clickButtonByText('修改模板与参数'); await wait(250);
+  };
+  const selectTemplate = async (value) => {
+    await evaluate(`(() => { const s = document.querySelector('[data-testid="config-template"]'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await wait(150);
+  };
+  const readTrial = () => evaluate(`(() => ({
+    items: [...document.querySelectorAll('[data-testid="trial-item"]')].map((el) => el.textContent.trim()),
+    statuses: [...document.querySelectorAll('[data-testid="trial-status"]')].map((el) => el.innerText.trim()),
+    details: [...document.querySelectorAll('[data-testid="trial-detail"]')].map((el) => el.textContent.trim()),
+    summary: document.querySelector('[data-testid="trial-summary"]')?.textContent ?? '',
+    caption: document.querySelector('[data-testid="trial-caption"]')?.textContent ?? '',
+  }))()`);
+
+  await openConfigRow('db', 12);
+  await selectTemplate('pg-basic');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const blocked = await evaluate(`(() => ({
+    compat: document.querySelector('[data-testid="compat-result"]')?.textContent ?? '',
+    flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '',
+    trialDisabled: document.querySelector('[data-action="run-trial"]').disabled,
+    publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+    blockedStep: [...document.querySelectorAll('.steps li')].some((li) => li.classList.contains('blocked')),
+  }))()`);
+  check('不兼容模板（MySQL 资源 × PostgreSQL 模板）检查未通过并阻止试采/发布',
+    blocked.compat.includes('不兼容') && blocked.flow.includes('未通过') && blocked.trialDisabled && blocked.publishDisabled && blocked.blockedStep,
+    JSON.stringify({ compat: blocked.compat.trim(), flow: blocked.flow, trialDisabled: blocked.trialDisabled, publishDisabled: blocked.publishDisabled, blockedStep: blocked.blockedStep }));
+  const blockedTrial = await readTrial();
+  check('不兼容时展示最近试采明细（3 项非空，含部分失败与错误码）并标注已失效',
+    blockedTrial.items.length === 3 && blockedTrial.items.every(Boolean) && blockedTrial.statuses.every(Boolean)
+      && blockedTrial.details.every(Boolean) && blockedTrial.details.some((d) => d.includes('ER_TABLEACCESS_DENIED'))
+      && blockedTrial.caption.includes('已失效'),
+    JSON.stringify(blockedTrial));
+  await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(150);
+  await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(200);
+  const blockedPublish = await evaluate(`document.querySelector('[data-testid="flow-state"]')?.textContent ?? ''`);
+  check('不兼容状态下试采/发布按钮点击均不推进流程、不进入已发布',
+    !blockedPublish.includes('已发布') && !blockedPublish.includes('试采完成'), blockedPublish);
+  await evaluate(`(() => { const card = [...document.querySelectorAll('app-card')].find((c) => c.textContent.includes('检查并启用')); card.scrollIntoView({ block: 'start' }); })()`);
+  await wait(200);
+  await shot('db-config-incompatible-blocked-1440x900');
+
+  await open('class=db&view=detail&id=12&tab=collection&state=normal&perm=full', 1440, 900);
+  await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300);
+  const headerPass = await evaluate(`({ compat: Boolean(document.querySelector('[data-testid="compat-result"]')), flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '', items: document.querySelectorAll('[data-testid="trial-item"]').length })`);
+  check('页头试采先完成兼容性检查再试采（不跳过前置检查）',
+    headerPass.compat === true && headerPass.flow.includes('试采完成') && headerPass.items === 3, JSON.stringify(headerPass));
+
+  await openConfigRow('db', 12);
+  await selectTemplate('pg-basic');
+  await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300);
+  const headerBlocked = await evaluate(`({ flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '', publishDisabled: document.querySelector('[data-action="publish"]').disabled })`);
+  check('页头试采对不兼容模板同样拒绝，不产生试采完成状态',
+    headerBlocked.flow.includes('未通过') && !headerBlocked.flow.includes('试采完成') && headerBlocked.publishDisabled === true, JSON.stringify(headerBlocked));
+
+  const TRIAL_EXPECT = {
+    db: ['核心指标', '慢查询', '会话快照'],
+    server: ['CPU / 内存', '磁盘', '网络速率'],
+    network: ['接口状态', '接口流量', '设备温度'],
+  };
+  for (const [clsName, id] of [['db', 12], ['server', 21], ['network', 31]]) {
+    await openConfigRow(clsName, id);
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+    const cells = await readTrial();
+    check(`试采表 [${clsName}] 三项采集项/结果/说明均非空`,
+      cells.items.length === 3 && cells.items.every((v, i) => v === TRIAL_EXPECT[clsName][i])
+        && cells.statuses.every(Boolean) && cells.details.every(Boolean) && cells.summary.includes('共 3 项'),
+      JSON.stringify(cells));
+    if (clsName === 'db') {
+      check('数据库试采展示部分失败与错误码，并提示未全部成功',
+        cells.statuses.includes('部分失败') && cells.details.some((d) => d.includes('ER_TABLEACCESS_DENIED')) && cells.summary.includes('未全部成功'),
+        JSON.stringify(cells));
+    }
+    await evaluate(`(() => { const card = [...document.querySelectorAll('app-card')].find((c) => c.textContent.includes('检查并启用')); card.scrollIntoView({ block: 'start' }); })()`);
+    await wait(200);
+    await shot(`${clsName}-config-trial-results-1440x900`);
+  }
+
   // 10. 详情内指标使用所选资源 id（R2 上下文）
   await open('class=db&view=detail&id=9&tab=metrics&state=normal&perm=full', 1440, 900);
   const metricContext = await evaluate(`(() => {

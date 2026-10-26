@@ -317,7 +317,7 @@ function card(title, body, opts = {}) {
 }
 
 function table(columns, rows, opts = {}) {
-  return html`<div class="table-scroll" role="region" tabindex="0" aria-label=${opts.label ?? '数据表格，可横向滚动'}>
+  return html`<div class="table-scroll" role="region" tabindex="0" aria-label=${opts.label ?? '数据表格，可横向滚动'} data-testid=${opts.testId ?? nothing}>
     <app-data-table .columns=${columns} .rows=${rows} dense .loading=${Boolean(opts.loading)} .emptyMessage=${opts.emptyMessage ?? '暂无可用数据'}></app-data-table>
   </div>`;
 }
@@ -653,6 +653,8 @@ function ensureConfig() {
       overrides: { ...row.overrides },
       editing: false,
       step: 0,
+      compat: null,
+      compatReason: '',
       trial: null,
       published: false,
       applied: false,
@@ -674,9 +676,66 @@ function effectiveParams(row) {
   });
 }
 
+/* 试采样例：每项为 [采集项, 结果, 徽章变体, 说明]；试采不写正式历史。 */
+const TRIAL_FIXTURES = {
+  db: [
+    ['核心指标', '成功', 'ok', '连接数、缓冲池命中率取得有效样本'],
+    ['慢查询', '部分失败', 'warn', '权限不足 · ER_TABLEACCESS_DENIED'],
+    ['会话快照', '成功', 'ok', '取得 42 个活跃会话'],
+  ],
+  server: [
+    ['CPU / 内存', '成功', 'ok', '取得有效样本'],
+    ['磁盘', '成功', 'ok', '/data 使用 71.3%'],
+    ['网络速率', '待验证', 'muted', '逐接口速率依赖版本能力'],
+  ],
+  network: [
+    ['接口状态', '成功', 'ok', '46/48 接口可用'],
+    ['接口流量', '成功', 'ok', '取得标称容量'],
+    ['设备温度', '模板未覆盖', 'muted', '当前模板不含温度指标'],
+  ],
+};
+
+/* 兼容性规则（仅演示）：模板引擎族必须与资源引擎族一致；不一致时阻止试采与发布。 */
+const ENGINE_FAMILIES = [
+  [/postgresql/i, 'postgresql'],
+  [/mysql/i, 'mysql'],
+  [/dm8|达梦/i, 'dameng'],
+  [/linux|kylin|centos|ubuntu|red ?hat/i, 'linux'],
+  [/huawei/i, 'huawei'],
+  [/cisco/i, 'cisco'],
+];
+
+function engineFamily(text) {
+  const value = text ?? '';
+  for (const [pattern, family] of ENGINE_FAMILIES) if (pattern.test(value)) return family;
+  return 'unknown';
+}
+
+function resourceEngine(row) {
+  const label = ui.cls === 'db' ? `${row.dbType} ${row.version}` : ui.cls === 'server' ? row.os : row.vendor;
+  return { label, family: ui.cls === 'server' ? 'linux' : engineFamily(label) };
+}
+
+function compatResult(row) {
+  const cfg = ensureConfig();
+  const tpl = cfg.templateId ? templateById(ui.cls, cfg.templateId) : null;
+  const resource = resourceEngine(row);
+  if (!tpl) return { ok: false, detail: '未绑定模板', reason: '未绑定模板：无法执行兼容性检查' };
+  const templateFamily = engineFamily(tpl.engine);
+  if (templateFamily === 'unknown' || resource.family === 'unknown' || templateFamily !== resource.family) {
+    return {
+      ok: false,
+      detail: `${resource.label} 与 ${tpl.name}（${tpl.engine}）不兼容`,
+      reason: `模板 ${tpl.name} 面向 ${tpl.engine}，与 ${resource.label} 不兼容，不能绑定`,
+    };
+  }
+  return { ok: true, detail: `${resource.label} 与 ${tpl.name}（${tpl.engine}）兼容` };
+}
+
 function resetFlow() {
   const cfg = ui.config;
-  cfg.step = 0; cfg.trial = null; cfg.published = false; cfg.applied = false;
+  cfg.step = 0; cfg.compat = null; cfg.compatReason = '';
+  cfg.trial = null; cfg.published = false; cfg.applied = false;
 }
 
 function markDirty(patch = {}) {
@@ -704,7 +763,7 @@ function configContent(row) {
     <div class="actions" style="margin-top:12px">
       <button class="btn-primary" data-action="edit-config" .disabled=${!editable} title=${editable ? '修改模板与参数（复用 metric-configuration）' : manageReason}
         @click=${editable ? () => { cfg.editing = true; update(); } : undefined}>修改模板与参数</button>
-      <button class="btn" data-action="trial" .disabled=${!editable} title=${editable ? '执行本地试采演示' : manageReason} @click=${editable ? runTrial : undefined}>试采</button>
+      <button class="btn" data-action="trial" .disabled=${!editable} title=${editable ? '试采（必须先通过兼容性与权限检查，不绕过四步）' : manageReason} @click=${editable ? headerTrial : undefined}>试采</button>
       <button class="btn btn-refresh" @click=${() => showToast('演示：刷新采集状态', 'info')}>刷新采集状态</button>
     </div>
     ${editable ? nothing : html`<p class="notice info small" style="margin-top:12px" data-testid="config-readonly">只读：缺少 ${permLabel('manage')} 或资源范围不足；模板、参数、试采与发布均不可修改。</p>`}
@@ -769,21 +828,39 @@ function flowCard(row) {
     ['发布并应用配置', '服务复核试采与配置版本后发布；应用结果需刷新确认'],
     ['等待正式采集', '试采成功不等于持续采集就绪；正式样本到达前不显示健康'],
   ];
-  const trialRows = (cfg.trial ?? []).map((t) => ({
-    item: t.item, status: badge(t.status, t.variant), detail: t.detail,
+  const trialSource = cfg.step >= 2 ? (cfg.trial ?? []) : cfg.compat === 'incompatible' ? TRIAL_FIXTURES[ui.cls] : null;
+  const trialRows = (trialSource ?? []).map(([item, status, variant, detail]) => ({
+    item: html`<span data-testid="trial-item">${item}</span>`,
+    status: html`<span data-testid="trial-status">${badge(status, variant)}</span>`,
+    detail: html`<span data-testid="trial-detail">${detail}</span>`,
   }));
+  const trialFailed = (trialSource ?? []).filter(([, status]) => status !== '成功');
+  const stepClass = (index) => {
+    if (index < cfg.step) return 'done';
+    if (index !== cfg.step) return '';
+    return index === 0 && cfg.compat === 'incompatible' ? 'blocked' : 'current';
+  };
 
   return card('检查并启用（复用 metric-configuration 四步）', html`
-    <ol class="steps">${steps.map(([title, hint], i) => html`<li class=${i < cfg.step ? 'done' : i === cfg.step ? 'current' : ''}>
-      <span class="n">${i < cfg.step ? '✓' : i + 1}</span><div><strong>${title}</strong><p>${hint}</p></div>
+    <ol class="steps">${steps.map(([title, hint], i) => html`<li class=${stepClass(i)}>
+      <span class="n">${i < cfg.step ? '✓' : i === 0 && cfg.compat === 'incompatible' ? '✕' : i + 1}</span><div><strong>${title}</strong><p>${hint}</p></div>
     </li>`)}</ol>
     <p class="muted small" style="margin-top:12px" data-testid="flow-state">${flowStateText(cfg)}</p>
-    ${cfg.step >= 1 ? html`<div class="notice info small" style="margin-top:12px" data-testid="compat-result">
-      兼容性与权限：${compatText(row)} 影响预览：${trialImpact(row)}；只读凭据可用。检查不写正式配置。
+    ${cfg.compat === 'compatible' ? html`<div class="notice info small" style="margin-top:12px" data-testid="compat-result">
+      兼容性与权限：${cfg.compatReason} 影响预览：${trialImpact(row)}；只读凭据可用。检查不写正式配置。
+    </div>` : cfg.compat === 'incompatible' ? html`<div class="notice danger small" style="margin-top:12px" data-testid="compat-result" role="alert">
+      <strong>兼容性检查未通过，已阻止试采与发布。</strong> ${cfg.compatReason}；请改选与 ${resourceEngine(row).label} 兼容的模板后重新检查。
     </div>` : nothing}
-    ${cfg.step >= 2 ? table([
-      { key: 'item', label: '采集项' }, { key: 'status', label: '试采结果' }, { key: 'detail', label: '说明' },
-    ], trialRows, { label: '试采结果表', emptyMessage: '本次试采未返回样本；不能发布' }) : nothing}
+    ${trialSource ? html`
+      <p class="muted small" data-testid="trial-caption" style="margin-top:12px">${cfg.step >= 2
+        ? '本次试采结果（不写正式历史）；部分失败或待验证项不能按全部成功处理。'
+        : `最近一次试采结果（${templateById(ui.cls, row.templateId)?.name ?? '原模板'} · 模板已变更，已失效；仅作参考，不能作为发布依据）。`}</p>
+      ${table([
+        { key: 'item', label: '采集项' }, { key: 'status', label: '试采结果' }, { key: 'detail', label: '说明' },
+      ], trialRows, { label: '试采结果表', emptyMessage: '本次试采未返回样本；不能发布', testId: 'trial-table' })}
+      <p class="muted small" data-testid="trial-summary" style="margin-top:8px">${trialFailed.length
+        ? `共 ${trialSource.length} 项，${trialSource.length - trialFailed.length} 项成功；未全部成功：${trialFailed.map(([item, status, , detail]) => `${item} · ${status}（${detail}）`).join('；')}。`
+        : `共 ${trialSource.length} 项全部成功；仍需发布并由正式采集确认。`}</p>` : nothing}
     ${cfg.step >= 3 ? html`<div class="notice ${cfg.applied ? 'info' : 'warn'} small" style="margin-top:12px" data-testid="apply-state">
       ${cfg.applied ? '配置已应用；正式采集状态：等待首个正式样本（不代表已健康、不代表全部指标可用）。' : '已发布，应用状态：等待应用。发布成功不表示已开始正式采集。'}
     </div>` : nothing}
@@ -801,6 +878,7 @@ function flowCard(row) {
 
 function flowStateText(cfg) {
   if (!cfg.templateId) return '未绑定模板：请先选择模板，再执行检查、试采与发布。';
+  if (cfg.compat === 'incompatible') return `兼容性检查未通过：${cfg.compatReason}。已阻止试采与发布；请改选兼容模板后重新检查。`;
   if (cfg.step === 0) return cfg.dirty ? '草稿已修改：需要重新检查兼容性与权限，旧试采结果已失效。' : '未检查：检查只读取兼容性与影响，不写正式配置。';
   if (cfg.step === 1) return '兼容性与权限检查通过；尚未试采，未写正式历史。';
   if (cfg.step === 2) return '试采完成：不写正式历史；发布前请逐项核对结果。';
@@ -808,37 +886,66 @@ function flowStateText(cfg) {
   return '已应用；正式采集等待首个正式样本，不代表已健康。';
 }
 
-function compatText(row) {
-  return ui.cls === 'db' ? `${row.dbType} ${row.version} 与模板兼容` : ui.cls === 'server' ? `${row.os} 与 Linux 模板兼容` : `${row.vendor} 与 SNMP 模板兼容`;
-}
 function trialImpact(row) {
   return ui.cls === 'db' ? '本资源 1 个、每小时约 240 次请求' : ui.cls === 'server' ? '本资源 1 个、每小时约 240 次请求' : '本资源 1 个、每小时约 480 次 SNMP 轮询';
 }
 
 function runCompat() {
   const cfg = ensureConfig();
-  cfg.step = 1; cfg.trial = null; cfg.published = false; cfg.applied = false;
+  const compat = compatResult(selectedRow());
+  cfg.trial = null; cfg.published = false; cfg.applied = false;
+  if (!compat.ok) {
+    cfg.step = 0;
+    cfg.compat = 'incompatible';
+    cfg.compatReason = compat.reason;
+    showToast(`兼容性检查未通过：${compat.reason}`, 'error');
+    update();
+    return false;
+  }
+  cfg.compat = 'compatible';
+  cfg.compatReason = compat.detail;
+  cfg.step = 1;
   showToast('演示：兼容性与权限检查通过，未写正式配置', 'info');
   update();
+  return true;
 }
 
 function runTrial() {
   const cfg = ensureConfig();
+  const compat = compatResult(selectedRow());
+  if (!compat.ok || cfg.compat !== 'compatible' || cfg.step < 1) {
+    showToast(`试采被阻止：${compat.ok ? '请先通过兼容性与权限检查' : compat.reason}`, 'warning');
+    update();
+    return false;
+  }
   cfg.step = 2;
-  cfg.trial = ui.cls === 'db'
-    ? [['核心指标', '成功', 'ok', '连接数、缓冲池命中率取得有效样本'], ['慢查询', '部分失败', 'warn', '权限不足 · ER_TABLEACCESS_DENIED'], ['会话快照', '成功', 'ok', '取得 42 个活跃会话']]
-    : ui.cls === 'server'
-      ? [['CPU / 内存', '成功', 'ok', '取得有效样本'], ['磁盘', '成功', 'ok', '/data 使用 71.3%'], ['网络速率', '待验证', 'muted', '逐接口速率依赖版本能力']]
-      : [['接口状态', '成功', 'ok', '46/48 接口可用'], ['接口流量', '成功', 'ok', '取得标称容量'], ['设备温度', '模板未覆盖', 'muted', '当前模板不含温度指标']];
+  cfg.trial = TRIAL_FIXTURES[ui.cls];
   showToast('演示：试采完成，未写正式历史', 'info');
   update();
+  return true;
+}
+
+/* 页头入口不跳过前置检查：先检查兼容性与权限，再按结果决定是否试采。 */
+function headerTrial() {
+  const cfg = ensureConfig();
+  if (!configAllowed()) return;
+  const checked = cfg.compat === 'compatible' && cfg.step >= 1 ? true : runCompat();
+  if (!checked) return;
+  runTrial();
 }
 
 function publishConfig() {
   const cfg = ensureConfig();
+  const compat = compatResult(selectedRow());
+  if (!compat.ok || cfg.compat !== 'compatible' || cfg.step < 2) {
+    showToast(`发布被拒绝：${compat.ok ? '请先完成试采' : compat.reason}`, 'warning');
+    update();
+    return false;
+  }
   cfg.step = 3; cfg.published = true; cfg.applied = false; cfg.dirty = false;
   showToast('演示：配置已发布，等待应用确认', 'info');
   update();
+  return true;
 }
 
 function refreshApply() {
