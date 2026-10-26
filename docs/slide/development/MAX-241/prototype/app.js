@@ -766,38 +766,55 @@ function engineFamily(text) {
   return 'unknown';
 }
 
-/* 版本只能取自描述本身的显式系统版本：内核/构建元数据 span、架构（x86_64/x86/aarch64/amd64…）、
-   位数补充以及括号内的代号说明都不是版本。元数据 span 必须整体剔除——从元数据词开始，连同
-   分隔符（= : #）、单词修饰（release/version/编号…）和完整取值 token（含 el9 一类后缀）——不能
-   只剥数字前缀，否则残留片段（如 "el9"）会被当成系统版本。描述明确 unknown/未知或清理后没有
-   版本 token 时，版本不可确认。 */
-const VERSION_METADATA = [
-  /[（(]\s*(?!v?\d+(?:\.\d+)*\s*[）)])[^）)]*[）)]/g,
-  /(?:^|[\s,，;；/])(?:kernel|build|内核|构建)(?:\s*(?:release|version|ver|rev|no\.?|number|编号))?\s*[:=#]?\s*v?\d[\w.\-+~]*/gi,
-  /\b(?:x86[_-](?:64|32)|x86|amd64|x64|aarch64|arm64|armhf|armv\d+l?|i[3-6]86|ppc64\w*|s390x|riscv\d*\w*|mips\w*|loongarch\w*)\b/gi,
-  /\b(?:32|64)\s*[-_ ]?\s*(?:bits?|位)/gi,
-];
+/* 系统版本必须来自可肯定证明的来源：资源描述里受支持的 OS 族标签之后、只隔着操作系统通名或
+   架构一类的非元数据词，出现明确的版本 token（如 "CentOS 7.9"、"Kylin OS V10 SP3"、"Linux 6.1"）。
+   内核（kernel）、构建（build/ID）、release/version/revision 等元数据词一旦先出现，说明后面的
+   数字属于元数据、来源不可证明——直接判定版本未知，而不是继续扫描后面的任意数字；架构
+   （x86_64/x86/amd64/aarch64…）与位数（64 bit/64bit/64 位）同样不是版本。描述明确 unknown/未知、
+   没有受支持的 OS 族标签或找不到锚定版本 token 时都返回 null。 */
+const VERSION_TOKEN = /^v?(\d+(?:\.\d+)*)$/i;
+const BITNESS_TOKEN = /^\d+\s*[-_]?\s*(?:bits?|位)$/i;
+const ARCH_TOKEN = /^(?:x86[_-]?(?:64|32)?|amd64|x64|aarch64|arm64|armhf|armv\d+l?|i[3-6]86|ppc64\w*|s390x|riscv\d*\w*|mips\w*|loongarch\w*)$/i;
+const VERSION_FILLER = /^(?:linux|os|server|enterprise|operating|system|edition|core|desktop|workstation|client|gnu|the|with|on|for|service|pack|sp|update|操作系统|系统|服务器)$/i;
+const VERSION_METADATA_WORD = /^(?:kernel|build|release|version|ver|rev|revision|id|no|number|status|内核|构建|修订|发布|编号|代号|状态)$/i;
 const VERSION_UNKNOWN = /unknown|未知|未确认|待确认|n\/a\b/i;
+const OS_TEXT_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}._+~-]*/gu;
 
-function versionSourceText(text) {
-  let value = String(text ?? '');
-  for (const pattern of VERSION_METADATA) value = value.replace(pattern, ' ');
-  return value.trim();
+function osFamilyMatch(text) {
+  for (const [pattern, family] of SERVER_OS_FAMILIES) {
+    const m = pattern.exec(text);
+    if (m) return { family, end: m.index + m[0].length };
+  }
+  return null;
 }
 
-const parseVersion = (text) => {
-  const value = versionSourceText(text);
-  if (!value || VERSION_UNKNOWN.test(value)) return null;
-  const m = value.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
-  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
-};
+/* 返回 { label, version } 或 null；label 保留描述原写法（V10 → 10、22.04 保持 22.04）。 */
+function systemVersion(text) {
+  const raw = String(text ?? '');
+  if (!raw.trim() || VERSION_UNKNOWN.test(raw)) return null;
+  const anchor = osFamilyMatch(raw);
+  if (!anchor) return null;
+  const tokens = [...raw.slice(anchor.end).matchAll(OS_TEXT_TOKEN)].map((m) => m[0]);
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (BITNESS_TOKEN.test(token)) return null;
+    const m = VERSION_TOKEN.exec(token);
+    if (m) {
+      if (!token.includes('.') && /^(?:bits?|位)$/i.test(tokens[i + 1] ?? '')) return null;
+      const parts = m[1].split('.').map(Number);
+      return { label: m[1], version: [parts[0], parts[1] ?? 0, parts[2] ?? 0] };
+    }
+    if (VERSION_METADATA_WORD.test(token)) return null;
+    if (VERSION_FILLER.test(token) || ARCH_TOKEN.test(token)) continue;
+    return null;
+  }
+  return null;
+}
 
-/* 展示用版本号：保留系统描述中的原始写法（如 22.04、V10），不归一化。 */
-const versionLabel = (text) => {
-  const value = versionSourceText(text);
-  if (!value || VERSION_UNKNOWN.test(value)) return null;
-  const m = value.match(/\d+(?:\.\d+)?(?:\.\d+)?/);
-  return m ? m[0] : null;
+/* 显式版本字段（数据库版本、模板版本）按字段原值解析，不参与系统描述来源判定。 */
+const parseVersion = (text) => {
+  const m = String(text ?? '').match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
 };
 
 function versionInRange(version, target) {
@@ -819,7 +836,7 @@ function constraintLabel(target) {
   if (target.os) parts.push(`系统 ${target.os.join('/')}`);
   if (target.platform) parts.push(`平台 ${target.platform.toUpperCase()}`);
   if (target.min) parts.push(`版本 ${rangeLabel(target)}`);
-  else if (target.requireVersion) parts.push('系统版本需可从系统描述确认（架构/内核/构建号不作为版本）');
+  else if (target.requireVersion) parts.push('系统版本需可从系统描述确认（OS 名称后的明确版本；架构/内核/构建号不作为版本）');
   return parts.join(' · ');
 }
 
@@ -827,10 +844,11 @@ function constraintLabel(target) {
 function resourceEngine(row) {
   if (ui.cls === 'server') {
     const os = row.os ?? row.version ?? '';
-    const found = SERVER_OS_FAMILIES.find(([pattern]) => pattern.test(os));
-    const osFamily = found ? found[1] : 'unknown';
+    const found = osFamilyMatch(os);
+    const osFamily = found ? found.family : 'unknown';
+    const sys = systemVersion(os);
     return {
-      label: os || '未知系统', kind: 'server', osFamily, version: parseVersion(os), versionLabel: versionLabel(os),
+      label: os || '未知系统', kind: 'server', osFamily, version: sys?.version ?? null, versionLabel: sys?.label ?? null,
       family: LINUX_OS.includes(osFamily) ? 'linux' : osFamily,
     };
   }
@@ -886,7 +904,7 @@ function compatResult(row) {
     if (!resource.version) {
       return reject(`${resource.label} 的${target.kind === 'server' ? '系统版本' : '版本'}未知`,
         target.kind === 'server'
-          ? `无法确认 ${resource.label} 的系统版本：系统描述中的架构、内核、构建号不作为系统版本，需明确系统版本后才能判定与 ${tplLabel} 兼容`
+          ? `无法确认 ${resource.label} 的系统版本：系统描述中的架构、内核、构建号不作为系统版本，需在操作系统名称后给出明确版本（如 CentOS 7.9）后才能判定与 ${tplLabel} 兼容`
           : `无法确认 ${resource.label} 的版本，不能判定与 ${tplLabel} 兼容`);
     }
     if (target.min && !versionInRange(resource.version, target)) {

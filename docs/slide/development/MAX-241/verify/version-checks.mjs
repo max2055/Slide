@@ -83,6 +83,15 @@ const cases = [
   { name: 'Ubuntu 22.04 kernel 6.5 × Linux 模板 → 取 22.04 而非内核号 6.5', cls: 'server', template: 'linux-basic', row: { os: 'Ubuntu 22.04 kernel 6.5' }, expect: true, expectLabel: '22.04' },
   { name: 'Linux 6.1 × Linux 模板 → 既有合法基线仍可用', cls: 'server', template: 'linux-basic', row: { os: 'Linux 6.1' }, expect: true, expectLabel: '6.1' },
   { name: 'Linux kernel 6.1 × Linux 模板 → 缺显式系统版本，不取内核号', cls: 'server', template: 'linux-basic', row: { os: 'Linux kernel 6.1' }, expect: false, expectLabel: null },
+  /* review9 反例：系统版本必须有肯定式来源（OS 族标签后的明确版本 token）。元数据词一旦先出现，
+     后面的数字属于元数据 build ID / 内核版本，来源不可证明——不能继续扫描任意首数字。 */
+  ...['linux-basic', 'linux-minimal'].flatMap((template) => [
+    { name: `Linux build ID 19042 × ${template} → 构建 ID 不是系统版本`, cls: 'server', template, row: { os: 'Linux build ID 19042' }, expect: false, expectLabel: null },
+    { name: `Linux kernel: version 6.1 × ${template} → 分隔符后的内核版本不是系统版本`, cls: 'server', template, row: { os: 'Linux kernel: version 6.1' }, expect: false, expectLabel: null },
+    { name: `Linux kernel version=6.1 × ${template} → 元数据修饰词后的数字不是系统版本`, cls: 'server', template, row: { os: 'Linux kernel version=6.1' }, expect: false, expectLabel: null },
+    { name: `Linux abc 6.1 × ${template} → 非通名词打断来源，不取后面任意数字`, cls: 'server', template, row: { os: 'Linux abc 6.1' }, expect: false, expectLabel: null },
+    { name: `Linux 6.1 build 20261026 × ${template} → 版本在前的来源可证明，后续元数据不影响`, cls: 'server', template, row: { os: 'Linux 6.1 build 20261026' }, expect: true, expectLabel: '6.1' },
+  ]),
 ];
 
 const results = cases.map((c) => {

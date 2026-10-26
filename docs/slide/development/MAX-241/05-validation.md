@@ -358,3 +358,78 @@ MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" 
 - `verify/run-checks.mjs` sha256 `3ee1a42ccdf850d0257bce71d40dd1737e68249688fec96ce5ac049cbbb6c9bc`
 - `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`（本轮未改）
 - 机器结果：GREEN 56/56、Chrome 166/166、Edge 166/166；RED 46/56（同一脚本、同一 15 项新增用例，修复前源码）。
+
+## 13. F1 肯定式版本来源修复（2026-10-27，对应 Chief review9）
+
+review9 接受 review7 的五个元数据 span 修复，但指出根因仍在：`VERSION_METADATA` 只是清洗黑名单，清洗后 `parseVersion`/`versionLabel` 仍无条件取剩余文本的首个数字。两个明确元数据输入在两个 Linux 模板上都被误判为系统版本并放行（独立 VM 64/68、Chrome 55/70、实际 Edge 55/70）：
+
+| 仅含元数据、无系统版本的合成输入 | 修复前误取 | 根因 |
+|---|---|---|
+| `Linux build ID 19042` | `19042` | `build ID` 不在修饰词列举内，取值残留 |
+| `Linux kernel: version 6.1` | `6.1` | 修饰词必须紧贴元数据词，`kernel: version` 的顺序不匹配 |
+
+### 13.1 修复
+
+- 改为**肯定式来源提取**（`systemVersion()`），不再依赖“清洗后取首数字”：
+  1. 先按受支持的 OS 族标签（`SERVER_OS_FAMILIES`）定位锚点；
+  2. 锚点之后按 token 顺序扫描：操作系统通名（`OS`/`Server`/`Enterprise`/`Linux`/`Core`/`SP` 等）与架构词可跳过；
+  3. 遇到明确的版本 token（`v?7.9`、`V10`、`22.04.3`）即返回，`label` 保留原写法；
+  4. 遇到内核/构建/ID/`release`/`version`/`revision`/编号等**元数据词**直接判为不可确认——后面的数字属于元数据，不继续扫描；
+  5. 遇到其它未列举词、位数（`64 bit`/`64bit`/`64 位`）、`unknown`/未知，或没有受支持的 OS 族标签时同样不可确认。
+- 因而不需要继续穷举失败词形：`Linux abc 6.1` 这类未列举词也会打断来源链；`Linux 6.1 build 20261026` 因版本在前仍取 `6.1`；`CentOS 7.9 kernel 5.14.0-427.13.1.el9` 取 `7.9`，`Kylin OS V10 SP3 kernel=4.19.90 (aarch64)` 取 `10`，`Ubuntu 22.04 build 20261026` 取 `22.04`，`Linux 6.1` 取 `6.1`；`Windows Server 2019` 仍按操作系统不符拒绝。
+- 数据库/模板显式版本字段改用独立的 `parseVersion` 直接按字段值解析，不再与系统描述清洗逻辑耦合。
+- 四个入口（检查、配置试采、页头试采、发布）仍各自调用同一 `compatResult`，无第二套判定或放行旁路；参数/模板变更使旧证据失效的行为不变；拒绝文案补充“需在操作系统名称后给出明确版本（如 CentOS 7.9）”。
+- 不新增版本下界/支持矩阵，不删除已支持操作系统；`release`/`version` 等修饰词后的数字一律按元数据处理，无法证明来源时判为“不可确认”，由人工补充明确版本。
+
+### 13.2 证据（合成输入，绑定本轮源码）
+
+| 检查 | 修复前（RED，`c126f6c4c` 的 `app.js`） | 修复后（GREEN） |
+|---|---|---|
+| `verify/version-checks.mjs`（66 项） | 60/66 —— 6 项失败：两个 review9 反例 × 2 模板 + `Linux abc 6.1` × 2 模板 | **66/66** |
+| `verify/run-checks.mjs` 完整检查，Chrome 156.0.8078.48 | — | **186/186** |
+| 同一脚本，Microsoft Edge 156.0.4314.42（`Browser.getVersion` = `Edg/156.0.4314.42`） | — | **186/186** |
+
+- RED 复现：`MAX241_APP_SRC=<c126f6c4c 的 app.js 副本> node verify/version-checks.mjs`，同一用例与判定逻辑；失败项渲染出的错误版本为 `19042`、`6.1`、`6.1`（各两个模板），与 review9 报告一致，其余 60 项行为不变。
+- 新增 GREEN 用例 10 项：两个 review9 反例 × 2 模板、`Linux kernel version=6.1` × 2 模板（元数据修饰词变体）、`Linux abc 6.1` × 2 模板（来源链被打断）、`Linux 6.1 build 20261026` × 2 模板（版本在前，断言 `6.1`）。
+- 浏览器新增 20 项（166 → 186），Chrome 与实际 Edge 结果一致：
+  - `Linux build ID 19042`、`Linux kernel: version 6.1` × 三档尺寸（1440×900 / 1366×768 / 1920×1080）：检查以 `role=alert` 拒绝并显示“系统版本不可确认/架构、内核、构建号不作为系统版本”，试采与发布禁用、检查按钮仍可聚焦、无整页横向溢出；页头试采同样不产生试采结果（12 项）。
+  - `Linux 6.1 build 20261026` 三档尺寸：检查通过且文案为“系统版本 6.1 取自系统描述”，试采 3 项、发布进入“等待应用”（3 项）。
+  - `Linux abc 6.1`：来源链被打断时拒绝，不取后面任意数字（1 项）。
+  - 合法检查后改为 `Linux kernel: version 6.1`：配置试采、页头试采、发布三个入口各自独立拒绝（3 项）。
+  - 修改参数使旧证据失效，随后合法重查→试采→发布仍可推进（1 项）。
+- 截图：`/Users/max/Coding/40-Slide/outputs/MAX-241-f1-review9-20261027/screenshots-chrome|screenshots-edge/`（`server-os-positive-source-*`）；机器结果见同目录 `checks.json`、`version-checks-green.json`、`red/version-checks-red.json`。
+- 浏览器身份：`browser-chrome.json`（`Chrome/156.0.8078.48`）、`browser-edge.json`（`Edg/156.0.4314.42`）。
+- 未变化的 F2/R1/R2/R3/R5 与旧 79/11 项检查沿用既有接受结论，未重跑旧证据。
+
+### 13.3 复现
+
+```bash
+# 1) 原型服务（仓库根目录）
+frontend/node_modules/.bin/vite --config docs/slide/development/MAX-241/prototype/vite.config.mjs
+# 2) 判定函数（合成输入）+ RED 对照
+node docs/slide/development/MAX-241/verify/version-checks.mjs
+MAX241_APP_SRC=<修复前 app.js 副本> node docs/slide/development/MAX-241/verify/version-checks.mjs
+# 3) 浏览器（Chrome / 实际 Edge）
+node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" MAX241_CDP_PORT=9344 \
+  node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+# 4) 浏览器身份
+node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执行文件>" 9356 <输出JSON>
+```
+
+### 13.4 边界与绑定
+
+- 合成系统描述只证明判定函数与原型呈现；**不代表真实服务器/采集验收**，未连接后端、真实资源或共享服务；生产系统版本字段来源与未知语义仍须实施阶段按真实契约验证。
+- 本轮只改 `docs/slide/development/MAX-241/**`（原型、验证脚本与设计说明），生产 frontend/API/导航/共享组件只读；未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
+- SHA 绑定见 §13.5。
+
+### 13.5 SHA 绑定
+
+- 修复与验证同属提交（分支 `agent/15coder1/max-241`，起始 `c126f6c4cd43a479f3c55fe8078d9bfb07077815` 保留，未 amend/rebase；随后仅有文档绑定提交，代码不变）。
+- `prototype/app.js` sha256 `6c210f60a874596cc322c8bb1320783fcc1388fe08addd50a8f91751d917f077`
+- `verify/version-checks.mjs` sha256 `985497dd1974672f9ed0f3a035e4b1a97f2c5a2a70687774b6e793fb8e28f395`
+- `verify/run-checks.mjs` sha256 `53f9b93deded0b72f778f5fad6ec49753dc4d9e1b46e221034bf62a0e5b3b6fc`
+- `03-detail-design.md` sha256 `f7218447b8cc61443bdcd86fdfbdb4f15bad9c216363190fe97e048f2438d5e0`
+- `prototype/README.md` sha256 `08fafc5ece582a9247d0b109a7a908d9e008a161dd01f85fc846fa7984fecd18`
+- `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`（本轮未改）
+- 机器结果：GREEN 66/66、Chrome 186/186、Edge 186/186；RED 60/66（同一脚本、同一 10 项新增用例，修复前源码）。
