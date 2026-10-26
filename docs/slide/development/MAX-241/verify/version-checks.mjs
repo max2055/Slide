@@ -92,6 +92,19 @@ const cases = [
     { name: `Linux abc 6.1 × ${template} → 非通名词打断来源，不取后面任意数字`, cls: 'server', template, row: { os: 'Linux abc 6.1' }, expect: false, expectLabel: null },
     { name: `Linux 6.1 build 20261026 × ${template} → 版本在前的来源可证明，后续元数据不影响`, cls: 'server', template, row: { os: 'Linux 6.1 build 20261026' }, expect: true, expectLabel: '6.1' },
   ]),
+  /* review11 反例：基础 OS 版本缺失时，update / patch / SP / service pack 编号是补丁元数据，
+     不能冒充基础版本——不能只屏蔽某两个字面值，同一 token 类别在两个 Linux 模板上都要拒绝。 */
+  ...['linux-basic', 'linux-minimal'].flatMap((template) => [
+    { name: `Linux update 20261026 × ${template} → 更新编号不是基础版本`, cls: 'server', template, row: { os: 'Linux update 20261026' }, expect: false, expectLabel: null },
+    { name: `Linux service pack 3 × ${template} → 服务包编号不是基础版本`, cls: 'server', template, row: { os: 'Linux service pack 3' }, expect: false, expectLabel: null },
+    { name: `Linux SP3 × ${template} → SP 编号不是基础版本`, cls: 'server', template, row: { os: 'Linux SP3' }, expect: false, expectLabel: null },
+    { name: `Linux SP 3 × ${template} → SP 编号不是基础版本`, cls: 'server', template, row: { os: 'Linux SP 3' }, expect: false, expectLabel: null },
+    { name: `Linux patch 20261026 × ${template} → 补丁编号不是基础版本`, cls: 'server', template, row: { os: 'Linux patch 20261026' }, expect: false, expectLabel: null },
+    /* 基础版本已有时，后续补丁/服务包信息不得抹掉合法版本。 */
+    { name: `Linux 6.1 update 20261026 × ${template} → 保留基础版本 6.1`, cls: 'server', template, row: { os: 'Linux 6.1 update 20261026' }, expect: true, expectLabel: '6.1' },
+    { name: `Linux 6.1 update20261026 × ${template} → 连写更新编号不污染基础版本`, cls: 'server', template, row: { os: 'Linux 6.1 update20261026' }, expect: true, expectLabel: '6.1' },
+    { name: `Kylin OS V10 service pack 3 × ${template} → 保留基础版本 10`, cls: 'server', template, row: { os: 'Kylin OS V10 service pack 3' }, expect: true, expectLabel: '10' },
+  ]),
 ];
 
 const results = cases.map((c) => {

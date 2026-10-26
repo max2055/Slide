@@ -876,6 +876,97 @@ async function main() {
     JSON.stringify({ republishBlocked, flow: editedFlow.flow, items: rechecked.items, apply: rechecked.apply.trim() }));
   await shot('server-os-positive-source-config-edit-recheck');
 
+  /* review11：基础 OS 版本缺失、只剩 update / patch / SP / service pack 编号时，
+     检查与页头试采都不得放行；三档尺寸全部覆盖。 */
+  const PATCH_METADATA_GAPS = ['Linux update 20261026', 'Linux service pack 3', 'Linux SP3'];
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    for (const os of PATCH_METADATA_GAPS) {
+      await openConfigRow('server', 21, w, h);
+      await setServerOs(os);
+      await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+      const patchBlocked = await serverFlow();
+      check(`F1r11 ${sizeLabel} 「${os}」检查拒绝：补丁/更新编号不是基础系统版本`,
+        patchBlocked.alert === 'alert' && patchBlocked.compat.includes('系统版本') && patchBlocked.compat.includes('更新')
+          && patchBlocked.flow.includes('未通过') && patchBlocked.items === 0
+          && patchBlocked.trialDisabled === true && patchBlocked.publishDisabled === true
+          && patchBlocked.checkFocusable === true && patchBlocked.page === true,
+        JSON.stringify({ compat: patchBlocked.compat.trim().slice(0, 110), flow: patchBlocked.flow, items: patchBlocked.items }));
+      const headerEnabled = patchBlocked.headerTrialDisabled === false;
+      if (headerEnabled) { await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300); }
+      const patchHeader = await serverFlow();
+      check(`F1r11 ${sizeLabel} 「${os}」页头试采同样未通过，不产生试采结果`,
+        headerEnabled && patchHeader.flow.includes('未通过') && !patchHeader.flow.includes('试采完成')
+          && patchHeader.items === 0 && !patchHeader.apply.includes('已发布'),
+        JSON.stringify({ headerEnabled, flow: patchHeader.flow, items: patchHeader.items }));
+      await shot(`server-os-patch-metadata-blocked-${sizeLabel}-${os.replace(/[^\w]+/g, '-')}`);
+    }
+  }
+
+  /* 两个 Linux 模板分别验证：同一 update / service pack 描述都不得冒充基础版本。 */
+  for (const [template, os] of [
+    ['linux-basic', 'Linux update 20261026'],
+    ['linux-minimal', 'Linux update 20261026'],
+    ['linux-basic', 'Linux service pack 3'],
+    ['linux-minimal', 'Linux service pack 3'],
+  ]) {
+    await openConfigRow('server', 21);
+    await selectTemplate(template);
+    await setServerOs(os);
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+    const tplBlocked = await serverFlow();
+    check(`F1r11 「${os}」× ${template} 检查拒绝：补丁编号不是基础版本`,
+      tplBlocked.alert === 'alert' && tplBlocked.compat.includes('系统版本')
+        && tplBlocked.flow.includes('未通过') && tplBlocked.items === 0
+        && tplBlocked.trialDisabled === true && tplBlocked.publishDisabled === true,
+      JSON.stringify({ compat: tplBlocked.compat.trim().slice(0, 110), flow: tplBlocked.flow }));
+  }
+
+  /* 基础版本已有时，后续补丁/更新信息不得抹掉合法版本：检查/试采/发布仍可推进。 */
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    await openConfigRow('server', 21, w, h);
+    await setServerOs('Linux 6.1 update 20261026');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+    const patchedCheck = await serverFlow();
+    await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+    await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(250);
+    const patchedFlow = await serverFlow();
+    check(`F1r11 ${sizeLabel} 「Linux 6.1 update 20261026」保留基础版本 6.1，检查/试采/发布均可推进`,
+      patchedCheck.compat.includes('满足') && patchedCheck.compat.includes('系统版本 6.1 取自系统描述')
+        && patchedFlow.items === 3 && patchedFlow.apply.includes('已发布') && patchedFlow.page === true,
+      JSON.stringify({ compat: patchedCheck.compat.trim().slice(0, 120), items: patchedFlow.items, apply: patchedFlow.apply.trim() }));
+    await shot(`server-os-patch-metadata-legal-${sizeLabel}`);
+  }
+
+  await openConfigRow('server', 21);
+  await setServerOs('Kylin OS V10 service pack 3');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const kylinPack = await serverFlow();
+  check('F1r11 「Kylin OS V10 service pack 3」保留基础版本 10',
+    kylinPack.compat.includes('满足') && kylinPack.compat.includes('系统版本 10 取自系统描述'),
+    JSON.stringify({ compat: kylinPack.compat.trim().slice(0, 120), flow: kylinPack.flow }));
+
+  /* 合法检查后改为仅补丁/更新元数据：配置试采、页头试采、发布三个入口各自独立拒绝。 */
+  for (const [entry, label] of [['run-trial', '配置试采'], ['trial', '页头试采'], ['publish', '发布']]) {
+    await openConfigRow('server', 21);
+    await setServerOs('Linux 6.1 update 20261026');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    if (entry === 'publish') { await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250); }
+    const beforeSwitch = await serverFlow();
+    await setServerOs('Linux update 20261026');
+    const entryEnabled = await evaluate(`!document.querySelector('[data-action="${entry}"]').disabled`);
+    const staleCompatible = (await serverFlow()).compat.includes('满足');
+    await evaluate(`document.querySelector('[data-action="${entry}"]').click()`); await wait(300);
+    const afterEntry = await serverFlow();
+    const blocked = entry === 'publish'
+      ? !afterEntry.apply.includes('已发布')
+      : afterEntry.items === 0 && !afterEntry.flow.includes('试采完成');
+    check(`F1r11 合法检查后系统改为 update 编号：${label}入口独立拒绝`,
+      beforeSwitch.compat.includes('满足') && staleCompatible && entryEnabled && blocked,
+      JSON.stringify({ entry, entryEnabled, staleCompatible, blocked, flow: afterEntry.flow, items: afterEntry.items, apply: afterEntry.apply.trim() }));
+    await shot(`server-os-patch-metadata-entry-${entry}`);
+  }
+
+
   // 10. 详情内指标使用所选资源 id（R2 上下文）
   await open('class=db&view=detail&id=9&tab=metrics&state=normal&perm=full', 1440, 900);
   const metricContext = await evaluate(`(() => {

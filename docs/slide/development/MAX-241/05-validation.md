@@ -433,3 +433,73 @@ node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执
 - `prototype/README.md` sha256 `08fafc5ece582a9247d0b109a7a908d9e008a161dd01f85fc846fa7984fecd18`
 - `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`（本轮未改）
 - 机器结果：GREEN 66/66、Chrome 186/186、Edge 186/186；RED 60/66（同一脚本、同一 10 项新增用例，修复前源码）。
+
+## 14. F1 补丁/更新元数据边界修复（2026-10-27，对应 Chief review11）
+
+review11 接受 review9 的肯定式来源修复，但指出同一来源判定仍有一个缺口：`VERSION_FILLER` 把 `update`/`service`/`pack`/`sp` 当作可跳过的操作系统通名，基础 OS 版本缺失时，其后的补丁/更新编号仍会被当成“明确版本”。两个 Linux 模板均误放行，四个入口（检查、配置试采、页头试采、发布）都受影响：
+
+| 仅含补丁元数据、无基础版本的合成输入 | 修复前误取 | 根因 |
+|---|---|---|
+| `Linux update 20261026` | `20261026` | `update` 被当作可跳过通名，后续数字命中版本 token |
+| `Linux service pack 3` | `3` | `service`/`pack` 同上 |
+| `Linux SP 3` | `3` | `sp` 同上 |
+
+### 14.1 修复
+
+- 把 `update`/`patch`/`service`/`pack`/`sp` 从 `VERSION_FILLER`（可跳过通名）移入 `VERSION_METADATA_WORD`（元数据词）：基础版本缺失时，这些词一旦先出现就**停止扫描并判为不可确认**，不再取其后的数字。
+- 按**同一 token 类别**收口，不针对字面值：`update`、`patch`、`service pack`（两个 token 均命中）、`SP`/`SP 3`/`Kylin OS V10 SP3` 的既有形式都走同一判定；未单独列举的 `SP3` 连写形式因不是合法版本 token 同样不可确认。
+- 基础版本已有时，后续补丁/更新信息不会抹掉合法版本：扫描在第一个版本 token 处返回，`Linux 6.1 update 20261026`、`Linux 6.1 update20261026`、`Kylin OS V10 service pack 3` 分别取 `6.1`、`6.1`、`10`。
+- 拒绝文案补充“补丁/更新编号不作为系统版本”，继续提示需在操作系统名称后给出明确版本；不新增支持矩阵、不删除已支持 OS、不写通用自然语言解析器。
+- review9 记录中 `SP` 曾被列为可跳过的通名，本轮归入补丁元数据；行为以本节为准，历史记录保留。
+
+### 14.2 证据（合成输入，绑定本轮源码）
+
+| 检查 | 修复前（RED，`26378364d` 的 `app.js`） | 修复后（GREEN） |
+|---|---|---|
+| `verify/version-checks.mjs`（82 项） | 76/82 —— 6 项失败：`Linux update 20261026`、`Linux service pack 3`、`Linux SP 3` × 两个 Linux 模板 | **82/82** |
+| `verify/run-checks.mjs` 完整检查，Chrome 156.0.8078.48 | — | **215/215**（其中 F1r11 新增 29 项全部通过） |
+| 同一脚本，Microsoft Edge 156.0.4314.42（`Browser.getVersion` = `Edg/156.0.4314.42`） | — | **215/215**（F1r11 29/29） |
+
+- RED 复现：`MAX241_APP_SRC=<26378364d 的 app.js 副本> node verify/version-checks.mjs`，同一用例与判定逻辑；失败项渲染出的版本为 `20261026`、`3`、`3`（各两个模板），与 review11 报告一致，其余 76 项行为不变。
+- 新增 GREEN 用例 16 项（66 → 82）：三类补丁元数据 × 2 模板（6 项）、SP 连写与 patch 形式 × 2 模板（4 项）、`Linux 6.1 update 20261026`、`Linux 6.1 update20261026`、`Kylin OS V10 service pack 3` 各 × 2 模板（6 项，断言基础版本保留）。
+- 浏览器新增 29 项（186 → 215），Chrome 与实际 Edge 结果一致：
+  - `Linux update 20261026`、`Linux service pack 3`、`Linux SP3` × 三档尺寸（1440×900 / 1366×768 / 1920×1080）：检查以 `role=alert` 拒绝并显示“系统版本不可确认/补丁更新编号不作为系统版本”，试采与发布禁用、检查按钮仍可聚焦、无整页横向溢出；页头试采同样不产生试采结果（18 项）。
+  - `Linux update 20261026`、`Linux service pack 3` × `linux-basic`/`linux-minimal` 两个模板：检查均拒绝（4 项）。
+  - `Linux 6.1 update 20261026` 三档尺寸：检查通过且文案为“系统版本 6.1 取自系统描述”，试采 3 项、发布进入“等待应用”（3 项）；`Kylin OS V10 service pack 3` 检查通过并注明系统版本 10（1 项）。
+  - 合法检查后改为 `Linux update 20261026`：配置试采、页头试采、发布三个入口各自独立拒绝（3 项）。
+  - 既有 review5/review7/review9 反例、合法 CentOS 7.9 / Kylin V10 / Linux 6.1 / Ubuntu 22.04 / RHEL 9.4（含架构、完整 kernel/build）、Windows 负例、参数修改失效与合法重查均在同一轮回归通过，未重做已接受结论。
+- 截图：`/Users/max/Coding/40-Slide/outputs/MAX-241-f1-review11-20261027/screenshots-chrome|screenshots-edge/`（`server-os-patch-metadata-*`）；机器结果见同目录 `checks-*.json`、`version-checks-green.json`、`version-checks-red.json`。
+- 浏览器身份：`browser-chrome.json`（`Chrome/156.0.8078.48`）、`browser-edge.json`（`Edg/156.0.4314.42`）。
+- F2/R1/R2/R3/R5 沿用既有接受证据，未重做；旧 79/11 未重跑。
+
+### 14.3 复现
+
+```bash
+# 1) 原型服务（仓库根目录）
+frontend/node_modules/.bin/vite --config docs/slide/development/MAX-241/prototype/vite.config.mjs
+# 2) 判定函数（合成输入）+ RED 对照
+node docs/slide/development/MAX-241/verify/version-checks.mjs
+MAX241_APP_SRC=<修复前 app.js 副本> node docs/slide/development/MAX-241/verify/version-checks.mjs
+# 3) 浏览器（Chrome / 实际 Edge）
+node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" MAX241_CDP_PORT=9344 \
+  node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+# 4) 浏览器身份
+node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执行文件>" 9356 <输出JSON>
+```
+
+### 14.4 边界与绑定
+
+- 合成系统描述只证明判定函数与原型呈现；**不代表真实服务器/采集验收**，未连接后端、真实资源或共享服务；生产系统版本字段来源与未知语义仍须实施阶段按真实契约验证。
+- 本轮只改 `docs/slide/development/MAX-241/**`（原型、验证脚本与设计说明），生产 frontend/API/导航/共享组件只读；未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
+- SHA 绑定见 §14.5。
+
+### 14.5 SHA 绑定
+
+- 修复与验证同属提交 `358e57cb9`（分支 `agent/15coder1/max-241`，起始 `26378364d7420c4009de11e4ca9337630373b2ff` 保留，未 amend/rebase；本节为随后的文档追加，代码不变）。
+- `prototype/app.js` sha256 `51d1638cc8f0a3160594654fa8fd1ed167ac5b18b109050cdc0aba5b4b29632a`
+- `verify/version-checks.mjs` sha256 `540782412aea5a51b0893955bc8609ac69e039e0af370db00dbb48f6dc7b65fa`
+- `verify/run-checks.mjs` sha256 `c285e0e21ee001966d859c34a4a5d151a00450ab8695ef67f198d41b120ec94b`
+- `03-detail-design.md` sha256 `a88be7937cb39a8ba51435b1d1f7e669987d62d93a45eae66142428f44d87b6f`
+- `prototype/README.md` sha256 `8c15e4a6cd9c08f5114148c3f103ea1e5066377735bcb9cdeab684fa2ff3e531`
+- 机器结果：GREEN 82/82、Chrome 215/215、Edge 215/215；RED 76/82（同一脚本、同一批新增用例，修复前源码）。
