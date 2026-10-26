@@ -75,6 +75,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (101, ?)', [roleId]);
     token = signAccessToken(await contexts.loadActiveActor(101), secret);
     // Dependent facts are cleaned only inside this run-owned database.
+    await pool.execute('DELETE FROM investigation_alert_owners');
+    await pool.execute('DELETE FROM alerts WHERE id >= 9500');
     for (const table of ['investigation_budget_resources', 'investigation_budget_ledger', 'investigation_budget_domains',
       'investigation_requests', 'investigation_resources', 'investigations', 'chat_sessions']) await pool.execute(`DELETE FROM ${table}`);
     await pool.execute('DELETE FROM system_config WHERE config_key = ?', [INVESTIGATION_EFFECTIVE_BUDGET_KEY]);
@@ -89,7 +91,8 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
   });
 
-  async function reserve(state: 'reserved' | 'sent' | 'unknown' | 'settled' | 'cancelled', prices = true, currency = 'USD') {
+  async function reserve(state: 'reserved' | 'sent' | 'unknown' | 'settled' | 'cancelled', prices = true, currency = 'USD',
+    mode: 'manual' | 'automatic' = 'manual', resourceId = 9181) {
     const investigation = randomUUID();
     const request = randomUUID();
     const config = investigationBudgetConfiguration();
@@ -100,11 +103,12 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
       VALUES (?, 'private-resource-secret', 'event-request-secret', 'ops', 1, ?, 'user', 102, ?)`, [investigation, investigation, 'a'.repeat(64)]);
     // No resource rights or membership for the reader: global management is
     // explicitly distinct from resource-scoped investigation access.
-    await pool.execute("INSERT INTO investigation_resources VALUES (?, 'instance', 9181, 'primary'), (?, 'server', 9182, 'related')", [investigation, investigation]);
+    await pool.execute("INSERT INTO investigation_resources VALUES (?, 'instance', ?, 'primary'), (?, 'server', ?, 'related')",
+      [investigation, resourceId, investigation, resourceId + 1]);
     await pool.execute(`INSERT INTO investigation_requests (id, investigation_id, actor_kind, actor_id, idempotency_key,
       request_hash, request_snapshot, job_id, accepted_version) VALUES (?, ?, 'user', 102, ?, ?, ?, ?, 1)`,
     [request, investigation, request, 'b'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1, authority: { profileHash: investigationProfileHash(INVESTIGATION_PROFILES.ops) }, secret: 'request-snapshot-secret' }), randomUUID()]);
-    const allocation = await ledger.reserve({ requestId: request, operationId: 'fixture', domain, mode: 'manual',
+    const allocation = await ledger.reserve({ requestId: request, operationId: 'fixture', domain, mode,
       profile: INVESTIGATION_PROFILES.ops, reserveTokens: 1000, reserveCostMicros: 2000,
       ...(prices ? { prices: { input: 1_000_000, cachedInput: 100_000, output: 2_000_000 } } : {}) });
     // Worst-case reserve must cover all-output prices.
@@ -119,10 +123,37 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
   async function snapshot() {
     const result: Record<string, unknown> = {};
     for (const table of ['investigation_budget_domains', 'investigation_budget_ledger', 'investigation_budget_resources',
-      'investigation_requests', 'investigations', 'investigation_resources', 'chat_sessions', 'chat_messages', 'workflow_jobs', 'outbox_events', 'operational_events']) {
+      'investigation_alert_owners', 'investigation_requests', 'investigations', 'investigation_resources', 'chat_sessions',
+      'chat_messages', 'workflow_jobs', 'outbox_events', 'operational_events']) {
       result[table] = (await pool.query(`SELECT * FROM ${table}`))[0];
     }
     return result;
+  }
+  /** Durable automatic evidence: ownership row, accepted request and real job
+   * state. No receipt is synthesized here beyond the explicit alert tag. */
+  async function autoExecution(alertId: number, instanceId: number, state: 'queued' | 'running' | 'completed' | 'dead_letter' | 'cancelled') {
+    const investigation = randomUUID(), request = randomUUID(), job = randomUUID();
+    await pool.execute("INSERT INTO chat_sessions (session_id, user_id, title) VALUES (?, 102, 'auto-alert-session')", [investigation]);
+    await pool.execute(`INSERT INTO investigations (id, title, goal, profile_id, profile_version, session_id, owner_kind, owner_id,
+      scope_version, active_request_id) VALUES (?, 'auto alert', 'auto goal', 'ops', 1, ?, 'service', ?, ?, ?)`,
+    [investigation, investigation, serviceId, 'c'.repeat(64), request]);
+    await pool.execute("INSERT INTO investigation_resources VALUES (?, 'instance', ?, 'primary')", [investigation, instanceId]);
+    await pool.execute(`INSERT INTO investigation_requests (id, investigation_id, actor_kind, actor_id, idempotency_key,
+      request_hash, request_snapshot, job_id, accepted_version) VALUES (?, ?, 'service', ?, ?, ?, ?, ?, 1)`,
+    [request, investigation, serviceId, request, 'd'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1 }), job]);
+    await pool.execute(`INSERT INTO workflow_jobs (id, job_type, schema_version, payload, idempotency_key, state)
+      VALUES (?, 'investigation.execute', 1, ?, ?, ?)`, [job, JSON.stringify({ investigationId: investigation, requestId: request }), `auto:${request}`, state]);
+    await pool.execute("INSERT INTO investigation_alert_owners (alert_id, lane, command_snapshot, investigation_id) VALUES (?, 'investigation', ?, ?)",
+      [alertId, JSON.stringify({ trigger: 'auto' }), investigation]);
+    return { investigation, request, job };
+  }
+  async function clearExecution(record: { investigation: string; job: string }) {
+    await pool.execute('DELETE FROM investigation_alert_owners WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_requests WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigation_resources WHERE investigation_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM investigations WHERE id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM chat_sessions WHERE session_id = ?', [record.investigation]);
+    await pool.execute('DELETE FROM workflow_jobs WHERE id = ?', [record.job]);
   }
 
   it('reports no production policy registration rather than fake presets; reading initializes nothing', async () => {
@@ -135,14 +166,17 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     const body = await response.json() as InvestigationPoliciesResponse;
     expect(Value.Check(InvestigationGovernanceSchemas.InvestigationPoliciesResponse, body)).toBe(true);
     expect(body).toMatchObject({
-      schemaVersion: 2, configurationStatus: 'not_configured', automaticAnalysisStatus: 'blocked',
+      schemaVersion: 3, configurationStatus: 'not_configured', automaticAnalysisStatus: 'blocked',
       policy: { id: 'database-alert-pilot', version: 1, profileId: 'ops', source: 'database-alert-engine', readonly: true },
       masterSwitch: { source: 'defaults', status: 'defaulted', enabled: true, instanceWhitelistCount: 0 },
       investigationSwitch: { enabled: false, manualEnabled: false, legacyEnabled: false, source: 'environment' },
       serviceIdentity: { status: 'not_configured', permissionsSufficient: false, missingPermissions: [], instanceScopeSufficient: true },
-      entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null },
-      budget: { status: 'uninitialized', quotaReached: false },
-      latestOutcome: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+      entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null, witnessTypes: [] },
+      receipts: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+      execution: { observed: 0, accepted: 0, running: 0, completed: 0, failed: 0, cancelled: 0, suppressed: 0, unknown: 0,
+        lastStatus: null, lastAt: null },
+      budget: { status: 'uninitialized', quotaReached: false, capacityReached: false, reserveTokens: 32_000,
+        reserveCostMicros: currentConfig.reserveCostMicros, admissionReasons: [] },
       resourceCoverage: [
         { type: 'database', status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false },
         { type: 'server', status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false },
@@ -153,7 +187,7 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect(body.blockers.map((blocker: { code: string }) => blocker.code)).not.toContain('ENTRY_NOT_OBSERVED');
     expect(await snapshot()).toEqual(before);
   });
-  it('separates configuration, switches, entry receipts, identity permissions and per-type coverage without writes', async () => {
+  it('separates configuration, switches, durable wiring, receipts and execution without writes', async () => {
     const serviceRole = Number((await pool.execute<ResultSetHeader>("INSERT INTO roles (name) VALUES ('t07c-pilot-service')"))[0].insertId);
     await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [serviceId, serviceRole]);
     const grantService = async (...codes: string[]) => {
@@ -177,7 +211,9 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
         enabled: true, cronExpression: '*/30 * * * *', severityLevels: ['warning', 'error', 'critical'],
         instanceWhitelist: [], timeWindowStart: '00:00', timeWindowEnd: '23:59' })]);
       await reserve('settled');
-      // A real entry receipt is represented by the durable alert observation.
+      // The receipt is only the observation; durable ownership plus the real
+      // investigation request and workflow job carry the execution outcome.
+      const execution = await autoExecution(9501, 9181, 'completed');
       await pool.execute(`INSERT INTO alerts (id, instance_id, alert_type, level, title, message, source, tags)
         VALUES (9501, 9181, 'performance', 'warning', 'pilot alert', 'fixture', 'alert-engine', ?)`,
         [JSON.stringify({ auto_analysis: { status: 'accepted', reason: null, attemptedAt: '2026-10-25T00:00:00.000Z' } })]);
@@ -187,23 +223,85 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
       expect(response.status).toBe(200);
       const body = await response.json() as InvestigationPoliciesResponse;
       expect(Value.Check(InvestigationGovernanceSchemas.InvestigationPoliciesResponse, body)).toBe(true);
-      expect(body).toMatchObject({ configurationStatus: 'configured', automaticAnalysisStatus: 'available',
+      expect(body).toMatchObject({ schemaVersion: 3, configurationStatus: 'configured', automaticAnalysisStatus: 'available',
         blockers: [],
         serviceIdentity: { status: 'ready', permissionsSufficient: true, missingPermissions: [], instanceScopeSufficient: true },
-        entry: { status: 'connected', observedReceiptCount: 1, lastObservedAt: '2026-10-25T00:00:00.000Z' },
-        budget: { status: 'matching', quotaReached: false },
-        latestOutcome: { total: 1, accepted: 1, suppressed: 0, pending: 0, unknown: 0, lastStatus: 'accepted',
+        entry: { status: 'connected', observedReceiptCount: 1, lastObservedAt: '2026-10-25T00:00:00.000Z',
+          witnessTypes: ['database'] },
+        receipts: { total: 1, accepted: 1, suppressed: 0, pending: 0, unknown: 0, lastStatus: 'accepted',
           lastReason: null, lastAttemptAt: '2026-10-25T00:00:00.000Z' },
+        execution: { observed: 1, accepted: 0, running: 0, completed: 1, failed: 0, cancelled: 0, suppressed: 0, unknown: 0,
+          lastStatus: 'completed' },
+        budget: { status: 'matching', quotaReached: false, capacityReached: false, reserveTokens: 32_000,
+          reserveCostMicros: currentConfig.reserveCostMicros, admissionReasons: [] },
         resourceCoverage: [
           { type: 'database', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true },
           { type: 'server', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true },
           { type: 'network_device', status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true }] });
+      expect(body.execution.lastAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/);
       expect(JSON.stringify(body)).not.toMatch(/9181|9182|9183|pilot-db|pilot-server|pilot-net|serviceUserId/);
-      // The budget page shares the same entry fact rather than claiming a
-      // connected trigger from configuration alone.
+      // The budget page shares the same durable entry fact.
       expect(await (await read('budget')).json()).toMatchObject({ automaticTriggerStatus: 'connected', admissionStatus: 'matching' });
       expect(await snapshot()).toEqual(before);
       expect((await pool.query<RowDataPacket[]>('SELECT * FROM alerts ORDER BY id'))[0]).toEqual(alertsBefore);
+
+      // Durable terminal states are reported separately from the receipt.
+      await pool.execute("UPDATE workflow_jobs SET state = 'dead_letter' WHERE id = ?", [execution.job]);
+      const failed = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(failed).toMatchObject({ automaticAnalysisStatus: 'available',
+        execution: { observed: 1, completed: 0, failed: 1, lastStatus: 'failed' } });
+      await pool.execute("UPDATE workflow_jobs SET state = 'cancelled' WHERE id = ?", [execution.job]);
+      const cancelled = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(cancelled.execution).toMatchObject({ observed: 1, failed: 0, cancelled: 1, lastStatus: 'cancelled' });
+      await pool.execute("UPDATE workflow_jobs SET state = 'completed' WHERE id = ?", [execution.job]);
+
+      // Counterexample: an arbitrary old suppressed receipt on a configured
+      // resource, with no durable ownership, must stay unverified.
+      await clearExecution(execution);
+      await pool.execute('UPDATE alerts SET tags = ? WHERE id = 9501', [JSON.stringify({
+        auto_analysis: { status: 'suppressed', reason: 'RESOURCE_ALERT_PILOT_UNCONFIGURED', attemptedAt: '2020-01-01T00:00:00.000Z' } })]);
+      const stale = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(stale).toMatchObject({ entry: { status: 'unverified', observedReceiptCount: 1, lastObservedAt: '2020-01-01T00:00:00.000Z',
+          witnessTypes: [] },
+        receipts: { total: 1, suppressed: 1, lastStatus: 'suppressed', lastReason: 'RESOURCE_ALERT_PILOT_UNCONFIGURED' },
+        execution: { observed: 0, lastStatus: null, lastAt: null },
+        automaticAnalysisStatus: 'unverified' });
+      expect(stale.blockers.map((blocker: { code: string }) => blocker.code)).toEqual(['ENTRY_NOT_OBSERVED']);
+
+      // Counterexample: part of a configured type missing must not be available.
+      await pool.execute("INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (9184, 'pilot-db-2', 'pilot2.invalid', 3306, 'fixture', 'unused')");
+      await pool.execute("INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, 9184, 'read-only')", [serviceId]);
+      process.env.INVESTIGATION_OPS_INSTANCE_IDS = '9181,9184';
+      const both = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(both.resourceCoverage[0]).toMatchObject({ status: 'covered', configuredCount: 2, existingCount: 2, permittedCount: 2 });
+      await pool.execute('DELETE FROM instance_permissions WHERE user_id = ? AND instance_id = 9184', [serviceId]);
+      await pool.execute('DELETE FROM database_instances WHERE id = 9184');
+      const partial = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(partial.resourceCoverage[0]).toMatchObject({ status: 'partial', configuredCount: 2, existingCount: 1, permittedCount: 1 });
+      expect(partial.blockers.map((blocker: { code: string }) => blocker.code)).toEqual(['RESOURCE_UNAVAILABLE']);
+      expect(partial.automaticAnalysisStatus).toBe('blocked');
+      process.env.INVESTIGATION_OPS_INSTANCE_IDS = '9181';
+
+      // Counterexample: one token short of the REAL automatic reserve must not
+      // be reported as admitting the next request.
+      const [settled] = await pool.query<RowDataPacket[]>("SELECT id FROM investigation_budget_ledger WHERE state = 'settled' LIMIT 1");
+      await pool.execute("UPDATE investigation_budget_ledger SET charged_tokens = 4999999, mode = 'automatic' WHERE id = ?", [settled[0].id]);
+      const quota = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(quota.budget).toMatchObject({ status: 'matching', quotaReached: true, capacityReached: false, reserveTokens: 32_000 });
+      expect(quota.budget.admissionReasons).toEqual(expect.arrayContaining(['AUTOMATIC_DAILY_TOKENS', 'TOTAL_DAILY_TOKENS']));
+      expect(quota.blockers.map((blocker: { code: string }) => blocker.code)).toContain('BUDGET_QUOTA_REACHED');
+      await pool.execute("UPDATE investigation_budget_ledger SET charged_tokens = 1000, mode = 'manual' WHERE id = ?", [settled[0].id]);
+
+      // Concurrency is an instantaneous admission fact and must be visible.
+      await reserve('reserved', true, 'USD', 'automatic', 9201);
+      await reserve('reserved', true, 'USD', 'automatic', 9202);
+      await reserve('reserved', true, 'USD', 'automatic', 9203);
+      await reserve('reserved', false, 'USD', 'manual', 9204);
+      const capacity = await (await read('policies')).json() as InvestigationPoliciesResponse;
+      expect(capacity.budget).toMatchObject({ status: 'matching', quotaReached: false, capacityReached: true });
+      expect(capacity.budget.admissionReasons).toEqual(expect.arrayContaining(['GLOBAL_CONCURRENCY', 'MANUAL_CAPACITY_RESERVED']));
+      expect(capacity.blockers.map((blocker: { code: string }) => blocker.code)).toContain('BUDGET_CAPACITY_REACHED');
+      expect(capacity.automaticAnalysisStatus).toBe('blocked');
 
       // Revoking live service permissions removes coverage instead of stale status.
       await grantService('chat:view', 'instance:view');
@@ -222,26 +320,19 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
         resourceCoverage: [{ status: 'partial', permittedCount: 0 }, { status: 'covered' }, { status: 'covered' }] });
       expect(unscoped.blockers.map((blocker: { code: string }) => blocker.code)).toContain('RESOURCE_INSTANCE_SCOPE_MISSING');
 
-      // A configured but unwired/missing resource is not covered.
+      // A configured but missing resource is not covered.
       await pool.execute('DELETE FROM network_devices WHERE id = 9183');
       const missing = await (await read('policies')).json() as InvestigationPoliciesResponse;
       expect(missing.resourceCoverage[2]).toMatchObject({ status: 'unavailable', configuredCount: 1, existingCount: 0 });
       expect(missing.blockers.map((blocker: { code: string }) => blocker.code)).toContain('RESOURCE_UNAVAILABLE');
-
-      // Suppressed-only receipts prove the entry fired, but never a success.
-      await pool.execute('UPDATE alerts SET tags = ? WHERE id = 9501', [JSON.stringify({
-        auto_analysis: { status: 'suppressed', reason: 'BUDGET_QUOTA', attemptedAt: '2026-10-25T01:00:00.000Z' } })]);
-      const suppressed = await (await read('policies')).json() as InvestigationPoliciesResponse;
-      expect(suppressed).toMatchObject({ entry: { status: 'connected' },
-        latestOutcome: { total: 1, suppressed: 1, lastStatus: 'suppressed', lastReason: 'BUDGET_QUOTA' } });
-      expect(suppressed.automaticAnalysisStatus).not.toBe('available');
     } finally {
       await pool.execute("DELETE FROM system_config WHERE config_key = 'auto_analysis_config'");
       await pool.execute('DELETE FROM alerts WHERE id = 9501');
+      await pool.execute('DELETE FROM investigation_alert_owners');
       await pool.execute('DELETE FROM instance_permissions WHERE user_id = ?', [serviceId]);
       await pool.execute('DELETE FROM network_devices WHERE id = 9183');
       await pool.execute('DELETE FROM servers WHERE id = 9182');
-      await pool.execute('DELETE FROM database_instances WHERE id = 9181');
+      await pool.execute('DELETE FROM database_instances WHERE id IN (9181, 9184)');
       await pool.execute('DELETE FROM user_roles WHERE user_id = ?', [serviceId]);
       await pool.execute('DELETE FROM roles WHERE id = ?', [serviceRole]);
     }
@@ -438,7 +529,7 @@ describe.skipIf(!port)('T07-C real migration/ledger/JWT/TCP governance facts', (
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_domains WHERE domain_key = ?', ['investigation-v1']))[0]).toEqual(oldDomain);
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM investigation_budget_ledger ORDER BY id'))[0]).toEqual(oldLedger);
     const [audit] = await pool.execute<RowDataPacket[]>(`SELECT details_json FROM audit_log_entries
-      WHERE action = 'investigation.effective_budget.update' AND JSON_EXTRACT(details_json, '$.rotation') IS NOT NULL`);
+      WHERE action = 'investigation.effective_budget.update' AND JSON_TYPE(JSON_EXTRACT(details_json, '$.rotation')) = 'OBJECT'`);
     expect((typeof audit[0].details_json === 'string' ? JSON.parse(audit[0].details_json) : audit[0].details_json))
       .toMatchObject({ rotation: { previousRevision: 1, revision: 2, previousDomain: 'investigation-v1', domain: 'investigation-v1:v2' } });
   });

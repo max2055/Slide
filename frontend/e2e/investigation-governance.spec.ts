@@ -1,10 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { ResultSetHeader } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { startInvestigationServer } from './fixtures/investigation-server.ts';
 import { MysqlInvestigationBudgetLedger } from '../../apps/db-ops-api/src/investigations/budget-ledger.js';
 import { investigationBudgetConfiguration } from '../../apps/db-ops-api/src/investigations/session-bridge.js';
 import { INVESTIGATION_PROFILES, investigationProfileHash } from '../../apps/db-ops-api/src/investigations/profiles.js';
+import { provisionInvestigationServiceIdentity } from '../../apps/db-ops-api/src/investigations/authorization.js';
 
 let env: Awaited<ReturnType<typeof startInvestigationServer>>;
 let manager: Awaited<ReturnType<typeof env.contexts.loadActiveActor>>;
@@ -54,7 +56,7 @@ async function read(page: Page, kind: string) {
 }
 async function snapshot() {
   const result: Record<string, unknown> = {};
-  for (const table of ['investigation_budget_domains', 'investigation_budget_ledger', 'investigation_budget_resources', 'investigation_requests', 'investigations', 'investigation_resources', 'chat_sessions', 'chat_messages', 'workflow_jobs', 'outbox_events', 'operational_events']) {
+  for (const table of ['investigation_alert_owners', 'investigation_budget_domains', 'investigation_budget_ledger', 'investigation_budget_resources', 'investigation_requests', 'investigations', 'investigation_resources', 'chat_sessions', 'chat_messages', 'workflow_jobs', 'outbox_events', 'operational_events']) {
     result[table] = (await env.pool.query(`SELECT * FROM ${table}`))[0];
   }
   return result;
@@ -270,3 +272,103 @@ for (const width of [1600, 1024, 390]) {
     await page.screenshot({ path: `test-results/t06-governance-${width}.png`, fullPage: true });
   });
 }
+
+test('real durable wiring, execution outcomes and receipt history stay separate under live revocation', async ({ page }) => {
+  let serviceId = 0, roleId = 0;
+  const investigation = randomUUID(), request = randomUUID(), job = randomUUID();
+  try {
+    // A dedicated service principal, never the interactive manager.
+    serviceId = await provisionInvestigationServiceIdentity(env.pool as never, 't06-wiring');
+    const [role] = await env.pool.query("INSERT INTO roles (name) VALUES ('t06-wiring-service')");
+    roleId = Number((role as ResultSetHeader).insertId);
+    await env.pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (?,?)', [serviceId, roleId]);
+    for (const code of ['chat:view', 'instance:view']) await env.pool.query(
+      'INSERT INTO role_permissions (role_id,permission_id) SELECT ?,id FROM permissions WHERE code=?', [roleId, code]);
+    await env.pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (?,101,'read-only')", [serviceId]);
+    Object.assign(process.env, { INVESTIGATION_OPS_AUTO_ENABLED: 'true', INVESTIGATION_OPS_SERVICE_USER_ID: String(serviceId),
+      INVESTIGATION_OPS_INSTANCE_IDS: '101' });
+    delete process.env.INVESTIGATION_OPS_SERVER_IDS; delete process.env.INVESTIGATION_OPS_NETWORK_DEVICE_IDS;
+    await env.pool.query("REPLACE INTO system_config (config_key,config_value) VALUES ('auto_analysis_config',?)", [JSON.stringify({
+      enabled: true, cronExpression: '*/30 * * * *', severityLevels: ['warning', 'error', 'critical'],
+      instanceWhitelist: [], timeWindowStart: '00:00', timeWindowEnd: '23:59' })]);
+    // Durable automatic ownership, an accepted request and a real workflow job.
+    await env.pool.query("INSERT INTO chat_sessions (session_id,user_id,title) VALUES (?,101,'wiring fixture')", [investigation]);
+    await env.pool.query(`INSERT INTO investigations (id,title,goal,profile_id,profile_version,session_id,owner_kind,owner_id,
+      scope_version,active_request_id) VALUES (?, 'wiring fixture','wiring goal','ops',1,?,'service',?,?,?)`,
+    [investigation, investigation, serviceId, 'c'.repeat(64), request]);
+    await env.pool.query("INSERT INTO investigation_resources VALUES (?,'instance',101,'primary')", [investigation]);
+    await env.pool.query(`INSERT INTO investigation_requests (id,investigation_id,actor_kind,actor_id,idempotency_key,
+      request_hash,request_snapshot,job_id,accepted_version) VALUES (?,?,'service',?,?,?,?,?,1)`,
+    [request, investigation, serviceId, request, 'd'.repeat(64), JSON.stringify({ profileId: 'ops', profileVersion: 1 }), job]);
+    await env.pool.query(`INSERT INTO workflow_jobs (id,job_type,schema_version,payload,idempotency_key,state)
+      VALUES (?, 'investigation.execute',1,?,?,'completed')`, [job, JSON.stringify({ investigationId: investigation, requestId: request }), `wiring:${request}`]);
+    await env.pool.query("DELETE FROM alerts WHERE id = 9501");
+    await env.pool.query(`INSERT INTO alerts (id,instance_id,alert_type,level,title,message,source,tags)
+      VALUES (9501,101,'performance','warning','wiring alert','fixture','alert-engine',?)`,
+    [JSON.stringify({ auto_analysis: { status: 'accepted', reason: null, attemptedAt: '2026-10-25T00:00:00.000Z' } })]);
+    await env.pool.query("INSERT INTO investigation_alert_owners (alert_id,lane,command_snapshot,investigation_id) VALUES (9501,'investigation',?,?)",
+      [JSON.stringify({ trigger: 'auto' }), investigation]);
+
+    const before = await snapshot();
+    await login(page); await read(page, 'policies');
+    await expect.poll(() => view(page).evaluate((e: any) => e.facts !== null)).toBe(true);
+    await expect(view(page)).toContainText('已确认入口接线');
+    await expect(view(page)).toContainText('历史回执（全部告警）');
+    await expect(view(page)).toContainText('最近执行结果');
+    await expect(view(page)).toContainText('已完成');
+    await expect(view(page)).toContainText('已观察接线的资源类型');
+    await expect(view(page)).toContainText('数据库');
+    // Keyboard refresh is side-effect free across every durable table.
+    const refresh = view(page).getByRole('button', { name: '刷新调查策略' });
+    await refresh.focus(); await expect(refresh).toBeFocused();
+    const refreshed = page.waitForResponse(r => r.url().includes('/api/investigation-policies') && r.status() === 200);
+    await page.keyboard.press('Enter'); await refreshed;
+    await expect.poll(() => view(page).evaluate((e: any) => e.facts?.execution?.completed)).toBe(1);
+    expect(await snapshot()).toEqual(before);
+
+    // Live service-principal revocation removes availability, not just text.
+    await env.pool.query('DELETE FROM instance_permissions WHERE user_id=? AND instance_id=101', [serviceId]);
+    const revoked = page.waitForResponse(r => r.url().includes('/api/investigation-policies') && r.status() === 200);
+    await refresh.click(); await revoked;
+    await expect(view(page)).toContainText('缺少实例级授权');
+    await expect.poll(() => view(page).evaluate((e: any) => e.facts?.automaticAnalysisStatus)).toBe('blocked');
+    await expect(view(page)).toContainText('自动分析尚不可用');
+    await env.pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (?,101,'read-only')", [serviceId]);
+
+    // An old suppressed receipt without durable ownership never becomes wired.
+    await env.pool.query('DELETE FROM investigation_alert_owners WHERE alert_id=9501');
+    await env.pool.query('DELETE FROM investigation_requests WHERE investigation_id=?', [investigation]);
+    await env.pool.query('DELETE FROM investigation_resources WHERE investigation_id=?', [investigation]);
+    await env.pool.query('DELETE FROM investigations WHERE id=?', [investigation]);
+    await env.pool.query('DELETE FROM chat_sessions WHERE session_id=?', [investigation]);
+    await env.pool.query('DELETE FROM workflow_jobs WHERE id=?', [job]);
+    await env.pool.query('UPDATE alerts SET tags=? WHERE id=9501', [JSON.stringify({
+      auto_analysis: { status: 'suppressed', reason: 'RESOURCE_ALERT_PILOT_UNCONFIGURED', attemptedAt: '2020-01-01T00:00:00.000Z' } })]);
+    const stale = page.waitForResponse(r => r.url().includes('/api/investigation-policies') && r.status() === 200);
+    await refresh.click(); await stale;
+    await expect(view(page)).toContainText('未观察到持久入口证据');
+    await expect(view(page)).toContainText('尚无持久执行');
+    await expect(view(page).getByRole('alert')).toContainText('自动分析待验证入口');
+    await expect(view(page)).not.toContainText('已确认入口接线');
+    const [remainingAlerts] = await env.pool.query('SELECT id FROM alerts WHERE id = 9501');
+    expect(remainingAlerts).toHaveLength(1);
+  } finally {
+    for (const key of ['INVESTIGATION_OPS_AUTO_ENABLED', 'INVESTIGATION_OPS_SERVICE_USER_ID', 'INVESTIGATION_OPS_INSTANCE_IDS',
+      'INVESTIGATION_OPS_SERVER_IDS', 'INVESTIGATION_OPS_NETWORK_DEVICE_IDS']) delete process.env[key];
+    await env.pool.query("DELETE FROM system_config WHERE config_key='auto_analysis_config'");
+    await env.pool.query('DELETE FROM investigation_alert_owners');
+    await env.pool.query('DELETE FROM alerts WHERE id=9501');
+    await env.pool.query('DELETE FROM investigation_requests WHERE investigation_id=?', [investigation]);
+    await env.pool.query('DELETE FROM investigation_resources WHERE investigation_id=?', [investigation]);
+    await env.pool.query('DELETE FROM investigations WHERE id=?', [investigation]);
+    await env.pool.query('DELETE FROM chat_sessions WHERE session_id=?', [investigation]);
+    await env.pool.query('DELETE FROM workflow_jobs WHERE id=?', [job]);
+    if (serviceId) {
+      await env.pool.query('DELETE FROM instance_permissions WHERE user_id=?', [serviceId]);
+      await env.pool.query('DELETE FROM user_roles WHERE user_id=?', [serviceId]);
+      await env.pool.query('DELETE FROM users WHERE id=?', [serviceId]);
+    }
+    if (roleId) await env.pool.query('DELETE FROM roles WHERE id=?', [roleId]);
+    await grant();
+  }
+});

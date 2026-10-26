@@ -6,7 +6,7 @@ import { ActorContextService, type ActorContext } from '../auth/actor-context.js
 import { dbConnection } from '../db-connection.js';
 import { InvestigationAuthorization } from './authorization.js';
 import { InvestigationSessionBridge, investigationBudgetConfiguration } from './session-bridge.js';
-import { MysqlInvestigationBudgetLedger } from './budget-ledger.js';
+import { AUTOMATIC_ALERT_RESERVE_TOKENS, MysqlInvestigationBudgetLedger } from './budget-ledger.js';
 import { MysqlOperationalEventIngest } from './event-ingest.js';
 import { investigationBridgeFlags, databaseAlertPilotConfiguration } from './bridge-flags.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
@@ -164,7 +164,7 @@ export class DatabaseAlertBridge {
           policy: { id: resource.type === 'instance' ? 'database-alert-pilot' : `${resource.type}-alert-pilot`, version: 1, domain: admission.domain, actor: command.actor,
             profileId: 'ops', profileVersion: 1, resources: [{ ...resource, role: 'primary' }],
             kinds: [kind], threshold: 1, windowMs: 300_000, cooldownMs: 300_000, criticalSingle: true,
-            reserveTokens: 32_000, reserveCostMicros: config.reserveCostMicros } };
+            reserveTokens: AUTOMATIC_ALERT_RESERVE_TOKENS, reserveCostMicros: config.reserveCostMicros } };
         const ingest = new MysqlOperationalEventIngest(this.poolProvider, binding,
           new MysqlInvestigationBudgetLedger(this.poolProvider, admission.policy), this.authorization, this.bridge, modern ? input.context : undefined);
         const receipt = await ingest.ingest({ schemaVersion: 1, sourceEventId: `alert:${command.alert.id}`, kind,

@@ -9,7 +9,7 @@ afterEach(() => { document.body.replaceChildren(); window.history.replaceState({
 const coverage = (type: 'database' | 'server' | 'network_device', extra: Record<string, unknown> = {}) =>
   ({ type, status: 'not_configured', configuredCount: 0, existingCount: 0, permittedCount: 0, typePermission: false, ...extra });
 const policies = {
-  schemaVersion: 2, source: 'production_composition', originBoundary: 'investigation_engine_persist_only',
+  schemaVersion: 3, source: 'production_composition', originBoundary: 'investigation_engine_persist_only',
   policy: { id: 'database-alert-pilot', version: 1, profileId: 'ops', source: 'database-alert-engine', readonly: true },
   configurationStatus: 'not_configured',
   masterSwitch: { source: 'defaults', status: 'defaulted', enabled: true, severityLevels: ['critical', 'error', 'warning'],
@@ -17,9 +17,12 @@ const policies = {
   investigationSwitch: { enabled: false, manualEnabled: false, legacyEnabled: false, source: 'environment' },
   serviceIdentity: { status: 'not_configured', permissionsSufficient: false, missingPermissions: [], instanceScopeSufficient: true },
   resourceCoverage: [coverage('database'), coverage('server'), coverage('network_device')],
-  entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null },
-  budget: { status: 'uninitialized', quotaReached: false },
-  latestOutcome: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+  entry: { status: 'not_connected', observedReceiptCount: 0, lastObservedAt: null, witnessTypes: [] },
+  receipts: { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0, lastStatus: null, lastReason: null, lastAttemptAt: null },
+  execution: { observed: 0, accepted: 0, running: 0, completed: 0, failed: 0, cancelled: 0, suppressed: 0, unknown: 0,
+    lastStatus: null, lastAt: null },
+  budget: { status: 'uninitialized', quotaReached: false, capacityReached: false, reserveTokens: 32000,
+    reserveCostMicros: 1000000, admissionReasons: [] },
   automaticAnalysisStatus: 'blocked',
   blockers: [
     { code: 'SERVICE_IDENTITY_NOT_CONFIGURED', layer: 'configuration', remediation: 'deployment_environment' },
@@ -34,9 +37,16 @@ const unwired = { ...policies, configurationStatus: 'configured', automaticAnaly
   serviceIdentity: { ...policies.serviceIdentity, status: 'ready', permissionsSufficient: true },
   resourceCoverage: [coverage('database', { status: 'covered', configuredCount: 1, existingCount: 1, permittedCount: 1, typePermission: true }),
     coverage('server'), coverage('network_device')],
-  entry: { status: 'unverified', observedReceiptCount: 0, lastObservedAt: null },
-  budget: { status: 'matching', quotaReached: false },
+  entry: { status: 'unverified', observedReceiptCount: 0, lastObservedAt: null, witnessTypes: [] },
+  budget: { ...policies.budget, status: 'matching' },
   blockers: [{ code: 'ENTRY_NOT_OBSERVED', layer: 'wiring', remediation: 'alert_engine' }] };
+const wired = { ...unwired, automaticAnalysisStatus: 'available', entry: { status: 'connected', observedReceiptCount: 2,
+    lastObservedAt: '2026-10-26T00:00:00.000Z', witnessTypes: ['database'] },
+  receipts: { total: 3, accepted: 1, suppressed: 2, pending: 0, unknown: 0, lastStatus: 'accepted', lastReason: null,
+    lastAttemptAt: '2026-10-26T00:00:00.000Z' },
+  execution: { observed: 2, accepted: 0, running: 0, completed: 1, failed: 0, cancelled: 1, suppressed: 1, unknown: 0,
+    lastStatus: 'cancelled', lastAt: '2026-10-26T00:01:00.000Z' },
+  budget: { ...unwired.budget, capacityReached: false, admissionReasons: [] }, blockers: [] };
 
 it('renders unconfigured switches, identity and entry as separate facts', async () => {
   vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(policies)));
@@ -61,9 +71,40 @@ it('does not claim automatic analysis is available before an entry receipt exist
   const stats = [...element.shadowRoot!.querySelectorAll('stat-card')].map(card => (card as any).value);
   expect(stats).toContain('待验证入口');
   expect(text).toContain('自动分析待验证入口');
-  expect(text).toContain('未观察到入口回执');
+  expect(text).toContain('未观察到持久入口证据');
   expect(text).not.toContain('自动分析已就绪');
   expect(element.shadowRoot!.querySelector('[data-blocker="ENTRY_NOT_OBSERVED"]')).not.toBeNull();
+});
+
+it('keeps durable execution outcomes separate from historical receipts', async () => {
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(wired)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const text = element.shadowRoot!.textContent!;
+  expect(text).toContain('已确认入口接线');
+  expect(text).toContain('历史回执（全部告警）');
+  expect(text).toContain('最近执行结果');
+  expect(text).toContain('已完成');
+  expect(text).toContain('已取消');
+  expect(text).toContain('准入抑制');
+  expect(text).toContain('数据库');
+  expect(element.shadowRoot!.querySelectorAll('[data-blocker]')).toHaveLength(0);
+});
+
+it('shows the real automatic reserve and instantaneous admission reasons', async () => {
+  const blocked = { ...wired, automaticAnalysisStatus: 'blocked',
+    budget: { ...wired.budget, quotaReached: true, capacityReached: true,
+      admissionReasons: ['AUTOMATIC_DAILY_TOKENS', 'GLOBAL_CONCURRENCY'] },
+    blockers: [{ code: 'BUDGET_QUOTA_REACHED', layer: 'budget', remediation: 'budget_settings' },
+      { code: 'BUDGET_CAPACITY_REACHED', layer: 'budget', remediation: 'budget_settings' }] };
+  vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(blocked)));
+  const element = await mount(); await vi.waitFor(() => expect((element as any).facts).not.toBeNull());
+  await element.updateComplete;
+  const text = element.shadowRoot!.textContent!;
+  expect(text).toContain('32,000');
+  expect(text).toContain('余额不足以容纳一次预留');
+  expect(text).toContain('全局并发当前已满（瞬时）');
+  expect(element.shadowRoot!.querySelector('[data-blocker="BUDGET_CAPACITY_REACHED"]')).not.toBeNull();
 });
 
 it('routes missing items to the existing configuration pages', async () => {

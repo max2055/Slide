@@ -22,8 +22,8 @@ export interface AutomaticAnalysisDerivation {
 }
 
 /** Pure derivation from separately observed facts. Configuration may be
- * complete while execution is not; an unobserved entry stays "unverified"
- * rather than being reported as connected or available. */
+ * complete while execution is not; an entry without durable automatic
+ * evidence stays "unverified" rather than being reported as connected. */
 export function deriveAutomaticAnalysisFacts(input: AutomaticAnalysisInput): AutomaticAnalysisDerivation {
   const blockers: PolicyBlocker[] = [];
   const seen = new Set<string>();
@@ -52,18 +52,25 @@ export function deriveAutomaticAnalysisFacts(input: AutomaticAnalysisInput): Aut
 
   for (const coverage of input.resourceCoverage) {
     if (coverage.configuredCount === 0) continue;
-    if (coverage.existingCount === 0) { block('RESOURCE_UNAVAILABLE', 'resources', 'deployment_environment'); continue; }
-    if (input.serviceIdentity.status === 'ready' && !coverage.typePermission)
-      block('RESOURCE_PERMISSION_MISSING', 'authorization', 'user_permissions');
+    // Configured resources that no longer exist/are available block the type,
+    // whether all of them are gone or only a subset. An unconfigured type
+    // contributes nothing, so configured types still report their own facts.
+    if (coverage.existingCount < coverage.configuredCount) block('RESOURCE_UNAVAILABLE', 'resources', 'deployment_environment');
+    if (input.serviceIdentity.status !== 'ready') continue;
+    if (!coverage.typePermission) block('RESOURCE_PERMISSION_MISSING', 'authorization', 'user_permissions');
+    else if (coverage.permittedCount < coverage.existingCount) block('RESOURCE_INSTANCE_SCOPE_MISSING', 'authorization', 'user_permissions');
   }
 
   if (input.budget.status === 'unavailable') block('BUDGET_UNAVAILABLE', 'budget', 'budget_settings');
   else if (input.budget.status === 'uninitialized') block('BUDGET_UNINITIALIZED', 'budget', 'budget_settings');
   else if (input.budget.status === 'conflict') block('BUDGET_CONFLICT', 'budget', 'budget_settings');
+  // Daily/hourly/cost limits and the instantaneous concurrency snapshot are
+  // distinct refusal reasons; a reserve that no longer fits is a quota fact.
   if (input.budget.quotaReached) block('BUDGET_QUOTA_REACHED', 'budget', 'budget_settings');
+  if (input.budget.capacityReached) block('BUDGET_CAPACITY_REACHED', 'budget', 'budget_settings');
 
-  // Absent an observed automatic ingress receipt, a fully configured stack is
-  // not yet proven wired. Any earlier blocker already explains the gap.
+  // Absent durable automatic ownership, a fully configured stack is not yet
+  // proven wired. Any earlier blocker already explains the gap.
   if (blockers.length === 0 && input.entry.status !== 'connected')
     block('ENTRY_NOT_OBSERVED', 'wiring', 'alert_engine');
 

@@ -24,10 +24,20 @@ export const InvestigationPolicyBlockerCodeSchema = Type.Union([
   Type.Literal('RESOURCE_UNAVAILABLE'), Type.Literal('RESOURCE_PERMISSION_MISSING'),
   Type.Literal('RESOURCE_INSTANCE_SCOPE_MISSING'), Type.Literal('BUDGET_UNAVAILABLE'),
   Type.Literal('BUDGET_UNINITIALIZED'), Type.Literal('BUDGET_CONFLICT'), Type.Literal('BUDGET_QUOTA_REACHED'),
-  Type.Literal('ENTRY_NOT_OBSERVED'),
+  Type.Literal('BUDGET_CAPACITY_REACHED'), Type.Literal('ENTRY_NOT_OBSERVED'),
 ]);
+// Reasons a new automatic reservation would be refused right now. Quota and
+// cost limits are durable; concurrency reasons are an instantaneous snapshot.
+export const InvestigationAdmissionReasonSchema = Type.Union([
+  Type.Literal('AUTOMATIC_DAILY_TOKENS'), Type.Literal('TOTAL_DAILY_TOKENS'), Type.Literal('DAILY_COST'),
+  Type.Literal('AUTOMATIC_FREQUENCY'), Type.Literal('GLOBAL_CONCURRENCY'), Type.Literal('MANUAL_CAPACITY_RESERVED'),
+  Type.Literal('RESOURCE_CONCURRENCY'),
+]);
+const resourceType = Type.Union([Type.Literal('database'), Type.Literal('server'), Type.Literal('network_device')]);
+const receiptStatus = Type.Union([Type.Literal('accepted'), Type.Literal('suppressed'), Type.Literal('pending'),
+  Type.Literal('unknown'), Type.Null()]);
 export const InvestigationPoliciesResponseSchema = Type.Object({
-  schemaVersion: Type.Literal(2), source: Type.Literal('production_composition'),
+  schemaVersion: Type.Literal(3), source: Type.Literal('production_composition'),
   originBoundary: Type.Literal('investigation_engine_persist_only'),
   // The repository-owned pilot definition only. It is not resource coverage.
   policy: Type.Object({ id: Type.Literal('database-alert-pilot'), version: Type.Literal(1), profileId: Type.Literal('ops'),
@@ -54,24 +64,46 @@ export const InvestigationPoliciesResponseSchema = Type.Object({
     instanceScopeSufficient: Type.Boolean(),
   }, strict),
   resourceCoverage: Type.Array(Type.Object({
-    type: Type.Union([Type.Literal('database'), Type.Literal('server'), Type.Literal('network_device')]),
+    type: resourceType,
     status: Type.Union([Type.Literal('not_configured'), Type.Literal('covered'), Type.Literal('partial'),
       Type.Literal('unavailable')]),
     configuredCount: count, existingCount: count, permittedCount: count, typePermission: Type.Boolean(),
   }, strict), { maxItems: 3 }),
+  // Ingress wiring is proven only by durable automatic ownership on a resource
+  // currently in scope. Receipt tags alone remain observations, never proof.
   entry: Type.Object({
     status: Type.Union([Type.Literal('not_connected'), Type.Literal('unverified'), Type.Literal('connected')]),
     observedReceiptCount: count,
     lastObservedAt: Type.Union([Type.String({ pattern: isoInstant }), Type.Null()]),
+    witnessTypes: Type.Array(resourceType, { maxItems: 3 }),
   }, strict),
-  budget: Type.Object({ status: Type.Union([Type.Literal('uninitialized'), Type.Literal('matching'),
-    Type.Literal('conflict'), Type.Literal('unavailable')]), quotaReached: Type.Boolean() }, strict),
-  latestOutcome: Type.Object({
+  // Historical alerts.tags.auto_analysis receipts. A receipt proves the
+  // entrance was called; it never proves an execution ran or succeeded.
+  receipts: Type.Object({
     total: count, accepted: count, suppressed: count, pending: count, unknown: count,
-    lastStatus: Type.Union([Type.Literal('accepted'), Type.Literal('suppressed'), Type.Literal('pending'),
-      Type.Literal('unknown'), Type.Null()]),
+    lastStatus: receiptStatus,
     lastReason: Type.Union([Type.String({ pattern: '^[A-Z][A-Z0-9_]{0,63}$' }), Type.Null()]),
     lastAttemptAt: Type.Union([Type.String({ pattern: isoInstant }), Type.Null()]),
+  }, strict),
+  // Durable execution outcomes from automatic owners, investigation requests
+  // and workflow jobs. Mutually exclusive per owned alert.
+  execution: Type.Object({
+    observed: count, accepted: count, running: count, completed: count, failed: count,
+    cancelled: count, suppressed: count, unknown: count,
+    lastStatus: Type.Union([Type.Literal('accepted'), Type.Literal('running'), Type.Literal('completed'),
+      Type.Literal('failed'), Type.Literal('cancelled'), Type.Literal('suppressed'),
+      Type.Literal('unknown'), Type.Null()]),
+    lastAt: Type.Union([Type.String({ pattern: isoInstant }), Type.Null()]),
+  }, strict),
+  budget: Type.Object({
+    status: Type.Union([Type.Literal('uninitialized'), Type.Literal('matching'),
+      Type.Literal('conflict'), Type.Literal('unavailable')]),
+    // Evaluated with the same reserve as automatic admission; false means the
+    // check could not be evaluated, not that a new request would be accepted.
+    quotaReached: Type.Boolean(),
+    capacityReached: Type.Boolean(),
+    reserveTokens: count, reserveCostMicros: count,
+    admissionReasons: Type.Array(InvestigationAdmissionReasonSchema, { maxItems: 7 }),
   }, strict),
   automaticAnalysisStatus: Type.Union([Type.Literal('available'), Type.Literal('unverified'), Type.Literal('blocked')]),
   blockers: Type.Array(Type.Object({
@@ -81,7 +113,7 @@ export const InvestigationPoliciesResponseSchema = Type.Object({
     remediation: Type.Union([Type.Literal('analysis_settings'), Type.Literal('budget_settings'),
       Type.Literal('user_permissions'), Type.Literal('deployment_environment'), Type.Literal('alert_engine'),
       Type.Literal('none')]),
-  }, strict), { maxItems: 12 }),
+  }, strict), { maxItems: 20 }),
 }, { ...strict, $id: 'InvestigationPoliciesResponse' });
 export const InvestigationBudgetResponseSchema = Type.Object({
   schemaVersion: Type.Literal(1), source: Type.Literal('investigationBudgetConfiguration'),

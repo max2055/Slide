@@ -47,7 +47,20 @@ type PolicyBlocker = PolicyFacts['blockers'][number];
 const identityLabels: Record<PolicyFacts['serviceIdentity']['status'], string> = {
   not_configured: '尚未配置', not_found: '账号不存在', invalid: '不是专用服务身份', disabled: '账号已停用', ready: '已就绪' };
 const entryLabels: Record<PolicyFacts['entry']['status'], string> = {
-  not_connected: '尚未接入', unverified: '未观察到入口回执', connected: '已观察到入口回执' };
+  not_connected: '尚未接入', unverified: '未观察到持久入口证据', connected: '已确认入口接线' };
+const receiptStatusLabels: Record<NonNullable<PolicyFacts['receipts']['lastStatus']>, string> = {
+  accepted: '已受理', suppressed: '已抑制', pending: '待处理', unknown: '未知' };
+const executionLabels: Record<NonNullable<PolicyFacts['execution']['lastStatus']>, string> = {
+  accepted: '已受理待执行', running: '执行中', completed: '已完成', failed: '执行失败',
+  cancelled: '已取消', suppressed: '准入抑制', unknown: '结果未知' };
+const admissionReasonLabels: Record<PolicyFacts['budget']['admissionReasons'][number], string> = {
+  AUTOMATIC_FREQUENCY: '自动每小时请求已达上限',
+  AUTOMATIC_DAILY_TOKENS: '自动每日 Token 余额不足以容纳一次预留',
+  TOTAL_DAILY_TOKENS: '全部每日 Token 余额不足以容纳一次预留',
+  DAILY_COST: '每日成本余额不足以容纳一次预留',
+  GLOBAL_CONCURRENCY: '全局并发当前已满（瞬时）',
+  MANUAL_CAPACITY_RESERVED: '自动通道并发当前已满（手动保留容量，瞬时）',
+  RESOURCE_CONCURRENCY: '已配置资源并发当前均已满（瞬时）' };
 const budgetLabels: Record<PolicyFacts['budget']['status'], string> = {
   uninitialized: '尚未初始化', matching: '与冻结策略一致', conflict: '与冻结策略冲突', unavailable: '预算配置不可用' };
 const coverageLabels = { database: '数据库', server: '服务器', network_device: '网络设备' } as const;
@@ -70,8 +83,9 @@ const blockerLabels: Record<PolicyBlocker['code'], string> = {
   BUDGET_UNAVAILABLE: '预算配置不可用',
   BUDGET_UNINITIALIZED: '预算域尚未初始化，自动准入无法保留额度',
   BUDGET_CONFLICT: '当前配置与冻结预算冲突，不能视为可准入',
-  BUDGET_QUOTA_REACHED: '当天自动额度或成本已达到上限',
-  ENTRY_NOT_OBSERVED: '尚未观察到自动入口回执，不能确认已接通',
+  BUDGET_QUOTA_REACHED: '当天额度、频次或成本余额不足以容纳下一次自动预留',
+  BUDGET_CAPACITY_REACHED: '当前并发快照没有可用槽位（瞬时事实）',
+  ENTRY_NOT_OBSERVED: '尚未观察到持久自动入口证据，不能确认已接线',
 };
 const remediationLabels: Record<PolicyBlocker['remediation'], string> = {
   analysis_settings: '前往自动分析设置', budget_settings: '前往有效预算', user_permissions: '前往用户与权限',
@@ -354,8 +368,8 @@ export class InvestigationGovernancePage extends LitElement {
     const master = facts.masterSwitch, investigation = facts.investigationSwitch, identity = facts.serviceIdentity;
     const available = facts.automaticAnalysisStatus === 'available';
     const headline = { available: '已就绪', unverified: '待验证入口', blocked: '尚未可用' }[facts.automaticAnalysisStatus];
-    const headlineHint = available ? '已观察到自动入口回执；配置与权限为当前读取事实'
-      : facts.automaticAnalysisStatus === 'unverified' ? '配置与开关已就绪，但尚无入口回执'
+    const headlineHint = available ? '已确认持久自动入口证据；配置与权限为当前读取事实'
+      : facts.automaticAnalysisStatus === 'unverified' ? '配置与开关已就绪，但尚无持久自动入口证据'
         : `${facts.blockers.length} 项阻塞，逐项修复后再判断`;
     return html`<div class="metrics">
         ${stat('配置完整', facts.configurationStatus === 'configured' ? '已配置' : facts.configurationStatus === 'invalid' ? '配置无效' : '尚未配置', '专用身份 + 资源范围 + 总开关格式')}
@@ -364,7 +378,7 @@ export class InvestigationGovernancePage extends LitElement {
       </div>
       ${facts.blockers.length
         ? html`<div class="notice" role="alert"><div><strong>${facts.automaticAnalysisStatus === 'unverified' ? '自动分析待验证入口' : '自动分析尚不可用'}</strong><ul class="rules">${facts.blockers.map(blocker => html`<li data-blocker=${blocker.code}>${blockerLabels[blocker.code]} · ${this.remediationAction(blocker)}</li>`)}</ul></div></div>`
-        : html`<div class="notice neutral" role="status"><div><strong>${headline}</strong>配置、入口、权限与预算均为当前读取事实；历史回执不代表每次都成功。</div></div>`}
+        : html`<div class="notice neutral" role="status"><div><strong>${headline}</strong>配置、入口、权限与预算均为当前读取事实；历史回执与曾成功的执行都不代表下次一定成功。</div></div>`}
       <div class="section-head"><h2>总开关与调查开关</h2><span class="caption">两个开关分别控制不同入口，必须同时开启</span></div>
       <app-card><div class="definitions-grid">
         <div><h3>AI 总开关</h3>${badge(master.status === 'invalid' ? '配置无效' : master.enabled ? '已开启' : '已关闭', master.status === 'invalid' ? 'danger' : master.enabled ? 'ok' : 'muted')}
@@ -394,21 +408,36 @@ export class InvestigationGovernancePage extends LitElement {
           status: badge(coverageStatusLabels[coverage.status], coverage.status === 'covered' ? 'ok' : coverage.status === 'partial' ? 'warn' : coverage.status === 'unavailable' ? 'danger' : 'muted'),
           configured: fmt(coverage.configuredCount), existing: fmt(coverage.existingCount), permitted: fmt(coverage.permittedCount),
           permission: coverage.typePermission ? '已具备' : '缺少' })))}</app-card>
-      <div class="section-head"><h2>自动入口与最近结果</h2><span class="caption">回执只证明入口被调用，不证明模型执行成功</span></div>
+      <div class="section-head"><h2>自动入口接线</h2><span class="caption">只有当前配置范围内的持久自动接管证据才算接线</span></div>
       <app-card><div class="definitions-grid"><div>
           ${badge(entryLabels[facts.entry.status], facts.entry.status === 'connected' ? 'ok' : facts.entry.status === 'unverified' ? 'warn' : 'muted')}
-          ${pairs([['入口状态', entryLabels[facts.entry.status]], ['已观察回执', `${fmt(facts.entry.observedReceiptCount)} 条`],
-            ['最近回执时间', facts.entry.lastObservedAt ?? '无']])}
-          <p class="caption">未观察到回执时尚不能宣称可自动分析；历史回执来自 alerts.tags.auto_analysis。</p></div>
-        <div><h3>最近结果分布</h3>${pairs([['已受理', fmt(facts.latestOutcome.accepted)], ['已抑制', fmt(facts.latestOutcome.suppressed)],
-            ['待处理', fmt(facts.latestOutcome.pending)], ['未知', fmt(facts.latestOutcome.unknown)],
-            ['最近状态', facts.latestOutcome.lastStatus ?? '无'], ['最近原因', facts.latestOutcome.lastReason ?? '无'],
-            ['最近尝试', facts.latestOutcome.lastAttemptAt ?? '无']])}</div>
+          ${pairs([['入口状态', entryLabels[facts.entry.status]], ['当前范围回执', `${fmt(facts.entry.observedReceiptCount)} 条`],
+            ['最近回执时间', facts.entry.lastObservedAt ?? '无'],
+            ['已观察接线的资源类型', facts.entry.witnessTypes.length ? facts.entry.witnessTypes.map(type => coverageLabels[type]).join('、') : '无']])}
+          <p class="caption">接线证据来自 investigation_alert_owners 的自动调查接管记录；任意历史告警标签或已删除资源都不能证明当前范围已接线。</p></div>
+        <div><h3>历史回执（全部告警）</h3>${pairs([['已受理', fmt(facts.receipts.accepted)], ['已抑制', fmt(facts.receipts.suppressed)],
+            ['待处理', fmt(facts.receipts.pending)], ['未知', fmt(facts.receipts.unknown)], ['回执总数', fmt(facts.receipts.total)],
+            ['最近状态', facts.receipts.lastStatus ? receiptStatusLabels[facts.receipts.lastStatus] : '无'],
+            ['最近原因', facts.receipts.lastReason ?? '无'], ['最近尝试', facts.receipts.lastAttemptAt ?? '无']])}
+          <p class="caption">alerts.tags.auto_analysis 只证明入口曾尝试，不证明模型执行或成功。</p></div>
+      </div></app-card>
+      <div class="section-head"><h2>最近执行结果</h2><span class="caption">来自持久接管、调查请求与工作流任务的真实终态</span></div>
+      <app-card><div class="definitions-grid"><div>
+          ${facts.execution.observed ? badge(executionLabels[facts.execution.lastStatus!], facts.execution.lastStatus === 'completed' ? 'ok' : ['failed', 'cancelled'].includes(facts.execution.lastStatus!) ? 'danger' : 'warn') : badge('尚无持久执行', 'muted')}
+          ${pairs([['已观察到接管', `${fmt(facts.execution.observed)} 次`], ['已受理待执行', fmt(facts.execution.accepted)],
+            ['执行中', fmt(facts.execution.running)], ['已完成', fmt(facts.execution.completed)], ['执行失败', fmt(facts.execution.failed)],
+            ['已取消', fmt(facts.execution.cancelled)], ['准入抑制', fmt(facts.execution.suppressed)],
+            ['结果未知', fmt(facts.execution.unknown)]])}
+          <p class="caption">最近状态 ${facts.execution.lastStatus ? executionLabels[facts.execution.lastStatus] : '无'} · ${facts.execution.lastAt ?? '无时间'}</p></div>
+        <div><h3>口径</h3><p class="caption">回执观察与执行结果互不替代：入口回执不等于执行，执行成功也不证明此刻的权限与预算仍充足。</p></div>
       </div></app-card>
       <div class="section-head"><h2>预算与准入</h2>${badge(budgetLabels[facts.budget.status], facts.budget.status === 'matching' ? 'ok' : facts.budget.status === 'conflict' ? 'danger' : facts.budget.status === 'unavailable' ? 'danger' : 'warn')}</div>
       <app-card><div class="definitions-grid"><div>${pairs([['冻结策略', budgetLabels[facts.budget.status]],
-            ['当天额度', facts.budget.quotaReached ? '已达到上限' : facts.budget.status === 'matching' ? '未达到上限' : '无法判断']])}
-          <p class="caption">只读汇总；不推算剩余额度，也不代表供应商账单。</p></div>
+            ['下一次自动预留', facts.budget.status !== 'matching' ? '无法判断' : facts.budget.quotaReached || facts.budget.capacityReached ? '当前会被拒绝' : '当前可容纳'],
+            ['每次预留 Token', fmt(facts.budget.reserveTokens)],
+            ['每次预留成本', `${fmt(facts.budget.reserveCostMicros)} micro`],
+            ['准入原因', facts.budget.admissionReasons.length ? facts.budget.admissionReasons.map(reason => admissionReasonLabels[reason]).join('；') : '无']])}
+          <p class="caption">按当前自动准入的同一预留量比较；并发原因为瞬时快照，不保证未来发送一定成功。只读汇总，不创建域或保留额度。</p></div>
         <div><h3>处理路径</h3><p class="caption">未初始化时首次准入才会创建账本域；本页刷新不会创建或保留额度。</p>
           <button class="link" data-remediation="budget_settings" @click=${() => this.openRemediation('budget_settings')}>前往有效预算 →</button></div>
       </div></app-card>
@@ -427,7 +456,7 @@ export class InvestigationGovernancePage extends LitElement {
       <div class="metrics">${stat('全部每日 Token 上限',fmt(policy.maxTotalTokensPerDay),'UTC 日窗口 · 配置额度')}${stat('自动每日 Token 上限',fmt(policy.maxAutomaticTokensPerDay),'包含在全部每日上限中')}${stat('每日成本上限',money(policy.maxCostMicrosPerDay,policy.currency),'按配置费率估算 · 非剩余余额')}</div>
       <div class="section-head"><h2>预算规则</h2><span class="caption">当前加载配置 · 只读</span></div><app-card data-budget="loader"><div class="definitions-grid"><div><h3>并发与频次</h3>${pairs([['全局并发',`${fmt(policy.maxConcurrent)} 个`],['其中手动保留',`${fmt(policy.manualReserved)} 个`],['每资源并发',`${fmt(policy.maxPerResourceConcurrent)} 个`],['自动每小时请求',`${fmt(policy.maxAutomaticRequestsPerHour)} 次`]])}</div><div><h3>成本与预留</h3>${pairs([['币种',policy.currency],['每日成本上限',money(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',money(facts.reserveCostMicros,policy.currency)],['窗口时区','UTC']])}</div></div><details><summary>查看精确值与配置来源</summary>${pairs([['每日成本上限',exactMoney(policy.maxCostMicrosPerDay,policy.currency)],['每执行保留成本',exactMoney(facts.reserveCostMicros,policy.currency)],['配置来源',facts.policySource === 'settings' ? '有效预算设置' : '部署加载器'],['账本域',`${facts.domain} · 修订 ${facts.admissionRevision}`]])}</details></app-card>
       <div class="section-head"><h2>持久冻结配置</h2>${badge(facts.admissionStatus === 'conflict' ? '配置冲突' : frozen ? '一致' : '未初始化',facts.admissionStatus === 'conflict' ? 'danger' : frozen ? 'ok' : 'muted')}</div><app-card data-budget="frozen" .compact=${!!frozen}>${frozen ? table([{key:'field',label:'关键字段',width:'40%'},{key:'loader',label:'当前配置',width:'30%'},{key:'persisted',label:'冻结配置',width:'30%'}],fields.map(([key,label]) => ({field:label,loader:value(key,policy),persisted:html`<span class=${policy[key] !== frozen[key] ? 'conflict' : ''}>${value(key,frozen)}${policy[key] !== frozen[key] ? ' · 不一致' : ''}</span>`}))) : html`<app-empty-state icon="clipboard" title="尚无冻结预算" description="预算域尚未初始化。只读刷新不会保留额度或触发调查。"></app-empty-state>`}</app-card>
-      <p class="detail-note">额度不等于余额或供应商收费；Profile 上限见调查 Profiles。${facts.automaticTriggerStatus === 'connected' ? '数据库告警试点已接入；每次实时校验权限与预算。' : '自动触发尚未接入。'}</p>`;
+      <p class="detail-note">额度不等于余额或供应商收费；Profile 上限见调查 Profiles。${facts.automaticTriggerStatus === 'connected' ? '已确认当前配置范围内的持久自动入口证据；每次实时校验权限与预算。' : '尚未观察到持久自动入口证据，不能确认已接入。'}</p>`;
   }
   private renderUsage(facts: InvestigationUsageResponse) {
     return html`<div class="metrics four">${stat('已知结算 Token',fmt(facts.settledTokens),`${fmt(facts.knownUsageCount)} 条已知用量`)}${stat('当前保留 Token',fmt(facts.outstandingTokens),'未释放的额度保留')}${stat('未知 / 待返回',`${fmt(facts.unknownUsageCount)} / ${fmt(facts.pendingUsageCount)}`,'不能当作零用量或零费用')}${stat('预留记录',fmt(facts.total),`${fmt(facts.groupCount)} 个账本分组`)}</div>
@@ -445,8 +474,10 @@ export class InvestigationGovernancePage extends LitElement {
       title = '自动分析 · 触发边界'; body = html`${pairs([['配置完整', facts.configurationStatus],
         ['AI 总开关', facts.masterSwitch.status === 'invalid' ? '配置无效' : facts.masterSwitch.enabled ? '已开启' : '已关闭'],
         ['调查自动开关', facts.investigationSwitch.enabled ? '已开启' : '未开启'],
-        ['自动入口', entryLabels[facts.entry.status]], ['专用服务身份', identityLabels[facts.serviceIdentity.status]],
-        ['预算', budgetLabels[facts.budget.status]], ['执行模式', '只读']])}<p class="detail-note">主体、全部必需资源、工具策略和预算均逐次实时核验。入口回执出现之前不会宣称可自动分析；内部调查事件仅持久化，不触发自身调查。</p><details><summary>策略技术标识</summary><pre>${JSON.stringify(facts, null, 2)}</pre></details>`;
+        ['自动入口', entryLabels[facts.entry.status]], ['已接线资源类型', facts.entry.witnessTypes.length ? facts.entry.witnessTypes.map(type => coverageLabels[type]).join('、') : '无'],
+        ['最近执行', facts.execution.lastStatus ? executionLabels[facts.execution.lastStatus] : '无'],
+        ['专用服务身份', identityLabels[facts.serviceIdentity.status]],
+        ['预算', budgetLabels[facts.budget.status]], ['执行模式', '只读']])}<p class="detail-note">主体、全部必需资源、工具策略和预算均逐次实时核验。缺少当前配置范围内的持久自动接管证据时不会宣称已接线；内部调查事件仅持久化，不触发自身调查。</p><details><summary>策略技术标识</summary><pre>${JSON.stringify(facts, null, 2)}</pre></details>`;
     } else if (this.dialog === 'ledger' && this.facts && this.kind === 'usage') {
       const facts = this.facts as InvestigationUsageResponse; title = '持久账本 · 汇总口径';
       body = html`<div data-usage="totals">${pairs([['Reservation 总数',fmt(facts.total)],['分组总数',fmt(facts.groupCount)],...Object.entries(stateLabels).map(([key,label]): [string,unknown] => [label,fmt(facts.counts[key as keyof typeof stateLabels])]),['已知用量数',fmt(facts.knownUsageCount)],['未知用量数',fmt(facts.unknownUsageCount)],['待返回用量数',fmt(facts.pendingUsageCount)],['历史预留 Token',fmt(facts.reservedTokens)],['当前保留 Token',fmt(facts.outstandingTokens)],['已知结算 Token',fmt(facts.settledTokens)]])}</div><p class="detail-note">发送前取消不代表供应商返回零用量。未知、待返回或缺费率部分未计入已知估算。</p><details><summary>精确成本值</summary>${facts.costs.map(cost => html`<div data-currency=${cost.currency}>${pairs([['币种',cost.currency],['历史预留成本',exactMoney(cost.reservedCostMicros,cost.currency)],['当前保留成本',exactMoney(cost.outstandingCostMicros,cost.currency)],['已知结算估算',exactMoney(cost.estimatedSettledCostMicros,cost.currency)]])}</div>`)}</details>`;

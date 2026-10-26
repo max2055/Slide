@@ -7,7 +7,7 @@ import { isValidInvestigationServiceIdentity } from '../auth/investigation-servi
 import { hasPermission } from '../auth/require-permission.js';
 import { DEFAULT_CONFIG } from '../ai-analysis-config-service.js';
 import { freezeInvestigationCaller } from './authorization.js';
-import { MysqlInvestigationBudgetLedger, type BudgetPolicy } from './budget-ledger.js';
+import { MysqlInvestigationBudgetLedger, AUTOMATIC_ALERT_RESERVE_TOKENS, type BudgetPolicy } from './budget-ledger.js';
 import { investigationBudgetConfiguration } from './session-bridge.js';
 import { InvestigationBudgetPolicySchema, type InvestigationPoliciesResponse, type InvestigationBudgetResponse,
   type InvestigationUsageResponse } from './governance-contracts.js';
@@ -51,6 +51,49 @@ const SEVERITIES = ['info', 'warning', 'error', 'critical'] as const;
 const PILOT_MAX_RESOURCES = 20;
 const RESOURCE_PERMISSION = { database: 'instance:view', server: 'servers:view', network_device: 'network_devices:view' } as const;
 const RESOURCE_TABLE = { database: 'database_instances', server: 'servers', network_device: 'network_devices' } as const;
+/** Alert column and ledger resource-key prefix per configured resource type.
+ * A fixed pilot policy id never implies coverage of another type. */
+const ALERT_COLUMN = { database: 'instance_id', server: 'server_id', network_device: 'network_device_id' } as const;
+const RESOURCE_KEY_PREFIX = { database: 'instance', server: 'server', network_device: 'network_device' } as const;
+type ResourceType = keyof typeof RESOURCE_PERMISSION;
+type ResourceIds = Record<ResourceType, number[]>;
+const QUOTA_REASONS = ['AUTOMATIC_FREQUENCY', 'AUTOMATIC_DAILY_TOKENS', 'TOTAL_DAILY_TOKENS', 'DAILY_COST'] as const;
+const CAPACITY_REASONS = ['GLOBAL_CONCURRENCY', 'MANUAL_CAPACITY_RESERVED', 'RESOURCE_CONCURRENCY'] as const;
+/** Only alerts whose resource is in the currently configured scope can say
+ * anything about that scope; global history never stands in for it. */
+function scopePredicate(ids: ResourceIds): { sql: string; values: unknown[] } | null {
+  const parts: string[] = [];
+  const values: unknown[] = [];
+  for (const type of Object.keys(ALERT_COLUMN) as ResourceType[]) {
+    if (!ids[type].length) continue;
+    parts.push(`a.${ALERT_COLUMN[type]} IN (${ids[type].map(() => '?').join(',')})`);
+    values.push(...ids[type]);
+  }
+  return parts.length ? { sql: `(${parts.join(' OR ')})`, values } : null;
+}
+/** SQL CASE mapping an alert row to the configured type it belongs to. */
+function resourceTypeCase(ids: ResourceIds): { sql: string; values: unknown[] } {
+  const branches: string[] = [];
+  const values: unknown[] = [];
+  for (const type of Object.keys(ALERT_COLUMN) as ResourceType[]) {
+    if (!ids[type].length) continue;
+    branches.push(`WHEN a.${ALERT_COLUMN[type]} IN (${ids[type].map(() => '?').join(',')}) THEN '${type}'`);
+    values.push(...ids[type]);
+  }
+  return { sql: `CASE ${branches.join(' ')} ELSE NULL END`, values };
+}
+type ExecutionOutcome = NonNullable<InvestigationPoliciesResponse['execution']['lastStatus']>;
+/** Durable state mapping: owners without an investigation were suppressed at
+ * admission; otherwise the workflow job carries the real terminal outcome. */
+function executionStatus(investigationId: unknown, jobState: unknown): ExecutionOutcome {
+  if (investigationId == null) return 'suppressed';
+  const job = typeof jobState === 'string' ? jobState : null;
+  return job === 'queued' ? 'accepted'
+    : job === 'running' || job === 'retry' ? 'running'
+      : job === 'completed' ? 'completed'
+        : job === 'dead_letter' ? 'failed'
+          : job === 'cancelled' ? 'cancelled' : 'unknown';
+}
 const masterDefaults = (): InvestigationPoliciesResponse['masterSwitch'] => ({
   source: 'defaults', status: 'defaulted', enabled: DEFAULT_CONFIG.enabled,
   severityLevels: [...DEFAULT_CONFIG.severityLevels] as InvestigationPoliciesResponse['masterSwitch']['severityLevels'],
@@ -220,15 +263,12 @@ export class InvestigationGovernanceStore {
         .filter(type => environment.ids[type].length > 0).map(type => RESOURCE_PERMISSION[type])];
       const serviceIdentity = await serviceIdentityFacts(c, this.contexts, environment, required);
       const resourceCoverage = await resourceCoverageFacts(c, environment.ids, serviceIdentity);
-      const budget = await this.budgetFacts(c);
-      const outcome = await this.receiptFacts(c);
-      const entry: InvestigationPoliciesResponse['entry'] = {
-        status: masterSwitch.status === 'invalid' || !masterSwitch.enabled || !investigationSwitch.enabled ? 'not_connected'
-          : outcome.total > 0 ? 'connected' : 'unverified',
-        observedReceiptCount: outcome.total, lastObservedAt: outcome.lastAttemptAt };
+      const budget = await this.budgetFacts(c, environment.ids);
+      const observed = await this.entryFacts(c, masterSwitch, investigationSwitch.enabled, environment.ids);
       const { configurationStatus, automaticAnalysisStatus, blockers } = deriveAutomaticAnalysisFacts({
-        masterSwitch, investigationSwitch, scopeStatus: environment.scopeStatus, serviceIdentity, resourceCoverage, budget, entry });
-      return { schemaVersion: 2 as const, source: 'production_composition' as const,
+        masterSwitch, investigationSwitch, scopeStatus: environment.scopeStatus, serviceIdentity, resourceCoverage, budget,
+        entry: observed.entry });
+      return { schemaVersion: 3 as const, source: 'production_composition' as const,
         originBoundary: 'investigation_engine_persist_only' as const,
         policy: { id: 'database-alert-pilot' as const, version: 1 as const, profileId: 'ops' as const,
           source: 'database-alert-engine' as const, readonly: true as const },
@@ -236,27 +276,40 @@ export class InvestigationGovernanceStore {
         serviceIdentity: { status: serviceIdentity.status, permissionsSufficient: serviceIdentity.permissionsSufficient,
           missingPermissions: serviceIdentity.missingPermissions,
           instanceScopeSufficient: serviceIdentity.instanceScopeSufficient },
-        resourceCoverage, entry, budget,
-        latestOutcome: { total: outcome.total, accepted: outcome.accepted, suppressed: outcome.suppressed,
-          pending: outcome.pending, unknown: outcome.unknown, lastStatus: outcome.lastStatus,
-          lastReason: outcome.lastReason, lastAttemptAt: outcome.lastAttemptAt },
+        resourceCoverage, entry: observed.entry, receipts: observed.receipts, execution: observed.execution, budget,
         automaticAnalysisStatus, blockers };
     });
   }
 
-  /** Read-only receipt aggregates from the alerts observation, never a claim
-   * that a model ran or succeeded. Unknown statuses stay counted as unknown. */
-  private async receiptFacts(c: PoolConnection): Promise<{
-    total: number; accepted: number; suppressed: number; pending: number; unknown: number;
-    lastStatus: InvestigationPoliciesResponse['latestOutcome']['lastStatus'];
-    lastReason: string | null; lastAttemptAt: string | null;
-  }> {
-    const groups = await rows(c, `SELECT JSON_UNQUOTE(JSON_EXTRACT(tags, '$.auto_analysis.status')) AS status, COUNT(*) AS n
-      FROM alerts WHERE JSON_TYPE(JSON_EXTRACT(tags, '$.auto_analysis')) = 'OBJECT'
-      GROUP BY JSON_UNQUOTE(JSON_EXTRACT(tags, '$.auto_analysis.status'))`);
-    const result = { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0,
-      lastStatus: null as InvestigationPoliciesResponse['latestOutcome']['lastStatus'], lastReason: null as string | null,
-      lastAttemptAt: null as string | null };
+  /** Entry wiring, historical receipts and durable execution outcomes are three
+   * separate observations. Only durable automatic ownership on a currently
+   * configured resource proves the entrance is wired; tag history alone never
+   * does, and neither substitutes for an execution outcome. */
+  private async entryFacts(c: PoolConnection, masterSwitch: InvestigationPoliciesResponse['masterSwitch'],
+    automaticEnabled: boolean, ids: ResourceIds): Promise<{
+      entry: InvestigationPoliciesResponse['entry'];
+      receipts: InvestigationPoliciesResponse['receipts'];
+      execution: InvestigationPoliciesResponse['execution'];
+    }> {
+    const receipts = await this.receiptFacts(c);
+    const scoped = await this.scopedReceiptFacts(c, ids);
+    const execution = await this.executionFacts(c, ids);
+    const wiringPossible = masterSwitch.status !== 'invalid' && masterSwitch.enabled && automaticEnabled;
+    return {
+      entry: { status: !wiringPossible ? 'not_connected' : execution.facts.observed > 0 ? 'connected' : 'unverified',
+        observedReceiptCount: scoped.count, lastObservedAt: scoped.lastAttemptAt,
+        witnessTypes: execution.witnessTypes },
+      receipts, execution: execution.facts };
+  }
+
+  /** Global receipt history from alert tags. These are observations of the
+   * entrance, never evidence that a model ran or that the current scope works. */
+  private async receiptFacts(c: PoolConnection): Promise<InvestigationPoliciesResponse['receipts']> {
+    const groups = await rows(c, `SELECT JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.status')) AS status, COUNT(*) AS n
+      FROM alerts a WHERE JSON_TYPE(JSON_EXTRACT(a.tags, '$.auto_analysis')) = 'OBJECT'
+      GROUP BY JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.status'))`);
+    const result: InvestigationPoliciesResponse['receipts'] = { total: 0, accepted: 0, suppressed: 0, pending: 0, unknown: 0,
+      lastStatus: null, lastReason: null, lastAttemptAt: null };
     for (const group of groups) {
       const n = number(group.n); result.total = number(result.total + n);
       const status = String(group.status ?? '').toLowerCase();
@@ -265,10 +318,10 @@ export class InvestigationGovernanceStore {
       else if (status === 'pending') result.pending = number(result.pending + n);
       else result.unknown = number(result.unknown + n);
     }
-    const [last] = await rows(c, `SELECT JSON_UNQUOTE(JSON_EXTRACT(tags, '$.auto_analysis.status')) AS status,
-      JSON_UNQUOTE(JSON_EXTRACT(tags, '$.auto_analysis.reason')) AS reason,
-      JSON_UNQUOTE(JSON_EXTRACT(tags, '$.auto_analysis.attemptedAt')) AS attempted_at
-      FROM alerts WHERE JSON_TYPE(JSON_EXTRACT(tags, '$.auto_analysis')) = 'OBJECT' ORDER BY id DESC LIMIT 1`);
+    const [last] = await rows(c, `SELECT JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.status')) AS status,
+      JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.reason')) AS reason,
+      JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.attemptedAt')) AS attempted_at
+      FROM alerts a WHERE JSON_TYPE(JSON_EXTRACT(a.tags, '$.auto_analysis')) = 'OBJECT' ORDER BY a.id DESC LIMIT 1`);
     const status = String(last?.status ?? '').toLowerCase();
     result.lastStatus = status === 'accepted' || status === 'suppressed' || status === 'pending' || status === 'unknown'
       ? status : null;
@@ -277,37 +330,140 @@ export class InvestigationGovernanceStore {
     return result;
   }
 
-  /** Budget readiness mirrors the admission snapshot check without creating a
-   * domain. Quota exhaustion is a same-day/outstanding aggregate only. */
-  private async budgetFacts(c: PoolConnection): Promise<InvestigationPoliciesResponse['budget']> {
+  /** Receipts whose alert belongs to the currently configured resources. This
+   * scopes the observation; it still does not prove durable execution. */
+  private async scopedReceiptFacts(c: PoolConnection, ids: ResourceIds): Promise<{ count: number; lastAttemptAt: string | null }> {
+    const scope = scopePredicate(ids);
+    if (!scope) return { count: 0, lastAttemptAt: null };
+    const [row] = await rows(c, `SELECT COUNT(*) AS n,
+      MAX(JSON_UNQUOTE(JSON_EXTRACT(a.tags, '$.auto_analysis.attemptedAt'))) AS attempted_at
+      FROM alerts a WHERE JSON_TYPE(JSON_EXTRACT(a.tags, '$.auto_analysis')) = 'OBJECT' AND ${scope.sql}`, scope.values);
+    return { count: number(row?.n),
+      lastAttemptAt: typeof row?.attempted_at === 'string' && ISO_INSTANT.test(row.attempted_at) ? row.attempted_at : null };
+  }
+
+  /** Durable automatic executions: the owner row froze the lane before any
+   * admission, the investigation request accepted the work, and the workflow
+   * job carries the real terminal state. Reads never create any of them. */
+  private async executionFacts(c: PoolConnection, ids: ResourceIds): Promise<{
+    facts: InvestigationPoliciesResponse['execution']; witnessTypes: ResourceType[];
+  }> {
+    const result: InvestigationPoliciesResponse['execution'] = { observed: 0, accepted: 0, running: 0, completed: 0,
+      failed: 0, cancelled: 0, suppressed: 0, unknown: 0, lastStatus: null, lastAt: null };
+    const scope = scopePredicate(ids);
+    if (!scope) return { facts: result, witnessTypes: [] };
+    const typeCase = resourceTypeCase(ids);
+    const joins = `FROM investigation_alert_owners o
+      JOIN alerts a ON a.id = o.alert_id
+      LEFT JOIN investigations i ON i.id = o.investigation_id
+      LEFT JOIN investigation_requests r ON r.id = i.active_request_id
+      LEFT JOIN workflow_jobs j ON j.id COLLATE utf8mb4_unicode_ci = r.job_id
+      WHERE o.lane = 'investigation' AND JSON_UNQUOTE(JSON_EXTRACT(o.command_snapshot, '$.trigger')) = 'auto'
+        AND ${scope.sql}`;
+    // Aggregate in SQL so a long history cannot silently undercount behind a
+    // JS row cap; the latest row is read separately for the most recent state.
+    const groups = await rows(c, `SELECT ${typeCase.sql} AS resource_type, COUNT(*) AS observed,
+      SUM(o.investigation_id IS NULL) AS suppressed,
+      SUM(o.investigation_id IS NOT NULL AND j.id IS NULL) AS unknown,
+      SUM(o.investigation_id IS NOT NULL AND j.state = 'queued') AS accepted,
+      SUM(o.investigation_id IS NOT NULL AND j.state IN ('running','retry')) AS running,
+      SUM(o.investigation_id IS NOT NULL AND j.state = 'completed') AS completed,
+      SUM(o.investigation_id IS NOT NULL AND j.state = 'dead_letter') AS failed,
+      SUM(o.investigation_id IS NOT NULL AND j.state = 'cancelled') AS cancelled
+      ${joins} GROUP BY resource_type`, [...typeCase.values, ...scope.values]);
+    const witness = new Set<ResourceType>();
+    for (const group of groups) {
+      const type = String(group.resource_type ?? '') as ResourceType;
+      if (type in ALERT_COLUMN) witness.add(type);
+      for (const key of ['observed', 'suppressed', 'unknown', 'accepted', 'running', 'completed', 'failed', 'cancelled'] as const)
+        result[key] = number(result[key] + number(group[key]));
+    }
+    const [last] = await rows(c, `SELECT o.investigation_id, j.state AS job_state,
+      DATE_FORMAT(o.created_at, '%Y-%m-%dT%H:%i:%s.000Z') AS owned_at
+      ${joins} ORDER BY o.created_at DESC, o.alert_id DESC LIMIT 1`, scope.values);
+    if (last) {
+      result.lastStatus = executionStatus(last.investigation_id, last.job_state);
+      result.lastAt = typeof last.owned_at === 'string' && ISO_INSTANT.test(last.owned_at) ? last.owned_at : null;
+    }
+    return { facts: result, witnessTypes: [...witness] };
+  }
+
+  /** Budget readiness mirrors the real automatic admission snapshot without
+   * creating a domain or reserving anything. It evaluates the SAME reserve an
+   * automatic alert uses, so "available" cannot coexist with a reserve that no
+   * longer fits. Concurrency reasons are an instantaneous observation. */
+  private async budgetFacts(c: PoolConnection, ids: ResourceIds): Promise<InvestigationPoliciesResponse['budget']> {
+    const base = { quotaReached: false, capacityReached: false, reserveTokens: AUTOMATIC_ALERT_RESERVE_TOKENS,
+      reserveCostMicros: 0, admissionReasons: [] as InvestigationPoliciesResponse['budget']['admissionReasons'] };
     try {
       const config = this.configuration();
+      if (!Number.isSafeInteger(config.reserveCostMicros) || config.reserveCostMicros < 1)
+        return { status: 'unavailable', ...base, reserveCostMicros: 0 };
+      base.reserveCostMicros = config.reserveCostMicros;
       const admission = resolveAdmissionConfiguration(await this.effectiveBudget.readStoredFrom(c), config);
       const [domain] = await rows(c, 'SELECT policy_snapshot, policy_hash FROM investigation_budget_domains WHERE domain_key = ?',
         [admission.domain]);
-      if (!domain) return { status: 'uninitialized', quotaReached: false };
+      if (!domain) return { status: 'uninitialized', ...base };
       const persisted = policy(json(domain.policy_snapshot));
       const matching = isDeepStrictEqual(persisted, admission.policy)
         && domain.policy_hash === createHash('sha256').update(JSON.stringify(admission.policy)).digest('hex');
-      if (!matching) return { status: 'conflict', quotaReached: false };
-      return { status: 'matching', quotaReached: await this.quotaReached(c, admission.domain, admission.policy) };
+      if (!matching) return { status: 'conflict', ...base };
+      const admissionReasons = await this.admissionReasons(c, admission.domain, admission.policy, config.reserveCostMicros, ids);
+      return { status: 'matching', reserveTokens: base.reserveTokens, reserveCostMicros: base.reserveCostMicros,
+        quotaReached: admissionReasons.some(reason => (QUOTA_REASONS as readonly string[]).includes(reason)),
+        capacityReached: admissionReasons.some(reason => (CAPACITY_REASONS as readonly string[]).includes(reason)),
+        admissionReasons };
     } catch (error) {
-      if (error instanceof InvestigationEffectiveBudgetError) return { status: 'unavailable', quotaReached: false };
+      if (error instanceof InvestigationEffectiveBudgetError) return { status: 'unavailable', ...base };
       throw error;
     }
   }
 
-  private async quotaReached(c: PoolConnection, domain: string, admission: BudgetPolicy): Promise<boolean> {
+  /** Same comparisons as MysqlInvestigationBudgetLedger.reserve for one
+   * automatic request on a configured resource. No row is written. */
+  private async admissionReasons(c: PoolConnection, domain: string, admission: BudgetPolicy, reserveCostMicros: number,
+    ids: ResourceIds): Promise<InvestigationPoliciesResponse['budget']['admissionReasons']> {
     const [usage] = await rows(c, `SELECT
       COUNT(DISTINCT CASE WHEN mode = 'automatic' AND budget_hour = DATE_FORMAT(UTC_TIMESTAMP(3), '%Y-%m-%d %H:00:00') THEN request_id END) AS auto_hour,
+      COUNT(DISTINCT CASE WHEN state IN ('reserved','sent','unknown') THEN id END) AS running,
+      COUNT(DISTINCT CASE WHEN state IN ('reserved','sent','unknown') AND mode = 'automatic' THEN id END) AS running_auto,
       COALESCE(SUM(CASE WHEN mode = 'automatic' AND (budget_day = UTC_DATE() OR state IN ('reserved','sent','unknown')) THEN charged_tokens ELSE 0 END), 0) AS auto_tokens,
       COALESCE(SUM(CASE WHEN budget_day = UTC_DATE() OR state IN ('reserved','sent','unknown') THEN charged_tokens ELSE 0 END), 0) AS total_tokens,
-      COALESCE(SUM(CASE WHEN budget_day = UTC_DATE() OR state IN ('reserved','sent','unknown') OR cost_status = 'unknown' THEN charged_cost_micros ELSE 0 END), 0) AS total_cost
+      COALESCE(SUM(CASE WHEN budget_day = UTC_DATE() OR state IN ('reserved','sent') OR cost_status = 'unknown' THEN charged_cost_micros ELSE 0 END), 0) AS total_cost
       FROM investigation_budget_ledger WHERE domain_key = ?`, [domain]);
-    return bigint(usage?.auto_hour) >= BigInt(admission.maxAutomaticRequestsPerHour)
-      || bigint(usage?.auto_tokens) >= BigInt(admission.maxAutomaticTokensPerDay)
-      || bigint(usage?.total_tokens) >= BigInt(admission.maxTotalTokensPerDay)
-      || bigint(usage?.total_cost) >= BigInt(admission.maxCostMicrosPerDay);
+    const reserve = BigInt(AUTOMATIC_ALERT_RESERVE_TOKENS);
+    const reasons: InvestigationPoliciesResponse['budget']['admissionReasons'] = [];
+    const push = (reason: InvestigationPoliciesResponse['budget']['admissionReasons'][number]) => {
+      if (!reasons.includes(reason)) reasons.push(reason);
+    };
+    if (bigint(usage?.auto_hour) >= BigInt(admission.maxAutomaticRequestsPerHour)) push('AUTOMATIC_FREQUENCY');
+    if (bigint(usage?.auto_tokens) + reserve > BigInt(admission.maxAutomaticTokensPerDay)) push('AUTOMATIC_DAILY_TOKENS');
+    if (bigint(usage?.total_tokens) + reserve > BigInt(admission.maxTotalTokensPerDay)) push('TOTAL_DAILY_TOKENS');
+    if (bigint(usage?.total_cost) + BigInt(reserveCostMicros) > BigInt(admission.maxCostMicrosPerDay)) push('DAILY_COST');
+    if (bigint(usage?.running) >= BigInt(admission.maxConcurrent)) push('GLOBAL_CONCURRENCY');
+    if (bigint(usage?.running_auto) >= BigInt(Math.max(0, admission.maxConcurrent - admission.manualReserved)))
+      push('MANUAL_CAPACITY_RESERVED');
+    if (await this.allResourcesSaturated(c, domain, admission, ids)) push('RESOURCE_CONCURRENCY');
+    return reasons;
+  }
+
+  /** A new automatic request targets one alert resource, so the type is only
+   * saturated when every configured resource still present has no free slot. */
+  private async allResourcesSaturated(c: PoolConnection, domain: string, admission: BudgetPolicy, ids: ResourceIds): Promise<boolean> {
+    const keys: string[] = [];
+    for (const type of Object.keys(RESOURCE_TABLE) as ResourceType[]) {
+      if (!ids[type].length) continue;
+      const existing = await rows(c, `SELECT id FROM ${RESOURCE_TABLE[type]} WHERE id IN (${ids[type].map(() => '?').join(',')})`
+        + (type === 'database' ? " AND lifecycle_state = 'available'" : ''), ids[type]);
+      for (const row of existing) keys.push(`${RESOURCE_KEY_PREFIX[type]}:${Number(row.id)}`);
+    }
+    if (!keys.length) return false;
+    const occupied = await rows(c, `SELECT r.resource_key AS resource_key, COUNT(*) AS n
+      FROM investigation_budget_resources r
+      JOIN investigation_budget_ledger l ON l.id = r.reservation_id
+      WHERE l.domain_key = ? AND l.state IN ('reserved','sent','unknown') GROUP BY r.resource_key`, [domain]);
+    const counts = new Map(occupied.map(row => [String(row.resource_key), number(row.n)]));
+    return keys.every(key => (counts.get(key) ?? 0) >= admission.maxPerResourceConcurrent);
   }
 
   budget(caller: ActorContext): Promise<InvestigationBudgetResponse> {
@@ -323,13 +479,13 @@ export class InvestigationGovernanceStore {
       const configured = policy(admission.policy);
       const [domain] = await rows(c, 'SELECT policy_snapshot, policy_hash FROM investigation_budget_domains WHERE domain_key = ?', [admission.domain]);
       const persisted = domain ? policy(json(domain.policy_snapshot)) : null;
-      // Same entry fact as the policies page: the master switch and the
-      // investigation lane must both be on AND an automatic ingress receipt
-      // must exist. Configuration alone never claims a connected entry.
+      // Same entry fact as the policies page: the switches must both be on AND
+      // durable automatic ownership must exist for a currently configured
+      // resource. Receipt tags alone never claim a connected entry.
       const masterSwitch = await masterSwitchFacts(c);
-      const receipts = await this.receiptFacts(c);
-      const automaticTriggerStatus = masterSwitch.status !== 'invalid' && masterSwitch.enabled
-        && investigationBridgeFlags().opsAuto && receipts.total > 0 ? 'connected' as const : 'not_connected' as const;
+      const flags = investigationBridgeFlags();
+      const entry = await this.entryFacts(c, masterSwitch, flags.opsAuto, pilotEnvironment().ids);
+      const automaticTriggerStatus = entry.entry.status === 'connected' ? 'connected' as const : 'not_connected' as const;
       return { schemaVersion: 1, source: 'investigationBudgetConfiguration', policy: configured,
         reserveCostMicros: number(config.reserveCostMicros), persistedPolicy: persisted,
         admissionStatus: persisted === null ? 'uninitialized' : isDeepStrictEqual(persisted, configured) && domain.policy_hash === createHash('sha256').update(JSON.stringify(configured)).digest('hex') ? 'matching' : 'conflict',

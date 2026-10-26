@@ -20,6 +20,9 @@ export interface BudgetPolicy {
 }
 /** Integer micro currency units per million tokens. Currency is fixed per domain. */
 export interface BudgetPrices { input: number; cachedInput: number; output: number }
+/** Tokens a single automatic alert admission reserves up front. Read-side
+ * readiness uses this same value, never a second, rosier policy. */
+export const AUTOMATIC_ALERT_RESERVE_TOKENS = 32_000;
 export interface BudgetUsage { inputTokens: number; cachedInputTokens: number; outputTokens: number }
 export interface BudgetReservationInput {
   requestId: string;

@@ -12,28 +12,32 @@ const manifest = {releaseId:'source-acceptance',commitSha:'8bdd8a3c09ae5d9f5e543
 // T06 Playwright spec against an isolated MySQL service.
 const coverage = (type: string, extra: Record<string, unknown> = {}) => ({type,status:'not_configured',configuredCount:0,existingCount:0,permittedCount:0,typePermission:false,...extra});
 const policyFacts = (mode: string) => mode === 'empty' ? {
-  schemaVersion:2,source:'production_composition',originBoundary:'investigation_engine_persist_only',
+  schemaVersion:3,source:'production_composition',originBoundary:'investigation_engine_persist_only',
   policy:{id:'database-alert-pilot',version:1,profileId:'ops',source:'database-alert-engine',readonly:true},
   configurationStatus:'not_configured',automaticAnalysisStatus:'blocked',
   masterSwitch:{source:'defaults',status:'defaulted',enabled:true,severityLevels:['warning','error','critical'],timeWindowStart:'00:00',timeWindowEnd:'23:59',instanceWhitelistCount:0},
   investigationSwitch:{enabled:false,manualEnabled:false,legacyEnabled:false,source:'environment'},
   serviceIdentity:{status:'not_configured',permissionsSufficient:false,missingPermissions:[],instanceScopeSufficient:true},
   resourceCoverage:[coverage('database'),coverage('server'),coverage('network_device')],
-  entry:{status:'not_connected',observedReceiptCount:0,lastObservedAt:null},budget:{status:'uninitialized',quotaReached:false},
-  latestOutcome:{total:0,accepted:0,suppressed:0,pending:0,unknown:0,lastStatus:null,lastReason:null,lastAttemptAt:null},
+  entry:{status:'not_connected',observedReceiptCount:0,lastObservedAt:null,witnessTypes:[]},
+  receipts:{total:0,accepted:0,suppressed:0,pending:0,unknown:0,lastStatus:null,lastReason:null,lastAttemptAt:null},
+  execution:{observed:0,accepted:0,running:0,completed:0,failed:0,cancelled:0,suppressed:0,unknown:0,lastStatus:null,lastAt:null},
+  budget:{status:'uninitialized',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
   blockers:[{code:'SERVICE_IDENTITY_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
     {code:'RESOURCE_SCOPE_NOT_CONFIGURED',layer:'configuration',remediation:'deployment_environment'},
     {code:'INVESTIGATION_SWITCH_DISABLED',layer:'switch',remediation:'deployment_environment'}],
 } : {
-  schemaVersion:2,source:'production_composition',originBoundary:'investigation_engine_persist_only',
+  schemaVersion:3,source:'production_composition',originBoundary:'investigation_engine_persist_only',
   policy:{id:'database-alert-pilot',version:1,profileId:'ops',source:'database-alert-engine',readonly:true},
   configurationStatus:'configured',automaticAnalysisStatus:'available',
   masterSwitch:{source:'system_config',status:'persisted',enabled:true,severityLevels:['warning','error','critical'],timeWindowStart:'00:00',timeWindowEnd:'23:59',instanceWhitelistCount:0},
   investigationSwitch:{enabled:true,manualEnabled:false,legacyEnabled:false,source:'environment'},
   serviceIdentity:{status:'ready',permissionsSufficient:true,missingPermissions:[],instanceScopeSufficient:true},
   resourceCoverage:[coverage('database',{status:'covered',configuredCount:1,existingCount:1,permittedCount:1,typePermission:true}),coverage('server'),coverage('network_device')],
-  entry:{status:'connected',observedReceiptCount:1,lastObservedAt:'2026-10-25T00:00:00.000Z'},budget:{status:'matching',quotaReached:false},
-  latestOutcome:{total:1,accepted:1,suppressed:0,pending:0,unknown:0,lastStatus:'accepted',lastReason:null,lastAttemptAt:'2026-10-25T00:00:00.000Z'},
+  entry:{status:'connected',observedReceiptCount:1,lastObservedAt:'2026-10-25T00:00:00.000Z',witnessTypes:['database']},
+  receipts:{total:1,accepted:1,suppressed:0,pending:0,unknown:0,lastStatus:'accepted',lastReason:null,lastAttemptAt:'2026-10-25T00:00:00.000Z'},
+  execution:{observed:1,accepted:0,running:0,completed:1,failed:0,cancelled:0,suppressed:0,unknown:0,lastStatus:'completed',lastAt:'2026-10-25T00:05:00.000Z'},
+  budget:{status:'matching',quotaReached:false,capacityReached:false,reserveTokens:32000,reserveCostMicros:100000,admissionReasons:[]},
   blockers:[],
 };
 
@@ -150,7 +154,7 @@ for (const mode of ['empty','loading','failed','forbidden']) test(`all four gove
     await page.goto(`/settings/ai/${kind}`);
     const view = page.locator(kind === 'profiles' ? 'investigation-profiles-page' : 'investigation-governance-page');
     if (mode === 'loading') await expect(view.getByRole('status')).toContainText('正在加载');
-    else if (mode === 'empty') await expect(view).toContainText({profiles:'尚未配置 Profiles',policies:'尚未配置调查策略',budget:'尚未初始化冻结预算',usage:'暂无持久用量'}[kind]!);
+    else if (mode === 'empty') await expect(view).toContainText({profiles:'尚未配置 Profiles',policies:'尚未配置专用服务身份',budget:'尚未初始化冻结预算',usage:'暂无持久用量'}[kind]!);
     else { await expect(view.getByRole('alert')).toBeVisible(); await expect(view.locator('app-data-table')).toHaveCount(0); }
     await capture(page,`${kind}-${mode}-390-dark-controlled`);
   }
