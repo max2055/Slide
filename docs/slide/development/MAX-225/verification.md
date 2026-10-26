@@ -2,6 +2,13 @@
 
 2026-10-26（第三轮）：真实 VM 采集→critical 告警→自动受理→真实模型有引用结论→自然恢复已全部跑通，用量在父单唯一账本中预留、回读并实测结算。
 
+## 第四轮：当前 CI 门禁修复（2026-10-26）
+
+- `tests/qualification/investigation-rollout.ts`：自动通道关闭后不再断言 legacy 回落。改为断言桥返回 `suppressed` / `AUTO_ANALYSIS_LANE_DISABLED`、新告警的 `ai_analysis` 与 `investigation_alert_owners` 均为 0 行、legacy 回调 0 次、付费请求 0 次；同时保留已受理 owner 在关闭与恢复前后的同 investigation 断言及真实 SQL 校验。
+- `apps/db-ops-api/tests/event-aggregation.test.ts`：补上恢复路径依赖的 `pool.query`，fixture 改为当前代码实际读取的单条告警行；断言创建 1 个事件、3 条成员关联与日志内容，并新增“单条告警不建展示事件”和“恢复扫描失败不阻断独立聚合”两条用例。
+- `apps/db-ops-api/src/event-aggregator.ts`：恢复扫描失败只记录告警并继续事件聚合（工作流取消仍优先抛出），避免把独立的展示聚合与自动准入绑定；准入仍由告警持久化路径负责。
+- 门禁证据：`vitest run tests/event-aggregation.test.ts` 6/6 通过、API typecheck 通过；rollout 资格用例依赖隔离 MySQL，按本轮串行约定交由 CI 执行。
+
 ## 第三轮：真实模型结论与可审计用量
 
 `apps/db-ops-api/scripts/qualify-automatic-alert.ts` 增加显式模型段（只有 `MAX225_REAL_MODEL=authorized` 才执行，默认不发送）。它复用同一隔离 schema 中已受理的 `investigation.execute` 作业，用既有 `InvestigationExecutor`、既有 Provider 配置（共享库仅 SELECT）和真实 DeepSeek 路由执行，结果见 `vm-acceptance-model-20261026.json`。
@@ -15,7 +22,9 @@
 - 真实模型：3 次 HTTP200（序列 1/2 为 `tool_calls`，3 为 `stop`），模型各轮调用 `get_resource_observations`、`get_server_alerts`；`agent_runs.state=completed`，`investigation_results` 1 行，7 条 claims 全部引用本次 `investigation_evidence`（3 行）中的 evidenceId，结论明确写单位/口径未知与证据缺口，未宣称根因或恢复。
 - 用量：Provider 实测 input 7201（其中缓存 4736，作为子集不重复计入）+ output 4090 = 11291；产品侧 `investigation_budget_ledger` 同时为 `settled`、`charged_tokens=11291`，与实测一致。
 - 父账本：每次发送前写入唯一 reservation（input 上界＝请求字节+1024，output 上界＝请求内 `max_tokens`≤4096）并回读确认后才发送；响应后按实测结算。累计 settled 57,478/10,000,000，无未结算预留；1 条未拿到响应的发送保留为 unknown（15,367 预留额，`MODEL_TRANSPORT_UNKNOWN`），按策略不重放。
-- 逐次可追溯性：**只有最终成功运行的 3 次发送**保留了完整 Provider requestID、请求哈希、上下界与逐次 usage；此前 16 次响应的逐次明细在父账本 8KB 压缩时只留下总量，现有产物中仅能恢复其中 5 个 reservation id、2 个 Provider requestID 及若干尝试级用量聚合。恢复范围与缺失项见 `model-budget-journal-20261026.md` / `.json`；不声称全部 19 次响应均逐次可追溯。
+- 逐次可追溯性：**只有最终成功运行的 3 次发送**保留了完整 Provider requestID、请求哈希、上下界与逐次 usage；此前 16 次响应的逐次明细在父账本 8KB 压缩时只留下总量，现有产物中仅能恢复其中 5 个 reservation id、2 个 Provider requestID 及若干尝试级用量聚合。这两组 ID **可能指向同一次发送**，不能相加作为互斥计数，因此只能确认“至少 9 次没有任何已恢复标识”，无法精确到 9 或 11。恢复范围与缺失项见 `model-budget-journal-20261026.md` / `.json`；不声称全部 19 次响应均逐次可追溯。
+- 汇总口径：57,478 settled 只来自 19 次有响应并已结算的发送；未知发送的 15,367 预留额单独保留、不包含在 settled 内（含 unknown 的总占用 72,845，但 15,367 是上界）。
+- 尝试 M 的 `Connection error` 只按已有运行记录解释：其 4 次已记录发送全部结算，M 之后 reservations 为空且 unknown 仍只有 G 的 `a37ad0e6`，因此产生该错误的 fetch 调用在 reservation 持久化前即被拒绝、没有进入 HTTP，不构成新的未知发送；具体是哪项预发送检查失败已不可恢复（SDK 用通用消息替换了原始异常）。完整推理与限制见 journal 的“尝试 M 的 Connection error”一节。
 
 ### 发送前约束（脚本内强制）
 
@@ -93,7 +102,7 @@
 ## 未完成项与限制
 
 - 功能验收无未完成项。第一、二轮记录的"CLI 无 metadata 写入能力"为旧版 CLI（`/opt/homebrew/bin/multica` 0.6.5）导致；当前生效的 0.7.0 CLI 具备 `issue metadata get/set`，本轮据此完成预留与结算。
-- **预算审计证据不完整**：最终 3 次发送有完整逐次记录；此前 16 次响应只能恢复总量、5 个 reservation id、2 个 Provider requestID 和尝试级聚合，其余逐次字段已不可恢复（详见 `model-budget-journal-20261026.md`）。按策略不为补证重发模型请求；累计 settled/unknown 数值不受影响。
+- **预算审计证据不完整**：最终 3 次发送有完整逐次记录；此前 16 次响应只能恢复总量、5 个 reservation id、2 个 Provider requestID 和尝试级聚合（两组 ID 可能重叠，不能当作互斥拆分），其余逐次字段已不可恢复（详见 `model-budget-journal-20261026.md`）。按策略不为补证重发模型请求；累计 settled/unknown 数值不受影响。
 - 生产默认上下文窗口 16000 下的多工具轮次治理失败（见上）属于本次验收暴露的既有运行限制，未在本单修改产品代码，也未在生产配置上验证修复。
 
 ## 环境状态

@@ -38,6 +38,7 @@
       }
     ],
     "utilizationIncludingUnknown": 72845,
+    "settledScope": "57478 is the sum of the 19 settled provider responses only. The 15367 unknown reservation is tracked separately and is not part of settled; utilizationIncludingUnknown = 57478 + 15367, but the 15367 is a reserved upper bound, not measured usage.",
     "cachedAccounting": "cached_input_tokens is a subset of input_tokens and is never added a second time; total_tokens = input_tokens + output_tokens"
   },
   "coverage": {
@@ -45,10 +46,11 @@
     "unknownProviderSends": 1,
     "fullyRetainedPerSend": 3,
     "partiallyRetainedPriorResponses": 16,
-    "priorSettledSendsWithProviderRequestId": 2,
-    "priorSettledSendsWithReservationIdOnly": 5,
-    "priorSettledSendsWithNoIdentifierRecovered": 9,
-    "summary": "The final successful run's 3 sends have complete per-send records. Of the 16 earlier settled responses, the ledger now keeps only the totals plus five reservation identifiers; two provider request IDs survive in run output, and the remaining 11 sends have aggregate attempt-level usage only. This file records exactly that split instead of claiming complete per-send provenance."
+    "priorWithProviderRequestIdRecovered": 2,
+    "priorWithReservationIdRecovered": 5,
+    "priorWithNoIdentifierRecoveredAtLeast": 9,
+    "identifierSetOverlap": "The 2 provider request IDs and the 5 reservation IDs are not known to be disjoint: a single send may be counted in both sets, and the 5 IDs belong to attempts E/F/G where the 2 request IDs also occurred. Therefore 2, 5 and 9 must not be read as a mutually exclusive split. 9 is only a lower bound (16 minus a union of at most 7); the exact count with no recovered identifier is somewhere between 9 and 11 and cannot be derived from retained artifacts.",
+    "summary": "The final successful run's 3 sends have complete per-send records. Of the 16 earlier settled responses, only the totals plus partial identifiers survive: two provider request IDs and five reservation IDs are recoverable from run output, those two sets may overlap, and every earlier attempt keeps aggregate attempt-level usage only. This file records the recoverable subset and its explicit gaps instead of claiming complete per-send provenance."
   },
   "finalAttempt": {
     "label": "N",
@@ -302,14 +304,24 @@
       "finishedAt": "2026-10-26T00:31:51.649Z",
       "outcome": "MODEL_RUN_NOT_COMPLETED (partial, transport Connection error)",
       "sends": 4,
-      "sendsDerivation": "arithmetic: 16 prior settled sends minus the 12 accounted for by E(2), F(2), G(1), I(2), J(2), K(1), L(2)",
+      "sendsDerivation": "modelDiagnostics.sends = 4, read from the attempt evidence in run message seq 444 before attempt N overwrote the file; consistent with arithmetic: 16 prior settled sends minus the 12 accounted for by E(2), F(2), G(1), I(2), J(2), K(1), L(2)",
       "settledTokens": 16126,
       "settledDerivation": "arithmetic: 46187 prior settled total minus 30061 (E+F+G+I+J+K+L)",
       "inputTokens": null,
       "cachedInputTokens": null,
       "outputTokens": null,
       "perSendIdentifiers": null,
-      "note": "attempt used INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000 and INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048 and still hit a transport error"
+      "note": "attempt used INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000 and INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048 and still ended with the SDK's Connection error",
+      "connectionErrorAnalysis": {
+        "observed": "run message seq 442 (2026-10-26T00:31:51.649Z): '[OpenAIProvider] chat() failed: Connection error.' followed by the summary line 'modelRequests: 0'",
+        "modelRequestsZeroMeaning": "evidence.modelRequests is assigned only after runRealModelSegment returns successfully, so 0 in a failed attempt is not a send count. The recorded send count for this attempt is modelDiagnostics.sends = 4 (seq 444).",
+        "ledgerStateAfter": "run message seq 444 (00:31:57, before attempt N): modelDiagnostics.sends = 4, reservations = [], settled.total_tokens = 46187 (includes M's 16126), unknown_requests still contains only a37ad0e6 from attempt G",
+        "sendProtocol": "The wrapper persists a reservation and reads it back before calling originalFetch; a transport failure settles that reservation as unknown and stops further sends (observed for attempt G).",
+        "conclusion": "All four recorded M sends are settled. The fetch call that produced the Connection error was rejected before its reservation became durable, so it never reached HTTP. M adds no new uncertain send and no metering gap.",
+        "notRecoverable": "The OpenAI SDK replaces any non-APIError thrown inside the fetch hook with its generic 'Connection error.', so which pre-send check failed (reservation write/read-back or a preflight assertion) cannot be recovered from retained artifacts.",
+        "corroboration": "The script edit immediately after M (run message seq 449) rethrows reserveBeforeSend failures as MODEL_LEDGER_RESERVE_FAILED_* so they are no longer masked. The measured parent metadata total was 8692 bytes at 00:28:17 and 7673 bytes at 00:30:00 against the 8192 ceiling and kept growing with each settlement; the ledger was compacted on both sides of M. This is consistent with a rejected pre-send ledger write but does not identify the exact assertion.",
+        "relatedSignature": "Attempt K (00:27:56) ends with the same 'Connection error.' signature; its ledger state afterwards is also reservations = [] with the same single unknown, so the same exclusion applies (K's send count is itself derived from ledger deltas)."
+      }
     }
   ],
   "recoveredReservationIdsWithoutMapping": {
@@ -321,7 +333,7 @@
       "1df4d5c9-062e-4fe2-bcdb-560cb12e506c"
     ],
     "scope": "the five settlement events that existed at parent ledger revision 20, before the 8KB compaction",
-    "missing": "Their scenario, input/cached/output tokens and provider request IDs were truncated in the run output that captured these identifiers and no longer exist in the revision 53 ledger."
+    "missing": "Their scenario, input/cached/output tokens and provider request IDs were truncated in the run output that captured these identifiers and no longer exist in the revision 53 ledger. They are not known to be disjoint from the two recovered provider request IDs, so the two counts cannot be combined into an exact identifier-coverage split."
   },
   "unknownRequest": {
     "id": "a37ad0e6-f9f4-485f-90d4-3dfbf9242571",
@@ -370,8 +382,8 @@
     "E: per-send reservation ids, request hashes, request bounds, provider request IDs and input/output split are not recoverable; only the two-send aggregate 4632 is exact.",
     "G: the settled send's identifiers, bounds and usage split are not recoverable; only the aggregate 1847 and the unknown record survive.",
     "I, J, K, L: only attempt-level usage aggregates survive; per-send request hashes, reservation ids and provider request IDs were overwritten with the attempt evidence file.",
-    "M: only the derived four-send aggregate 16126 survives; no per-send record, hash, bound or provider request ID was retained.",
-    "The five recovered reservation ids (revision 20) cannot be mapped to their usage or provider request ID.",
+    "M: only the derived four-send aggregate 16126 survives; no per-send record, hash, bound or provider request ID was retained. The Connection error itself is explained under priorAttempts[M].connectionErrorAnalysis: it is a pre-send failure, not a new uncertain send, but the exact pre-send check is not recoverable.",
+    "The five recovered reservation ids (revision 20) cannot be mapped to their usage or provider request ID, and they are not known to be disjoint from the two recovered provider request IDs. The number of earlier sends with no recovered identifier is therefore only bounded (>= 9), not exact.",
     "Alert/investigation request ids for attempts E through M were not retained.",
     "The parent ledger note 'per-request detail in MAX-225 evidence' is inaccurate for the 16 prior responses; this journal supersedes that claim for MAX-225 and no ledger rewrite was made in this continuation."
   ],

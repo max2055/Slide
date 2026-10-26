@@ -35,7 +35,15 @@ class EventAggregator {
     if (!pool) return { eventsCreated: 0, alertsAggregated: 0 };
 
     try {
-      await recoverAutomaticAlertAdmissions();
+      // Recovery is an independent sweep over persisted alerts. Admission for
+      // each alert is owned by its persistence path; a failed sweep must not
+      // suppress display aggregation of the same batch.
+      try { await recoverAutomaticAlertAdmissions(); }
+      catch (error) {
+        assertWorkflowActive();
+        // Codes only: never echo SQL or provider payloads from the sweep.
+        console.warn(`[EventAggregator] 自动分析恢复失败，继续事件聚合 (${(error as {code?: string}).code ?? 'UNKNOWN'})`);
+      }
       // Phase 1: 查找候选已有事件
       // 查找 10 分钟内还有活动的 open/investigating 事件，
       // 新告警如果属于同一 instance+type+metric 则可能被吸收
