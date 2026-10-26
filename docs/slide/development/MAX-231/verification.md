@@ -45,14 +45,44 @@
 - `pnpm --filter slide-api typecheck`、`pnpm contracts:check`：通过，公开契约未漂移。
 - 浏览器回归（Chromium，真实页面与 Lit 渲染）：`frontend/e2e/llm-save-apply-feedback.spec.ts` 4 项通过；既有 `frontend/e2e/llm-test-feedback.spec.ts` 8 项通过。覆盖保存应用失败警示、键盘 Enter 重试成功、正常保存、HTTP 500 保存失败，以及本轮两处顺序状态：保存成功后被未应用的启停取代（同一时刻不再显示“✓ 已保存配置”）、默认切换失败后重试成功清除旧错误并显示成功确认。
 
+## 真实后端验证（隔离 MySQL，2026-10-26）
+
+### 环境与证据性质（真实，非 mock）
+
+- **真实 SQL**：隔离容器 `slide-max231-sql-2601`（mysql:8.4.10，宿主 33306），用 `apps/db-ops-api/init-db.ts` 的迁移账本从空库建表；与 `slide-local-*` 共享栈和其他任务实例无关，结束后已删除。
+- **真实生产路由**：直接启动 `apps/db-ops-api/server.ts`（端口 3131，非测试替身），使用真实 JWT（`userId=1`、admin）通过 `verifyToken` + `requirePermission('llm:manage')`，调用 `POST/PUT /api/llm/configs`、`POST /api/llm/configs/:id/toggle`、`POST /api/llm/configs/:id/default`。
+- **真实运行时**：同一进程内读取 `llmService.getAvailableProviders()` / `isInitialized()`，即生产 LLMService 单例的实际运行配置，而非数据库回读。
+- **故障是真实配置故障**：`max231-nokey` 为启用但无凭据的 Provider，重载时 `createServiceProviderClient` 真实抛 `LLM_CREDENTIAL_NOT_CONFIGURED`，`initialize()` 返回 false；**未注入 mock、未改源码分支、未伪造响应**。持久化失败路径用真实的参数校验拒绝（`Max Tokens + 1024 >= 上下文窗口`），也非模拟。
+- **全程未发模型请求**：SDK 客户端只被构造（`provider-connection` 构造不联网）；本地 Provider 的 baseURL 指向未监听的 127.0.0.1:11434，验证期间该端口无监听。
+
+### 场景与真实响应
+
+| # | 操作（真实路由） | 响应 | 库内结果 | 运行时 `getAvailableProviders()` |
+| --- | --- | --- | --- | --- |
+| A | `POST /api/llm/configs` 创建 enabled 本地 Provider | `200 {success:true, providerId:9, applied:true}` | 行存在（`GET /api/llm/configs/9` 返回 `max231-local`） | `[max231-local, ollama]` |
+| B | 再创建 enabled 但无凭据的 Provider | `200 {success:true, providerId:10, applied:true}` | 行存在 | `[max231-local, ollama]`（不可用者被隔离，不阻断） |
+| C | `POST /:id/toggle` 停用一个可用 Provider | `200 {success:true, applied:true}` | `max231-local.enabled=0` | `[ollama]` |
+| D | 再停用最后一个可用 Provider | `200 {success:true, applied:false, reloadError:"LLM_CONFIGURATION_UNAVAILABLE"}` | `ollama.enabled=0`（持久化生效） | **仍为 `[ollama]`**，`isInitialized()=true`（保留上一份可用配置） |
+| E | 仅剩不可用 Provider 时 `POST /:id/default` | `200 {success:true, applied:false, reloadError:"LLM_CONFIGURATION_UNAVAILABLE"}` | `is_default` 已写库 | 仍为 `[ollama]` |
+| F | 重新启用可用 Provider（重试成功） | `200 {success:true, applied:true}` | `ollama.enabled=1` | `[ollama]` |
+| G | `PUT /api/llm/configs/:id` 补凭据 | `200 {success:true, providerId:10, applied:true}` | `api_key_encrypted` 为 v2 密文（134 字节），非明文 | `[max231-nokey, ollama]` |
+| H | 保存失败（创建/更新非法参数） | `{success:false, error:"LLM_MODEL_PARAMETERS_INVALID…"}`，**无 `applied`/`reloadError`** | 未落库 | 不变 |
+
+服务端日志同步印证：D/E 时 `[LLM] 初始化失败: LLM_CREDENTIAL_NOT_CONFIGURED` 且没有替换现有客户端；A/C/F/G 各自 `[LLM] 已加载 N 个提供商`。
+
+### 与验收项的对应
+
+- `success=true/applied=false` 返回固定代码 `LLM_CONFIGURATION_UNAVAILABLE`，不含异常文本；所有响应与日志中未出现写入的占位凭据（明文仅存在于请求体，库内为密文）。
+- 正常保存并应用（A/F/G）、保存失败（H）、应用失败（D/E）、重试成功（F）四类结果来自真实后端，前端对三类字段的消费由前述单测与浏览器用例覆盖。
+- 应用失败不阻断其他正常 Provider（B/C）；失败时保留上一份可用运行配置（D/E 运行时观测）。
+
+### 清理
+
+验证脚本为临时 harness，未提交；容器 `slide-max231-sql-2601` 已 `docker rm -f`，3131 端口释放，`slide-local-*` 共享栈未改动。
+
 ## 证据性质与未完成项
 
-- 浏览器用例的 `/api/llm/**` 响应为受控 fixture，用于稳定复现“已保存未应用”状态，属于模拟后端证据；页面、组件与键盘交互是真实实现。
-- **真实后端持久化/应用验证未完成（阻塞项）**：本工作树没有 `apps/db-ops-api/.env`；按批次规则，SQL fixture 归 MAX-225，未经串行交接不得另起 MySQL。本工作树内可访问的 Docker MySQL 实例凭据不可用，因此未执行真实后端验证。后端契约目前只有类型检查、契约检查、`reloadOutcome` 单元测试与浏览器 fixture 证据。需要串行交接一个隔离库后执行下列场景并记录真实响应：
-  1. 创建可用 Provider（enabled，含 key）→ `{success:true, applied:true}`，库内行存在；
-  2. 再创建一个 enabled 但无 key 的 Provider → 仍 `applied:true`（单个不可用 Provider 不阻断）；
-  3. 仅保留不可用 Provider（禁用可用者）→ `{success:true, applied:false, reloadError:'LLM_CONFIGURATION_UNAVAILABLE'}`，且运行时仍可列出上一份可用 Provider；
-  4. 恢复可用 Provider → 再次 `applied:true`。全程不发起模型请求。
+- 浏览器用例的 `/api/llm/**` 响应为受控 fixture，用于稳定复现“已保存未应用”状态，属于模拟后端证据；页面、组件与键盘交互是真实实现。真实后端自 2026-10-26 隔离库验证后不再是阻塞项（见上节）。
 - 删除入口（`DELETE /api/llm/configs/:id`）不在本单列出的入口范围内，保持原行为（删除后重载失败仍返回 500），已作为后续项记录，不在本单扩大范围。
 - 未修改 MAX-225 的 admission/runtime、MAX-234 的 CI 文件，也未改动 MAX-232 的告警路由逻辑；`server.ts` 仅改动 LLM 配置路由片段。
 
