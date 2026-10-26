@@ -109,6 +109,17 @@
     "unknownReservedTokens": 15367,
     "realModelSends": 19,
     "note": "cumulative provider HTTP requests across every attempt in this issue (19 responses + 1 unknown), not only the final passing run; cache tokens are a subset of input and are not added again",
-    "unknownRequests": 1
+    "unknownRequests": 1,
+    "journal": "docs/slide/development/MAX-225/model-budget-journal-20261026.md",
+    "journalJson": "docs/slide/development/MAX-225/model-budget-journal-20261026.json",
+    "perSendCoverage": {
+      "fullyRetained": 3,
+      "partial": 16,
+      "providerRequestIdsRecoveredFromPriorSends": 2,
+      "reservationIdsRecoveredWithoutUsage": 5,
+      "priorSendsWithoutIdentifier": 9,
+      "note": "Only the final successful run has complete per-send provider request IDs and usage. The 16 earlier responses keep exact totals; per-send detail is partially recoverable from existing run output and is listed with explicit gaps in the journal."
+    },
+    "recovery": "recovered from existing run messages and ledger revision 53 only; zero new model sends and zero ledger writes in this continuation"
   }
 }

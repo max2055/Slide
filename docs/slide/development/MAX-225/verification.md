@@ -14,7 +14,8 @@
 - 受理：单条 critical 告警 `tags.auto_analysis`=accepted，`investigation_alert_owners` 恰好 1 行、`lane='investigation'`，旧 lane 0 次。
 - 真实模型：3 次 HTTP200（序列 1/2 为 `tool_calls`，3 为 `stop`），模型各轮调用 `get_resource_observations`、`get_server_alerts`；`agent_runs.state=completed`，`investigation_results` 1 行，7 条 claims 全部引用本次 `investigation_evidence`（3 行）中的 evidenceId，结论明确写单位/口径未知与证据缺口，未宣称根因或恢复。
 - 用量：Provider 实测 input 7201（其中缓存 4736，作为子集不重复计入）+ output 4090 = 11291；产品侧 `investigation_budget_ledger` 同时为 `settled`、`charged_tokens=11291`，与实测一致。
-- 父账本：每次发送前写入唯一 reservation（input 上界＝请求字节+1024，output 上界＝请求内 `max_tokens`≤4096）并回读确认后才发送；响应后按实测结算。累计 settled 57,478/10,000,000，无未结算预留；1 条未拿到响应的发送保留为 unknown（15,367 预留额，`MODEL_TRANSPORT_UNKNOWN`），按策略不重放。全部模型请求均在 DeepSeek 计费口径下可追溯 requestID。
+- 父账本：每次发送前写入唯一 reservation（input 上界＝请求字节+1024，output 上界＝请求内 `max_tokens`≤4096）并回读确认后才发送；响应后按实测结算。累计 settled 57,478/10,000,000，无未结算预留；1 条未拿到响应的发送保留为 unknown（15,367 预留额，`MODEL_TRANSPORT_UNKNOWN`），按策略不重放。
+- 逐次可追溯性：**只有最终成功运行的 3 次发送**保留了完整 Provider requestID、请求哈希、上下界与逐次 usage；此前 16 次响应的逐次明细在父账本 8KB 压缩时只留下总量，现有产物中仅能恢复其中 5 个 reservation id、2 个 Provider requestID 及若干尝试级用量聚合。恢复范围与缺失项见 `model-budget-journal-20261026.md` / `.json`；不声称全部 19 次响应均逐次可追溯。
 
 ### 发送前约束（脚本内强制）
 
@@ -25,7 +26,7 @@
 ### 本轮发现的既有运行限制（未在本单修改产品代码）
 
 1. 生产默认上下文窗口 16000 时，模型一轮发起两个只读工具调用后，下一轮触发上下文治理并失败（`CONTEXT_UNRECOVERABLE` / `CONTEXT_GOVERNANCE_ERROR`），本次验收因此把限定运行设为 `INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000`（在 provider 实测 capability 1048576 之内）与 `INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048`（`summaryMaxTokens` 默认 10240 超过该 provider `maxOutputTokens` 4096，本就无法通过校验）。生产默认值未改，是否调整属另外范围。
-2. 父单 metadata 总量已接近 8KB 服务端上限（三个 key 合计约 5.8KB 后仍会随发送记录增长），单次结算写入曾因超限失败并留下一条 reservation；已按授权把静态说明与历史逐次事件收敛为总量+证据引用，账本数值未丢失。
+2. 父单 metadata 总量已接近 8KB 服务端上限（三个 key 合计约 5.8KB 后仍会随发送记录增长），单次结算写入曾因超限失败并留下一条 reservation；已按授权把静态说明与历史逐次事件收敛为总量+证据引用，账本数值未丢失。**但“证据引用”并不完整**：先前 16 次发送的逐次事件被折叠为 `s_hist`，parent note 声称其逐次明细在 MAX-225 证据中，实际只在证据里保留了最终 3 次；已在 `model-budget-journal-20261026.md` 中如实记录可恢复部分与缺失，未改写父账本。
 
 ### 环境说明
 
@@ -91,7 +92,8 @@
 
 ## 未完成项与限制
 
-- 无未完成验收项。第一、二轮记录的"CLI 无 metadata 写入能力"为旧版 CLI（`/opt/homebrew/bin/multica` 0.6.5）导致；当前生效的 0.7.0 CLI 具备 `issue metadata get/set`，本轮据此完成预留与结算。
+- 功能验收无未完成项。第一、二轮记录的"CLI 无 metadata 写入能力"为旧版 CLI（`/opt/homebrew/bin/multica` 0.6.5）导致；当前生效的 0.7.0 CLI 具备 `issue metadata get/set`，本轮据此完成预留与结算。
+- **预算审计证据不完整**：最终 3 次发送有完整逐次记录；此前 16 次响应只能恢复总量、5 个 reservation id、2 个 Provider requestID 和尝试级聚合，其余逐次字段已不可恢复（详见 `model-budget-journal-20261026.md`）。按策略不为补证重发模型请求；累计 settled/unknown 数值不受影响。
 - 生产默认上下文窗口 16000 下的多工具轮次治理失败（见上）属于本次验收暴露的既有运行限制，未在本单修改产品代码，也未在生产配置上验证修复。
 
 ## 环境状态

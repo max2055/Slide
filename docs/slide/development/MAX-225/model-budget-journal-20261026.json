@@ -1,0 +1,379 @@
+{
+  "schemaVersion": 1,
+  "issue": "MAX-225",
+  "parentIssue": "MAX-224",
+  "ledgerKey": "model_test_budget_ledger",
+  "ledgerRevision": 53,
+  "recoveredAt": "2026-10-26T00:53:31Z",
+  "sanitized": true,
+  "provenance": {
+    "recoveredFrom": [
+      "Multica run messages of run 01a17588-67d4-77f0-aa5b-e5a69ae5c892, the run that performed every MAX-225 model send",
+      "parent issue 01a173c9-449e-72ed-8301-9b7a6c19647b model_test_budget_ledger revision 53 (read-only)",
+      "docs/slide/development/MAX-225/vm-acceptance-model-20261026.json (final successful attempt, retained on disk)"
+    ],
+    "recoveryCommands": [
+      "multica issue run-messages 01a17588-67d4-77f0-aa5b-e5a69ae5c892 --output json",
+      "multica issue metadata get 01a173c9-449e-72ed-8301-9b7a6c19647b --key model_test_budget_ledger --output json"
+    ],
+    "newModelSends": 0,
+    "ledgerWrites": 0,
+    "reconstructionPolicy": "Only direct observations or exact arithmetic on retained totals are recorded. Fields that could not be recovered are null / listed under knownGaps; no identifier, hash, usage or request ID was invented."
+  },
+  "totals": {
+    "limitTokens": 10000000,
+    "settled": {
+      "inputTokens": 40976,
+      "cachedInputTokens": 24320,
+      "outputTokens": 16502,
+      "totalTokens": 57478
+    },
+    "outstandingReservations": [],
+    "unknownRequests": [
+      {
+        "id": "a37ad0e6-f9f4-485f-90d4-3dfbf9242571",
+        "reservedTokens": 15367,
+        "reason": "MODEL_TRANSPORT_UNKNOWN",
+        "at": "2026-10-26T00:21:24.501Z"
+      }
+    ],
+    "utilizationIncludingUnknown": 72845,
+    "cachedAccounting": "cached_input_tokens is a subset of input_tokens and is never added a second time; total_tokens = input_tokens + output_tokens"
+  },
+  "coverage": {
+    "settledProviderResponses": 19,
+    "unknownProviderSends": 1,
+    "fullyRetainedPerSend": 3,
+    "partiallyRetainedPriorResponses": 16,
+    "priorSettledSendsWithProviderRequestId": 2,
+    "priorSettledSendsWithReservationIdOnly": 5,
+    "priorSettledSendsWithNoIdentifierRecovered": 9,
+    "summary": "The final successful run's 3 sends have complete per-send records. Of the 16 earlier settled responses, the ledger now keeps only the totals plus five reservation identifiers; two provider request IDs survive in run output, and the remaining 11 sends have aggregate attempt-level usage only. This file records exactly that split instead of claiming complete per-send provenance."
+  },
+  "finalAttempt": {
+    "label": "N",
+    "startedAt": "2026-10-26T00:32:36.648Z",
+    "finishedAt": "2026-10-26T00:34:11.015Z",
+    "outcome": "admissionVerified+recovered, run completed",
+    "alertInvestigationRequestId": "d61aaef6-3ef2-47b8-a6eb-9adefebdb35d",
+    "investigationId": "d554fd8c-afbc-497f-bc28-2a6df97c98c3",
+    "agentRunId": "074ae36f-9b6d-4a3a-8be3-315314d965d4",
+    "productBudgetReservationId": "118fd7c4-d23b-49fb-b166-39144d7c801a",
+    "runtimeContext": {
+      "contextWindowTokens": 60000,
+      "summaryMaxTokens": 2048,
+      "maxTokens": 4096
+    },
+    "sends": [
+      {
+        "sequence": 1,
+        "reservationId": "6941da82-0b58-4e8b-b887-aa59d4f98e6f",
+        "scenario": "investigation-send-1",
+        "requestHash": "bf5a2cf96eb30aa332c2b3a7efd339675bca4b1eb7f165bffc5b6d386ccf37c2",
+        "requestBytes": 6912,
+        "inputBoundTokens": 7936,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 12032,
+        "readBack": "reservation persisted and re-read before send (script assertion MODEL_RESERVATION_NOT_DURABLE)",
+        "providerStatus": 200,
+        "providerRequestId": "adf36a41-df6b-4335-874b-3d4207123f3f",
+        "inputTokens": 1604,
+        "cachedInputTokens": 1152,
+        "outputTokens": 227,
+        "finishReason": "tool_calls",
+        "settlement": "settled"
+      },
+      {
+        "sequence": 2,
+        "reservationId": "7045a0c0-4cc1-4dd8-820d-c0a7f96534ab",
+        "scenario": "investigation-send-2",
+        "requestHash": "ab734828b489647698a8ba8f9768020dfd41fdf1f1069613966a5b2641f73a32",
+        "requestBytes": 10207,
+        "inputBoundTokens": 11231,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 15327,
+        "readBack": "reservation persisted and re-read before send (script assertion MODEL_RESERVATION_NOT_DURABLE)",
+        "providerStatus": 200,
+        "providerRequestId": "1048f419-21a0-42b8-a4f4-e670d0e49c94",
+        "inputTokens": 2395,
+        "cachedInputTokens": 1280,
+        "outputTokens": 684,
+        "finishReason": "tool_calls",
+        "settlement": "settled"
+      },
+      {
+        "sequence": 3,
+        "reservationId": "6ab1962a-fd6a-4d69-9fcd-1412197de763",
+        "scenario": "investigation-send-3",
+        "requestHash": "d5a19afa15823a210617086a910d6840b2ea99d28e0bc98f779875116cefc10a",
+        "requestBytes": 13587,
+        "inputBoundTokens": 14611,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 18707,
+        "readBack": "reservation persisted and re-read before send (script assertion MODEL_RESERVATION_NOT_DURABLE)",
+        "providerStatus": 200,
+        "providerRequestId": "ab993020-3fcc-4417-a89c-0e8f25928876",
+        "inputTokens": 3202,
+        "cachedInputTokens": 2304,
+        "outputTokens": 3179,
+        "finishReason": "stop",
+        "settlement": "settled"
+      }
+    ],
+    "measuredUsage": {
+      "inputTokens": 7201,
+      "cachedInputTokens": 4736,
+      "outputTokens": 4090,
+      "totalTokens": 11291
+    },
+    "productLedger": {
+      "state": "settled",
+      "charged_tokens": 11291
+    }
+  },
+  "priorAttempts": [
+    {
+      "label": "A",
+      "startedAt": "2026-10-26T00:13:31.856Z",
+      "finishedAt": "2026-10-26T00:14:00.533Z",
+      "outcome": "REAL_CPU_OBSERVATION_REQUIRED",
+      "sends": 0,
+      "note": "stopped before any provider request"
+    },
+    {
+      "label": "B",
+      "startedAt": "2026-10-26T00:16:03.981Z",
+      "finishedAt": "2026-10-26T00:16:15.217Z",
+      "outcome": "REAL_CPU_OBSERVATION_REQUIRED",
+      "sends": 0
+    },
+    {
+      "label": "C",
+      "startedAt": "2026-10-26T00:17:10.297Z",
+      "finishedAt": "2026-10-26T00:17:22.362Z",
+      "outcome": "QUALIFICATION_FAILED",
+      "sends": 0
+    },
+    {
+      "label": "D",
+      "startedAt": "2026-10-26T00:17:31.375Z",
+      "finishedAt": "2026-10-26T00:17:43.503Z",
+      "outcome": "QUALIFICATION_FAILED (Authentication failed before any send)",
+      "sends": 0
+    },
+    {
+      "label": "E",
+      "startedAt": "2026-10-26T00:18:05.245Z",
+      "finishedAt": "2026-10-26T00:18:42.696Z",
+      "outcome": "MODEL_RUN_NOT_COMPLETED (partial)",
+      "sends": 2,
+      "sendsDerivation": "arithmetic: five settled ledger events existed at revision 20; attempts F and G account for three, leaving two for E",
+      "settledTokens": 4632,
+      "settledDerivation": "arithmetic: ledger revision 14 total 11770 minus F group 7138",
+      "inputTokens": null,
+      "cachedInputTokens": null,
+      "outputTokens": null,
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "F",
+      "startedAt": "2026-10-26T00:18:53.188Z",
+      "finishedAt": "2026-10-26T00:19:51.337Z",
+      "outcome": "admission+recovery verified for this attempt; run completed",
+      "sends": 2,
+      "settledTokens": 7138,
+      "inputTokens": 3999,
+      "cachedInputTokens": 2432,
+      "outputTokens": 3139,
+      "usageScope": "attempt-level aggregate printed from the attempt evidence; per-send split was not printed and the evidence file was later overwritten",
+      "productBudgetLedger": "charged_tokens 7138, settled",
+      "recoveredSendFragments": [
+        {
+          "sequence": 1,
+          "providerRequestId": "e411a2c0-40a3-4570-b1bc-8a5c8328e56a",
+          "requestBytes": 6912,
+          "inputBoundTokens": 7936,
+          "outputCeilingTokens": 4096,
+          "reservedTokens": 12032,
+          "providerStatus": 200,
+          "finishReason": "tool_calls",
+          "tools": ["get_resource_observations", "get_server_alerts"],
+          "requestHash": null,
+          "inputTokens": null,
+          "cachedInputTokens": null,
+          "outputTokens": null
+        },
+        {
+          "sequence": 2,
+          "providerRequestId": "e0500b4e-f5dd-416e-a3ac-eff8c1c68b2e",
+          "requestBytes": 10167,
+          "inputBoundTokens": 11191,
+          "outputCeilingTokens": 4096,
+          "reservedTokens": 15287,
+          "providerStatus": 200,
+          "finishReason": "stop",
+          "tools": ["get_resource_observations", "get_server_alerts"],
+          "requestHash": null,
+          "inputTokens": null,
+          "cachedInputTokens": null,
+          "outputTokens": null
+        }
+      ]
+    },
+    {
+      "label": "G",
+      "startedAt": "2026-10-26T00:20:54.397Z",
+      "finishedAt": "2026-10-26T00:21:38.581Z",
+      "outcome": "MODEL_RUN_NOT_COMPLETED (partial, INVESTIGATION_PROVIDER_UNKNOWN)",
+      "agentRunId": "24769bf9-7a15-49d3-9c77-c6b52583581d",
+      "workflowJobId": "e19626aa-9a3a-4f72-b562-e737e891e032",
+      "sends": 1,
+      "settledTokens": 1847,
+      "settledDerivation": "arithmetic: ledger revision 17 total 13617 minus revision 14 total 11770",
+      "inputTokens": null,
+      "cachedInputTokens": null,
+      "outputTokens": null,
+      "unknownSends": 1,
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "H",
+      "startedAt": "2026-10-26T00:24:02.682Z",
+      "finishedAt": "2026-10-26T00:24:22.142Z",
+      "outcome": "MODEL_TOOL_PREFLIGHT_NO_REAL_OBSERVATION",
+      "sends": 0
+    },
+    {
+      "label": "I",
+      "startedAt": "2026-10-26T00:24:39.113Z",
+      "finishedAt": "2026-10-26T00:25:21.877Z",
+      "outcome": "partial CONTEXT_UNRECOVERABLE (contextWindowTokens 16000)",
+      "sends": 2,
+      "settledTokens": 4848,
+      "inputTokens": 4043,
+      "cachedInputTokens": 2432,
+      "outputTokens": 805,
+      "usageScope": "attempt-level aggregate from the attempt's product ledger allocation; equals the parent ledger delta 13617 -> 18465",
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "J",
+      "startedAt": "2026-10-26T00:26:21.236Z",
+      "finishedAt": "2026-10-26T00:27:04.980Z",
+      "outcome": "partial CONTEXT_UNRECOVERABLE (contextWindowTokens 16000)",
+      "sends": 2,
+      "settledTokens": 5173,
+      "inputTokens": 4108,
+      "cachedInputTokens": 2432,
+      "outputTokens": 1065,
+      "usageScope": "attempt-level aggregate; equals the parent ledger delta 18465 -> 23638",
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "K",
+      "startedAt": "2026-10-26T00:27:23.356Z",
+      "finishedAt": "2026-10-26T00:27:56.468Z",
+      "outcome": "partial PROVIDER_TRANSIENT",
+      "sends": 1,
+      "settledTokens": 1923,
+      "inputTokens": 1604,
+      "cachedInputTokens": 1152,
+      "outputTokens": 319,
+      "usageScope": "single-send attempt-level usage; equals the parent ledger delta 23638 -> 25561",
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "L",
+      "startedAt": "2026-10-26T00:29:12.787Z",
+      "finishedAt": "2026-10-26T00:29:55.552Z",
+      "outcome": "partial CONTEXT_GOVERNANCE_ERROR (contextWindowTokens 16000, summaryMaxTokens 2048)",
+      "sends": 2,
+      "settledTokens": 4500,
+      "settledDerivation": "arithmetic: attempt usage snapshot 3904 input + 596 output; parent ledger L+M delta is 20626",
+      "inputTokens": 3904,
+      "cachedInputTokens": 2432,
+      "outputTokens": 596,
+      "usageScope": "attempt-level aggregate",
+      "perSendIdentifiers": null
+    },
+    {
+      "label": "M",
+      "startedAt": "2026-10-26T00:30:17.474Z",
+      "finishedAt": "2026-10-26T00:31:51.649Z",
+      "outcome": "MODEL_RUN_NOT_COMPLETED (partial, transport Connection error)",
+      "sends": 4,
+      "sendsDerivation": "arithmetic: 16 prior settled sends minus the 12 accounted for by E(2), F(2), G(1), I(2), J(2), K(1), L(2)",
+      "settledTokens": 16126,
+      "settledDerivation": "arithmetic: 46187 prior settled total minus 30061 (E+F+G+I+J+K+L)",
+      "inputTokens": null,
+      "cachedInputTokens": null,
+      "outputTokens": null,
+      "perSendIdentifiers": null,
+      "note": "attempt used INVESTIGATION_CONTEXT_WINDOW_TOKENS=60000 and INVESTIGATION_SUMMARY_OUTPUT_TOKENS=2048 and still hit a transport error"
+    }
+  ],
+  "recoveredReservationIdsWithoutMapping": {
+    "ids": [
+      "be817ee2-2636-45d3-acfc-fd82f63c5f66",
+      "5fa9f1ea-a251-446c-826c-a93879526208",
+      "01381824-8733-4a6a-9156-42c2cee5d2d9",
+      "d12f3473-88a0-4b9f-b238-65577d46296d",
+      "1df4d5c9-062e-4fe2-bcdb-560cb12e506c"
+    ],
+    "scope": "the five settlement events that existed at parent ledger revision 20, before the 8KB compaction",
+    "missing": "Their scenario, input/cached/output tokens and provider request IDs were truncated in the run output that captured these identifiers and no longer exist in the revision 53 ledger."
+  },
+  "unknownRequest": {
+    "id": "a37ad0e6-f9f4-485f-90d4-3dfbf9242571",
+    "scenario": "investigation-send-2",
+    "reservedAt": "2026-10-26T00:21:24.501Z",
+    "inputBoundTokens": 11271,
+    "outputCeilingTokens": 4096,
+    "reservedTokens": 15367,
+    "reason": "MODEL_TRANSPORT_UNKNOWN",
+    "transportStatus": {
+      "providerStatus": null,
+      "providerRequestId": null,
+      "usage": null,
+      "error": "OpenAI SDK chat() failed: Connection error",
+      "clientMaxRetries": 0,
+      "redirect": "error",
+      "attemptRunId": "24769bf9-7a15-49d3-9c77-c6b52583581d"
+    },
+    "settlement": "unknown: full reservation retained, never released"
+  },
+  "unknownNotReplayed": {
+    "assertion": "the unknown request was not replayed",
+    "evidence": [
+      "the send wrapper sets stop=true on transport error, settles the reservation as unknown and rethrows, so the same process sends nothing further (run messages seq 339-340)",
+      "the same reservation id appears once in reservations at revision 17 and then once in unknown_requests at revisions 17, 20, 32 and 53; it is never released or settled",
+      "every later attempt created a new alert, a new investigation and new reservations in a fresh isolated schema; none references a37ad0e6 (later attempts I, J, K, L, M and final N)",
+      "the final successful job used a different request id d61aaef6-3ef2-47b8-a6eb-9adefebdb35d and settled only its own three reservations",
+      "revision 53 has zero outstanding reservations; only the unknown remains reserved"
+    ],
+    "limits": "No provider-side request log or provider request ID exists for this send, so the provider cannot be shown independently to have not executed it. The recorded guarantee is ledger- and process-level: no retry, no replay, full reservation retained."
+  },
+  "reconciliation": {
+    "priorSettledTokens": 46187,
+    "finalSettledTokens": 11291,
+    "settledTotal": 57478,
+    "checks": [
+      "input 40976 = 33775 prior + 7201 final",
+      "output 16502 = 12412 prior + 4090 final",
+      "cached 24320 = 19584 prior + 4736 final",
+      "total 57478 = 46187 + 11291",
+      "attempt totals: 4632 + 7138 + 1847 + 4848 + 5173 + 1923 + 4500 + 16126 = 46187",
+      "final three sends: 1831 + 3079 + 6381 = 11291"
+    ]
+  },
+  "knownGaps": [
+    "E: per-send reservation ids, request hashes, request bounds, provider request IDs and input/output split are not recoverable; only the two-send aggregate 4632 is exact.",
+    "G: the settled send's identifiers, bounds and usage split are not recoverable; only the aggregate 1847 and the unknown record survive.",
+    "I, J, K, L: only attempt-level usage aggregates survive; per-send request hashes, reservation ids and provider request IDs were overwritten with the attempt evidence file.",
+    "M: only the derived four-send aggregate 16126 survives; no per-send record, hash, bound or provider request ID was retained.",
+    "The five recovered reservation ids (revision 20) cannot be mapped to their usage or provider request ID.",
+    "Alert/investigation request ids for attempts E through M were not retained.",
+    "The parent ledger note 'per-request detail in MAX-225 evidence' is inaccurate for the 16 prior responses; this journal supersedes that claim for MAX-225 and no ledger rewrite was made in this continuation."
+  ],
+  "accountingImpact": "None. The journal adds no sends and no ledger writes; settled 57478, unknown 15367, reservations 0 remain exactly as revision 53 recorded."
+}
