@@ -13,7 +13,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
-const SRC = fileURLToPath(new URL('../prototype/app.js', import.meta.url));
+/* 默认读取工作树原型源码；MAX241_APP_SRC 供 RED 对照指向修复前的同一文件副本，
+   用例与判定逻辑不变。 */
+const SRC = process.env.MAX241_APP_SRC ?? fileURLToPath(new URL('../prototype/app.js', import.meta.url));
 const src = readFileSync(SRC, 'utf8');
 
 const templates = src.slice(src.indexOf('const TEMPLATES ='), src.indexOf('/* ---------------- 演示资源'));
@@ -66,6 +68,21 @@ const cases = [
   { name: 'Ubuntu 22.04.3 LTS (Jammy) × Linux 最小模板 → 括号代号不干扰版本', cls: 'server', template: 'linux-minimal', row: { os: 'Ubuntu 22.04.3 LTS (Jammy)' }, expect: true },
   { name: 'Windows Server 2019 (x86_64) × Linux 模板 → 操作系统不符', cls: 'server', template: 'linux-basic', row: { os: 'Windows Server 2019 (x86_64)' }, expect: false },
   { name: 'Windows Server 2019 amd64 × Linux 最小模板 → 操作系统不符', cls: 'server', template: 'linux-minimal', row: { os: 'Windows Server 2019 amd64' }, expect: false },
+  /* review7 反例：元数据 span 必须整体剔除；只含元数据的描述没有系统版本。
+     同一组输入分别在两个 Linux 模板上验证（模板约束不同，判定逻辑相同）。 */
+  ...['linux-basic', 'linux-minimal'].flatMap((template) => [
+    { name: `Linux kernel=6.1 × ${template} → 等号内核元数据不是系统版本`, cls: 'server', template, row: { os: 'Linux kernel=6.1' }, expect: false, expectLabel: null },
+    { name: `Linux kernel release 5.14.0 × ${template} → release 修饰内核元数据不是系统版本`, cls: 'server', template, row: { os: 'Linux kernel release 5.14.0' }, expect: false, expectLabel: null },
+    { name: `Linux 64 bit × ${template} → 位数不是系统版本`, cls: 'server', template, row: { os: 'Linux 64 bit' }, expect: false, expectLabel: null },
+    { name: `Linux x86 × ${template} → 裸架构不是系统版本`, cls: 'server', template, row: { os: 'Linux x86' }, expect: false, expectLabel: null },
+    { name: `Linux kernel 5.14.0-427.13.1.el9 × ${template} → 完整内核号后缀不残留为系统版本`, cls: 'server', template, row: { os: 'Linux kernel 5.14.0-427.13.1.el9' }, expect: false, expectLabel: null },
+  ]),
+  /* 合法系统版本与完整内核元数据并存：只取显式系统版本，不吃内核号也不被后缀污染。 */
+  { name: 'CentOS 7.9 kernel 5.14.0-427.13.1.el9 × Linux 模板 → 取 7.9 而非 9', cls: 'server', template: 'linux-basic', row: { os: 'CentOS 7.9 kernel 5.14.0-427.13.1.el9' }, expect: true, expectLabel: '7.9' },
+  { name: 'CentOS 7.9 kernel 5.14.0-427.13.1.el9 × Linux 最小模板 → 取 7.9 而非 9', cls: 'server', template: 'linux-minimal', row: { os: 'CentOS 7.9 kernel 5.14.0-427.13.1.el9' }, expect: true, expectLabel: '7.9' },
+  { name: 'Ubuntu 22.04 kernel 6.5 × Linux 模板 → 取 22.04 而非内核号 6.5', cls: 'server', template: 'linux-basic', row: { os: 'Ubuntu 22.04 kernel 6.5' }, expect: true, expectLabel: '22.04' },
+  { name: 'Linux 6.1 × Linux 模板 → 既有合法基线仍可用', cls: 'server', template: 'linux-basic', row: { os: 'Linux 6.1' }, expect: true, expectLabel: '6.1' },
+  { name: 'Linux kernel 6.1 × Linux 模板 → 缺显式系统版本，不取内核号', cls: 'server', template: 'linux-basic', row: { os: 'Linux kernel 6.1' }, expect: false, expectLabel: null },
 ];
 
 const results = cases.map((c) => {
@@ -73,15 +90,22 @@ const results = cases.map((c) => {
   const actual = vm.runInContext(`${templates}
 function ensureConfig() { return cfg; }
 ${funcs}
-compatResult(fixture)`, context);
-  return { name: c.name, cls: c.cls, template: c.template, row: c.row, expect: c.expect, ok: actual.ok, reason: actual.reason ?? null, pass: actual.ok === c.expect };
+({ compat: compatResult(fixture), resource: resourceEngine(fixture) })`, context);
+  const label = actual.resource?.versionLabel ?? null;
+  const labelOk = c.expectLabel === undefined ? true : label === c.expectLabel;
+  return {
+    name: c.name, cls: c.cls, template: c.template, row: c.row, expect: c.expect,
+    ok: actual.compat.ok, reason: actual.compat.reason ?? null, versionLabel: label,
+    ...(c.expectLabel === undefined ? {} : { expectLabel: c.expectLabel }),
+    pass: actual.compat.ok === c.expect && labelOk,
+  };
 });
 
 const failed = results.filter((r) => !r.pass);
 const out = {
   generatedAt: new Date().toISOString(),
   source: SRC,
-  method: '原型源码的 templateById/compatResult 在隔离 VM 中执行；合成输入，不代表真实数据库/设备验收',
+  method: '原型源码的 templateById/compatResult/resourceEngine 在隔离 VM 中执行；合成输入，不代表真实数据库/设备验收',
   total: results.length,
   passed: results.length - failed.length,
   results,

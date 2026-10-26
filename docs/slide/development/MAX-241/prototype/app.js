@@ -766,13 +766,16 @@ function engineFamily(text) {
   return 'unknown';
 }
 
-/* 版本只能取自描述本身的版本号：架构（x86_64/aarch64/amd64…）、内核号、构建号以及括号内的
-   代号/位数补充都不是版本；描述明确 unknown/未知或清理后没有数字时，版本不可确认。 */
+/* 版本只能取自描述本身的显式系统版本：内核/构建元数据 span、架构（x86_64/x86/aarch64/amd64…）、
+   位数补充以及括号内的代号说明都不是版本。元数据 span 必须整体剔除——从元数据词开始，连同
+   分隔符（= : #）、单词修饰（release/version/编号…）和完整取值 token（含 el9 一类后缀）——不能
+   只剥数字前缀，否则残留片段（如 "el9"）会被当成系统版本。描述明确 unknown/未知或清理后没有
+   版本 token 时，版本不可确认。 */
 const VERSION_METADATA = [
   /[（(]\s*(?!v?\d+(?:\.\d+)*\s*[）)])[^）)]*[）)]/g,
-  /\b(?:x86_?64|amd64|x64|aarch64|arm64|armv\d+\w*|i[3-6]86|ppc64\w*|s390x|riscv\w*|mips\w*)\b/gi,
-  /\b\d+-bit\b/gi,
-  /\b(?:kernel|build|内核|构建)\s*[:#]?\s*v?\d+(?:[.\-_+]\d+)*/gi,
+  /(?:^|[\s,，;；/])(?:kernel|build|内核|构建)(?:\s*(?:release|version|ver|rev|no\.?|number|编号))?\s*[:=#]?\s*v?\d[\w.\-+~]*/gi,
+  /\b(?:x86[_-](?:64|32)|x86|amd64|x64|aarch64|arm64|armhf|armv\d+l?|i[3-6]86|ppc64\w*|s390x|riscv\d*\w*|mips\w*|loongarch\w*)\b/gi,
+  /\b(?:32|64)\s*[-_ ]?\s*(?:bits?|位)/gi,
 ];
 const VERSION_UNKNOWN = /unknown|未知|未确认|待确认|n\/a\b/i;
 
