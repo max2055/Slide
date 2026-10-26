@@ -3,6 +3,7 @@ import { RuntimeError, validateRecoverySnapshot } from './recovery-policy.js';
 import { TurnLoop } from './turn-loop.js';
 import type { ToolExecutor } from './tool-executor.js';
 import { resolveContextConfig } from '../model-context.js';
+import { summaryOutputAllocation } from './auto-compact.js';
 
 export class AgentRuntime {
   constructor(
@@ -15,6 +16,9 @@ export class AgentRuntime {
       const context = resolveContextConfig(spec, this.getProvider());
       spec = { ...spec, maxTokens: context.maxTokens };
     } catch { throw new RuntimeError('INVALID_POLICY', 'Invalid model context configuration'); }
+    // A frozen summary allocation the model cannot emit must fail here, before
+    // any ordinary or summary request, even when compaction is not due.
+    summaryOutputAllocation(spec, this.getProvider());
     if (spec.budgetLimits) {
       for (const value of [spec.maxIterations, spec.maxTokens!, spec.budgetLimits.maxToolCalls, spec.budgetLimits.maxProviderAttempts, spec.budgetLimits.maxTotalTokens, spec.budgetLimits.maxNoProgressSteps]) {
         if (!Number.isSafeInteger(value) || value < 1) throw new RuntimeError('INVALID_POLICY', 'Runtime budgets must be finite positive integers');

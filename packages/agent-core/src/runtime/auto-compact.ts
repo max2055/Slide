@@ -58,6 +58,30 @@ const summaryHook: AgentHook = {
   beforeExecuteTools: async () => {}, emitReasoning: async () => {}, emitReasoningEnd: async () => {},
   afterIteration: async () => {}, finalizeContent: (_context, content) => content,
 };
+/** Shared summary-output policy: validate the frozen allocation before any
+ * ordinary or summary request is dispatched. Shared runtimes (chat and other
+ * entry points) configure no summary allocation, so they keep the historical
+ * compatible default rather than inheriting the larger investigation-only
+ * ceiling, and never exceed a verified model output limit. Explicit
+ * allocations are never clamped: an allocation the verified model cannot emit
+ * fails the run instead of surfacing mid-execution. */
+export function summaryOutputAllocation(
+  spec: Pick<AgentRunSpec, 'model' | 'maxTokens' | 'contextPolicy'>,
+  provider?: LLMProvider,
+): number {
+  const capability = provider?.getModelCapabilities?.(spec.model);
+  const verifiedOutput = capability?.source === 'conservative-fallback' ? undefined : capability?.maxOutputTokens;
+  const configured = spec.contextPolicy?.summaryMaxTokens;
+  if (configured !== undefined && verifiedOutput !== undefined && configured > verifiedOutput) {
+    throw new RuntimeError('CONTEXT_UNRECOVERABLE', `Summary output ${configured} exceeds model output limit ${verifiedOutput}`);
+  }
+  if (configured !== undefined && configured > 4096 && verifiedOutput === undefined) {
+    throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Summary output requires verified model capacity');
+  }
+  const maxTokens = configured ?? Math.min(2048, spec.maxTokens ?? 4096, verifiedOutput ?? Infinity);
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid summary output budget');
+  return maxTokens;
+}
 export async function autoCompact(
   manager: ContextManager, raw: Message[], provider: LLMProvider, recovery: RecoveryPolicy, tracker: RapidRefill,
   persist: (record?: SummaryRecord, compactState?: ReturnType<RapidRefill['snapshot']>, receipt?: SummaryReceipt) => Promise<void>,
@@ -98,23 +122,10 @@ export async function autoCompact(
   // summary ceiling so a small content target cannot force incomplete JSON.
   // The summary request and complete resulting projection must still fit their
   // actual windows; neither a token count nor the target proves that fit.
-  // Summary output is independent of ordinary-answer output. Never silently
-  // clamp an explicit allocation: the capability/window gates must admit it in
-  // full. Shared runtimes (chat and other entry points) configure no summary
-  // allocation, so they keep the historical compatible default rather than
-  // inheriting the larger investigation-only ceiling, and never exceed a
-  // verified model output limit.
-  const capability = provider.getModelCapabilities?.(spec.model);
-  const verifiedOutput = capability?.source === 'conservative-fallback' ? undefined : capability?.maxOutputTokens;
-  const configured = spec.contextPolicy?.summaryMaxTokens;
-  if (configured !== undefined && verifiedOutput !== undefined && configured > verifiedOutput) {
-    throw new RuntimeError('CONTEXT_UNRECOVERABLE', `Summary output ${configured} exceeds model output limit ${verifiedOutput}`);
-  }
-  if (configured !== undefined && configured > 4096 && verifiedOutput === undefined) {
-    throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Summary output requires verified model capacity');
-  }
-  const maxTokens = configured ?? Math.min(2048, spec.maxTokens ?? 4096, verifiedOutput ?? Infinity);
-  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new RuntimeError('CONTEXT_UNRECOVERABLE', 'Invalid summary output budget');
+  // Summary output is independent of ordinary-answer output. Runtime startup
+  // already validated the frozen allocation; keep the same gate at the actual
+  // summary boundary so a changed capability still fails before this send.
+  const maxTokens = summaryOutputAllocation(spec, provider);
   // Project receipts before enclosing history in a synthetic message. Once
   // wrapped as JSON, a provider cannot recognize individual tool results.
   // Summary input preserves accepted planning/history; optional numerical

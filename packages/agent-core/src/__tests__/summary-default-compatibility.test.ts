@@ -83,3 +83,38 @@ it('compacts a chat-shaped run without an explicit summary allocation before the
   expect(record?.summary).toEqual(summary);
   expect(result.runtimeState).toMatchObject({providerAttempts:2,unknownRequests:0,reservedTokens:0});
 });
+
+it('fails an explicit oversized summary allocation before any send on a short ordinary history',async()=>{
+  // No compaction is due, so only runtime startup can reject the frozen allocation.
+  const f=fixture(10240,{history:'short history'});
+  const saved:any[]=[];
+  const error=await new AgentRunner(f.provider).run({...f.spec,checkpointCallback:async checkpoint=>{saved.push(structuredClone(checkpoint));}}).catch(value=>value);
+  expect(error).toMatchObject({code:'CONTEXT_UNRECOVERABLE'});
+  expect(String(error.message)).toContain('8192');
+  expect(f.bodies).toHaveLength(0);expect(f.options).toHaveLength(0);
+  expect(saved).toHaveLength(0);
+});
+
+it('fails an explicit oversized summary allocation on a resumed short history',async()=>{
+  const f=fixture(10240,{history:'short history'});
+  const runtime_state_v1={schemaVersion:1,modelSteps:0,providerAttempts:0,toolCalls:0,total:0,unknownRequests:0,reservedTokens:0,
+    counts:{empty:0,continuation:0,stream:0,repetition:0,context:0},usage:{}};
+  const error=await new AgentRunner(f.provider).run({...f.spec,resumeCheckpoint:{runtime_state_v1}}).catch(value=>value);
+  expect(error).toMatchObject({code:'CONTEXT_UNRECOVERABLE'});
+  expect(f.bodies).toHaveLength(0);
+});
+
+it('sends a short ordinary history with the compatible default allocation unchanged',async()=>{
+  const f=fixture(undefined,{history:'short history'});
+  const result=await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.bodies).toHaveLength(1);expect(f.bodies[0].max_tokens).toBe(4096);
+  expect(result.runtimeState).toMatchObject({providerAttempts:1,unknownRequests:0,reservedTokens:0});
+});
+
+it('admits an explicit summary allocation within verified output on a short history',async()=>{
+  const f=fixture(10240,{history:'short history',maxOutputTokens:16384});
+  const result=await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('completed');
+  expect(f.bodies).toHaveLength(1);expect(f.bodies[0].max_tokens).toBe(4096);
+});
