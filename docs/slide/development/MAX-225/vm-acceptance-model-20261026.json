@@ -1,0 +1,690 @@
+{
+  "schemaVersion": 1,
+  "qualification": "MAX-225",
+  "startedAt": "2026-10-26T00:32:49.470Z",
+  "sharedWrites": 0,
+  "modelRequests": 3,
+  "samples": [
+    {
+      "attempts": [
+        {
+          "status": "succeeded",
+          "error": null
+        }
+      ],
+      "observation": {
+        "id": "sha256:0460f08116a517f939528324b6d5c4d6548d25384745ed5011a5837f77c2d9ad",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "3",
+        "metric": {
+          "id": "linux.cpu.user_system_percent",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-10-26T00:33:09.841Z",
+        "collected_at": "2026-10-26T00:33:10.492Z",
+        "stored_at": null,
+        "unit": "%",
+        "value": {
+          "encoding": "float64",
+          "value": 9.1
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "server:3",
+          "metric_binding_id": "server:3:linux.cpu.user_system_percent",
+          "collector_id": "linux-host-gauges",
+          "attempt_id": "MAX225:3848f66c-d99b-4a94-aed0-31047d7d3170:linux-host-gauges"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "linux-host",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:905eb05ae652e5d391636c74ce68b7dabe487d521178f146503435daccc54e0b",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "attempts": [
+        {
+          "status": "succeeded",
+          "error": null
+        }
+      ],
+      "observation": {
+        "id": "sha256:c8e08cddc15a0dadff18ad18e16cab6044937acbb5a6bbd5e58d5f8575d3f06b",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "3",
+        "metric": {
+          "id": "linux.cpu.user_system_percent",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-10-26T00:34:08.564Z",
+        "collected_at": "2026-10-26T00:34:08.942Z",
+        "stored_at": null,
+        "unit": "%",
+        "value": {
+          "encoding": "float64",
+          "value": 9.1
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "server:3",
+          "metric_binding_id": "server:3:linux.cpu.user_system_percent",
+          "collector_id": "linux-host-gauges",
+          "attempt_id": "MAX225:a0a61587-02b5-4aa6-b671-4f32ddf8ff1b:linux-host-gauges"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "linux-host",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:dec3ab170bfc09e51605c628036d6fafdf52157a3e730c1f4401fb0ca9217259",
+            "stage": "raw"
+          }
+        ]
+      }
+    },
+    {
+      "attempts": [
+        {
+          "status": "succeeded",
+          "error": null
+        }
+      ],
+      "observation": {
+        "id": "sha256:9be9afb616317e0c93b733ab01896d05ff09f5c307f90d9ee79a850b0d5fcb1f",
+        "stage": "normalized",
+        "resource_type": "server",
+        "resource_id": "3",
+        "metric": {
+          "id": "linux.cpu.user_system_percent",
+          "semantic_version": "1.0.0"
+        },
+        "dimensions": {},
+        "observed_at": "2026-10-26T00:34:08.968Z",
+        "collected_at": "2026-10-26T00:34:09.414Z",
+        "stored_at": null,
+        "unit": "%",
+        "value": {
+          "encoding": "float64",
+          "value": 0
+        },
+        "quality": {
+          "status": "good",
+          "reason": "none"
+        },
+        "accuracy": "exact",
+        "production": "measured",
+        "source": {
+          "binding_id": "server:3",
+          "metric_binding_id": "server:3:linux.cpu.user_system_percent",
+          "collector_id": "linux-host-gauges",
+          "attempt_id": "MAX225:14170a3f-391c-472c-89cb-9e9d6ae447a3:linux-host-gauges"
+        },
+        "versions": {
+          "contract": "1.0.0",
+          "package_id": "linux-host",
+          "package_version": "1.0.0",
+          "transform_version": "1.0.0",
+          "config_revision": 1
+        },
+        "lineage": [
+          {
+            "id": "sha256:cfea3b479e140beabb559f7907d1d7c8c96d8bafedc1b833b134abaa933357e8",
+            "stage": "raw"
+          }
+        ]
+      }
+    }
+  ],
+  "stage": "evaluate_and_admit",
+  "sshRelay": {
+    "listen": "192.168.49.1:2222",
+    "target": "192.168.49.130:22"
+  },
+  "resource": {
+    "type": "server",
+    "id": 3
+  },
+  "threshold": 8.645,
+  "alerts": [
+    {
+      "id": 1,
+      "status": "resolved",
+      "metric_value": "9.1",
+      "tags": {
+        "quality": "good",
+        "rule_id": 9001,
+        "rule_name": "MAX225 real VM CPU",
+        "dimensions": {},
+        "observed_to": "2026-10-26T00:34:08.960Z",
+        "target_type": "server",
+        "auto_analysis": {
+          "reason": "accepted",
+          "status": "pending",
+          "requestId": "d61aaef6-3ef2-47b8-a6eb-9adefebdb35d",
+          "analysisId": null,
+          "attemptedAt": "2026-10-26T00:33:10.718Z",
+          "investigationId": "d554fd8c-afbc-497f-bc28-2a6df97c98c3"
+        },
+        "observed_from": "2026-10-26T00:33:08.960Z",
+        "auto_generated": true,
+        "semantic_migration": {
+          "old_id": "cpu_usage",
+          "reason": "Pinned definition; threshold and resource scope preserved",
+          "status": "mapped",
+          "version": "1.0.0",
+          "resource": {
+            "id": 3,
+            "type": "server"
+          },
+          "metric_id": "linux.cpu.user_system_percent",
+          "threshold_conversion": "none"
+        },
+        "rule_window_seconds": 0
+      },
+      "resolved_at": "2026-10-26T00:34:09.000Z"
+    }
+  ],
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "outputCeiling": 4096,
+    "jobRequestId": "d61aaef6-3ef2-47b8-a6eb-9adefebdb35d",
+    "runState": "completed",
+    "executorState": "completed",
+    "executorError": null,
+    "preflight": {
+      "observations": [
+        {
+          "metricId": "cpu_usage",
+          "value": 9.1,
+          "observedAt": "2026-10-26T00:33:09.841Z",
+          "quality": "good"
+        },
+        {
+          "metricId": "memory_usage",
+          "value": null,
+          "observedAt": null,
+          "quality": "unknown",
+          "reason": "missing_input"
+        },
+        {
+          "metricId": "load_1min",
+          "value": null,
+          "observedAt": null,
+          "quality": "unknown",
+          "reason": "MIGRATION_REVIEW_REQUIRED"
+        },
+        {
+          "metricId": "uptime",
+          "value": null,
+          "observedAt": null,
+          "quality": "unknown",
+          "reason": "MIGRATION_REVIEW_REQUIRED"
+        }
+      ],
+      "alerts": [
+        {
+          "id": 1,
+          "level": "critical",
+          "title": "[CRITICAL] MAX225 real VM CPU - 192.168.49.1",
+          "message": "服务器指标 \"cpu_usage\"（） 当前值为 9.1，超过阈值 8.65；采集时间 unknown",
+          "status": "unread",
+          "created_at": "2026-10-26T00:33:10.000Z",
+          "instance_id": null
+        }
+      ]
+    },
+    "sends": [
+      {
+        "sequence": 1,
+        "requestHash": "bf5a2cf96eb30aa332c2b3a7efd339675bca4b1eb7f165bffc5b6d386ccf37c2",
+        "requestBytes": 6912,
+        "inputBoundTokens": 7936,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 12032,
+        "tools": [
+          "get_resource_observations",
+          "get_server_alerts"
+        ],
+        "providerStatus": 200,
+        "usage": {
+          "prompt_tokens": 1604,
+          "completion_tokens": 227,
+          "total_tokens": 1831,
+          "prompt_tokens_details": {
+            "cached_tokens": 1152
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 87
+          },
+          "prompt_cache_hit_tokens": 1152,
+          "prompt_cache_miss_tokens": 452
+        },
+        "finishReason": "tool_calls",
+        "requestId": "adf36a41-df6b-4335-874b-3d4207123f3f"
+      },
+      {
+        "sequence": 2,
+        "requestHash": "ab734828b489647698a8ba8f9768020dfd41fdf1f1069613966a5b2641f73a32",
+        "requestBytes": 10207,
+        "inputBoundTokens": 11231,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 15327,
+        "tools": [
+          "get_resource_observations",
+          "get_server_alerts"
+        ],
+        "providerStatus": 200,
+        "usage": {
+          "prompt_tokens": 2395,
+          "completion_tokens": 684,
+          "total_tokens": 3079,
+          "prompt_tokens_details": {
+            "cached_tokens": 1280
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 593
+          },
+          "prompt_cache_hit_tokens": 1280,
+          "prompt_cache_miss_tokens": 1115
+        },
+        "finishReason": "tool_calls",
+        "requestId": "1048f419-21a0-42b8-a4f4-e670d0e49c94"
+      },
+      {
+        "sequence": 3,
+        "requestHash": "d5a19afa15823a210617086a910d6840b2ea99d28e0bc98f779875116cefc10a",
+        "requestBytes": 13587,
+        "inputBoundTokens": 14611,
+        "outputCeilingTokens": 4096,
+        "reservedTokens": 18707,
+        "tools": [
+          "get_resource_observations",
+          "get_server_alerts"
+        ],
+        "providerStatus": 200,
+        "usage": {
+          "prompt_tokens": 3202,
+          "completion_tokens": 3179,
+          "total_tokens": 6381,
+          "prompt_tokens_details": {
+            "cached_tokens": 2304
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 1709
+          },
+          "prompt_cache_hit_tokens": 2304,
+          "prompt_cache_miss_tokens": 898
+        },
+        "finishReason": "stop",
+        "requestId": "ab993020-3fcc-4417-a89c-0e8f25928876"
+      }
+    ],
+    "measuredUsage": {
+      "inputTokens": 7201,
+      "outputTokens": 4090,
+      "cachedInputTokens": 4736
+    },
+    "productLedger": {
+      "state": "settled",
+      "charged_tokens": 11291,
+      "charged_cost_micros": 1000000,
+      "usage_snapshot": {
+        "inputTokens": 7201,
+        "outputTokens": 4090,
+        "cachedInputTokens": 4736
+      },
+      "cost_status": "unknown"
+    },
+    "summary": "server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。",
+    "claims": [
+      {
+        "kind": "inference",
+        "statement": "观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "该 9.1 高于事件所述阈值 8.65（约高 0.45，约 5.2%），但观测响应未给出单位与计量口径（百分制或其它均不可确认），因此不能据此判定是否构成真实 CPU 过载或确定其严重度。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "同批读数中 memory_usage=null 且 reason=missing_input、quality=unknown；load_1min 与 uptime 均为 null 且 reason=MIGRATION_REVIEW_REQUIRED、quality=unknown。这三项均不可用于健康或宕机判断（缺失不等于正常）。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "本次观测为 limit=4 的有界分页，返回条目已占满上限（响应声明 unselected≤4），说明指标清单不完整：不能断言 server/3 仅有这 4 个指标，也不能把未读取指标视为健康或故障。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "本次仅有一个响应可供证据绑定（call_00_xril8JvuevG7KIJeBKQ50494，bytes=845）。两次 get_server_alerts 调用返回内容一致（1 条 critical 告警，created_at=2026-10-26T00:33:10.000Z，消息为 cpu_usage 当前值 9.1 超阈值 8.65 且“采集时间 unknown”，status=unread，total=1），但响应未附带 toolCallId/contextReference，故告警属旁证，未按契约绑定到本次执行证据。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "本次未返回任何文件系统字段（resource/mount/device/fs_type/used/size），也没有资源关系与资源元数据接口可用，因此 server/3 的文件系统容量、依赖关系与影响面在本轮均为未观测，无法评估。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      },
+      {
+        "kind": "inference",
+        "statement": "告警侧仅 1 条记录（total=1），无重复记录、无起止时间与窗口统计（观测失败字段为 observedAt=null、from/to=null、ruleWindowSeconds=0 且来自不可信输入），故“持久告警”的持续性未被验证，无法区分瞬时尖峰与持续偏高。",
+        "supportingEvidenceIds": [
+          "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd"
+        ],
+        "contradictingEvidenceIds": []
+      }
+    ],
+    "evidenceRows": 3,
+    "evidenceIds": [
+      "085ecb4d-160a-45a4-bf4b-490b5d2fd9b3",
+      "3f0a14b3-f4e2-4e68-8a6a-3db777cf65dd",
+      "8361e5f5-b5ab-42db-9c21-969e3d99b029"
+    ],
+    "finalAnswerHash": "2f82ea0e9364bce5fc832afe2c352b2d4ca416311330b801fbdd1ef8557c746f",
+    "finalAnswer": "```json\n{\n  \"analysisVersion\": 1,\n  \"summary\": \"server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。\",\n  \"claims\": [\n    {\n      \"statement\": \"观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该 9.1 高于事件所述阈值 8.65（约高 0.45，约 5.2%），但观测响应未给出单位与计量口径（百分制或其它均不可确认），因此不能据此判定是否构成真实 CPU 过载或确定其严重度。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"同批读数中 memory_usage=null 且 reason=missing_input、quality=unknown；load_1min 与 uptime 均为 null 且 reason=MIGRATION_REVIEW_REQUIRED、quality=unknown。这三项均不可用于健康或宕机判断（缺失不等于正常）。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次观测为 limit=4 的有界分页，返回条目已占满上限（响应声明 unselected≤4），说明指标清单不完整：不能断言 server/3 仅有这 4 个指标，也不能把未读取指标视为健康或故障。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次仅有一个响应可供证据绑定（call_00_xril8JvuevG7KIJeBKQ50494，bytes=845）。两次 get_server_alerts 调用返回内容一致（1 条 critical 告警，created_at=2026-10-26T00:33:10.000Z，消息为 cpu_usage 当前值 9.1 超阈值 8.65 且“采集时间 unknown”，status=unread，total=1），但响应未附带 toolCallId/contextReference，故告警属旁证，未按契约绑定到本次执行证据。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次未返回任何文件系统字段（resource/mount/device/fs_type/used/size），也没有资源关系与资源元数据接口可用，因此 server/3 的文件系统容量、依赖关系与影响面在本轮均为未观测，无法评估。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"告警侧仅 1 条记录（total=1），无重复记录、无起止时间与窗口统计（观测失败字段为 observedAt=null、from/to=null、ruleWindowSeconds=0 且来自不可信输入），故“持久告警”的持续性未被验证，无法区分瞬时尖峰与持续偏高。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"hypotheses\": [\n    {\n      \"statement\": \"阈值 8.65 与百分制 CPU 不相容，cpu_usage 的单位/阈值配置可能未校准，告警或为配置或口径问题而非真实过载。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该告警可能为单点瞬时尖峰：仅有 1 条记录、无窗口统计、无 cpu_usage 历史序列可核对。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"unresolvedQuestions\": [\n    \"cpu_usage 9.1 的单位与采集口径是什么，阈值 8.65 依据何种量纲设置？\",\n    \"cpu_usage 在 2026-10-26T00:33 前后的历史序列如何，是否持续高于 8.65？\",\n    \"memory_usage、load_1min、uptime 为何缺失，MIGRATION_REVIEW_REQUIRED 待何人评审？\",\n    \"告警标题中 192.168.49.1 与 instance_id=null 的归属关系如何核实？\"\n  ],\n  \"recommendations\": [\n    {\n      \"action\": \"补采 cpu_usage 历史序列（≥1h，含单位与 dimensions），并补齐 memory_usage、load_1min、uptime\",\n      \"priority\": \"high\"\n    },\n    {\n      \"action\": \"核对 cpu_usage 单位与阈值 8.65 的配置语义，校准后再判定严重度与是否需处置\",\n      \"priority\": \"medium\"\n    },\n    {\n      \"action\": \"核实告警归属实例（标题 IP 与 instance_id 不一致）并确认其确认/关闭状态\",\n      \"priority\": \"low\"\n    }\n  ]\n}\n```",
+    "sharedWrites": 0
+  },
+  "recovered": true,
+  "owners": [
+    {
+      "alert_id": 1,
+      "lane": "investigation",
+      "investigation_id": "d554fd8c-afbc-497f-bc28-2a6df97c98c3",
+      "analysis_id": null
+    }
+  ],
+  "admissionVerified": true,
+  "finishedAt": "2026-10-26T00:34:09.439Z",
+  "modelDiagnostics": {
+    "runs": [
+      {
+        "id": "074ae36f-9b6d-4a3a-8be3-315314d965d4",
+        "state": "completed",
+        "result": {
+          "event": {
+            "type": "complete",
+            "resolution": {
+              "kind": "response_ready",
+              "retryable": false,
+              "reasonCode": "RUNTIME_RESPONSE_READY"
+            },
+            "stopReason": "completed",
+            "finalContent": "```json\n{\n  \"analysisVersion\": 1,\n  \"summary\": \"server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。\",\n  \"claims\": [\n    {\n      \"statement\": \"观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该 9.1 高于事件所述阈值 8.65（约高 0.45，约 5.2%），但观测响应未给出单位与计量口径（百分制或其它均不可确认），因此不能据此判定是否构成真实 CPU 过载或确定其严重度。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"同批读数中 memory_usage=null 且 reason=missing_input、quality=unknown；load_1min 与 uptime 均为 null 且 reason=MIGRATION_REVIEW_REQUIRED、quality=unknown。这三项均不可用于健康或宕机判断（缺失不等于正常）。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次观测为 limit=4 的有界分页，返回条目已占满上限（响应声明 unselected≤4），说明指标清单不完整：不能断言 server/3 仅有这 4 个指标，也不能把未读取指标视为健康或故障。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次仅有一个响应可供证据绑定（call_00_xril8JvuevG7KIJeBKQ50494，bytes=845）。两次 get_server_alerts 调用返回内容一致（1 条 critical 告警，created_at=2026-10-26T00:33:10.000Z，消息为 cpu_usage 当前值 9.1 超阈值 8.65 且“采集时间 unknown”，status=unread，total=1），但响应未附带 toolCallId/contextReference，故告警属旁证，未按契约绑定到本次执行证据。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次未返回任何文件系统字段（resource/mount/device/fs_type/used/size），也没有资源关系与资源元数据接口可用，因此 server/3 的文件系统容量、依赖关系与影响面在本轮均为未观测，无法评估。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"告警侧仅 1 条记录（total=1），无重复记录、无起止时间与窗口统计（观测失败字段为 observedAt=null、from/to=null、ruleWindowSeconds=0 且来自不可信输入），故“持久告警”的持续性未被验证，无法区分瞬时尖峰与持续偏高。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"hypotheses\": [\n    {\n      \"statement\": \"阈值 8.65 与百分制 CPU 不相容，cpu_usage 的单位/阈值配置可能未校准，告警或为配置或口径问题而非真实过载。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该告警可能为单点瞬时尖峰：仅有 1 条记录、无窗口统计、无 cpu_usage 历史序列可核对。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"unresolvedQuestions\": [\n    \"cpu_usage 9.1 的单位与采集口径是什么，阈值 8.65 依据何种量纲设置？\",\n    \"cpu_usage 在 2026-10-26T00:33 前后的历史序列如何，是否持续高于 8.65？\",\n    \"memory_usage、load_1min、uptime 为何缺失，MIGRATION_REVIEW_REQUIRED 待何人评审？\",\n    \"告警标题中 192.168.49.1 与 instance_id=null 的归属关系如何核实？\"\n  ],\n  \"recommendations\": [\n    {\n      \"action\": \"补采 cpu_usage 历史序列（≥1h，含单位与 dimensions），并补齐 memory_usage、load_1min、uptime\",\n      \"priority\": \"high\"\n    },\n    {\n      \"action\": \"核对 cpu_usage 单位与阈值 8.65 的配置语义，校准后再判定严重度与是否需处置\",\n      \"priority\": \"medium\"\n    },\n    {\n      \"action\": \"核实告警归属实例（标题 IP 与 instance_id 不一致）并确认其确认/关闭状态\",\n      \"priority\": \"low\"\n    }\n  ]\n}\n```",
+            "messageParts": {
+              "id": "run_074ae36f-9b6d-4a3a-8be3-315314d965d4_assistant",
+              "role": "assistant",
+              "parts": [
+                {
+                  "id": "run_074ae36f-9b6d-4a3a-8be3-315314d965d4_assistant/part/0",
+                  "text": "```json\n{\n  \"analysisVersion\": 1,\n  \"summary\": \"server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。\",\n  \"claims\": [\n    {\n      \"statement\": \"观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该 9.1 高于事件所述阈值 8.65（约高 0.45，约 5.2%），但观测响应未给出单位与计量口径（百分制或其它均不可确认），因此不能据此判定是否构成真实 CPU 过载或确定其严重度。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"同批读数中 memory_usage=null 且 reason=missing_input、quality=unknown；load_1min 与 uptime 均为 null 且 reason=MIGRATION_REVIEW_REQUIRED、quality=unknown。这三项均不可用于健康或宕机判断（缺失不等于正常）。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次观测为 limit=4 的有界分页，返回条目已占满上限（响应声明 unselected≤4），说明指标清单不完整：不能断言 server/3 仅有这 4 个指标，也不能把未读取指标视为健康或故障。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次仅有一个响应可供证据绑定（call_00_xril8JvuevG7KIJeBKQ50494，bytes=845）。两次 get_server_alerts 调用返回内容一致（1 条 critical 告警，created_at=2026-10-26T00:33:10.000Z，消息为 cpu_usage 当前值 9.1 超阈值 8.65 且“采集时间 unknown”，status=unread，total=1），但响应未附带 toolCallId/contextReference，故告警属旁证，未按契约绑定到本次执行证据。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次未返回任何文件系统字段（resource/mount/device/fs_type/used/size），也没有资源关系与资源元数据接口可用，因此 server/3 的文件系统容量、依赖关系与影响面在本轮均为未观测，无法评估。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"告警侧仅 1 条记录（total=1），无重复记录、无起止时间与窗口统计（观测失败字段为 observedAt=null、from/to=null、ruleWindowSeconds=0 且来自不可信输入），故“持久告警”的持续性未被验证，无法区分瞬时尖峰与持续偏高。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"hypotheses\": [\n    {\n      \"statement\": \"阈值 8.65 与百分制 CPU 不相容，cpu_usage 的单位/阈值配置可能未校准，告警或为配置或口径问题而非真实过载。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该告警可能为单点瞬时尖峰：仅有 1 条记录、无窗口统计、无 cpu_usage 历史序列可核对。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"unresolvedQuestions\": [\n    \"cpu_usage 9.1 的单位与采集口径是什么，阈值 8.65 依据何种量纲设置？\",\n    \"cpu_usage 在 2026-10-26T00:33 前后的历史序列如何，是否持续高于 8.65？\",\n    \"memory_usage、load_1min、uptime 为何缺失，MIGRATION_REVIEW_REQUIRED 待何人评审？\",\n    \"告警标题中 192.168.49.1 与 instance_id=null 的归属关系如何核实？\"\n  ],\n  \"recommendations\": [\n    {\n      \"action\": \"补采 cpu_usage 历史序列（≥1h，含单位与 dimensions），并补齐 memory_usage、load_1min、uptime\",\n      \"priority\": \"high\"\n    },\n    {\n      \"action\": \"核对 cpu_usage 单位与阈值 8.65 的配置语义，校准后再判定严重度与是否需处置\",\n      \"priority\": \"medium\"\n    },\n    {\n      \"action\": \"核实告警归属实例（标题 IP 与 instance_id 不一致）并确认其确认/关闭状态\",\n      \"priority\": \"low\"\n    }\n  ]\n}\n```",
+                  "type": "text",
+                  "source": "fact",
+                  "status": "completed",
+                  "durable": {
+                    "kind": "mysql",
+                    "reference": "run_074ae36f-9b6d-4a3a-8be3-315314d965d4_assistant"
+                  }
+                }
+              ],
+              "runId": "074ae36f-9b6d-4a3a-8be3-315314d965d4",
+              "legacy": {
+                "id": "run_074ae36f-9b6d-4a3a-8be3-315314d965d4_assistant",
+                "role": "assistant",
+                "runId": "074ae36f-9b6d-4a3a-8be3-315314d965d4",
+                "turnId": "82fc5f6e-9233-441e-8e1e-1b4d0ef5ecfc",
+                "content": "```json\n{\n  \"analysisVersion\": 1,\n  \"summary\": \"server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。\",\n  \"claims\": [\n    {\n      \"statement\": \"观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该 9.1 高于事件所述阈值 8.65（约高 0.45，约 5.2%），但观测响应未给出单位与计量口径（百分制或其它均不可确认），因此不能据此判定是否构成真实 CPU 过载或确定其严重度。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"同批读数中 memory_usage=null 且 reason=missing_input、quality=unknown；load_1min 与 uptime 均为 null 且 reason=MIGRATION_REVIEW_REQUIRED、quality=unknown。这三项均不可用于健康或宕机判断（缺失不等于正常）。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次观测为 limit=4 的有界分页，返回条目已占满上限（响应声明 unselected≤4），说明指标清单不完整：不能断言 server/3 仅有这 4 个指标，也不能把未读取指标视为健康或故障。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次仅有一个响应可供证据绑定（call_00_xril8JvuevG7KIJeBKQ50494，bytes=845）。两次 get_server_alerts 调用返回内容一致（1 条 critical 告警，created_at=2026-10-26T00:33:10.000Z，消息为 cpu_usage 当前值 9.1 超阈值 8.65 且“采集时间 unknown”，status=unread，total=1），但响应未附带 toolCallId/contextReference，故告警属旁证，未按契约绑定到本次执行证据。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"本次未返回任何文件系统字段（resource/mount/device/fs_type/used/size），也没有资源关系与资源元数据接口可用，因此 server/3 的文件系统容量、依赖关系与影响面在本轮均为未观测，无法评估。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"告警侧仅 1 条记录（total=1），无重复记录、无起止时间与窗口统计（观测失败字段为 observedAt=null、from/to=null、ruleWindowSeconds=0 且来自不可信输入），故“持久告警”的持续性未被验证，无法区分瞬时尖峰与持续偏高。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"hypotheses\": [\n    {\n      \"statement\": \"阈值 8.65 与百分制 CPU 不相容，cpu_usage 的单位/阈值配置可能未校准，告警或为配置或口径问题而非真实过载。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    },\n    {\n      \"statement\": \"该告警可能为单点瞬时尖峰：仅有 1 条记录、无窗口统计、无 cpu_usage 历史序列可核对。\",\n      \"supportingToolCallIds\": [\"call_00_xril8JvuevG7KIJeBKQ50494\"],\n      \"contradictingToolCallIds\": []\n    }\n  ],\n  \"unresolvedQuestions\": [\n    \"cpu_usage 9.1 的单位与采集口径是什么，阈值 8.65 依据何种量纲设置？\",\n    \"cpu_usage 在 2026-10-26T00:33 前后的历史序列如何，是否持续高于 8.65？\",\n    \"memory_usage、load_1min、uptime 为何缺失，MIGRATION_REVIEW_REQUIRED 待何人评审？\",\n    \"告警标题中 192.168.49.1 与 instance_id=null 的归属关系如何核实？\"\n  ],\n  \"recommendations\": [\n    {\n      \"action\": \"补采 cpu_usage 历史序列（≥1h，含单位与 dimensions），并补齐 memory_usage、load_1min、uptime\",\n      \"priority\": \"high\"\n    },\n    {\n      \"action\": \"核对 cpu_usage 单位与阈值 8.65 的配置语义，校准后再判定严重度与是否需处置\",\n      \"priority\": \"medium\"\n    },\n    {\n      \"action\": \"核实告警归属实例（标题 IP 与 instance_id 不一致）并确认其确认/关闭状态\",\n      \"priority\": \"low\"\n    }\n  ]\n}\n```"
+              },
+              "source": "fact",
+              "status": "completed",
+              "turnId": "82fc5f6e-9233-441e-8e1e-1b4d0ef5ecfc",
+              "durable": {
+                "kind": "mysql",
+                "reference": "run_074ae36f-9b6d-4a3a-8be3-315314d965d4_assistant"
+              },
+              "version": 1,
+              "runTerminal": "completed"
+            },
+            "messageSequence": 2
+          },
+          "stopReason": "completed",
+          "completionPending": false,
+          "investigationExecution": {
+            "jobId": "c0a956f9-2662-44c7-bf47-557b3ec6541a",
+            "tools": {
+              "call_00_3JUzIGYLaKIChCjTjzGe5586": {
+                "name": "get_server_alerts",
+                "result": {
+                  "data": {
+                    "total": 1,
+                    "alerts": [
+                      {
+                        "id": 1,
+                        "level": "critical",
+                        "title": "[CRITICAL] MAX225 real VM CPU - 192.168.49.1",
+                        "status": "unread",
+                        "message": "服务器指标 \"cpu_usage\"（） 当前值为 9.1，超过阈值 8.65；采集时间 unknown",
+                        "created_at": "2026-10-26T00:33:10.000Z",
+                        "instance_id": null
+                      }
+                    ]
+                  },
+                  "details": {
+                    "server_id": 3
+                  },
+                  "success": true,
+                  "summary": "服务器 #3 告警 1 条"
+                },
+                "status": "returned",
+                "inputHash": "57279c8af1361e9ae5ab5eed1078728029335398e2bfed51e2a267b505ca2434"
+              },
+              "call_00_xril8JvuevG7KIJeBKQ50494": {
+                "name": "get_resource_observations",
+                "result": {
+                  "data": {
+                    "resource": {
+                      "id": 3,
+                      "type": "server"
+                    },
+                    "observations": [
+                      {
+                        "value": 9.1,
+                        "source": "metrics",
+                        "quality": "good",
+                        "metricId": "cpu_usage",
+                        "resource": {
+                          "id": 3,
+                          "type": "server"
+                        },
+                        "dimensions": {},
+                        "observedAt": "2026-10-26T00:33:09.841Z",
+                        "validUntil": "2026-10-26T00:38:09.841Z"
+                      },
+                      {
+                        "value": null,
+                        "reason": "missing_input",
+                        "source": "metrics",
+                        "quality": "unknown",
+                        "metricId": "memory_usage",
+                        "resource": {
+                          "id": 3,
+                          "type": "server"
+                        },
+                        "dimensions": {},
+                        "observedAt": null,
+                        "validUntil": null
+                      },
+                      {
+                        "value": null,
+                        "reason": "MIGRATION_REVIEW_REQUIRED",
+                        "source": "metrics",
+                        "quality": "unknown",
+                        "metricId": "load_1min",
+                        "resource": {
+                          "id": 3,
+                          "type": "server"
+                        },
+                        "observedAt": null,
+                        "validUntil": null
+                      },
+                      {
+                        "value": null,
+                        "reason": "MIGRATION_REVIEW_REQUIRED",
+                        "source": "metrics",
+                        "quality": "unknown",
+                        "metricId": "uptime",
+                        "resource": {
+                          "id": 3,
+                          "type": "server"
+                        },
+                        "observedAt": null,
+                        "validUntil": null
+                      }
+                    ]
+                  },
+                  "success": true
+                },
+                "status": "returned",
+                "inputHash": "38436e640bdd136886f427a4552576bfeb17d34e873093d78cd664ed7a329560"
+              },
+              "call_01_wu0k0ccapBM3khmk4GQC6320": {
+                "name": "get_server_alerts",
+                "result": {
+                  "data": {
+                    "total": 1,
+                    "alerts": [
+                      {
+                        "id": 1,
+                        "level": "critical",
+                        "title": "[CRITICAL] MAX225 real VM CPU - 192.168.49.1",
+                        "status": "unread",
+                        "message": "服务器指标 \"cpu_usage\"（） 当前值为 9.1，超过阈值 8.65；采集时间 unknown",
+                        "created_at": "2026-10-26T00:33:10.000Z",
+                        "instance_id": null
+                      }
+                    ]
+                  },
+                  "details": {
+                    "server_id": 3
+                  },
+                  "success": true,
+                  "summary": "服务器 #3 告警 1 条"
+                },
+                "status": "returned",
+                "inputHash": "f76b862ec7c37109ee54115fa617fba036237774f618982b3917c76cb6dbc64b"
+              }
+            },
+            "usage": {
+              "inputTokens": 7201,
+              "outputTokens": 4090,
+              "cachedInputTokens": 4736
+            },
+            "provider": null,
+            "terminal": {
+              "source": "runtime",
+              "reasonCode": "RUNTIME_RESPONSE_READY",
+              "stopReason": "completed"
+            },
+            "requestId": "d61aaef6-3ef2-47b8-a6eb-9adefebdb35d",
+            "deadlineAt": 1792974910945,
+            "provenance": {
+              "inputHash": "dc0427fa4464be748e30e3504abc1508eab89f1d74485488901466e5efff09b7",
+              "modelVersion": "deepseek-flash",
+              "promptVersion": "ops@1/prompt:1/sha256:c2f018620730529c6e635c788e03d4dbcf491b8d222d60ed9c92e2eb2fcc0f0f"
+            },
+            "fencingToken": 1,
+            "usageUnknown": false,
+            "profileBudget": {
+              "maxRows": 200,
+              "maxBytes": 128000,
+              "maxTokens": 32000,
+              "deadlineMs": 120000,
+              "maxWindowMs": 3600000,
+              "maxToolCalls": 20,
+              "maxProviderAttempts": 8
+            },
+            "reservationId": "118fd7c4-d23b-49fb-b166-39144d7c801a",
+            "schemaVersion": 1,
+            "reservedTokens": 32000,
+            "runtimeContext": {
+              "maxTokens": 4096,
+              "summaryMaxTokens": 2048,
+              "contextWindowTokens": 60000
+            }
+          }
+        }
+      }
+    ],
+    "allocation": [
+      {
+        "state": "settled",
+        "charged_tokens": 11291,
+        "charged_cost_micros": 1000000,
+        "usage_snapshot": {
+          "inputTokens": 7201,
+          "outputTokens": 4090,
+          "cachedInputTokens": 4736
+        },
+        "cost_status": "unknown"
+      }
+    ],
+    "resultCount": 1,
+    "evidenceRows": 3,
+    "sends": 3,
+    "runtimeContext": {
+      "maxTokens": 4096,
+      "summaryMaxTokens": 2048,
+      "contextWindowTokens": 60000
+    },
+    "assistantMessages": [
+      "```json\n{\n  \"analysisVersion\": 1,\n  \"summary\": \"server/3 的 cpu_usage=9.1（observedAt 2026-10-26T00:33:09.841Z，validUntil 00:38:09.841Z，quality=good，单位/口径未知）高于事件所称阈值 8.65；memory_usage、load_1min、uptime 均为 null（missing_input / MIGRATION_REVIEW_REQUIRED）。无 FS 字段与资源关系数据，告警接口未返回可绑定的 toolCallId，持续性无法验证；不宣称根因或恢复。\",\n  \"claims\": [\n    {\n      \"statement\": \"观测到 server/3 指标 cpu_usage=9.1：observedAt=2026-10-26T00:33:09.841Z，validUntil=2026-10-26T00:38:09.841Z，source=metrics，quality=good，dimensions={}。相对当前时间 2026-10-26T00:33:39.665Z 约滞后 30 秒，仍在有效期内，非陈旧读数。\",\n      \"supportingToolCallIds\": [\"call_00_xril8Jvuev"
+    ]
+  }
+}
