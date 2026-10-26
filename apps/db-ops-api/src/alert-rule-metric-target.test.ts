@@ -4,22 +4,26 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { MetricRegistry } from './metric-registry.js';
 import { findAlertMetric } from './metrics/alert-metric-catalog.js';
+import { validateAlertThresholdUnits } from './alerts/threshold-units.js';
 
 // Execute the actual route handlers with the real, target-keyed registry.
 // Only authorization and persistence are replaced in this focused regression.
 const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
 const routes = source.slice(source.indexOf('  // 创建告警规则'), source.indexOf('  // 删除告警规则'));
 
-async function request(method: 'POST' | 'PUT', body: Record<string, unknown>, storedTarget = 'server') {
+async function request(method: 'POST' | 'PUT', body: Record<string, unknown>, storedTarget = 'server',
+  stored: Record<string, unknown> = {}) {
   const app = Fastify();
   const registry = new MetricRegistry();
   const service = { createAlertRule: vi.fn(async () => ({ success: true, ruleId: 99 })),
     updateAlertRule: vi.fn(async () => ({ success: true })) };
-  const existing = { id: 99, target_type: storedTarget, metric_name: 'filesystem_size_bytes' };
+  const existing = { id: 99, target_type: storedTarget, metric_name: 'filesystem_size_bytes', threshold: 1,
+    threshold_template: null, severity: 'warning', ...stored };
   const code = ts.transpileModule(routes, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('fastify', 'verifyToken', 'requirePermission', 'validateAlertRuleInstanceIds',
-    'metricRegistry', 'findAlertMetric', 'alertDatabaseService', 'requireAlertRuleAccess', code)(app,
-    async () => {}, () => async () => {}, () => null, registry, findAlertMetric, service, async () => existing);
+    'metricRegistry', 'findAlertMetric', 'validateAlertThresholdUnits', 'alertDatabaseService', 'requireAlertRuleAccess', code)(app,
+    async () => {}, () => async () => {}, () => null, registry, findAlertMetric, validateAlertThresholdUnits, service,
+    async () => existing);
   try {
     const response = await app.inject({ method, url: method === 'POST' ? '/api/alert-rules' : '/api/alert-rules/99', payload: body });
     return { status: response.statusCode, body: response.json(), service };
@@ -51,5 +55,62 @@ describe('alert rule metric validation follows the resource target', () => {
     const result = await request('PUT', { target_type: 'instance' });
     expect(result.status).toBe(400);
     expect(result.service.updateAlertRule).not.toHaveBeenCalled();
+  });
+});
+
+describe('alert rule save checks threshold units (#256)', () => {
+  const ratioRule = {
+    metric_name: 'linux.filesystem.used_ratio', target_type: 'server',
+    threshold_template: { warning: 0.8, error: 0.9, critical: 0.95 },
+  };
+
+  it('rejects copying 80/90/95 onto the ratio metric on create', async () => {
+    const result = await request('POST', {
+      target_type: 'server', metric_name: 'linux.filesystem.used_ratio',
+      threshold_template: { warning: 80, error: 90, critical: 95 },
+    });
+    expect(result.status).toBe(400);
+    expect(result.body.code).toBe('ALERT_THRESHOLD_RATIO_RANGE');
+    expect(result.body.error).toContain('0.80/0.90/0.95');
+    expect(result.service.createAlertRule).not.toHaveBeenCalled();
+  });
+
+  it('accepts 0.80/0.90/0.95 on the ratio metric', async () => {
+    const result = await request('POST', {
+      target_type: 'server', metric_name: 'linux.filesystem.used_ratio',
+      threshold_template: { warning: 0.8, error: 0.9, critical: 0.95 },
+    });
+    expect(result.status).toBe(200);
+    expect(result.service.createAlertRule).toHaveBeenCalled();
+  });
+
+  it('rejects the ratio on a byte metric', async () => {
+    const result = await request('POST', {
+      metric_name: 'mysql.tables.estimated_allocated_bytes',
+      threshold_template: { warning: 0.8, error: 0.9, critical: 0.95 },
+    });
+    expect(result.status).toBe(400);
+    expect(result.body.code).toBe('ALERT_THRESHOLD_BYTES_ABSOLUTE');
+    expect(result.service.createAlertRule).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bad template on update and leaves untouched rule fields alone', async () => {
+    const stored = { ...ratioRule, threshold: 0.8 };
+    const rejected = await request('PUT', { threshold_template: { warning: 80, error: 90, critical: 95 } },
+      'server', stored);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.code).toBe('ALERT_THRESHOLD_RATIO_RANGE');
+    expect(rejected.service.updateAlertRule).not.toHaveBeenCalled();
+
+    const toggled = await request('PUT', { enabled: false }, 'server', stored);
+    expect(toggled.status).toBe(200);
+    expect(toggled.service.updateAlertRule).toHaveBeenCalledWith(99, { enabled: false });
+  });
+
+  it('rejects a percent static threshold on an update that clears the template', async () => {
+    const result = await request('PUT', { threshold: 80 },
+      'server', { ...ratioRule, threshold: 0.8, threshold_template: null });
+    expect(result.status).toBe(400);
+    expect(result.body.code).toBe('ALERT_THRESHOLD_RATIO_RANGE');
   });
 });

@@ -20,6 +20,13 @@
 | 文件系统使用率过高 | `linux.filesystem.used_ratio` | `1` | 0.80 | 0.90 | 0.95 | 300s |
 | 数据库大小过高 | `mysql.tables.estimated_allocated_bytes` | `By` | 100 GiB | 500 GiB | 1,000 GiB | 300s |
 
+### 单位换算（#256）
+
+- `linux.filesystem.used_ratio` 的 `unit=1`，值域 0–1：`ratio = host.filesystem.used_bytes / host.filesystem.size_bytes`。
+- 百分数到比率的换算：`80% = 0.80`、`90% = 0.90`、`95% = 0.95`。不能把 80/90/95 原值写到 ratio 指标上——在 0–1 指标上 `>= 80` 永远不会满足。
+- 若改用百分比指标（`unit=%`，如 `linux.cpu.user_system_percent`），必须保留该指标标识和 `%` 单位并继续使用 80/90/95；不能只改指标名而保留原数值。
+- 分母为零或 used/size 缺失时，派生值为 `null` + `quality=unknown`，不能补 0；真实 0（例如 `/dev`）仍按 0 参与评估。
+
 阈值依据（2026-10-25 真实基线，instance:1）：
 
 - QPS：379 个有效样本（窗口 2026-10-25T05:20:53Z–13:33:45Z），min 278.06、p50 629.45、p99 751.78、max 782.75；33 个重置样本为 `unknown/null`。warning 2,000 ≈ 2.6× max，error 5,000 ≈ 6.4×，critical 8,000 ≈ 10.2×。旧的 3,000/8,000/15,000 没有被复用。
@@ -35,7 +42,8 @@
   - 允许派生速率/估算指标的 `partial` + `estimated` 证据；`unknown`/`invalid` 和 null 仍然拒绝，计数器重置不会被当作 0。
   - 查询窗口多取一个 bucket，并只裁掉查询边缘没有样本的尾 bucket；真实停采会让最后一个有值 bucket 变 `stale`，中间缺桶仍是 `gap`。
 - `apps/db-ops-api/src/metrics/alert-metric-catalog.ts` + `server.ts`：告警规则 API 先查旧注册表，再查已审核语义指标；新规则可以通过既有 API 编辑，而不是复制一份旧的 `metric_definitions`。
-- 文档：`2026-10-25-eight-issues-followup.md` 的 #6 表已把 80/90/95 修正为 ratio 0.80/0.90/0.95。
+- `apps/db-ops-api/src/alerts/threshold-units.ts` + `server.ts`：告警规则保存时按指标单位校验阈值语义。`unit=1` 只接受 (0, 1]（80/90/95 直接返回 `ALERT_THRESHOLD_RATIO_RANGE` 并提示 0.80/0.90/0.95）；`unit=By` 只接受正整数绝对字节（比率返回 `ALERT_THRESHOLD_BYTES_ABSOLUTE`）；这两类指标上的旧告警宏（如 `${disk_warning}`）被拒绝（`ALERT_THRESHOLD_MACRO_NOT_ALLOWED`），避免只改指标名后继续沿用旧百分比。迁移 `plan`（预览）仍由 `validateReplacementDefinition` 先行校验，`disable/delete --apply` 复用同一份计划。
+- 文档：`2026-10-25-eight-issues-followup.md` 的 #6 表已把 80/90/95 修正为 ratio 0.80/0.90/0.95；本文件补充了换算公式和保存校验。
 
 ## 迁移步骤（实际执行）
 
@@ -76,6 +84,19 @@ ORDER BY timestamp_ms;
 - 新规则当前评估结果记录在 `current_rule_evaluation`：库大小当前为 `healthy`（1,278,853,120 By）；QPS/文件系统当前为 `unknown`（QPS 窗口内有计数器重置/重启缺口，server:3 近几次采集因 5s SSH 超时被取消，能力证据为 unknown）。这是真实的 unknown，不是 0，也不是健康。
 - 对同一批真实正式数据做证据时点 replay（`replay_evaluation`，只把当前 capability/attempt 状态排除，保留原始 bucket 窗口与质量）：QPS `healthy`、文件系统 `healthy`、库大小 `healthy`；阈值 2,000 / 0.80 / 100 GiB 均未被真实基线触发。
 
+## 边界与独立恢复验证（#256）
+
+真实基线最高 `/` 为 0.371783，未达到 0.80，因此 0.79/0.81 边界不能从生产观测直接取得。`apps/db-ops-api/src/alerts/filesystem-ratio-boundary.test.ts` 以 server:3 的 11 个真实挂载容量（2026-10-25T13:24:52Z）为分母，把 used 分别设为 `floor(size × 0.79)` 与 `ceil(size × 0.81)`：
+
+- 11/11 挂载：0.79 侧 < 0.80 → healthy；0.81 侧 > 0.80 → warning。
+- 0.89 → warning、0.90 → error、0.94 → error、0.95 → critical。
+- 三个挂载同时为 0.81、其余为 0.79 时只有这三个 firing；把其中一个恢复到 0.79 后只有该挂载恢复，其余保持 firing。
+- used 缺失 → `value=null` / `quality=unknown`；size 缺失 → `missing_input`；真实 0（`/dev`）→ `value=0` / `quality=good`。
+- 旧 80/90/95 直接用于 ratio（0.371783…0.999999）永不触发，复现了原指引的漏报风险。
+- 库大小规则在真实 1,278,853,120 By 为 healthy；101/501/1001 GiB 分别为 warning/error/critical。
+
+这些是真实挂载分母上的边界构造，不是生产已达到 0.79/0.81 的观测，报告里不得表述为真实高使用率事件。
+
 ## 仍然 blocked / unknown 的旧项
 
 - `metric_definitions` 中的旧 `qps`、`disk_usage` 定义保留；`/api/metrics/config/resources/instance/:id/migration` 继续返回 `CUSTOM_EXPRESSION_REVIEW_REQUIRED`。没有改名，也没有用直接改库冒充迁移。
@@ -90,7 +111,10 @@ ORDER BY timestamp_ms;
 pnpm --filter slide-api exec vitest run \
   src/metrics/consumers/legacy-alert-migration.test.ts \
   src/metrics/consumers/operational.test.ts \
-  src/metrics/alert-metric-catalog.test.ts
+  src/metrics/alert-metric-catalog.test.ts \
+  src/alerts/threshold-units.test.ts \
+  src/alerts/filesystem-ratio-boundary.test.ts \
+  src/alert-rule-metric-target.test.ts
 
 # 事务/审计（MySQL 9.6 容器）
 METRICS_TEST_MYSQL_PORT=<port> pnpm --filter slide-api exec vitest run \

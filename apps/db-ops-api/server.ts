@@ -109,6 +109,7 @@ import { createAnalysisRecoveryJob, registerAnalysisRecoveryHandler } from './sr
 import { parseFaultDiagnosisInstanceId } from './src/fault-diagnosis-route-input.js';
 import { metricRegistry } from './src/metric-registry.js';
 import { findAlertMetric } from './src/metrics/alert-metric-catalog.js';
+import { validateAlertThresholdUnits } from './src/alerts/threshold-units.js';
 import { metricDatabaseService, type MetricTargetType } from './src/metric-database-service.js';
 import { baselineCalculator } from './src/baseline-calculator.js';
 import { alertEscalationService } from './src/alert-escalation-service.js';
@@ -3189,6 +3190,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             return;
           }
         }
+        // #256: ratios are 0–1 (0.80/0.90/0.95); byte metrics keep absolute integers.
+        const thresholdViolation = validateAlertThresholdUnits({
+          metricId: data.metric_name,
+          unit: metricDef?.unit,
+          threshold: data.threshold,
+          threshold_template: data.threshold_template,
+        });
+        if (thresholdViolation) {
+          reply.code(400).send({ error: thresholdViolation.message, code: thresholdViolation.code });
+          return;
+        }
         const result = await alertDatabaseService.createAlertRule({
           name: data.name,
           description: data.description,
@@ -3245,6 +3257,22 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
           if (!def.is_collected) {
             reply.code(400).send({ error: `指标 "${metricName}" 未启用采集，无法更新告警规则` });
+            return;
+          }
+        }
+        // #256: re-check unit semantics whenever a threshold-bearing field is written.
+        if (data.metric_name !== undefined || data.target_type !== undefined
+          || data.threshold !== undefined || data.threshold_template !== undefined) {
+          const metricName = data.metric_name ?? existingRule.metric_name;
+          const thresholdMetric = findAlertMetric(metricName, data.target_type ?? existingRule.target_type ?? 'instance');
+          const thresholdViolation = validateAlertThresholdUnits({
+            metricId: metricName,
+            unit: thresholdMetric?.unit,
+            threshold: data.threshold !== undefined ? data.threshold : existingRule.threshold,
+            threshold_template: data.threshold_template !== undefined ? data.threshold_template : existingRule.threshold_template,
+          });
+          if (thresholdViolation) {
+            reply.code(400).send({ error: thresholdViolation.message, code: thresholdViolation.code });
             return;
           }
         }
