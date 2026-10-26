@@ -664,7 +664,12 @@ async function main() {
       checkFocusable: (() => { if (!check) return false; check.focus(); return document.activeElement === check; })(),
     };
   })()`);
-  const OS_VERSIONLESS = ['CentOS unknown (x86_64)', 'Kylin OS unknown (aarch64)', 'Linux x86_64'];
+  /* review5 架构/未知反例 + review7 元数据 span 反例（等号/release 修饰/位数/裸架构/完整内核号后缀）。 */
+  const OS_VERSIONLESS = [
+    'CentOS unknown (x86_64)', 'Kylin OS unknown (aarch64)', 'Linux x86_64',
+    'Linux kernel=6.1', 'Linux kernel release 5.14.0', 'Linux 64 bit', 'Linux x86',
+    'Linux kernel 5.14.0-427.13.1.el9',
+  ];
 
   for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
     for (const os of OS_VERSIONLESS) {
@@ -706,6 +711,23 @@ async function main() {
     await shot(`server-os-provenance-legal-${sizeLabel}`);
   }
 
+  /* review7：合法系统版本与完整内核元数据并存时，只取显式系统版本（7.9 而非 el9 的 9）。 */
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    await openConfigRow('server', 21, w, h);
+    await setServerOs('CentOS 7.9 kernel 5.14.0-427.13.1.el9');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+    const legalCheck = await serverFlow();
+    await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+    await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(250);
+    const legalFlow = await serverFlow();
+    check(`F1r7 ${sizeLabel} 「CentOS 7.9 kernel 5.14.0-427.13.1.el9」取系统版本 7.9，检查/试采/发布均可推进`,
+      legalCheck.compat.includes('满足') && legalCheck.compat.includes('系统版本 7.9 取自系统描述')
+        && legalFlow.items === 3 && legalFlow.apply.includes('已发布')
+        && legalFlow.page === true,
+      JSON.stringify({ compat: legalCheck.compat.trim().slice(0, 120), items: legalFlow.items, apply: legalFlow.apply.trim(), page: legalFlow.page }));
+    await shot(`server-os-provenance-metadata-span-legal-${sizeLabel}`);
+  }
+
   for (const [os, template, versionLabel] of [
     ['Kylin OS V10 SP3 (aarch64)', 'linux-basic', '10'],
     ['Ubuntu 22.04 amd64', 'linux-minimal', '22.04'],
@@ -740,6 +762,27 @@ async function main() {
       beforeSwitch.compat.includes('满足') && staleCompatible && entryEnabled && blocked,
       JSON.stringify({ entry, entryEnabled, staleCompatible, blocked, flow: afterEntry.flow, items: afterEntry.items, apply: afterEntry.apply.trim() }));
     await shot(`server-os-provenance-entry-${entry}`);
+  }
+
+  /* review7：合法检查后把系统改为只剩完整内核元数据的描述，三个入口仍各自独立拒绝。 */
+  for (const [entry, label] of [['run-trial', '配置试采'], ['trial', '页头试采'], ['publish', '发布']]) {
+    await openConfigRow('server', 21);
+    await setServerOs('CentOS 7.9 kernel 5.14.0-427.13.1.el9');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    if (entry === 'publish') { await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250); }
+    const beforeSwitch = await serverFlow();
+    await setServerOs('Linux kernel 5.14.0-427.13.1.el9');
+    const entryEnabled = await evaluate(`!document.querySelector('[data-action="${entry}"]').disabled`);
+    const staleCompatible = (await serverFlow()).compat.includes('满足');
+    await evaluate(`document.querySelector('[data-action="${entry}"]').click()`); await wait(300);
+    const afterEntry = await serverFlow();
+    const blocked = entry === 'publish'
+      ? !afterEntry.apply.includes('已发布')
+      : afterEntry.items === 0 && !afterEntry.flow.includes('试采完成');
+    check(`F1r7 合法检查后系统改为完整内核元数据：${label}入口独立拒绝`,
+      beforeSwitch.compat.includes('满足') && staleCompatible && entryEnabled && blocked,
+      JSON.stringify({ entry, entryEnabled, staleCompatible, blocked, flow: afterEntry.flow, items: afterEntry.items, apply: afterEntry.apply.trim() }));
+    await shot(`server-os-provenance-metadata-span-entry-${entry}`);
   }
 
   // 10. 详情内指标使用所选资源 id（R2 上下文）

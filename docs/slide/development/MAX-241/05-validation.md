@@ -293,3 +293,59 @@ node docs/slide/development/MAX-241/verify/browser-version.mjs "<浏览器可执
 - `verify/run-checks.mjs` sha256 `3bb85f57ba505d700194783f8df80dfe45cf89c1ded0a9d8731d89c0ee1c651d`
 - `verify/browser-version.mjs` sha256 `93685f1839f5036ea2e5cb25eab79fcb8c149026a1223d851a6f054d8a3dfd80`
 - 机器结果：GREEN 41/41、Chrome 130/130、Edge 130/130；RED 32/41（同一脚本、同一 18 项新增用例，修复前源码）。
+
+## 12. F1 元数据 span 修复（2026-10-26，对应 Chief review7）
+
+review7 接受 review5 的三个架构反例修复，但用同一范围的合成输入指出系统版本来源仍可绕过：`VERSION_METADATA` 只剥特定拼写的数字子串，残留片段仍被 `parseVersion`/`versionLabel` 当作首个数字。两个 Linux 模板表现相同（各 5 项失败，合计 10 项）：
+
+| 仅含元数据、无系统版本的合成输入 | 修复前误取 | 根因 |
+|---|---|---|
+| `Linux kernel=6.1` | `6.1` | 内核 span 只允许 `:`/`#`，`=` 未被识别，取值原样残留 |
+| `Linux kernel release 5.14.0` | `5.14.0` | 内核 span 未覆盖 `release` 这类单词修饰 |
+| `Linux 64 bit` | `64` | 位数规则只认 `<n>-bit` 连字符写法 |
+| `Linux x86` | `86` | 架构规则只列 `x86_64`/`x64`，未覆盖裸 `x86` |
+| `Linux kernel 5.14.0-427.13.1.el9` | `9` | 内核号只剥到 `5.14.0-427.13.1`，残留 `.el9` 中的 `9` |
+
+### 12.1 修复
+
+- 元数据改为**整体 span 剔除**：从 `kernel|build|内核|构建` 起，连同空白、`=`/`:`/`#` 分隔符、`release|version|ver|rev|no.|number|编号` 单词修饰，以及完整取值 token（`\d[\w.\-+~]*`，覆盖 `5.14.0-427.13.1.el9`）一次性移除，而不是只剥数字前缀。
+- 架构规则补齐裸 `x86`、`x86_32`、`armhf`、`loongarch*` 等；位数规则同时覆盖 `64 bit`、`64bit`、`64位`。
+- 剔除后仍取描述中第一个显式版本 token：`CentOS 7.9 kernel 5.14.0-427.13.1.el9` → `7.9`（不是 `9`）；`Ubuntu 22.04 kernel 6.5` → `22.04`；`Linux 6.1` → `6.1`；`Linux kernel 6.1` 没有系统版本 → 拒绝。
+- `unknown|未知|未确认|待确认|n/a` 语义、展示原样写法、拒绝原因文案不变；不新增版本下界/支持矩阵，不删除已支持操作系统。检查、配置试采、页头试采、发布仍各自调用同一个 `compatResult`，没有第二套判定或放行旁路。
+
+### 12.2 证据（合成输入，绑定本轮源码）
+
+| 检查 | 修复前（RED） | 修复后（GREEN） |
+|---|---|---|
+| `verify/version-checks.mjs`（56 项） | 46/56 —— 10 项失败，恰为 5 个 review7 反例 × 2 个 Linux 模板 | **56/56** |
+| `verify/run-checks.mjs` 完整检查，Chrome 156.0.8078.48 | — | **166/166** |
+| 同一脚本，Microsoft Edge 156.0.4314.42（`Browser.getVersion` = `Edg/156.0.4314.42`） | — | **166/166** |
+
+- RED 复现：`MAX241_APP_SRC=<修复前 app.js 副本> node verify/version-checks.mjs`，用例与判定逻辑不变；失败项为 `Linux kernel=6.1`、`Linux kernel release 5.14.0`、`Linux 64 bit`、`Linux x86`、`Linux kernel 5.14.0-427.13.1.el9` 各两个模板，渲染出的错误版本分别为 `6.1`/`5.14.0`/`64`/`86`/`9`，与 review7 报告一致；其余 46 项行为不变。
+- 新增 GREEN 用例 15 项：上述 5 反例 × 2 模板，加 `CentOS 7.9 kernel 5.14.0-427.13.1.el9`（两个模板，断言版本为 `7.9`）、`Ubuntu 22.04 kernel 6.5`（断言 `22.04`）、`Linux 6.1`（断言 `6.1`）、`Linux kernel 6.1`（拒绝）。
+- 浏览器新增 36 项（130 → 166）：
+  - 5 个 review7 反例 × 3 档尺寸（1440×900 / 1366×768 / 1920×1080）：检查以 `role=alert` 拒绝并显示“系统版本不可确认/架构、内核、构建号不作为系统版本”，试采与发布禁用、检查按钮仍可聚焦、无整页横向溢出；页头试采同样不产生试采结果（15 + 15 项）。
+  - `CentOS 7.9 kernel 5.14.0-427.13.1.el9` 三档尺寸：检查通过且文案为“系统版本 7.9 取自系统描述”，试采 3 项、发布进入“等待应用”（3 项）。
+  - 合法检查后改为 `Linux kernel 5.14.0-427.13.1.el9`：配置试采、页头试采、发布三个入口各自独立拒绝（3 项）。
+- 截图：`/Users/max/Coding/40-Slide/outputs/MAX-241-f1-review7-20261026/screenshots-chrome|screenshots-edge/`（`server-os-provenance-blocked-*`、`server-os-provenance-metadata-span-*`）；机器结果见同目录 `checks.json`、`version-checks-green.json`、`red/version-checks-red.json`。
+- 浏览器身份：`browser-chrome.json`（`Chrome/156.0.8078.48`）、`browser-edge.json`（`Edg/156.0.4314.42`）。
+
+### 12.3 复现
+
+```bash
+# 1) 原型服务（仓库根目录）
+frontend/node_modules/.bin/vite --config docs/slide/development/MAX-241/prototype/vite.config.mjs
+# 2) 判定函数（合成输入）+ RED 对照
+node docs/slide/development/MAX-241/verify/version-checks.mjs
+MAX241_APP_SRC=<修复前 app.js 副本> node docs/slide/development/MAX-241/verify/version-checks.mjs
+# 3) 浏览器（Chrome / 实际 Edge）
+node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+MAX241_BROWSER="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" MAX241_CDP_PORT=9344 \
+  node docs/slide/development/MAX-241/verify/run-checks.mjs http://127.0.0.1:8971/docs/slide/development/MAX-241/prototype <输出目录>
+```
+
+### 12.4 边界与绑定
+
+- 合成系统描述只证明判定函数与原型呈现；**不代表真实服务器/采集验收**，未连接后端、真实资源或共享服务；生产系统版本字段来源与未知语义仍须实施阶段按真实契约验证。
+- 本轮只改 `docs/slide/development/MAX-241/**`（原型、验证脚本与设计说明），生产 frontend/API/导航/共享组件只读；未发模型请求、未写 224 账本、未部署、无子代理；人工听读不设门禁。
+- SHA 绑定见 §12.5。
