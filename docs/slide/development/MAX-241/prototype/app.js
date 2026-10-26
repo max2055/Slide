@@ -656,6 +656,7 @@ function ensureConfig() {
       compat: null,
       compatReason: '',
       trial: null,
+      trialBinding: null,
       published: false,
       applied: false,
       dirty: false,
@@ -676,6 +677,8 @@ function effectiveParams(row) {
   });
 }
 
+const DEMO_NOW = '2026-10-26 11:44';
+
 /* 试采样例：每项为 [采集项, 结果, 徽章变体, 说明]；试采不写正式历史。 */
 const TRIAL_FIXTURES = {
   db: [
@@ -695,15 +698,67 @@ const TRIAL_FIXTURES = {
   ],
 };
 
-/* 兼容性规则（仅演示）：模板引擎族必须与资源引擎族一致；不一致时阻止试采与发布。 */
+/* 最近一次试采快照：必须显式绑定资源、模板、配置版本与时间，并声明来源。
+   页面不按资源类别共用通用样例，失败的检查也不生成"最近一次试采"。 */
+const TRIAL_HISTORY = [
+  {
+    cls: 'db', source: 'preset', resourceId: 12, resourceName: 'mysql-order-prod',
+    templateId: 'mysql-basic', templateName: 'MySQL 基础采集', templateVersion: 'v2.4.1',
+    configVersion: 37, at: '2026-10-25 21:08', overrides: { connectTimeout: '5s' },
+    rows: [
+      ['核心指标', '成功', 'ok', '连接数、缓冲池命中率取得有效样本'],
+      ['慢查询', '部分失败', 'warn', '权限不足 · ER_TABLEACCESS_DENIED'],
+      ['会话快照', '成功', 'ok', '取得 42 个活跃会话'],
+    ],
+  },
+];
+
+const TRIAL_SOURCE_LABEL = { preset: '预置历史快照', demo: '本页演示试采' };
+
+const trialHistoryFor = (row) => TRIAL_HISTORY.find((h) => h.cls === ui.cls && h.resourceId === row.id) ?? null;
+
+/* 兼容性规则（仅演示）：模板声明的类别 / 子类型 / 引擎族 / 版本范围必须全部可验证；
+   未知或未覆盖一律不宣称兼容。检查、页头试采与发布都调用同一判定。 */
 const ENGINE_FAMILIES = [
   [/postgresql/i, 'postgresql'],
   [/mysql/i, 'mysql'],
   [/dm8|达梦/i, 'dameng'],
   [/linux|kylin|centos|ubuntu|red ?hat/i, 'linux'],
+  [/windows/i, 'windows'],
   [/huawei/i, 'huawei'],
   [/cisco/i, 'cisco'],
 ];
+
+const SERVER_OS_FAMILIES = [
+  [/kylin|麒麟/i, 'kylin'],
+  [/centos/i, 'centos'],
+  [/ubuntu/i, 'ubuntu'],
+  [/red ?hat|rhel/i, 'redhat'],
+  [/windows/i, 'windows'],
+  [/linux/i, 'linux'],
+];
+
+/* 网络设备子类型按型号判定；未知型号不宣称兼容。 */
+const NETWORK_KINDS = [
+  [/^usg/i, 'firewall'],
+  [/^(s|ce|ne)\d/i, 'switch'],
+];
+
+const LINUX_OS = ['kylin', 'centos', 'ubuntu', 'redhat', 'linux'];
+
+const TEMPLATE_TARGETS = {
+  'mysql-basic': { family: 'mysql', kind: 'database', min: [8, 0], maxMajor: 8 },
+  'mysql-replica': { family: 'mysql', kind: 'database', min: [8, 0], maxMajor: 8 },
+  'pg-basic': { family: 'postgresql', kind: 'database', min: [14, 0] },
+  'dm-basic': { family: 'dameng', kind: 'database', min: [8, 0], maxMajor: 8 },
+  'linux-basic': { family: 'linux', kind: 'server', os: LINUX_OS },
+  'linux-minimal': { family: 'linux', kind: 'server', os: LINUX_OS },
+  'huawei-snmp': { family: 'huawei', kind: 'switch', platform: 'v200' },
+  'cisco-snmp': { family: 'cisco', kind: 'switch' },
+  'huawei-fw-snmp': { family: 'huawei', kind: 'firewall', platform: 'v600' },
+};
+
+const KIND_LABEL = { database: '数据库', server: '服务器', switch: '交换机', firewall: '防火墙' };
 
 function engineFamily(text) {
   const value = text ?? '';
@@ -711,9 +766,58 @@ function engineFamily(text) {
   return 'unknown';
 }
 
+const parseVersion = (text) => {
+  const m = String(text ?? '').match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
+};
+
+function versionInRange(version, target) {
+  if (!version) return false;
+  const [major, minor] = version;
+  if (major < target.min[0]) return false;
+  if (major === target.min[0] && minor < target.min[1]) return false;
+  if (target.maxMajor !== undefined && major > target.maxMajor) return false;
+  return true;
+}
+
+function rangeLabel(target) {
+  const base = `${target.min[0]}.${target.min[1]}`;
+  return target.maxMajor === undefined ? `${base}+` : `${base}–${target.maxMajor}.x`;
+}
+
+function constraintLabel(target) {
+  const parts = [KIND_LABEL[target.kind] ?? target.kind];
+  if (target.os) parts.push(`系统 ${target.os.join('/')}`);
+  if (target.platform) parts.push(`平台 ${target.platform.toUpperCase()}`);
+  if (target.min) parts.push(`版本 ${rangeLabel(target)}`);
+  return parts.join(' · ');
+}
+
+/* 资源侧描述：引擎族 + 类别/子类型 + 版本；任一无法确认即为 unknown，不得视为兼容。 */
 function resourceEngine(row) {
-  const label = ui.cls === 'db' ? `${row.dbType} ${row.version}` : ui.cls === 'server' ? row.os : row.vendor;
-  return { label, family: ui.cls === 'server' ? 'linux' : engineFamily(label) };
+  if (ui.cls === 'server') {
+    const os = row.os ?? row.version ?? '';
+    const found = SERVER_OS_FAMILIES.find(([pattern]) => pattern.test(os));
+    const osFamily = found ? found[1] : 'unknown';
+    return {
+      label: os || '未知系统', kind: 'server', osFamily, version: parseVersion(os),
+      family: LINUX_OS.includes(osFamily) ? 'linux' : osFamily,
+    };
+  }
+  if (ui.cls === 'network') {
+    const vendor = row.vendor ?? '';
+    const model = row.version ?? '';
+    const found = NETWORK_KINDS.find(([pattern]) => pattern.test(model));
+    const platform = (/V(\d{3})/i.exec(vendor) ?? [])[1];
+    return {
+      label: [vendor, model].filter(Boolean).join(' ') || '未知设备', kind: found ? found[1] : 'unknown',
+      family: engineFamily(vendor), platform: platform ? `v${platform.toLowerCase()}` : 'unknown', version: null,
+    };
+  }
+  return {
+    label: `${row.dbType ?? ''} ${row.version ?? ''}`.trim() || '未知数据库', kind: 'database',
+    family: engineFamily(row.dbType), version: parseVersion(row.version),
+  };
 }
 
 function compatResult(row) {
@@ -721,21 +825,73 @@ function compatResult(row) {
   const tpl = cfg.templateId ? templateById(ui.cls, cfg.templateId) : null;
   const resource = resourceEngine(row);
   if (!tpl) return { ok: false, detail: '未绑定模板', reason: '未绑定模板：无法执行兼容性检查' };
-  const templateFamily = engineFamily(tpl.engine);
-  if (templateFamily === 'unknown' || resource.family === 'unknown' || templateFamily !== resource.family) {
-    return {
-      ok: false,
-      detail: `${resource.label} 与 ${tpl.name}（${tpl.engine}）不兼容`,
-      reason: `模板 ${tpl.name} 面向 ${tpl.engine}，与 ${resource.label} 不兼容，不能绑定`,
-    };
+  const target = TEMPLATE_TARGETS[tpl.id];
+  const tplLabel = `${tpl.name}（${tpl.engine}）`;
+  const reject = (detail, reason) => ({ ok: false, detail, reason });
+  if (!target) {
+    return reject(`${resource.label} 与 ${tplLabel} 的适配范围未声明`,
+      `模板 ${tplLabel} 没有声明可验证的适配范围，不能判定兼容`);
   }
-  return { ok: true, detail: `${resource.label} 与 ${tpl.name}（${tpl.engine}）兼容` };
+  if (resource.family === 'unknown') {
+    return reject(`无法确认 ${resource.label} 的引擎`,
+      `无法确认资源引擎（${resource.label}）：未知引擎不宣称兼容，请人工确认`);
+  }
+  if (resource.family !== target.family) {
+    return reject(`${resource.label} 与 ${tplLabel} 不兼容`,
+      `模板 ${tplLabel} 面向 ${tpl.engine}（${KIND_LABEL[target.kind]}），与 ${resource.label} 的引擎族不符，不兼容，不能绑定`);
+  }
+  if (resource.kind !== target.kind) {
+    return reject(`${resource.label} 与 ${tplLabel} 的设备类型不符`,
+      `模板 ${tplLabel} 要求${KIND_LABEL[target.kind]}，而 ${resource.label} 是${KIND_LABEL[resource.kind] ?? '未知类型'}，不兼容，不能绑定`);
+  }
+  if (target.os && !target.os.includes(resource.osFamily)) {
+    return reject(`${resource.label} 与 ${tplLabel} 的操作系统不匹配`,
+      `模板 ${tplLabel} 支持 ${target.os.join('/')}，而 ${resource.label} 的系统为 ${resource.osFamily === 'unknown' ? '未知' : resource.osFamily}，不兼容，不能绑定`);
+  }
+  if (target.platform && resource.platform !== target.platform) {
+    return reject(`${resource.label} 与 ${tplLabel} 的平台不符`,
+      `模板 ${tplLabel} 面向 ${target.platform.toUpperCase()} 平台，而 ${resource.label} 为 ${resource.platform === 'unknown' ? '未知平台' : resource.platform.toUpperCase()}，不兼容，不能绑定`);
+  }
+  if (target.min) {
+    if (!resource.version) {
+      return reject(`${resource.label} 的版本未知`, `无法确认 ${resource.label} 的版本，不能判定与 ${tplLabel} 兼容`);
+    }
+    if (!versionInRange(resource.version, target)) {
+      return reject(`${resource.label} 与 ${tplLabel} 的版本不兼容`,
+        `模板 ${tplLabel} 要求版本 ${rangeLabel(target)}，而 ${resource.label} 为 ${resource.version.join('.')}，不兼容，不能绑定`);
+    }
+  }
+  return { ok: true, detail: `${resource.label} 满足 ${tplLabel} 的适配约束（${constraintLabel(target)}）` };
+}
+
+/* 试采证据：本轮试采优先，其次是该资源显式绑定的历史快照；没有就是未试采。 */
+const paramsKey = (overrides = {}) => JSON.stringify(Object.keys(overrides).sort().map((k) => [k, overrides[k] ?? '']));
+
+function trialEvidence(row, cfg) {
+  if (cfg.trial && cfg.trialBinding) return { ...cfg.trialBinding, rows: cfg.trial, current: cfg.step >= 2 };
+  return trialHistoryFor(row);
+}
+
+function trialStaleReasons(row, cfg, evidence) {
+  if (!evidence) return [];
+  const reasons = [];
+  if (evidence.templateId !== cfg.templateId) {
+    reasons.push(`模板已变更为 ${cfg.templateId ? (templateById(ui.cls, cfg.templateId)?.name ?? cfg.templateId) : '未绑定'}`);
+  }
+  if (evidence.configVersion !== row.revision) reasons.push(`配置版本已变更为 ${row.revision}`);
+  if (paramsKey(evidence.overrides) !== paramsKey(cfg.overrides)) reasons.push('参数已修改');
+  return reasons;
+}
+
+function trialBindingText(evidence) {
+  return `${evidence.resourceName} #${evidence.resourceId} · ${evidence.templateName} ${evidence.templateVersion} · 配置版本 ${evidence.configVersion} · ${evidence.at} · ${TRIAL_SOURCE_LABEL[evidence.source] ?? evidence.source}`;
 }
 
 function resetFlow() {
   const cfg = ui.config;
   cfg.step = 0; cfg.compat = null; cfg.compatReason = '';
-  cfg.trial = null; cfg.published = false; cfg.applied = false;
+  cfg.published = false; cfg.applied = false;
+  /* 已执行的演示试采保留为失效快照（带绑定信息展示），但发布要求 step>=2，不能用它发布。 */
 }
 
 function markDirty(patch = {}) {
@@ -828,7 +984,9 @@ function flowCard(row) {
     ['发布并应用配置', '服务复核试采与配置版本后发布；应用结果需刷新确认'],
     ['等待正式采集', '试采成功不等于持续采集就绪；正式样本到达前不显示健康'],
   ];
-  const trialSource = cfg.step >= 2 ? (cfg.trial ?? []) : cfg.compat === 'incompatible' ? TRIAL_FIXTURES[ui.cls] : null;
+  const evidence = trialEvidence(row, cfg);
+  const staleReasons = trialStaleReasons(row, cfg, evidence);
+  const trialSource = evidence?.rows ?? null;
   const trialRows = (trialSource ?? []).map(([item, status, variant, detail]) => ({
     item: html`<span data-testid="trial-item">${item}</span>`,
     status: html`<span data-testid="trial-status">${badge(status, variant)}</span>`,
@@ -852,15 +1010,18 @@ function flowCard(row) {
       <strong>兼容性检查未通过，已阻止试采与发布。</strong> ${cfg.compatReason}；请改选与 ${resourceEngine(row).label} 兼容的模板后重新检查。
     </div>` : nothing}
     ${trialSource ? html`
-      <p class="muted small" data-testid="trial-caption" style="margin-top:12px">${cfg.step >= 2
-        ? '本次试采结果（不写正式历史）；部分失败或待验证项不能按全部成功处理。'
-        : `最近一次试采结果（${templateById(ui.cls, row.templateId)?.name ?? '原模板'} · 模板已变更，已失效；仅作参考，不能作为发布依据）。`}</p>
+      <p class="muted small" data-testid="trial-caption" style="margin-top:12px">${evidence.current
+        ? `本次试采结果（${trialBindingText(evidence)}；不写正式历史）。部分失败或待验证项不能按全部成功处理。`
+        : staleReasons.length
+          ? `最近一次试采记录（${trialBindingText(evidence)}）；${staleReasons.join('；')}，已失效，仅作参考，不能作为发布依据。`
+          : `最近一次试采记录（${trialBindingText(evidence)}）；本轮未重新试采，不能作为发布依据。`}</p>
       ${table([
         { key: 'item', label: '采集项' }, { key: 'status', label: '试采结果' }, { key: 'detail', label: '说明' },
       ], trialRows, { label: '试采结果表', emptyMessage: '本次试采未返回样本；不能发布', testId: 'trial-table' })}
-      <p class="muted small" data-testid="trial-summary" style="margin-top:8px">${trialFailed.length
+      <p class="muted small" data-testid="trial-summary" style="margin-top:8px">${evidence.current ? '' : '历史记录（非本轮）：'}${trialFailed.length
         ? `共 ${trialSource.length} 项，${trialSource.length - trialFailed.length} 项成功；未全部成功：${trialFailed.map(([item, status, , detail]) => `${item} · ${status}（${detail}）`).join('；')}。`
-        : `共 ${trialSource.length} 项全部成功；仍需发布并由正式采集确认。`}</p>` : nothing}
+        : `共 ${trialSource.length} 项全部成功；仍需发布并由正式采集确认。`}</p>`
+      : html`<p class="muted small" data-testid="trial-none" style="margin-top:12px">未试采：该资源没有已记录的试采快照，不能显示试采结果，也不用同类资源的通用样例代替。</p>`}
     ${cfg.step >= 3 ? html`<div class="notice ${cfg.applied ? 'info' : 'warn'} small" style="margin-top:12px" data-testid="apply-state">
       ${cfg.applied ? '配置已应用；正式采集状态：等待首个正式样本（不代表已健康、不代表全部指标可用）。' : '已发布，应用状态：等待应用。发布成功不表示已开始正式采集。'}
     </div>` : nothing}
@@ -893,7 +1054,7 @@ function trialImpact(row) {
 function runCompat() {
   const cfg = ensureConfig();
   const compat = compatResult(selectedRow());
-  cfg.trial = null; cfg.published = false; cfg.applied = false;
+  cfg.published = false; cfg.applied = false;
   if (!compat.ok) {
     cfg.step = 0;
     cfg.compat = 'incompatible';
@@ -912,14 +1073,22 @@ function runCompat() {
 
 function runTrial() {
   const cfg = ensureConfig();
-  const compat = compatResult(selectedRow());
+  const row = selectedRow();
+  const compat = compatResult(row);
   if (!compat.ok || cfg.compat !== 'compatible' || cfg.step < 1) {
     showToast(`试采被阻止：${compat.ok ? '请先通过兼容性与权限检查' : compat.reason}`, 'warning');
     update();
     return false;
   }
+  const tpl = templateById(ui.cls, cfg.templateId);
   cfg.step = 2;
+  /* 证据必须绑定资源、模板、配置版本与时间；不按类别共用通用样例。 */
   cfg.trial = TRIAL_FIXTURES[ui.cls];
+  cfg.trialBinding = {
+    source: 'demo', resourceId: row.id, resourceName: row.name,
+    templateId: tpl.id, templateName: tpl.name, templateVersion: tpl.version,
+    configVersion: row.revision, at: DEMO_NOW, overrides: { ...cfg.overrides },
+  };
   showToast('演示：试采完成，未写正式历史', 'info');
   update();
   return true;

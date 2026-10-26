@@ -23,8 +23,8 @@ const BASE = (args[0] ?? 'http://127.0.0.1:8971/docs/slide/development/MAX-241/p
 const OUT = args[1] ?? './screenshots';
 const MODE = args.includes('--counterexamples') ? 'counterexamples' : 'full';
 const LABEL = args.includes('--label') ? args[args.indexOf('--label') + 1] : 'current';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const PORT = 9333;
+const CHROME = process.env.MAX241_BROWSER ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const PORT = Number(process.env.MAX241_CDP_PORT ?? 9333);
 const PROFILE = `/tmp/max241-cdp-${process.pid}`;
 const INDEX = `${BASE}/index.html`;
 
@@ -437,8 +437,8 @@ async function main() {
   check('监控配置绑定随所选资源变化（第二行模板非首行）', perRowConfig.name.includes('MySQL 只读副本采集') && perRowConfig.group.includes('只读副本标准'), JSON.stringify(perRowConfig));
 
   // 9b. R4：不兼容模板必须被阻止；试采明细必须渲染真实单元格并含部分失败/错误码（R6）
-  const openConfigRow = async (clsName, id) => {
-    await open(`class=${clsName}&view=detail&id=${id}&tab=collection&state=normal&perm=full`, 1440, 900);
+  const openConfigRow = async (clsName, id, w = 1440, h = 900) => {
+    await open(`class=${clsName}&view=detail&id=${id}&tab=collection&state=normal&perm=full`, w, h);
     await clickButtonByText('修改模板与参数'); await wait(250);
   };
   const selectTemplate = async (value) => {
@@ -467,9 +467,15 @@ async function main() {
     blocked.compat.includes('不兼容') && blocked.flow.includes('未通过') && blocked.trialDisabled && blocked.publishDisabled && blocked.blockedStep,
     JSON.stringify({ compat: blocked.compat.trim(), flow: blocked.flow, trialDisabled: blocked.trialDisabled, publishDisabled: blocked.publishDisabled, blockedStep: blocked.blockedStep }));
   const blockedTrial = await readTrial();
-  check('不兼容时展示最近试采明细（3 项非空，含部分失败与错误码）并标注已失效',
+  check('不兼容时只展示绑定资源/模板/配置版本/时间的预置历史快照（非按类通用样例）',
     blockedTrial.items.length === 3 && blockedTrial.items.every(Boolean) && blockedTrial.statuses.every(Boolean)
       && blockedTrial.details.every(Boolean) && blockedTrial.details.some((d) => d.includes('ER_TABLEACCESS_DENIED'))
+      && blockedTrial.caption.includes('最近一次试采记录')
+      && blockedTrial.caption.includes('mysql-order-prod #12')
+      && blockedTrial.caption.includes('MySQL 基础采集 v2.4.1')
+      && blockedTrial.caption.includes('配置版本 37')
+      && blockedTrial.caption.includes('2026-10-25 21:08')
+      && blockedTrial.caption.includes('预置历史快照')
       && blockedTrial.caption.includes('已失效'),
     JSON.stringify(blockedTrial));
   await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(150);
@@ -480,6 +486,124 @@ async function main() {
   await evaluate(`(() => { const card = [...document.querySelectorAll('app-card')].find((c) => c.textContent.includes('检查并启用')); card.scrollIntoView({ block: 'start' }); })()`);
   await wait(200);
   await shot('db-config-incompatible-blocked-1440x900');
+
+  // 9c. F2：无历史不得凭空出现；预置历史必须绑定资源/模板/配置版本/时间；修改后保留失效快照
+  await openConfigRow('db', 9);
+  await selectTemplate('pg-basic');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const noHistory = await evaluate(`(() => ({
+    items: document.querySelectorAll('[data-testid="trial-item"]').length,
+    table: Boolean(document.querySelector('[data-testid="trial-table"]')),
+    caption: Boolean(document.querySelector('[data-testid="trial-caption"]')),
+    none: document.querySelector('[data-testid="trial-none"]')?.textContent ?? '',
+    trialDisabled: document.querySelector('[data-action="run-trial"]').disabled,
+    publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+  }))()`);
+  check('F2 无试采历史的资源在检查失败后显示未试采，不生成"最近一次"',
+    noHistory.items === 0 && !noHistory.table && !noHistory.caption && noHistory.none.includes('未试采')
+      && noHistory.trialDisabled === true && noHistory.publishDisabled === true, JSON.stringify(noHistory));
+  await shot('db-config-no-trial-history-1440x900');
+
+  await openConfigRow('db', 12);
+  const presetOnOpen = await readTrial();
+  const presetPublish = await evaluate(`document.querySelector('[data-action="publish"]').disabled`);
+  check('F2 预置历史在未检查时标注为历史记录并绑定所属资源，不能用于发布',
+    presetOnOpen.caption.includes('最近一次试采记录') && presetOnOpen.caption.includes('mysql-order-prod #12')
+      && presetOnOpen.caption.includes('本轮未重新试采') && presetPublish === true, JSON.stringify(presetOnOpen));
+
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+  await evaluate(`document.querySelector('[data-action="run-trial"]').click()`); await wait(250);
+  const currentTrial = await readTrial();
+  check('F2 本页演示试采绑定资源/模板/配置版本/时间并标明为本轮结果',
+    currentTrial.caption.includes('本次试采结果') && currentTrial.caption.includes('mysql-order-prod #12')
+      && currentTrial.caption.includes('MySQL 基础采集 v2.4.1') && currentTrial.caption.includes('配置版本 37')
+      && currentTrial.caption.includes('本页演示试采') && currentTrial.summary.includes('共 3 项'),
+    JSON.stringify(currentTrial));
+  await selectTemplate('mysql-replica');
+  const afterChange = await readTrial();
+  const afterChangeState = await evaluate(`(() => ({
+    publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+    trialDisabled: document.querySelector('[data-action="run-trial"]').disabled,
+    flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '',
+  }))()`);
+  check('F2 修改模板后保留带原模板绑定的失效快照，且不可发布',
+    afterChange.caption.includes('已失效') && afterChange.caption.includes('模板已变更为')
+      && afterChange.caption.includes('MySQL 基础采集 v2.4.1') && afterChange.items.length === 3
+      && afterChangeState.publishDisabled === true && afterChangeState.trialDisabled === true
+      && !afterChangeState.flow.includes('已发布'), JSON.stringify({ afterChange, afterChangeState }));
+  await shot('db-config-stale-trial-snapshot-1440x900');
+
+  // 9d. F1：版本/设备子类型不符必须拒绝；检查、页头试采、发布共用同一完整判定
+  await openConfigRow('network', 28);
+  await selectTemplate('huawei-snmp');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const subtypeBlocked = await evaluate(`(() => ({
+    compat: document.querySelector('[data-testid="compat-result"]')?.textContent ?? '',
+    flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '',
+    trialDisabled: document.querySelector('[data-action="run-trial"]').disabled,
+    publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+    items: document.querySelectorAll('[data-testid="trial-item"]').length,
+  }))()`);
+  check('F1 Huawei V600 防火墙选 Huawei VRP V200 交换机模板：检查拒绝并禁用试采/发布',
+    subtypeBlocked.compat.includes('要求交换机') && subtypeBlocked.compat.includes('防火墙')
+      && subtypeBlocked.flow.includes('未通过') && subtypeBlocked.trialDisabled === true
+      && subtypeBlocked.publishDisabled === true && subtypeBlocked.items === 0, JSON.stringify(subtypeBlocked));
+  await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300);
+  const subtypeHeader = await evaluate(`({ flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '', publishDisabled: document.querySelector('[data-action="publish"]').disabled, items: document.querySelectorAll('[data-testid="trial-item"]').length })`);
+  check('F1 页头试采对设备子类型不符同样拒绝且不产生试采结果',
+    subtypeHeader.flow.includes('未通过') && !subtypeHeader.flow.includes('试采完成')
+      && subtypeHeader.publishDisabled === true && subtypeHeader.items === 0, JSON.stringify(subtypeHeader));
+  await evaluate(`document.querySelector('[data-action="publish"]').click()`); await wait(200);
+  const subtypePublish = await evaluate(`document.querySelector('[data-testid="flow-state"]')?.textContent ?? ''`);
+  check('F1 子类型不符时点击发布不推进流程', !subtypePublish.includes('已发布') && !subtypePublish.includes('试采完成'), subtypePublish);
+  await evaluate(`(() => { const card = [...document.querySelectorAll('app-card')].find((c) => c.textContent.includes('检查并启用')); card.scrollIntoView({ block: 'start' }); })()`);
+  await wait(200);
+  await shot('network-config-subtype-rejected-1440x900');
+
+  await openConfigRow('network', 28);
+  await selectTemplate('huawei-fw-snmp');
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const subtypeOk = await evaluate(`({ compat: document.querySelector('[data-testid="compat-result"]')?.textContent ?? '', flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '' })`);
+  check('F1 合法设备子类型/平台：Huawei V600 防火墙选防火墙模板通过检查',
+    subtypeOk.compat.includes('满足') && subtypeOk.compat.includes('平台 V600') && subtypeOk.compat.includes('防火墙') && subtypeOk.flow.includes('通过'),
+    JSON.stringify(subtypeOk));
+
+  await openConfigRow('server', 21);
+  await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(250);
+  const serverOs = await evaluate(`({ compat: document.querySelector('[data-testid="compat-result"]')?.textContent ?? '', flow: document.querySelector('[data-testid="flow-state"]')?.textContent ?? '' })`);
+  check('F1 Linux 服务器选 Linux 模板按系统约束通过检查',
+    serverOs.compat.includes('满足') && serverOs.flow.includes('通过'), JSON.stringify(serverOs));
+
+  // 9e. F1/F2 受影响页三档尺寸：阻断与历史快照均可达、无整页溢出
+  for (const [sizeLabel, [w, h]] of Object.entries(SIZES)) {
+    await openConfigRow('db', 12, w, h);
+    await selectTemplate('pg-basic');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    const sizedDb = await evaluate(`(() => ({
+      page: document.documentElement.scrollWidth <= window.innerWidth,
+      items: document.querySelectorAll('[data-testid="trial-item"]').length,
+      caption: document.querySelector('[data-testid="trial-caption"]')?.textContent ?? '',
+      publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+    }))()`);
+    check(`F2 ${sizeLabel} 不兼容阻断页无整页溢出，历史快照标注已失效且不可发布`,
+      sizedDb.page === true && sizedDb.items === 3 && sizedDb.caption.includes('已失效') && sizedDb.publishDisabled === true,
+      JSON.stringify(sizedDb));
+    await shot(`db-config-incompatible-${sizeLabel}`);
+
+    await openConfigRow('network', 28, w, h);
+    await selectTemplate('huawei-snmp');
+    await evaluate(`document.querySelector('[data-action="check-compat"]').click()`); await wait(200);
+    const sizedNet = await evaluate(`(() => ({
+      page: document.documentElement.scrollWidth <= window.innerWidth,
+      compat: document.querySelector('[data-testid="compat-result"]')?.textContent ?? '',
+      trialDisabled: document.querySelector('[data-action="run-trial"]').disabled,
+      publishDisabled: document.querySelector('[data-action="publish"]').disabled,
+    }))()`);
+    check(`F1 ${sizeLabel} 设备子类型拒绝页无整页溢出且试采/发布禁用`,
+      sizedNet.page === true && sizedNet.compat.includes('防火墙') && sizedNet.trialDisabled === true && sizedNet.publishDisabled === true,
+      JSON.stringify(sizedNet));
+    await shot(`network-config-subtype-${sizeLabel}`);
+  }
 
   await open('class=db&view=detail&id=12&tab=collection&state=normal&perm=full', 1440, 900);
   await evaluate(`document.querySelector('[data-action="trial"]').click()`); await wait(300);
