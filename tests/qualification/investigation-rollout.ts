@@ -87,7 +87,7 @@ try {
     return { original, receipt, duplicates, concurrency: 8, requests, runs, reservations, delivery: stats(timings) };
   });
 
-  await check('cohort and old/new flags: accepted owner survives rollback', async () => {
+  await check('cohort and old/new flags: accepted owner survives rollback, new alert suppressed', async () => {
     const ids: number[] = [];
     for (const metric of ['t12_cohort', 't12_outside']) {
       const [row] = await env!.pool.query("INSERT INTO alerts(instance_id,target_type,alert_type,level,title,message,metric_name) VALUES(101,'instance','performance','critical',?,'frozen readonly CPU',?)", [metric, metric]);
@@ -109,7 +109,15 @@ try {
       const [row]: any = await c.query("INSERT INTO ai_analysis(analysis_type,target_type,instance_id,related_id,trigger_type,status) VALUES('alert_rca','instance',101,?,'auto','pending')", [ids[1]]);
       return { success: true, analysisId: row.insertId, status: 'pending' };
     });
-    assert.equal(legacyAdmissions, 1); assert(bridgeResult.analysisId);
+    // Disabling automatic analysis suppresses the alert; it never falls back
+    // to the legacy automatic lane. Both lanes and paid providers stay at 0.
+    assert.equal(bridgeResult.success, false);
+    assert.equal(bridgeResult.status, 'suppressed');
+    assert.equal(bridgeResult.error, 'AUTO_ANALYSIS_LANE_DISABLED');
+    assert.equal(bridgeResult.analysisId, undefined);
+    assert.equal(legacyAdmissions, 0);
+    assert.equal(await count('SELECT COUNT(*) AS n FROM ai_analysis WHERE related_id=?', [ids[1]]), 0);
+    assert.equal(await count('SELECT COUNT(*) AS n FROM investigation_alert_owners WHERE alert_id=?', [ids[1]]), 0);
     const outsidePaidRequests = env!.counts().providerCalls - providerCallsBefore;
     assert.equal(outsidePaidRequests, 0);
     env!.bridgeFlags.opsAuto = true; env!.bridgeFlags.manual = true;
@@ -119,7 +127,8 @@ try {
     const paidOwnerCount = await count('SELECT COUNT(*) AS n FROM investigation_alert_owners WHERE alert_id=?', [ids[0]]);
     assert.equal(paidOwnerCount, 1);
     return { cohort: [101], flagHistory: ['true', 'false', 'true'], investigationId: admitted.investigationId,
-      paidOwnerCount, legacyAdmissions, bridgeResult, outsidePaidRequests };
+      paidOwnerCount, legacyAdmissions, outsidePaidRequests, outsideLegacyAnalysis: 0,
+      suppression: { status: bridgeResult.status, error: bridgeResult.error, analysisId: bridgeResult.analysisId } };
   });
 
   await check('bounded evidence retention preserves hashes and results', async () => {
