@@ -95,7 +95,7 @@ RED 产物：`.../repair/red-old/counterexamples-old.json`（0/11）；GREEN 产
 | `counter-{db,server,network}-page-forbidden.png` | 页面 403 清空上下文（R3） |
 | `counter-{db,server,network}-config-editable.png` | 可编辑配置（R4） |
 | `counter-{server,network}-template-flow.png` | 非数据库模板流程（R4） |
-| `db-detail-state-{empty,loading,error,partial,forbidden,module403}-1440x900.png` | 六态 |
+| `db-detail-state-{empty,loading,error,partial,forbidden}-1440x900.png` / `server-detail-state-module403-1440x900.png` | 六态 + 模块 403 |
 | `db-detail-focus-1440x900.png` / `db-list-test-dialog-1440x900.png` | 键盘焦点环、共享弹窗 |
 | `db-detail-long-name-1366x768.png` | 长名称换行 |
 

@@ -357,6 +357,7 @@ async function main() {
     actions: document.querySelectorAll('.detail-actions button').length,
   }))()`);
   check('模块 403 保留页面身份、仅该页签无权限', module403.identity && module403.message && module403.actions > 0, JSON.stringify(module403));
+  await shot('server-detail-state-module403-1440x900');
 
   // 7. 权限分层：只读 / 管理无备份 / 备份写
   await open('class=db&view=list&state=normal&perm=view', 1440, 900);
