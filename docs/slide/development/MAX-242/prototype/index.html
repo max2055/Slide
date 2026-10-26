@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAX-242 · AI 工作空间体验原型（演示数据）</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">跳到主要内容</a>
+  <div class="demo-banner" role="note">
+    <strong>演示数据</strong> · 未接真实后端 · 不调用模型 · 不执行任何运维动作 · 原型，不代表生产能力
+  </div>
+  <div class="shell">
+    <aside class="nav" aria-label="原型导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div><strong>AI 工作空间</strong><small>MAX-242 体验原型</small></div>
+      </div>
+      <nav>
+        <a href="#/home" data-nav="home">工作空间首页</a>
+        <a href="#/start" data-nav="start">从事件发起</a>
+        <a href="#/detail" data-nav="detail">调查详情</a>
+        <a href="#/supplement" data-nav="supplement">结构化补充</a>
+        <a href="#/action" data-nav="action">行动与审批</a>
+        <a href="#/verify" data-nav="verify">复测结论</a>
+        <a href="#/handoff" data-nav="handoff">交接摘要</a>
+        <a href="#/exceptions" data-nav="exceptions">异常分支</a>
+        <a href="#/compat" data-nav="compat">旧入口兼容</a>
+      </nav>
+      <div class="nav-foot">
+        <label class="role-switch">演示进度
+          <select id="stage">
+            <option value="after-v1">① 结果 V1 · 待补充</option>
+            <option value="after-v2">② 结果 V2 · 待创建行动</option>
+            <option value="pending-approval">③ 计划待审批</option>
+            <option value="after-execution">④ 已执行 · 待复测</option>
+            <option value="retested-recovered">⑤ 复测：恢复</option>
+            <option value="retested-not-improved">⑤ 复测：未改善</option>
+            <option value="retested-insufficient">⑤ 复测：证据不足</option>
+          </select>
+        </label>
+        <label class="role-switch">演示角色
+          <select id="role">
+            <option value="operator">运维工程师（调查处理人）</option>
+            <option value="approver">审批人（另一账号）</option>
+            <option value="viewer">只读查看者</option>
+          </select>
+        </label>
+        <p class="muted tiny">切换只改变本页演示状态，不模拟真实权限或后端版本。</p>
+      </div>
+    </aside>
+    <main id="main" class="main" tabindex="-1"></main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
