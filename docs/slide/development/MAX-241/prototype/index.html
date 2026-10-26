@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN" data-roundness="default">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAX-241 三类完整资源详情原型</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- 设计评审控制条：不属于产品界面，仅用于切换类型/页签/状态与宽度检查。 -->
+  <div class="review-bar" role="region" aria-label="设计评审控制">
+    <strong>MAX-241 设计原型</strong>
+    <span class="review-note">演示数据 · 不连后端 · 非生产界面</span>
+    <label>资源
+      <select id="ctl-class">
+        <option value="db">数据库</option>
+        <option value="server">服务器</option>
+        <option value="network">网络设备</option>
+      </select>
+    </label>
+    <label>视图
+      <select id="ctl-view">
+        <option value="list">列表</option>
+        <option value="detail">详情</option>
+      </select>
+    </label>
+    <label>页签
+      <select id="ctl-tab"></select>
+    </label>
+    <label>状态
+      <select id="ctl-state">
+        <option value="normal">正常</option>
+        <option value="empty">无数据</option>
+        <option value="loading">加载中</option>
+        <option value="error">加载失败</option>
+        <option value="partial">部分失败</option>
+        <option value="forbidden">无权限</option>
+      </select>
+    </label>
+    <label class="review-check"><input type="checkbox" id="ctl-long" /> 长名称</label>
+    <span class="review-hint">快捷键：←/→ 切页签，Esc 关弹窗</span>
+  </div>
+
+  <div id="app" class="app-shell"></div>
+
+  <div id="dialog-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
