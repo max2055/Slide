@@ -81,7 +81,8 @@ const fail = (code: BindingHostErrorCode): never => {
 const LIMITS = {
   caller_key: 255,
   receipt_id: 255,
-  resource_key: 512,
+  /** Matches the existing `metric_policy_bindings.resource_key` column width. */
+  resource_key: 255,
   operation_key: 1024,
   resource_type: 32,
   digest: 71,
