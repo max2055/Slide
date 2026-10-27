@@ -1,6 +1,6 @@
 # MAX-238 B2D：内部原子事务适配核心
 
-2026-10-27。本文件对应实现提交 `688e9657498630b5eb3e685e2fb8dc5e50bae794`，端口收敛 `f448a00206bdd8929d50be0dbdb891941329482a`（实现最终状态；下文文档提交只在其后追加）。基线为已接受 B2C `26859b1196574831fe29acd266269874aef147d7`。**本包是未挂载的内部适配核心**：没有生产 store、路由、receipt issuer、DDL、运行时或真实采集；真实存储与读者接线见 `b2d-production-wiring.md`。
+2026-10-27。本文件对应实现提交 `688e9657498630b5eb3e685e2fb8dc5e50bae794`，端口收敛 `f448a00206bdd8929d50be0dbdb891941329482a`（实现最终状态；下文文档提交只在其后追加）。已接受的 B2C 基线为 `26859b1196574831fe29acd266269874aef147d7`。**B2D-R1 最终能力时效补修**见 §7，实现提交 `4f312e6c3`，基线为 B2D 交付 HEAD `41f39dc8a0c0564e5a8fd96220338cdde65ae320`。**本包是未挂载的内部适配核心**：没有生产 store、路由、receipt issuer、DDL、运行时或真实采集；真实存储与读者接线见 `b2d-production-wiring.md`。
 
 ## 1. 允许文件与实际 diff
 
@@ -39,7 +39,7 @@
    - unsupported/unknown 等 `blocking` 项 → `TRANSACTION_RESOLUTION_BLOCKED`（携结构化 item 定位）；
    - 无任何可执行步骤 → `TRANSACTION_RESOLUTION_EMPTY`。
 6. 读 v2 receipt、受信 mandatory 列表、receipt 单次消费查询。
-7. 最后一次异步授权复验，然后**同步**读受信 `serverNow`；其后无 await，依次校验 receipt 身份（receipt id、resource、base/target、candidate digest、**resolution identity**、dependency digest）、时间、逐项 read/transform/unit 与显式非必需排除。
+7. 最后一次异步授权复验，然后**同步**读受信 `serverNow`；其后无 await，依次校验 receipt 身份（receipt id、resource、base/target、candidate digest、**resolution identity**、dependency digest）、时间、逐项 read/transform/unit 与显式非必需排除，再执行 §7 的最终能力时效门禁。
 8. 返回 `prepared`：`resolution`、`plan`、三个身份、上一份 application 与 actor，供 adapter 组意图。
 
 v1 与 v2 的边界：
@@ -95,3 +95,43 @@ focused 覆盖（真实 `PackageRegistry.install/get`、真实 `sealRelease`）�
 ## 6. 下一最小事实
 
 Chief 对准确 HEAD 做 B2D 终态复审；若接受，再按 `b2d-production-wiring.md` 核实现有 DDL/生产写/DB 授权，单独放行生产存储、receipt issuer 与旧读者 fence。MAX238 与父 MAX235 保持 `in_progress`；原五项/A06/A07/A09/A16/A20、A01–A22、四编码标准、D05/O02/O03 不缩减。
+
+## 7. B2D-R1：最终能力时效门禁（实现提交 `4f312e6c3`）
+
+基线 `41f39dc8a0c0564e5a8fd96220338cdde65ae320`；只改 `transaction-guard.ts` 与 `transaction-adapter.test.ts`，未改 adapter、`resolve.ts`/`plan.ts`、contracts、DDL、路由、运行时或任何共享文件。
+
+### 7.1 缺陷
+
+v2 入口把 `applicationContext.at` 交给 B2C 解析能力，最终授权之后只用 `serverNow` 校验 receipt 时效，没有按最终受信时间复核实际启用项的能力窗口，也没有拒绝未来的 `applicationContext.at`。因此：
+
+- receipt 在 10 月 4 日才过期时，9 月 19 日就结束的能力仍可进入 prepared/stage（F1a：context 9 月 18 日、能力 9 月 19 日到期、最终 now 10 月 3 日）；
+- `at` 与能力 `evaluated_at` 为 10 月 3 日 12 时、最终 now 为 10 月 3 日 0 时时，提前 12 小时的“未来证据”仍被接受（F1b）。
+
+### 7.2 修复
+
+`assertEnableTime(application, plan, now)` 位于最后一次异步授权与**同步** `serverNow` 之后、形成 prepared 决策之前，无后续 await：
+
+1. 受信 `applicationContext.at` 必须可解析且不晚于最终 `now`；否则 `TRANSACTION_CONTEXT_TIME_INVALID`。未来的 context 也是唯一能让未来 inventory（`observed_at <= at` 但晚于 now）看起来受支持的入口，因此同一条规则拒绝。
+2. 对 `plan.releases[].steps[].items[]`（即本次启用计划实际使用、`decision: 'collect'` 的每一项）校验 `evaluated_at <= now < valid_until`；不满足（含恰好等于 `valid_until`）则 `TRANSACTION_CAPABILITY_TIME_INVALID`，携排序后的 `{template_id, item_id, item_version}`，不携值、driver 或凭据。
+3. 禁用/未选中项不进入任何 plan step，不引入新权限结论；既有 `blocking` 排除、settings disable、空计划仍在 B2C 阶段拒绝。
+4. 门禁只作用于新 prepared 路径：精确 committed replay 仍零 stage，receipt 过期或 current revision 前进不触发重写；unknown 仍只返回原操作查询，不因时间问题重发；legacy 最终授权/依赖、v1 79 项、v2 三摘要/完整查询/collision/receipt 单次消费、同步 clock 异常与撤权/取消/依赖变化全部保留。
+5. 修正原成功 fixture：默认能力窗口改为覆盖 context（`2026-09-18`）与最终 now（`2026-10-03`），不再用 9 月 19 日就到期的能力当作 10 月 3 日的合法成功前提；反例另以显式过期/未来窗口构造，没有靠改时间掩盖漏洞。
+
+### 7.3 验证（实现 `4f312e6c3`，Node v24.18.0 / pnpm 11.19.0；均为底层命令真实退出码）
+
+| 命令 | 结果 | 退出码 |
+| --- | --- | --- |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings/transaction-adapter.test.ts` | 1 file / 67 passed（原 58 + 9 新增） | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings` | 6 files / 216 passed | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings src/metrics/policy src/metrics/scheduler src/metrics/packages src/contracts/metrics` | 16 passed + 4 skipped files；412 passed + 36 skipped | 0 |
+| `pnpm --filter slide-api typecheck` | 无错误 | 0 |
+| `pnpm exec oxlint apps/db-ops-api/src/metrics/bindings` | 0 warnings / 0 errors | 0 |
+
+契约未改，`contracts:check` 按准入复用既有结果，未重复运行。
+
+反例闭合的可执行证据：将 `transaction-guard.ts` 临时还原为基线 `41f39dc8a` 后，同一测试文件为 5 failed / 62 passed——过期（F1a 形态）、读取期间过期、恰在边界到期、未来 context（F1b 形态）、未来 inventory 五条均实际失败（旧代码提交/暂存）；合法窗内成功、禁用项、replay 与 unknown 四条保持通过。恢复修复后 67 passed。
+
+### 7.4 未证明
+
+内存 fixture 仍只证明决策与零/单次写入计数；不称 MySQL 事务、CAS、行锁、真实能力探测、试采或生产应用已通过。生产 wiring、DDL、receipt issuer、共享读者与运行时接线仍须 Chief 接受 R1 后单独准入。
+
