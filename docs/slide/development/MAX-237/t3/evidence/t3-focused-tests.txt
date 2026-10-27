@@ -1,0 +1,9 @@
+
+ RUN  v4.1.8 /Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-33a863accf9b/worktree/apps/db-ops-api
+
+
+ Test Files  6 passed | 2 skipped (8)
+      Tests  94 passed | 23 skipped (117)
+   Start at  21:58:45
+   Duration  756ms (transform 931ms, setup 0ms, import 1.93s, tests 406ms, environment 0ms)
+

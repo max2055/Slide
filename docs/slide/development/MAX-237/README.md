@@ -355,3 +355,17 @@ T1 接受后，`max237-t2a-admission-20261027.md` 准入的 **T2A internal MySQL
   focused 83/83、drill 18/18、`tsc` 0、`oxlint` 0/0。
 - 明确未做：共享应用 DDL/migration 授权、应用切换/回退、pool/权限/审计/route 契约、真实采集闭环；
   PR #390 未合并，整单仍 `in_progress`。
+
+## 13. 现行入口：T3 应用库接线与三份官方模板（2026-10-27）
+
+成员 `01a17d9b-f942-7e81-9698-b2100c221d2f` 批准的 **T3 开发包**已交付到 PR #390（base `4ed20d4d9`，
+产品提交 `8a4f6489b`、CLI/证据 `535ae6635`，未合并）。详见 [t3/README.md](t3/README.md)。
+
+- 用已接受候选 DDL 的 `CREATE TABLE IF NOT EXISTS`，只给 `mysql3306` 所在应用库 `db_ops_ai` 补五张 T2B 表；
+  业务表行数前后一致，无 `ALTER`/`DROP`、停写、复制或切换。
+- 固定 Zabbix 7.0.21 提交 `6542e21f` 的三份官方模板按显式规则转换为 Slide 原生模板并经既有 repository 写入；
+  按上游 uuid 读回项数 1 / 5 / 9，与转换报告一致，重复导入为 `noop`。
+- 未转换项保留 `zabbix_agent_unsupported`、`snmp_oid_unmapped` 等稳定理由；触发器全部无单指标简单阈值，
+  保留原文并标 `unsupported`；没有表达式引擎、Agent/ODBC 传输或通用导入器。
+- 接口速率只用夹具证明首样本 / 计数重置 / 缺输入为未知；**三份模板的已验证对象均为「无」**，没有真实采集，
+  不是三类真实模板闭环。整单仍 `in_progress`。

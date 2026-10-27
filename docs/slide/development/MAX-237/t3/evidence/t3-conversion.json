@@ -1,0 +1,2770 @@
+{
+  "zabbix_reference": {
+    "version": "7.0.21",
+    "commit": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd",
+    "license": "AGPL-3.0-only",
+    "repository": "https://github.com/zabbix/zabbix",
+    "localPath": "/Users/max/Coding/40-Slide-references/zabbix",
+    "head": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd"
+  },
+  "templates": [
+    {
+      "category": "database",
+      "source": {
+        "url": "https://github.com/zabbix/zabbix/blob/6542e21fe6adc8ab7bf903c2a9d1df80e80366cd/templates/db/mysql_odbc/template_db_mysql_odbc.yaml",
+        "path": "templates/db/mysql_odbc/template_db_mysql_odbc.yaml",
+        "commit": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd",
+        "license": "AGPL-3.0-only",
+        "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+        "template_name": "MySQL by ODBC",
+        "export_version": "7.0"
+      },
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "name": "MySQL by ODBC",
+      "interval_ms": 60000,
+      "parameters": {
+        "schema": {
+          "interval_ms": {
+            "type": "integer",
+            "min": 1000,
+            "max": 86400000
+          }
+        },
+        "defaults": {
+          "interval_ms": 60000
+        }
+      },
+      "converted_item_count": 1,
+      "items": [
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "8fbad224ebdf46e7b25a0be015f21972",
+            "name": "Uptime",
+            "key": "mysql.uptime",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "uptime",
+            "value_type": null
+          },
+          "item_id": "8fbad224ebdf46e7b25a0be015f21972",
+          "display_name": "Uptime",
+          "metric": {
+            "id": "db.uptime_seconds",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "s",
+          "dimensions": {},
+          "package_release": "mysql-basic@1.0.0#sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+          "implementation_id": "builtin:mysql.status.v1",
+          "raw_field": "Uptime",
+          "note": "derived from SHOW GLOBAL STATUS Uptime, the same read-only status source as builtin:mysql.status.v1"
+        }
+      ],
+      "unsupported_count": 63,
+      "unsupported": [
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "70491bf6b6af401c9dfb10c0cbfddee1",
+            "name": "Get database",
+            "key": "db.odbc.get[get_database,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": "1h",
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "e389af9f1d134e028e3b637544c8a265",
+            "name": "Get replication",
+            "key": "db.odbc.get[get_replication,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": null,
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "72e0f88741d746bf88e8951ef69681f9",
+            "name": "Get status variables",
+            "key": "db.odbc.get[get_status_variables,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": null,
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "5b7c14e38799427cb6520f47bf8afe6c",
+            "name": "Status",
+            "key": "db.odbc.select[ping,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "b9fb80ca366e4d33801472bcd013f881",
+            "name": "Version",
+            "key": "db.odbc.select[version,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "73235748ba4742c0aa3c4f29509a162d",
+            "name": "Aborted clients per second",
+            "key": "mysql.aborted_clients.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "b6185e79abd744f78ce579a83381ba87",
+            "name": "Aborted connections per second",
+            "key": "mysql.aborted_connects.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "9db77e72fd9d404a8e1fd4e72c92d75c",
+            "name": "Binlog cache disk use",
+            "key": "mysql.binlog_cache_disk_use",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "05e7e91206bb4138a945ea0de2d8c01d",
+            "name": "Buffer pool efficiency",
+            "key": "mysql.buffer_pool_efficiency",
+            "type": "CALCULATED",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "expression_not_supported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "ad5520e067ea405eb939d319fa9690e9",
+            "name": "Buffer pool utilization",
+            "key": "mysql.buffer_pool_utilization",
+            "type": "CALCULATED",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "expression_not_supported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "f05d592e6ae74e64bc54c649418761a6",
+            "name": "Bytes received",
+            "key": "mysql.bytes_received.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "Bps",
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "ce737bc186f24014a70c75da2386986d",
+            "name": "Bytes sent",
+            "key": "mysql.bytes_sent.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "Bps",
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "a43ec23dad9345a5a1b0ff8bda12ed77",
+            "name": "Command Delete per second",
+            "key": "mysql.com_delete.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "cd924e3b51074b3baf642a7aa1eeb474",
+            "name": "Command Insert per second",
+            "key": "mysql.com_insert.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "31e6372d1249442ab3ebdd993f397e26",
+            "name": "Command Select per second",
+            "key": "mysql.com_select.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "0f5f638777284093bcdc5f2dacc8e951",
+            "name": "Command Update per second",
+            "key": "mysql.com_update.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "fad5f4e1885341d1958f653afb85ff07",
+            "name": "Connections per second",
+            "key": "mysql.connections.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "4b67e0e6291b4e0c841334ac052d7253",
+            "name": "Connection errors accept per second",
+            "key": "mysql.connection_errors_accept.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "76ad3a39e89e44daad08cc00174d4918",
+            "name": "Connection errors internal per second",
+            "key": "mysql.connection_errors_internal.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "83dfb916c7674e1fbd300be444241e25",
+            "name": "Connection errors max connections per second",
+            "key": "mysql.connection_errors_max_connections.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "9be4cb9e209344d0869a56082d16ec53",
+            "name": "Connection errors peer address per second",
+            "key": "mysql.connection_errors_peer_address.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "e50b9fea89cc440abc0155dc25346f05",
+            "name": "Connection errors select per second",
+            "key": "mysql.connection_errors_select.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "a82a7ada012141c6bdff63bc8d615786",
+            "name": "Connection errors tcpwrap per second",
+            "key": "mysql.connection_errors_tcpwrap.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "84d748ab80444e10bdb60bcfbdfa850a",
+            "name": "Created tmp tables on disk per second",
+            "key": "mysql.created_tmp_disk_tables.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "c5f2ae1ef46e4f65842ab4a31625906a",
+            "name": "Created tmp files on disk per second",
+            "key": "mysql.created_tmp_files.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "95fa4f4f1db44b2bb65889da246c03b5",
+            "name": "Created tmp tables on memory per second",
+            "key": "mysql.created_tmp_tables.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "e31f66bbc32b404c92debc4d9367162d",
+            "name": "InnoDB buffer pool pages free",
+            "key": "mysql.innodb_buffer_pool_pages_free",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "41019c084618404db183326c215d71f6",
+            "name": "InnoDB buffer pool pages total",
+            "key": "mysql.innodb_buffer_pool_pages_total",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "441b718148974e289db93299f869feba",
+            "name": "InnoDB buffer pool reads",
+            "key": "mysql.innodb_buffer_pool_reads",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "22ae5946fc2548cf8eee39a57ce8512b",
+            "name": "InnoDB buffer pool reads per second",
+            "key": "mysql.innodb_buffer_pool_reads.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "0a1775a7de33464e9ce8134950527021",
+            "name": "InnoDB buffer pool read requests",
+            "key": "mysql.innodb_buffer_pool_read_requests",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "98684abf32e642bd8784e68e64357dc9",
+            "name": "InnoDB buffer pool read requests per second",
+            "key": "mysql.innodb_buffer_pool_read_requests.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "4e829cbb3cc2485dac2757867badd0f4",
+            "name": "Innodb buffer pool wait free",
+            "key": "mysql.innodb_buffer_pool_wait_free",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "4680fd31a2514e3f827b0060a6d5bfc4",
+            "name": "Calculated value of innodb_log_file_size",
+            "key": "mysql.innodb_log_file_size",
+            "type": "CALCULATED",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "expression_not_supported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "79218a1068394ce69dfc6eeb626e83bc",
+            "name": "Innodb number open files",
+            "key": "mysql.innodb_num_open_files",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "fc561c5392bb43a4842977bdf4b882a8",
+            "name": "Innodb log written",
+            "key": "mysql.innodb_os_log_written",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "B",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "a62951afcfbd44e595a4d294b24056e5",
+            "name": "InnoDB row lock time",
+            "key": "mysql.innodb_row_lock_time",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "s",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "22277695b7154c019a76ca730e68e833",
+            "name": "InnoDB row lock time max",
+            "key": "mysql.innodb_row_lock_time_max",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "s",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "17c4270927a74d8388da8c25d9065556",
+            "name": "InnoDB row lock waits",
+            "key": "mysql.innodb_row_lock_waits",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "6106ebf4cae842c1a5acc2f13518de4f",
+            "name": "Max used connections",
+            "key": "mysql.max_used_connections",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "85e17b6b196e4916838e0318992fe33c",
+            "name": "Open tables",
+            "key": "mysql.open_tables",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "c23ce7b2689745728465c5b405d7b3ba",
+            "name": "Open table definitions",
+            "key": "mysql.open_table_definitions",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "2f0ced88c4524455bf790b3bc6512d04",
+            "name": "Queries per second",
+            "key": "mysql.queries.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "8d0fc2eb0be94d68966e09fca88e8deb",
+            "name": "Questions per second",
+            "key": "mysql.questions.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "b0227399437f4219b65ab1511d5e67c6",
+            "name": "Slow queries per second",
+            "key": "mysql.slow_queries.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "b675fd71138a4845965309dc5d6428d9",
+            "name": "Threads cached",
+            "key": "mysql.threads_cached",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "af56c636c8b94e4f9976d0d6cf60fcbb",
+            "name": "Threads connected",
+            "key": "mysql.threads_connected",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "8a50d5788f8a449b994dbe76536076a2",
+            "name": "Threads created per second",
+            "key": "mysql.threads_created.rate",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "derived_not_selectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "item",
+            "uuid": "c41afa83f6a94efda34d7b41c95c89ac",
+            "name": "Threads running",
+            "key": "mysql.threads_running",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "0987fb6afdae4587bc32864fa42728f2",
+            "name": "Database discovery",
+            "key": "mysql.database.discovery",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "f358179ef78b4a31affa9e049b4048b8",
+            "name": "Size of database {#DATABASE}",
+            "key": "db.odbc.select[{#DATABASE}_size,\"{$MYSQL.DSN}\"]",
+            "type": "ODBC",
+            "delay": "5m",
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "odbc_raw_not_a_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "ad12522557df499e9a78b8b3c07733dd",
+            "name": "MariaDB discovery",
+            "key": "mysql.extra_metric.discovery",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "eb8713584314461488b8769f1081d48d",
+            "name": "Binlog commits",
+            "key": "mysql.binlog_commits[{#SINGLETON}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "cbb7c1fadd934420b47950f52751795f",
+            "name": "Binlog group commits",
+            "key": "mysql.binlog_group_commits[{#SINGLETON}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "278488a9c0f543f6815a24592766d9bb",
+            "name": "Master GTID wait count",
+            "key": "mysql.master_gtid_wait_count[{#SINGLETON}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "93ad282dc3b24dba9f0351b0d0a59d39",
+            "name": "Master GTID wait timeouts",
+            "key": "mysql.master_gtid_wait_timeouts[{#SINGLETON}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "fd8bf7e639af4d3291030cdb9dd37bc9",
+            "name": "Master GTID wait time",
+            "key": "mysql.master_gtid_wait_time[{#SINGLETON}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "d0a235c0267c48e28bc6ecb99fb2380d",
+            "name": "Replication discovery",
+            "key": "mysql.replication.discovery",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "15f7b22867f54551afbed139d746e210",
+            "name": "Replication Seconds Behind Master {#MASTER_HOST}",
+            "key": "mysql.seconds_behind_master[\"{#MASTER_HOST}\"]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "s",
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "e063b116753d4124a88443fe4de20d41",
+            "name": "Replication Slave IO Running {#MASTER_HOST}",
+            "key": "mysql.slave_io_running[\"{#MASTER_HOST}\"]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "113be79554c14c2aad08036febb15d71",
+            "name": "Replication Slave SQL Running {#MASTER_HOST}",
+            "key": "mysql.slave_sql_running[\"{#MASTER_HOST}\"]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "a88eb463bb9740a4a4256306f11816bf",
+            "name": "Replication Slave SQL Running State {#MASTER_HOST}",
+            "key": "mysql.slave_sql_running_state[\"{#MASTER_HOST}\"]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "e19c120027e04da69b130e0f6cea29fc",
+            "kind": "prototype",
+            "uuid": "d88f65c4bee84e74bb6e00061ab27f0c",
+            "name": "Replication Slave status {#MASTER_HOST}",
+            "key": "mysql.slave_status[\"{#MASTER_HOST}\"]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "no_matching_slide_metric"
+        }
+      ],
+      "triggers": [],
+      "credential_macros_dropped": [
+        "{$MYSQL.DSN}",
+        "{$MYSQL.PASSWORD}",
+        "{$MYSQL.USER}"
+      ],
+      "graphs_not_converted": [
+        "MySQL: Bandwidth",
+        "MySQL: Connections",
+        "MySQL: InnoDB buffer pool",
+        "MySQL: Operations",
+        "MySQL: Queries",
+        "MySQL: Threads"
+      ],
+      "verified_objects": "none",
+      "note": "converted from the fixed official source; no real device/database was collected against"
+    },
+    {
+      "category": "server",
+      "source": {
+        "url": "https://github.com/zabbix/zabbix/blob/6542e21fe6adc8ab7bf903c2a9d1df80e80366cd/templates/os/linux/template_os_linux.yaml",
+        "path": "templates/os/linux/template_os_linux.yaml",
+        "commit": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd",
+        "license": "AGPL-3.0-only",
+        "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+        "template_name": "Linux by Zabbix agent",
+        "export_version": "7.0"
+      },
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "name": "Linux by Zabbix agent",
+      "interval_ms": 60000,
+      "parameters": {
+        "schema": {
+          "interval_ms": {
+            "type": "integer",
+            "min": 1000,
+            "max": 86400000
+          }
+        },
+        "defaults": {
+          "interval_ms": 60000
+        }
+      },
+      "converted_item_count": 5,
+      "items": [
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "403cebed115441369e94d35d070ca7b8",
+            "name": "Memory utilization",
+            "key": "vm.memory.utilization",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "item_id": "403cebed115441369e94d35d070ca7b8",
+          "display_name": "Memory utilization",
+          "metric": {
+            "id": "linux.memory.used_percent",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "%",
+          "dimensions": {},
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.host-gauges.v1",
+          "raw_field": "memory_usage",
+          "note": "(MemTotal - MemAvailable) / MemTotal, i.e. the MemAvailable-based used percent Slide already collects"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "48528aa936a04c8189375a6eae4033da",
+            "name": "Load average (1m avg)",
+            "key": "system.cpu.load[all,avg1]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "item_id": "48528aa936a04c8189375a6eae4033da",
+          "display_name": "Load average (1m avg)",
+          "metric": {
+            "id": "linux.load.one_minute",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "1",
+          "dimensions": {},
+          "package_release": "linux-basic@1.0.0#sha256:706820e5789b1b853bb3fc5f9d96573b2edad33630acbc7f9f72561caca58dc6",
+          "implementation_id": "builtin:linux.basic.v1",
+          "raw_field": "load_1min",
+          "note": "same /proc/loadavg one-minute field"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "8537f6c6ac6b438c80caf227946df891",
+            "name": "System uptime",
+            "key": "system.uptime",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "30s",
+            "units": "uptime",
+            "value_type": null
+          },
+          "item_id": "8537f6c6ac6b438c80caf227946df891",
+          "display_name": "System uptime",
+          "metric": {
+            "id": "linux.uptime.seconds",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "s",
+          "dimensions": {},
+          "package_release": "linux-basic@1.0.0#sha256:706820e5789b1b853bb3fc5f9d96573b2edad33630acbc7f9f72561caca58dc6",
+          "implementation_id": "builtin:linux.basic.v1",
+          "raw_field": "uptime",
+          "note": "same /proc/uptime seconds since boot"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "a6d90e0bc5ef4fb7acee8682687c485f",
+            "name": "FS [{#FSNAME}]: Space: Total",
+            "key": "vfs.fs.dependent.size[{#FSNAME},total]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "B",
+            "value_type": null
+          },
+          "item_id": "a6d90e0bc5ef4fb7acee8682687c485f",
+          "display_name": "FS [{#FSNAME}]: Space: Total",
+          "metric": {
+            "id": "host.filesystem.size_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "By",
+          "dimensions": {
+            "mount": "mount stable resource-local identity",
+            "device": "device stable resource-local identity",
+            "fs_type": "fs_type stable resource-local identity"
+          },
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.filesystem.v1",
+          "raw_field": "filesystem_size_bytes",
+          "note": "per-filesystem total bytes from df; reserved capacity included by the canonical metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "efee06a191aa4e5c8faa2762988b6955",
+            "name": "FS [{#FSNAME}]: Space: Used",
+            "key": "vfs.fs.dependent.size[{#FSNAME},used]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "B",
+            "value_type": null
+          },
+          "item_id": "efee06a191aa4e5c8faa2762988b6955",
+          "display_name": "FS [{#FSNAME}]: Space: Used",
+          "metric": {
+            "id": "host.filesystem.used_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "By",
+          "dimensions": {
+            "mount": "mount stable resource-local identity",
+            "device": "device stable resource-local identity",
+            "fs_type": "fs_type stable resource-local identity"
+          },
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.filesystem.v1",
+          "raw_field": "filesystem_used_bytes",
+          "note": "per-filesystem used bytes from df; mount/device/fs_type stay dimensions"
+        }
+      ],
+      "unsupported_count": 66,
+      "unsupported": [
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "df561a0cece94760a78704edf7da7326",
+            "name": "Host name of Zabbix agent running",
+            "key": "agent.hostname",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "f94f9f4699e94c369e6c98b2a2f485ce",
+            "name": "Zabbix agent ping",
+            "key": "agent.ping",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "27c42cf180b44632b5d9b8b5788165b3",
+            "name": "Version of Zabbix agent running",
+            "key": "agent.version",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "ef386d03ff2c42ffa236acd5215ad547",
+            "name": "Maximum number of open file descriptors",
+            "key": "kernel.maxfiles",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "678d70c041954ac8982fb5118b49f6e7",
+            "name": "Maximum number of processes",
+            "key": "kernel.maxproc",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "ab7d0471092544a6a950184d1bac906d",
+            "name": "Number of processes",
+            "key": "proc.num",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "b2637293884d40108f41b11767dd5be0",
+            "name": "Number of running processes",
+            "key": "proc.num[,,run]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "27cb0f66bb624146acfdd81b58f108a3",
+            "name": "System boot time",
+            "key": "system.boottime",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "15m",
+            "units": "unixtime",
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "5d186a46867b4eaaafd6396d3239dd3b",
+            "name": "Interrupts per second",
+            "key": "system.cpu.intr",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "953beb580df8418cb88b667b9dd37259",
+            "name": "Load average (5m avg)",
+            "key": "system.cpu.load[all,avg5]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "5716000e38e24dae8ead4ed98ede024b",
+            "name": "Load average (15m avg)",
+            "key": "system.cpu.load[all,avg15]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "f72e115544eb4079b09fec8c3539241c",
+            "name": "Number of CPUs",
+            "key": "system.cpu.num",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "73e85aa10a704fc7950d2d077f0c54ee",
+            "name": "Context switches per second",
+            "key": "system.cpu.switches",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "ca4235ec7607469cb0124a6253d3c489",
+            "name": "CPU utilization",
+            "key": "system.cpu.util",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "69b187838fb74f319e47c2ff4f99ef54",
+            "name": "CPU guest time",
+            "key": "system.cpu.util[,guest]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "a2b07497f2f343a99d26ad77e65bb54f",
+            "name": "CPU guest nice time",
+            "key": "system.cpu.util[,guest_nice]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "7aad6d159baa4a24901847144f0d231b",
+            "name": "CPU idle time",
+            "key": "system.cpu.util[,idle]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "cc4bc7693ae84f9bb18cee38d0814195",
+            "name": "CPU interrupt time",
+            "key": "system.cpu.util[,interrupt]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "5df67d9162cc437585990cc8708be894",
+            "name": "CPU iowait time",
+            "key": "system.cpu.util[,iowait]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "8ee6e54c86ba44ab88bb9e83c632c1ed",
+            "name": "CPU nice time",
+            "key": "system.cpu.util[,nice]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "a949a36004a449c58bef0cdc9d3fafd6",
+            "name": "CPU softirq time",
+            "key": "system.cpu.util[,softirq]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "3161dbd18e874e69b729c8e903cf7390",
+            "name": "CPU steal time",
+            "key": "system.cpu.util[,steal]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "d93097ed5ce74d35b6041ef2b5ba18e8",
+            "name": "CPU system time",
+            "key": "system.cpu.util[,system]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "57f9e2e34fab41e18e2bc93e786c92c6",
+            "name": "CPU user time",
+            "key": "system.cpu.util[,user]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "207341f390134e37ad431e2823666eb9",
+            "name": "System name",
+            "key": "system.hostname",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "6072902361404672a444841c786875e6",
+            "name": "System local time",
+            "key": "system.localtime",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "unixtime",
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "fd21580a151246b0a340bf924c326aa8",
+            "name": "Operating system architecture",
+            "key": "system.sw.arch",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "5e4c3d14634843e9b7b182e8fc08efbe",
+            "name": "Operating system",
+            "key": "system.sw.os",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "58818005e76d46dda14d6592f601ab00",
+            "name": "Number of installed packages",
+            "key": "system.sw.packages.get",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "160b82c121b147cbbf18c34dbb01d3ce",
+            "name": "Free swap space",
+            "key": "system.swap.size[,free]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "ca423242172f4b20ba47c26f4a61aee7",
+            "name": "Free swap space in %",
+            "key": "system.swap.size[,pfree]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "102c81b5523c4be0b4beae3cb88ebde1",
+            "name": "Total swap space",
+            "key": "system.swap.size[,total]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "fc6898682f904c57ba28bcb3748b237f",
+            "name": "System description",
+            "key": "system.uname",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "88056b3d2e424d5aba7cabcd4b043c9e",
+            "name": "Number of logged in users",
+            "key": "system.users.num",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "3b93d3590df24a46b29f6eb06f5e2446",
+            "name": "Checksum of /etc/passwd",
+            "key": "vfs.file.cksum[/etc/passwd,sha256]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "868440292732425c8f9df52882822c82",
+            "name": "Get filesystems",
+            "key": "vfs.fs.get",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "e811e6e2ae84461294e121f12e767b40",
+            "name": "Available memory",
+            "key": "vm.memory.size[available]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "20779a4c43374e5f9bea2584e93b85ef",
+            "name": "Available memory in %",
+            "key": "vm.memory.size[pavailable]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "d5c3541a7c0949ce812df1beb0732941",
+            "name": "Total memory",
+            "key": "vm.memory.size[total]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "item",
+            "uuid": "ca48c53be1bf46ae9dd2707158a55139",
+            "name": "Zabbix agent availability",
+            "key": "zabbix[host,agent,available]",
+            "type": "INTERNAL",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "internal_not_collectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "acfdea9c46ef48c68e6636f43b8f96a2",
+            "name": "Network interface discovery",
+            "key": "net.if.discovery",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "4d66608e190e4be7a438ea5d0d26e353",
+            "name": "Interface {#IFNAME}: Inbound packets discarded",
+            "key": "net.if.in[\"{#IFNAME}\",dropped]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "ed79960ca91f4e2ca45fed014a02c50b",
+            "name": "Interface {#IFNAME}: Inbound packets with errors",
+            "key": "net.if.in[\"{#IFNAME}\",errors]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "c9941a1f8d904309b581cae5ccc1660c",
+            "name": "Interface {#IFNAME}: Bits received",
+            "key": "net.if.in[\"{#IFNAME}\"]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": "bps",
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "0795a375a41d46a2b5c89547061cec8e",
+            "name": "Interface {#IFNAME}: Outbound packets discarded",
+            "key": "net.if.out[\"{#IFNAME}\",dropped]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "f8e8bbc069414e928a5da9817f4599a5",
+            "name": "Interface {#IFNAME}: Outbound packets with errors",
+            "key": "net.if.out[\"{#IFNAME}\",errors]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "82897d99b0114c67b0f5b449c768c8e7",
+            "name": "Interface {#IFNAME}: Bits sent",
+            "key": "net.if.out[\"{#IFNAME}\"]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "3m",
+            "units": "bps",
+            "value_type": null
+          },
+          "reason": "semantics_mismatch"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "3efd24ad36b04eb995cfeab82721c2fe",
+            "name": "Interface {#IFNAME}: Operational status",
+            "key": "vfs.file.contents[\"/sys/class/net/{#IFNAME}/operstate\"]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "f4c456e1f9ef4adbbd11f1ee17fa4d76",
+            "name": "Interface {#IFNAME}: Speed",
+            "key": "vfs.file.contents[\"/sys/class/net/{#IFNAME}/speed\"]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "5m",
+            "units": "bps",
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "d537e74070c74e4385ad241e8514dd3a",
+            "name": "Interface {#IFNAME}: Interface type",
+            "key": "vfs.file.contents[\"/sys/class/net/{#IFNAME}/type\"]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "2bbdc79f082d4c618e01bec625e9c90a",
+            "name": "Block devices discovery",
+            "key": "vfs.dev.discovery",
+            "type": "ZABBIX_PASSIVE",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "5e29abb8d56044f69426ed3594f8ac9f",
+            "name": "{#DEVNAME}: Disk average queue size (avgqu-sz)",
+            "key": "vfs.dev.queue_size[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "9600208af80e4a6abe55bb5a2240ea8e",
+            "name": "{#DEVNAME}: Disk read request avg waiting time (r_await)",
+            "key": "vfs.dev.read.await[{#DEVNAME}]",
+            "type": "CALCULATED",
+            "delay": null,
+            "units": "!ms",
+            "value_type": "FLOAT"
+          },
+          "reason": "expression_not_supported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "f4b982d8e7ee47adb34d74d817db43a6",
+            "name": "{#DEVNAME}: Disk read rate",
+            "key": "vfs.dev.read.rate[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "!r/s",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "877a3e892d9e489f98f2f16ea05bfdc2",
+            "name": "{#DEVNAME}: Disk read time (rate)",
+            "key": "vfs.dev.read.time.rate[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "4a3ee3166ee748e1855a2b02d44e9d62",
+            "name": "{#DEVNAME}: Disk utilization",
+            "key": "vfs.dev.util[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "5907708cf4854d48ae3ebf8f0bc41eef",
+            "name": "{#DEVNAME}: Disk write request avg waiting time (w_await)",
+            "key": "vfs.dev.write.await[{#DEVNAME}]",
+            "type": "CALCULATED",
+            "delay": null,
+            "units": "!ms",
+            "value_type": "FLOAT"
+          },
+          "reason": "expression_not_supported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "c4eb904dfddd4b0f8cdee4b2c477e213",
+            "name": "{#DEVNAME}: Disk write rate",
+            "key": "vfs.dev.write.rate[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "!w/s",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "e828495863304b219e24965f7b91e963",
+            "name": "{#DEVNAME}: Disk write time (rate)",
+            "key": "vfs.dev.write.time.rate[{#DEVNAME}]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "8309fd01a5864ad68866717d0fe67080",
+            "name": "{#DEVNAME}: Get stats",
+            "key": "vfs.file.contents[/sys/block/{#DEVNAME}/stat]",
+            "type": "ZABBIX_PASSIVE",
+            "delay": null,
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "7d090603037e4defb34ef74021d3adcd",
+            "name": "Mounted filesystem discovery",
+            "key": "vfs.fs.dependent.discovery",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "4da7f08a979a46df8b8aeebb42a46207",
+            "name": "FS [{#FSNAME}]: Inodes: Free, in %",
+            "key": "vfs.fs.dependent.inode[{#FSNAME},pfree]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "no_matching_slide_metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "d53e00855fb349e29bd74146e55265ae",
+            "name": "FS [{#FSNAME}]: Space: Available",
+            "key": "vfs.fs.dependent.size[{#FSNAME},free]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "B",
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "61ffe6fcb9d94199aaeb5d568ab74a27",
+            "name": "FS [{#FSNAME}]: Space: Used, in %",
+            "key": "vfs.fs.dependent.size[{#FSNAME},pused]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "686df59ab1e64b228a1efc20561cf520",
+            "name": "FS [{#FSNAME}]: Get data",
+            "key": "vfs.fs.dependent[{#FSNAME},data]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": "TEXT"
+          },
+          "reason": "zabbix_agent_unsupported"
+        },
+        {
+          "upstream": {
+            "template_uuid": "f8f7908280354f2abeed07dc788c3747",
+            "kind": "prototype",
+            "uuid": "c4bfc3639837451bb1fcf98ea654c939",
+            "name": "FS [{#FSNAME}]: Option: Read-only",
+            "key": "vfs.fs.dependent[{#FSNAME},readonly]",
+            "type": "DEPENDENT",
+            "delay": "0",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "zabbix_agent_unsupported"
+        }
+      ],
+      "triggers": [
+        {
+          "upstream": {
+            "uuid": "ae5269e17d434927bfd6edc09a9a1f4d",
+            "name": "Linux: Getting closer to process limit",
+            "expression": "last(/Linux by Zabbix agent/proc.num)/last(/Linux by Zabbix agent/kernel.maxproc)*100>80",
+            "priority": "WARNING"
+          },
+          "reason": "not_single_converted_item_threshold"
+        },
+        {
+          "upstream": {
+            "uuid": "f49fc01c5ac945d59455563bdbcc6469",
+            "name": "Linux: High swap space usage",
+            "expression": "max(/Linux by Zabbix agent/system.swap.size[,pfree],5m)<{$SWAP.PFREE.MIN.WARN} and last(/Linux by Zabbix agent/system.swap.size[,total])>0",
+            "priority": "WARNING"
+          },
+          "reason": "not_single_converted_item_threshold"
+        },
+        {
+          "upstream": {
+            "uuid": "686470cef97f48f6b017e9fc7a078afe",
+            "name": "Linux: Lack of available memory",
+            "expression": "max(/Linux by Zabbix agent/vm.memory.size[available],5m)<{$MEMORY.AVAILABLE.MIN} and last(/Linux by Zabbix agent/vm.memory.size[total])>0",
+            "priority": "AVERAGE"
+          },
+          "reason": "not_single_converted_item_threshold"
+        },
+        {
+          "upstream": {
+            "uuid": "695f0c352377409d95aca3fe76d1cae2",
+            "name": "Linux: Load average is too high",
+            "expression": "min(/Linux by Zabbix agent/system.cpu.load[all,avg1],5m)/last(/Linux by Zabbix agent/system.cpu.num)>{$LOAD_AVG_PER_CPU.MAX.WARN}\nand last(/Linux by Zabbix agent/system.cpu.load[all,avg5])>0\nand last(/Linux by Zabbix agent/system.cpu.load[all,avg15])>0\n",
+            "priority": "AVERAGE"
+          },
+          "reason": "not_single_converted_item_threshold"
+        }
+      ],
+      "credential_macros_dropped": [],
+      "graphs_not_converted": [
+        "Linux: CPU jumps",
+        "Linux: CPU usage",
+        "Linux: CPU utilization",
+        "Linux: Memory usage",
+        "Linux: Memory utilization",
+        "Linux: Processes",
+        "Linux: Swap usage",
+        "Linux: System load"
+      ],
+      "verified_objects": "none",
+      "note": "converted from the fixed official source; no real device/database was collected against"
+    },
+    {
+      "category": "network_device",
+      "source": {
+        "url": "https://github.com/zabbix/zabbix/blob/6542e21fe6adc8ab7bf903c2a9d1df80e80366cd/templates/net/huawei_snmp/template_net_huawei_snmp.yaml",
+        "path": "templates/net/huawei_snmp/template_net_huawei_snmp.yaml",
+        "commit": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd",
+        "license": "AGPL-3.0-only",
+        "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+        "template_name": "Huawei VRP by SNMP",
+        "export_version": "7.0"
+      },
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "name": "Huawei VRP by SNMP",
+      "interval_ms": 60000,
+      "parameters": {
+        "schema": {
+          "interval_ms": {
+            "type": "integer",
+            "min": 1000,
+            "max": 86400000
+          }
+        },
+        "defaults": {
+          "interval_ms": 60000
+        }
+      },
+      "converted_item_count": 9,
+      "items": [
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "1659d815112945478585fceef9318e68",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Operational status",
+            "key": "net.if.status[ifOperStatus.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "item_id": "1659d815112945478585fceef9318e68",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Operational status",
+          "metric": {
+            "id": "network.interface.oper_up",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "1",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "ifOperStatus",
+          "note": "IF-MIB ifOperStatus up=1/down=0, other enumerants unknown"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "9291e8cfc58a4c029ff339bae4892faf",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets with errors",
+            "key": "net.if.out.errors[ifOutErrors.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "item_id": "9291e8cfc58a4c029ff339bae4892faf",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets with errors",
+          "metric": {
+            "id": "snmp.interface.tx_errors_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "count",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txErrors",
+          "note": "IF-MIB ifOutErrors Counter32"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "998389bdf381441e92ddd597272002fa",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Bits sent",
+            "key": "net.if.out[ifHCOutOctets.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": "bps",
+            "value_type": null
+          },
+          "item_id": "998389bdf381441e92ddd597272002fa",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Bits sent",
+          "metric": {
+            "id": "snmp.interface.tx_octets_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "By",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txOctets",
+          "note": "raw Counter64 ifHCOutOctets; same counter-versus-rate note as the inbound item"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "c45208952a8f43e7a4ac90dbc9bf2eac",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Speed",
+            "key": "net.if.speed[ifHighSpeed.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "5m",
+            "units": "bps",
+            "value_type": null
+          },
+          "item_id": "c45208952a8f43e7a4ac90dbc9bf2eac",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Speed",
+          "metric": {
+            "id": "snmp.interface.speed_bits_per_second",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "bit/s",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "ifSpeed",
+          "note": "ifHighSpeed preferred, ifSpeed fallback"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "c5bc13495caf4a208b21bcd0a515a19d",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets discarded",
+            "key": "net.if.out.discards[ifOutDiscards.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "item_id": "c5bc13495caf4a208b21bcd0a515a19d",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets discarded",
+          "metric": {
+            "id": "snmp.interface.tx_discards_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "count",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txDiscards",
+          "note": "IF-MIB ifOutDiscards Counter32"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "d21e9fec64c54fd19605f8a8ba230211",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets with errors",
+            "key": "net.if.in.errors[ifInErrors.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "item_id": "d21e9fec64c54fd19605f8a8ba230211",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets with errors",
+          "metric": {
+            "id": "snmp.interface.rx_errors_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "count",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxErrors",
+          "note": "IF-MIB ifInErrors Counter32"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "e5323fadbfbe4773ab450312a2c29164",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Bits received",
+            "key": "net.if.in[ifHCInOctets.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": "bps",
+            "value_type": null
+          },
+          "item_id": "e5323fadbfbe4773ab450312a2c29164",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Bits received",
+          "metric": {
+            "id": "snmp.interface.rx_octets_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "By",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxOctets",
+          "note": "raw Counter64 ifHCInOctets; the upstream item presents bits/s, Slide keeps the counter and its rate is a separate derived metric"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "e5972a8dce67488cb6119c4f49d59a12",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets discarded",
+            "key": "net.if.in.discards[ifInDiscards.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "item_id": "e5972a8dce67488cb6119c4f49d59a12",
+          "display_name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets discarded",
+          "metric": {
+            "id": "snmp.interface.rx_discards_total",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "count",
+          "dimensions": {
+            "if_index": "if_index stable resource-local identity",
+            "interface_epoch": "interface_epoch stable resource-local identity"
+          },
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxDiscards",
+          "note": "IF-MIB ifInDiscards Counter32"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "e9dd0d849aaa499da9e2ef9e21ccd50e",
+            "name": "Uptime (network)",
+            "key": "system.net.uptime[sysUpTime.0]",
+            "type": "SNMP_AGENT",
+            "delay": "30s",
+            "units": "uptime",
+            "value_type": null
+          },
+          "item_id": "e9dd0d849aaa499da9e2ef9e21ccd50e",
+          "display_name": "Uptime (network)",
+          "metric": {
+            "id": "snmp.agent.uptime_seconds",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "s",
+          "dimensions": {},
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.system.v1",
+          "raw_field": "sysUpTime",
+          "note": "MIB-II sysUpTime centiseconds converted to seconds"
+        }
+      ],
+      "unsupported_count": 26,
+      "unsupported": [
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "1cd98c8030f14fbca6abee35eb87e45b",
+            "name": "ICMP ping",
+            "key": "icmpping",
+            "type": "SIMPLE",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "icmp_not_collected"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "ee1ee4ce3b3a4545bd407ecc3e428049",
+            "name": "ICMP loss",
+            "key": "icmppingloss",
+            "type": "SIMPLE",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "icmp_not_collected"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "4f3bda2c7ab84a418bde7602cf0d608d",
+            "name": "ICMP response time",
+            "key": "icmppingsec",
+            "type": "SIMPLE",
+            "delay": null,
+            "units": "s",
+            "value_type": "FLOAT"
+          },
+          "reason": "icmp_not_collected"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "023b4403df464029a1493c53a0122d6f",
+            "name": "SNMP traps (fallback)",
+            "key": "snmptrap.fallback",
+            "type": "SNMP_TRAP",
+            "delay": "0",
+            "units": null,
+            "value_type": "LOG"
+          },
+          "reason": "trap_not_collected"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "9aba5f7df03b4904869e0043dc73b9ae",
+            "name": "System contact details",
+            "key": "system.contact[sysContact.0]",
+            "type": "SNMP_AGENT",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "034cdbc177c346e0b49791250b8bf66d",
+            "name": "System description",
+            "key": "system.descr[sysDescr.0]",
+            "type": "SNMP_AGENT",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "202c91a61d644285a0d74d88ae1b1a79",
+            "name": "Uptime (hardware)",
+            "key": "system.hw.uptime[hrSystemUptime.0]",
+            "type": "SNMP_AGENT",
+            "delay": "30s",
+            "units": "uptime",
+            "value_type": null
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "78041d1a10ed4cb6b89a77bc1478b009",
+            "name": "System location",
+            "key": "system.location[sysLocation.0]",
+            "type": "SNMP_AGENT",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "3fad2aa468c2492a89b28bdbffd00c6c",
+            "name": "System name",
+            "key": "system.name",
+            "type": "SNMP_AGENT",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "a5e66466550f44a4b1d2137c751e9009",
+            "name": "System object ID",
+            "key": "system.objectid[sysObjectID.0]",
+            "type": "SNMP_AGENT",
+            "delay": "15m",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "item",
+            "uuid": "291fbe54d7c845bb9ec5b080be084612",
+            "name": "SNMP agent availability",
+            "key": "zabbix[host,snmp,available]",
+            "type": "INTERNAL",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "internal_not_collectable"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "40ceaa1bc97342c18e6af3e0b931a08b",
+            "name": "FAN Discovery",
+            "key": "discovery.fans",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "dfd00d1c27034d1b8f800939e33e8ddb",
+            "name": "#{#SNMPVALUE}: Fan status",
+            "key": "sensor.fan.status[hwEntityFanState.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "df877d1d7c9f44b5917b47aa474bbd2f",
+            "name": "Entity Discovery",
+            "key": "entity.discovery",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "c25af879114744fda58fb8516a0c171a",
+            "name": "{#ENT_NAME}: Hardware model name",
+            "key": "system.hw.model[entPhysicalDescr.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "597d528e3de944a5807ff37a97763a7e",
+            "name": "MPU Discovery",
+            "key": "mpu.discovery",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "29549c71091a44108377a90eb9afff25",
+            "name": "{#ENT_NAME}: Temperature",
+            "key": "sensor.temp.value[hwEntityTemperature.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "3m",
+            "units": "°C",
+            "value_type": "FLOAT"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "6fae73ea06ff4e99956085fb807d75ae",
+            "name": "{#ENT_NAME}: CPU utilization",
+            "key": "system.cpu.util[hwEntityCpuUsage.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "d7e128d526c14d1bb5519090104f0e04",
+            "name": "{#ENT_NAME}: Hardware serial number",
+            "key": "system.hw.serialnumber[entPhysicalSerialNum.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "110646e0177f4fbe840f6ba2d1d2afc4",
+            "name": "{#ENT_NAME}: Hardware version(revision)",
+            "key": "system.hw.version[entPhysicalHardwareRev.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "4472c8f94cd241468c851283f9854730",
+            "name": "{#ENT_NAME}: Operating system",
+            "key": "system.sw.os[entPhysicalSoftwareRev.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": "CHAR"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "6215b7e957884516a350f8a7038c7d3e",
+            "name": "{#ENT_NAME}: Memory utilization",
+            "key": "vm.memory.util[hwEntityMemUsage.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": null,
+            "units": "%",
+            "value_type": "FLOAT"
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "840dc40761294dc294cdd909318a7053",
+            "name": "Network interfaces discovery",
+            "key": "net.if.discovery",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "f6135b96b3584060b3a605312748edf4",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Interface type",
+            "key": "net.if.type[ifType.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "snmp_oid_unmapped"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "3d5bfd91c42b4656bf5843484ca2e016",
+            "name": "EtherLike-MIB Discovery",
+            "key": "net.if.duplex.discovery",
+            "type": "SNMP_AGENT",
+            "delay": "1h",
+            "units": null,
+            "value_type": null
+          },
+          "reason": "discovery_not_delivered"
+        },
+        {
+          "upstream": {
+            "template_uuid": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+            "kind": "prototype",
+            "uuid": "75c0d230a0ff43c2b0d40a071d058c72",
+            "name": "Interface {#IFNAME}({#IFALIAS}): Duplex status",
+            "key": "net.if.duplex[dot3StatsDuplexStatus.{#SNMPINDEX}]",
+            "type": "SNMP_AGENT",
+            "delay": null,
+            "units": null,
+            "value_type": null
+          },
+          "reason": "snmp_oid_unmapped"
+        }
+      ],
+      "triggers": [
+        {
+          "upstream": {
+            "uuid": "c8c41677f4ba463b90cea501e9112483",
+            "name": "Huawei VRP: Host has been restarted",
+            "expression": "(last(/Huawei VRP by SNMP/system.hw.uptime[hrSystemUptime.0])>0 and last(/Huawei VRP by SNMP/system.hw.uptime[hrSystemUptime.0])<10m) or (last(/Huawei VRP by SNMP/system.hw.uptime[hrSystemUptime.0])=0 and last(/Huawei VRP by SNMP/system.net.uptime[sysUpTime.0])<10m)",
+            "priority": "WARNING"
+          },
+          "reason": "not_single_converted_item_threshold"
+        }
+      ],
+      "credential_macros_dropped": [],
+      "graphs_not_converted": [],
+      "verified_objects": "none",
+      "note": "converted from the fixed official source; no real device/database was collected against"
+    }
+  ]
+}
