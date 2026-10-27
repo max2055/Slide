@@ -19,6 +19,7 @@
 |---|---|
 | 分支 | `agent/15coder1/max-238` |
 | 基点 / 证据 `run.head` | `2fa795e2a11cd77cd8312177015c32851c4c53a7` |
+| 测试提交 | `872c3a540`（只新增本包测试文件） |
 | 测试文件 | `apps/db-ops-api/src/metrics/config/formal-enablement-block.mysql.test.ts` |
 | 一次性平台库 | `127.0.0.1:13306`（`METRICS_TEST_MYSQL_PORT`，一次性 `mysql:8.4` 容器），库名 `max238_formal_enablement_block_<pid>`，测试结束 `DROP DATABASE`，容器跑完移除 |
 | 凭据来源 | 应用库行内既有密文，`decryptData` 解密后 `encryptData` 写进一次性库自己的行；未打印、未提交口令或密钥 |
