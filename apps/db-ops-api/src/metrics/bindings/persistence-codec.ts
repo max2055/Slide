@@ -2,27 +2,41 @@
  * MAX-238 / B2E — strict persistence codec for the per-resource binding row.
  *
  * One physical row (`metric_policy_bindings.payload`) carries either the legacy
- * single-package `Published` value or the template `templates-v1` envelope. This
- * module is the only place that decides which one a stored payload is, validates
- * every field of the template form, and builds the next pending payload while
- * preserving the previously effective snapshot. It never talks to a database,
- * never mutates its input, and never echoes a payload or a driver message in an
- * error: every failure is a stable machine code.
+ * single-package `Published` value (with no envelope, or the explicit
+ * `package-v1` one) or the template `templates-v1` envelope. This module is the
+ * only place that decides which one a stored payload is, validates every field
+ * of both forms, and builds the next pending payload while preserving the
+ * previously effective snapshot. A stored snapshot is only accepted as evidence
+ * after it validates as the actual resolved view (`CollectionPlanSchema`, the
+ * legacy `Resolved` shape, the B2C `TemplateCollectionPlan` shape) of *this*
+ * resource and revision; kind/identity labels alone never prove one. It never
+ * talks to a database, never mutates its input, and never echoes a payload or a
+ * driver message in an error: every failure is a stable machine code.
  *
  * It is still **unmounted**: no reader, store, route or scheduler imports it in
  * this package. `bindingPayloadSource` is the minimal fence a legacy reader can
  * call before decoding; changing that reader is a later wiring package.
  */
 import { z } from 'zod';
-import { TimestampSchema } from '../../contracts/metrics/definitions.js';
 import {
-  HashIdSchema, ResourceBindingCandidateSchema,
+  CapabilitySchema, CollectionPlanSchema, DimensionsSchema, IdSchema, MetricRefSchema,
+  ResourceTypeSchema, TimestampSchema, UnitSchema, VersionSchema,
+} from '../../contracts/metrics/index.js';
+import {
+  HashIdSchema, ItemIdSchema, PackageReleaseRefSchema, ParameterNameSchema, ParameterValueSchema,
+  ResourceBindingCandidateSchema, TemplateIdSchema, TemplatePinSchema, TemplateTriggerRefSchema,
+  VersionNumberSchema,
   type HashId, type ResourceBindingCandidate,
 } from '../../contracts/metrics/templates.js';
 import type { TemplateCollectionPlan } from './plan.js';
 
 /** The storage discriminant of the template form. It lives at the top level only. */
 export const BINDING_PAYLOAD_ENVELOPE = 'templates-v1';
+/**
+ * The admitted explicit form of the legacy single-package payload. Its content is
+ * exactly the no-envelope `Published` value; the envelope only states the source.
+ */
+export const BINDING_PAYLOAD_PACKAGE_ENVELOPE = 'package-v1';
 
 export type BindingPersistenceErrorCode =
   | 'BINDING_PAYLOAD_INVALID_JSON'
@@ -66,7 +80,203 @@ const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): b
 
 const RevisionSchema = z.number().int().nonnegative().max(MAX_REVISION);
 const TargetRevisionSchema = z.number().int().positive().max(MAX_REVISION);
+const PositiveSchema = z.number().int().positive();
+const CountSchema = z.number().int().nonnegative();
 const OperationKeySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:#@-]{0,1023}$/);
+
+// --- stored snapshot shapes -------------------------------------------------
+//
+// A stored effective snapshot is only evidence when it is the *actual* value the
+// accepted resolver wrote, so these reuse the existing contracts wherever one
+// exists (`CollectionPlanSchema` above all) and only add the thin shapes the
+// contracts describe as plain types.
+
+/** The eight resource settings, in the shape `policy/resolver.ts` returns. */
+const SettingsSchema = z.strictObject({
+  enabled: z.boolean(),
+  interval_ms: PositiveSchema,
+  timeout_ms: PositiveSchema,
+  stale_after_ms: PositiveSchema,
+  max_counter_gap_ms: PositiveSchema,
+  max_rows: PositiveSchema,
+  max_concurrency: PositiveSchema,
+  max_series_per_resource: PositiveSchema,
+});
+/** One setting's provenance, the `Origin` plain type. */
+const OriginSchema = z.strictObject({
+  layer: z.enum(['package', 'platform', 'group', 'resource']),
+  id: IdSchema,
+  revision: RevisionSchema.optional(),
+});
+const SettingSourcesSchema = z.strictObject({
+  enabled: OriginSchema,
+  interval_ms: OriginSchema,
+  timeout_ms: OriginSchema,
+  stale_after_ms: OriginSchema,
+  max_counter_gap_ms: OriginSchema,
+  max_rows: OriginSchema,
+  max_concurrency: OriginSchema,
+  max_series_per_resource: OriginSchema,
+});
+const ApplicabilityCheckSchema = z.strictObject({
+  attribute: IdSchema,
+  value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  supported_values: z.array(z.string()),
+  status: z.enum(['supported', 'unsupported', 'unknown']),
+});
+const MetricSourceSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('collector'), collector_id: IdSchema, raw_field: IdSchema }),
+  z.strictObject({ kind: z.literal('derived'), derived_id: IdSchema }),
+]);
+/**
+ * The legacy `Resolved` value of a published single-package row, validated as the
+ * `policy/resolver.ts` shape: the real collection plan plus every provenance,
+ * dependency and impact field. An empty or spliced object is not a snapshot.
+ */
+const LegacyResolvedSchema = z.strictObject({
+  applicability: z.array(ApplicabilityCheckSchema),
+  plan: CollectionPlanSchema,
+  metric_templates: z.array(z.strictObject({
+    metric: MetricRefSchema,
+    source: MetricSourceSchema,
+    enabled: z.boolean(),
+    required_dimensions: z.array(z.string().min(1)),
+    capability: CapabilitySchema,
+    decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
+  })),
+  settings: SettingsSchema,
+  platform_limits: z.record(z.string(), z.number()),
+  sources: SettingSourcesSchema,
+  metric_sources: z.record(z.string(), OriginSchema),
+  dependencies: z.array(z.strictObject({
+    metric: z.string().min(1),
+    requires: z.array(z.string().min(1)),
+  })),
+  collector_timeouts: z.array(z.strictObject({
+    collector_id: IdSchema,
+    timeout_ms: PositiveSchema,
+    source: OriginSchema,
+  })),
+  impact: z.strictObject({
+    requests_per_hour_estimate: z.number().nonnegative(),
+    request_unit: z.literal('logical_reads'),
+    estimated_series_upper_bound: CountSchema,
+    active_collectors: z.array(IdSchema),
+    disabled_metrics: z.array(z.string().min(1)),
+    unavailable_metrics: z.array(z.string().min(1)),
+    estimate: z.literal(true),
+  }),
+});
+
+// --- the B2C collection plan shape -----------------------------------------
+//
+// The plan is the stored evidence that a revision was actually resolved. Its
+// `kind`/`identity`/`revision`/`resource` labels are checked separately below;
+// this schema is what makes a four-label stub insufficient.
+
+const ReleaseRefSchema = z.strictObject({
+  id: IdSchema, version: VersionSchema, digest: HashIdSchema,
+});
+const SettingSourceSchema = z.discriminatedUnion('layer', [
+  z.strictObject({ layer: z.literal('platform'), id: IdSchema }),
+  z.strictObject({ layer: z.literal('package'), releases: z.array(ReleaseRefSchema) }),
+  z.strictObject({ layer: z.literal('group'), id: IdSchema, revision: RevisionSchema }),
+  z.strictObject({ layer: z.literal('resource'), id: IdSchema, revision: RevisionSchema }),
+]);
+const ResolvedParameterSchema = z.strictObject({
+  name: ParameterNameSchema,
+  type: z.enum(['number', 'integer', 'boolean', 'string']),
+  default: ParameterValueSchema.nullable(),
+  override: ParameterValueSchema.nullable(),
+  effective: ParameterValueSchema,
+  source: z.enum(['default', 'override']),
+});
+const PlanMappingSchema = z.strictObject({
+  metric: MetricRefSchema,
+  raw_field: IdSchema,
+  input_unit: UnitSchema,
+  output_unit: UnitSchema,
+  transform_version: VersionSchema,
+  steps: z.array(z.enum(['decode', 'unit_convert', 'counter_delta', 'rate', 'derive', 'normalize'])).min(2),
+});
+const PlanItemSchema = z.strictObject({
+  pin: TemplatePinSchema,
+  template_id: TemplateIdSchema,
+  item_id: ItemIdSchema,
+  item_version: VersionNumberSchema,
+  canonical_metric: MetricRefSchema,
+  unit: UnitSchema,
+  dimensions: DimensionsSchema,
+  mapping: PlanMappingSchema,
+  capability: CapabilitySchema,
+});
+const PlanStepSchema = z.strictObject({
+  release: ReleaseRefSchema,
+  release_ref: PackageReleaseRefSchema,
+  collector_id: IdSchema,
+  implementation_id: IdSchema,
+  method: z.enum(['sql', 'ssh', 'snmp']),
+  estimated_cost: z.enum(['low', 'medium', 'high']),
+  timeout_ms: PositiveSchema,
+  timeout_source: SettingSourceSchema,
+  logical_reads: CountSchema,
+  parameter_signature: HashIdSchema,
+  metrics: z.array(MetricRefSchema).min(1),
+  items: z.array(PlanItemSchema).min(1),
+});
+const PlanQuerySchema = z.strictObject({
+  implementation: IdSchema,
+  collectors: z.array(IdSchema).min(1),
+  cost: z.enum(['low', 'medium', 'high']),
+  logicalReads: CountSchema,
+});
+const ReleasePlanSchema = z.strictObject({
+  release: ReleaseRefSchema,
+  release_ref: PackageReleaseRefSchema,
+  interval_ms: PositiveSchema,
+  timeout_ms: PositiveSchema,
+  jitter_ms: CountSchema,
+  applicability: z.array(ApplicabilityCheckSchema),
+  collector_ids: z.array(IdSchema),
+  metric_keys: z.array(z.string().min(1)),
+  queries: z.array(PlanQuerySchema),
+  requests_per_hour_estimate: z.number().nonnegative(),
+  steps: z.array(PlanStepSchema),
+});
+const ExclusionSchema = z.strictObject({
+  pin: TemplatePinSchema,
+  template_id: TemplateIdSchema,
+  item_id: ItemIdSchema,
+  item_version: VersionNumberSchema,
+  release: ReleaseRefSchema,
+  metric: MetricRefSchema,
+  decision: z.enum(['disabled', 'unsupported', 'capability_unknown']),
+  reason: z.enum(['settings_disabled', 'metric_disabled', 'capability_unsupported', 'capability_unknown']),
+  blocking: z.boolean(),
+  capability: CapabilitySchema,
+});
+const CollectionPlanShapeSchema = z.strictObject({
+  kind: z.literal('template_collection_plan'),
+  internal: z.literal(true),
+  persisted: z.literal(false),
+  applied: z.literal(false),
+  executable: z.boolean(),
+  identity: HashIdSchema,
+  resource: z.strictObject({ type: ResourceTypeSchema, id: z.string().regex(/^[1-9]\d{0,15}$/) }),
+  revision: RevisionSchema,
+  settings: SettingsSchema,
+  parameters: z.array(z.strictObject({ pin: TemplatePinSchema, parameters: z.array(ResolvedParameterSchema) })),
+  triggers: z.array(z.strictObject({ pin: TemplatePinSchema, refs: z.array(TemplateTriggerRefSchema) })),
+  releases: z.array(ReleasePlanSchema),
+  excluded: z.array(ExclusionSchema),
+  budget: z.strictObject({
+    estimate: z.literal(true),
+    request_unit: z.literal('logical_reads'),
+    estimated_series_upper_bound: CountSchema,
+    max_series_per_resource: CountSchema,
+    requests_per_hour_estimate: z.number().nonnegative(),
+  }),
+});
 
 /** The legacy `Applied` value written by `policy/store.ts`; it has no resolution identity. */
 const LegacyApplicationSchema = z.strictObject({
@@ -77,7 +287,8 @@ const LegacyApplicationSchema = z.strictObject({
 });
 const LegacyPayloadSchema = z.strictObject({
   binding: z.unknown(),
-  resolved: z.record(z.string(), z.unknown()),
+  /** Checked as the full `Resolved` shape below, so its own failures are reported once. */
+  resolved: z.unknown(),
   published_at: TimestampSchema,
   application: LegacyApplicationSchema,
 });
@@ -172,6 +383,35 @@ export function bindingPayloadSource(raw: string | unknown): BindingPayloadSourc
   return decodeBindingPayload(raw).source;
 }
 
+/**
+ * True only for values JSON carries without rewriting them. `NaN`/`Infinity`
+ * become `null`, `undefined` drops a field and a `BigInt` throws, so an object
+ * input with any of them is not a snapshot of any stored row.
+ */
+function isJsonValue(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(value);
+    case 'object':
+      break;
+    default:
+      return false;
+  }
+  if (seen.has(value as object)) return false;
+  seen.add(value as object);
+  try {
+    if (Array.isArray(value)) return value.every(entry => isJsonValue(entry, seen));
+    if (!isPlainObject(value)) return false;
+    return Object.values(value).every(entry => isJsonValue(entry, seen));
+  } finally {
+    seen.delete(value as object);
+  }
+}
+
 const parseText = (raw: string): Record<string, unknown> => {
   let parsed: unknown;
   try {
@@ -180,6 +420,8 @@ const parseText = (raw: string): Record<string, unknown> => {
     return fail('BINDING_PAYLOAD_INVALID_JSON');
   }
   if (!isPlainObject(parsed)) return fail('BINDING_PAYLOAD_NOT_OBJECT');
+  // A number that overflows to `Infinity` parses without error; it is not a value.
+  if (!isJsonValue(parsed)) return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   return parsed;
 };
 
@@ -192,6 +434,9 @@ const clone = (raw: unknown): Record<string, unknown> => {
     // A value that cannot be cloned is not a JSON row.
     return fail('BINDING_PAYLOAD_NOT_OBJECT');
   }
+  // structuredClone keeps NaN/Infinity/BigInt/undefined; an object carrying them
+  // would be silently rewritten by the encode that follows. Reject it instead.
+  if (!isJsonValue(copied)) return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   return copied as Record<string, unknown>;
 };
 
@@ -202,30 +447,46 @@ const clone = (raw: unknown): Record<string, unknown> => {
 export function decodeBindingPayload(raw: string | unknown): DecodedBindingPayload {
   const payload = typeof raw === 'string' ? parseText(raw) : clone(raw);
 
-  const hasEnvelope = Object.hasOwn(payload, 'envelope');
-  if (hasEnvelope) {
-    if (payload.envelope !== BINDING_PAYLOAD_ENVELOPE) return fail('BINDING_PAYLOAD_UNKNOWN_ENVELOPE');
-    return decodeTemplatePayload(payload);
+  if (Object.hasOwn(payload, 'envelope')) {
+    if (payload.envelope === BINDING_PAYLOAD_ENVELOPE) return decodeTemplatePayload(payload);
+    // The explicit legacy form: the same `Published` content, no template member.
+    if (payload.envelope === BINDING_PAYLOAD_PACKAGE_ENVELOPE) return decodeLegacyPayload(payload, true);
+    return fail('BINDING_PAYLOAD_UNKNOWN_ENVELOPE');
   }
-  return decodeLegacyPayload(payload);
+  return decodeLegacyPayload(payload, false);
 }
 
-function decodeLegacyPayload(payload: Record<string, unknown>): DecodedLegacyBindingPayload {
+/**
+ * Decode the single-package form. `enveloped` is true for the explicit
+ * `package-v1` carrier, whose only extra member is the envelope itself; the
+ * stored value is preserved either way, so a re-encode adds or removes nothing.
+ */
+function decodeLegacyPayload(
+  payload: Record<string, unknown>,
+  enveloped: boolean,
+): DecodedLegacyBindingPayload {
   if (!isPlainObject(payload.binding)) return fail('BINDING_PAYLOAD_BINDING_INVALID');
   const binding = payload.binding;
-  // No envelope: only the legacy single-package form is readable. A null package
-  // (with or without pins) has no version identity here; package + pins together
-  // is ambiguous and never guessed.
+  // No envelope or an explicit `package-v1`: only the legacy single-package form
+  // is readable. A null package (with or without pins) has no version identity
+  // here; package + pins together is ambiguous and never guessed.
   if (binding.package === null || binding.package === undefined) return fail('BINDING_PAYLOAD_MISSING_SOURCE');
-  if (Array.isArray(binding.template_pins) && binding.template_pins.length > 0) {
-    return fail('BINDING_PAYLOAD_AMBIGUOUS_SOURCE');
+  // A pin list that is present but not an array is a malformed row, never an
+  // empty selection: only a genuinely absent `template_pins` defaults to [].
+  if (Object.hasOwn(binding, 'template_pins') && !Array.isArray(binding.template_pins)) {
+    return fail('BINDING_PAYLOAD_BINDING_INVALID');
   }
+  const pins = Object.hasOwn(binding, 'template_pins') ? binding.template_pins as unknown[] : [];
+  if (pins.length > 0) return fail('BINDING_PAYLOAD_AMBIGUOUS_SOURCE');
 
-  const parsed = LegacyPayloadSchema.safeParse(payload);
+  let stored: unknown = payload;
+  if (enveloped) {
+    const { envelope: _envelope, ...rest } = payload;
+    stored = rest;
+  }
+  const parsed = LegacyPayloadSchema.safeParse(stored);
   if (!parsed.success) return fail('BINDING_PAYLOAD_LEGACY_INVALID');
-  const normalized = ResourceBindingCandidateSchema.safeParse({
-    ...binding, template_pins: Array.isArray(binding.template_pins) ? binding.template_pins : [],
-  });
+  const normalized = ResourceBindingCandidateSchema.safeParse({ ...binding, template_pins: pins });
   if (!normalized.success) return fail('BINDING_PAYLOAD_BINDING_INVALID');
   const application = parsed.data.application;
   if (application.status === 'applied' && application.applied_revision === null) {
@@ -234,6 +495,12 @@ function decodeLegacyPayload(payload: Record<string, unknown>): DecodedLegacyBin
   if (application.error_code !== null && application.status !== 'failed') {
     return fail('BINDING_PAYLOAD_APPLICATION_INVALID');
   }
+
+  // The stored `resolved` must be the actual resolved view of this binding; an
+  // empty, spliced or foreign snapshot is corrupt storage, not evidence.
+  const resolved = LegacyResolvedSchema.safeParse(parsed.data.resolved);
+  if (!resolved.success) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
+  checkLegacySnapshot(resolved.data, normalized.data);
 
   const applied = application.applied_revision;
   // Only a row whose resolved value belongs to the applied revision proves an
@@ -256,11 +523,79 @@ function decodeLegacyPayload(payload: Record<string, unknown>): DecodedLegacyBin
         source: 'package',
         revision: applied,
         resolution_identity: null,
-        resolved: structuredClone(parsed.data.resolved),
+        resolved: structuredClone(resolved.data) as unknown as Record<string, unknown>,
       }
       : null,
     effective_missing: applied !== null && !provable,
   };
+}
+
+const refKeyOf = (resource: { type: string; id: number | string }): string => `${resource.type}:${resource.id}`;
+
+const samePackage = (
+  left: { id: string; version: string; digest: string },
+  right: { id: string; version: string; digest: string } | null,
+): boolean => right !== null
+  && left.id === right.id && left.version === right.version && left.digest === right.digest;
+
+/** The plan's policy and the resolved settings are two views of one resolved value. */
+const sameResolvedSettings = (
+  plan: z.infer<typeof CollectionPlanSchema>,
+  settings: z.infer<typeof SettingsSchema>,
+): boolean => plan.policy.enabled === settings.enabled
+  && plan.policy.interval_ms === settings.interval_ms
+  && plan.policy.timeout_ms === settings.timeout_ms
+  && plan.policy.stale_after_ms === settings.stale_after_ms
+  && plan.policy.max_counter_gap_ms === settings.max_counter_gap_ms
+  && plan.policy.max_concurrency === settings.max_concurrency
+  && plan.policy.max_series_per_resource === settings.max_series_per_resource;
+
+/**
+ * The identity a resolved snapshot must carry to belong to this row: same
+ * resource and config revision, the row's own package, and the policy id the
+ * accepted resolver derives from the group (or the resource when ungrouped).
+ * The plan's policy must also be the same view as the resolved settings.
+ */
+function checkLegacySnapshot(
+  resolved: z.infer<typeof LegacyResolvedSchema>,
+  binding: ResourceBindingCandidate,
+): void {
+  const plan = resolved.plan;
+  const collection = plan.binding;
+  const key = refKeyOf(binding.resource);
+  if (collection.id !== key
+    || collection.resource_type !== binding.resource.type
+    || collection.resource_id !== String(binding.resource.id)
+    || collection.config_revision !== binding.revision
+    || !samePackage(collection.package, binding.package)
+    || collection.policy_id !== (binding.group_id ?? `resource:${key}`)
+    || plan.policy.id !== collection.policy_id
+    || !sameResolvedSettings(plan, resolved.settings)) {
+    return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
+  }
+}
+
+/**
+ * A package snapshot carried by a template row: its resource is the row's own
+ * resource and its config revision is the applied revision it claims. Its
+ * package is the historical one (the template row has no package pin of its
+ * own), so it is compared by source and revision, never against the new pins.
+ */
+function checkPackageEffectiveSnapshot(
+  resolved: z.infer<typeof LegacyResolvedSchema>,
+  revision: number,
+  resource: { type: string; id: number },
+): void {
+  const plan = resolved.plan;
+  const collection = plan.binding;
+  if (collection.id !== refKeyOf(resource)
+    || collection.resource_type !== resource.type
+    || collection.resource_id !== String(resource.id)
+    || collection.config_revision !== revision
+    || plan.policy.id !== collection.policy_id
+    || !sameResolvedSettings(plan, resolved.settings)) {
+    return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
+  }
 }
 
 function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplateBindingPayload {
@@ -315,7 +650,7 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
     resource: binding.data.resource,
   }, 'BINDING_PAYLOAD_PLAN_INVALID');
 
-  const effective = parseEffective(payload.effective);
+  const effective = parseEffective(payload.effective, binding.data.resource);
   const applied = application.data.applied_revision;
   if (applied === null) {
     if (effective !== null) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
@@ -354,29 +689,32 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
   };
 }
 
+/**
+ * Validate a stored plan as the actual B2C `TemplateCollectionPlan` and as the
+ * snapshot of *this* resolution: kind/identity/revision labels alone never prove
+ * a plan, so the whole shape is parsed and then the labels and resource are
+ * checked against the row.
+ */
 function parsePlan(
   value: unknown,
-  expected: { identity: HashId; revision: number; resource?: { type: string; id: number } },
+  expected: { identity: HashId; revision: number; resource: { type: string; id: number } },
   code: BindingPersistenceErrorCode,
 ): TemplateCollectionPlan {
-  if (!isPlainObject(value)
-    || value.kind !== 'template_collection_plan'
-    || value.identity !== expected.identity
-    || value.revision !== expected.revision) {
-    return fail(code);
-  }
-  const resource = value.resource;
-  if (!isPlainObject(resource) || typeof resource.type !== 'string' || typeof resource.id !== 'string') {
-    return fail(code);
-  }
-  if (expected.resource !== undefined
-    && (resource.type !== expected.resource.type || resource.id !== String(expected.resource.id))) {
+  const plan = CollectionPlanShapeSchema.safeParse(value);
+  if (!plan.success) return fail(code);
+  if (plan.data.identity !== expected.identity
+    || plan.data.revision !== expected.revision
+    || plan.data.resource.type !== expected.resource.type
+    || plan.data.resource.id !== String(expected.resource.id)) {
     return fail(code);
   }
   return value as unknown as TemplateCollectionPlan;
 }
 
-function parseEffective(value: unknown): EffectiveSnapshot | null {
+function parseEffective(
+  value: unknown,
+  resource: { type: string; id: number },
+): EffectiveSnapshot | null {
   if (value === null) return null;
   if (!isPlainObject(value)) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
   if (value.source === 'package') {
@@ -384,12 +722,17 @@ function parseEffective(value: unknown): EffectiveSnapshot | null {
       return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
     }
     const revision = RevisionSchema.safeParse(value.revision);
-    if (!revision.success || value.resolution_identity !== null || !isPlainObject(value.resolved)) {
+    if (!revision.success || value.resolution_identity !== null) {
       return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
     }
+    // The carried package snapshot must be a real resolved view of this resource
+    // at the revision it claims, not an empty object or another row's history.
+    const resolved = LegacyResolvedSchema.safeParse(value.resolved);
+    if (!resolved.success) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
+    checkPackageEffectiveSnapshot(resolved.data, revision.data, resource);
     return {
       source: 'package', revision: revision.data, resolution_identity: null,
-      resolved: structuredClone(value.resolved),
+      resolved: structuredClone(resolved.data) as unknown as Record<string, unknown>,
     };
   }
   if (value.source === 'template') {
@@ -399,7 +742,9 @@ function parseEffective(value: unknown): EffectiveSnapshot | null {
     const revision = RevisionSchema.safeParse(value.revision);
     const identity = HashIdSchema.safeParse(value.resolution_identity);
     if (!revision.success || !identity.success) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
-    const plan = parsePlan(value.plan, { identity: identity.data, revision: revision.data }, 'BINDING_PAYLOAD_EFFECTIVE_INVALID');
+    const plan = parsePlan(value.plan, {
+      identity: identity.data, revision: revision.data, resource,
+    }, 'BINDING_PAYLOAD_EFFECTIVE_INVALID');
     return { source: 'template', revision: revision.data, resolution_identity: identity.data, plan };
   }
   return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
@@ -463,6 +808,9 @@ export function encodeTemplatePendingPayload(input: TemplatePendingWriteInput): 
     effective: input.previous_effective === null ? null : structuredClone(input.previous_effective),
     published_at: input.published_at,
   };
+  // `JSON.stringify` rewrites NaN/Infinity to null and drops undefined members, so
+  // a writer input carrying them would persist a snapshot it never validated.
+  if (!isJsonValue(payload)) return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   const text = JSON.stringify(payload);
   // Self-check: never hand a writer a payload this decoder would reject.
   if (decodeBindingPayload(text).kind !== 'template_pending') {

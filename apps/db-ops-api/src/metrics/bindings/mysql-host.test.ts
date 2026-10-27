@@ -8,6 +8,7 @@ import type {
   TemplateParameters, TemplatePin, TemplateVersion, VersionNumber,
 } from '../../contracts/metrics/templates.js';
 import { PackageRegistry, sealRelease, type ImplementationSpec, type PackageRelease } from '../packages/model.js';
+import { resolvePolicy } from '../policy/resolver.js';
 import { packageReleaseRef, templateContentHash, type MetricRef } from '../templates/model.js';
 import {
   BindingTransactionError, bindingCandidateDigest,
@@ -16,7 +17,7 @@ import {
 import { resolveTemplateBinding, templateResolutionIdentity, type TemplateResolutionContext } from './resolve.js';
 import { compileBindingCandidate } from './compile.js';
 import type { TemplateVersionReadPort } from './preflight.js';
-import { decodeBindingPayload } from './persistence-codec.js';
+import { BindingPersistenceError, decodeBindingPayload } from './persistence-codec.js';
 import {
   BindingHostError, MYSQL_BINDING_HOST_SQL, MysqlBindingHost,
   type BindingSqlConnection, type BindingSqlPool, type TrustedBindingInputs,
@@ -31,7 +32,6 @@ const EXPIRES = '2026-10-04T00:00:00Z';
 const DEP = `sha256:${'d'.repeat(64)}`;
 const RESOURCE = { type: 'instance' as const, id: 7 };
 const RESOURCE_KEY = 'instance:7';
-const legacyPackage = { id: 'legacy-package', version: '2.3.4', digest: `sha256:${'c'.repeat(64)}` };
 
 type ExtensionDefinition = Extract<MetricDefinition, { category: 'extension' }>;
 type CollectorStep = CollectorDefinition['mappings'][number]['steps'];
@@ -103,6 +103,10 @@ function release(): PackageRelease {
 
 const releaseV1 = release();
 const releaseRef = packageReleaseRef(releaseV1.package);
+/** The existing single-package row pins this exact release, so its `resolved` is real. */
+const legacyPackage = {
+  id: releaseV1.package.id, version: releaseV1.package.version, digest: releaseV1.package.digest,
+};
 
 function fixtureRegistry(): PackageRegistry {
   const registry = new PackageRegistry([], [mainImpl]);
@@ -542,13 +546,29 @@ class FakeSqlConnection implements BindingSqlConnection {
 
 // --- rows and the host under test ------------------------------------------
 
+/**
+ * The actual `Resolved` `resolvePolicy` writes for this resource's single-package
+ * row. A thinner look-alike would not prove the stored effective snapshot, so
+ * every successful row fixture carries the real value.
+ */
+function legacyResolved() {
+  return resolvePolicy(
+    fixtureRegistry(),
+    { resource: { ...RESOURCE }, package: legacyPackage, group_id: 'web', overrides: {}, revision: 4 },
+    trustedGroup(),
+    trustedResource() as never,
+    supported(alpha, beta),
+    AT,
+  );
+}
+
 function legacyPublished(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     binding: {
       resource: { ...RESOURCE }, package: legacyPackage, group_id: 'web', overrides: {},
       revision: 4, template_pins: [],
     },
-    resolved: { plan: { revision: 4 }, settings: { enabled: true } },
+    resolved: legacyResolved(),
     published_at: T1,
     application: { applied_revision: 4, reported_at: T1, status: 'applied', error_code: null },
     ...overrides,
@@ -725,9 +745,9 @@ describe('MySQL binding host', () => {
     // The pending revision never promotes the applied revision or marks health.
     expect(stored.application.status).toBe('pending');
     expect(stored.application.applied_revision).toBe(4);
+    // The carried snapshot is the actual legacy resolved view, not a label set.
     expect(stored.effective).toEqual({
-      source: 'package', revision: 4, resolution_identity: null,
-      resolved: { plan: { revision: 4 }, settings: { enabled: true } },
+      source: 'package', revision: 4, resolution_identity: null, resolved: legacyResolved(),
     });
 
     expect(before).toEqual(request());
@@ -998,5 +1018,118 @@ describe('read-only caller-key lookup', () => {
     const error = await hostErrorOf(host.lookupOperation('x'.repeat(256)));
     expect(error.code).toBe('HOST_INTENT_INVALID');
     expect(db.connections).toHaveLength(0);
+  });
+});
+
+describe('strict stored snapshots', () => {
+  it('commits on an actual legacy Resolved and an actual B2C plan, and carries that snapshot forward', async () => {
+    const db = await seededDb();
+    const { outcome } = await outcomeOf(db);
+
+    expect(outcome.kind).toBe('committed');
+    const stored = decodeBindingPayload(db.bindings.get(RESOURCE_KEY)!.payload);
+    expect(stored.kind).toBe('template_pending');
+    if (stored.kind !== 'template_pending') throw new Error('unreachable');
+    expect(stored.effective_missing).toBe(false);
+    expect(stored.effective).toEqual({
+      source: 'package', revision: 4, resolution_identity: null, resolved: legacyResolved(),
+    });
+    // The pending snapshot really is the B2C plan, not a label set.
+    expect(stored.pending.plan.releases.length).toBeGreaterThan(0);
+    expect(stored.pending.plan.releases[0].steps[0].items.length).toBeGreaterThan(0);
+  });
+
+  it('refuses to write when the old applied state has no actual effective plan', async () => {
+    const db = await seededDb({ published: legacyPublished({ resolved: {} }) });
+    const before = db.bindings.get(RESOURCE_KEY)!.payload;
+
+    // The accepted guard converts an unreadable binding into its own fail-closed
+    // rejection; nothing is staged and the row is untouched.
+    const error = await rejectionOf(makeHost(db).host.apply(request(), fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_BINDING_UNAVAILABLE');
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+    expect(db.eventNames()).not.toContain('operationInsert');
+    expect(db.bindings.get(RESOURCE_KEY)!.payload).toBe(before);
+    expect(db.connections[0].state).toBe('released');
+  });
+
+  it('refuses a real legacy plan whose config revision disagrees with the applied revision', async () => {
+    const published = legacyPublished();
+    (published.resolved as Record<string, any>).plan.binding.config_revision = 3;
+    const db = await seededDb({ published });
+    const before = db.bindings.get(RESOURCE_KEY)!.payload;
+
+    const error = await rejectionOf(makeHost(db).host.apply(request(), fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_BINDING_UNAVAILABLE');
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+    expect(db.bindings.get(RESOURCE_KEY)!.payload).toBe(before);
+  });
+
+  it('never reports a corrupt operation row as a complete lookup or as no operation', async () => {
+    const identity = await identityFor();
+    const digest = await digestFor();
+    const corruptions: Array<Record<string, unknown>> = [
+      { resource_type: 'not-a-resource' },
+      { candidate_digest: 'not-a-hash' },
+      { resolution_identity: '' },
+      { dependency_digest: 'sha256:short' },
+      { resource_id: 0 },
+      { target_revision: '1.5' },
+      { receipt_id: '' },
+      { status: 'pending' },
+    ];
+    for (const corruption of corruptions) {
+      const db = await seededDb();
+      db.operations.push({ ...committedOperation(identity, digest), ...corruption });
+      const found = await makeHost(db).host.lookupOperation('caller-1');
+      expect(found).toEqual({ complete: false, operation: null });
+    }
+  });
+
+  it('fails closed before any write when the stored operation row is corrupt', async () => {
+    const db = await seededDb();
+    db.operations.push({
+      ...committedOperation(await identityFor(), await digestFor()), candidate_digest: 'not-a-hash',
+    });
+
+    expect(await codeOf(db)).toBe('TRANSACTION_OPERATION_UNAVAILABLE');
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+    expect(db.eventNames()).not.toContain('operationInsert');
+  });
+
+  it('does not read a damaged receipt consumption row as a consumed receipt', async () => {
+    const db = await seededDb();
+    db.operations.push({ ...committedOperation(await identityFor(), await digestFor()), caller_key: '' });
+
+    expect(await codeOf(db)).toBe('TRANSACTION_RECEIPT_UNAVAILABLE');
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+    expect(db.eventNames()).not.toContain('operationInsert');
+  });
+
+  it('rejects a cross-resource effective plan built from a real B2C plan', async () => {
+    const db = await seededDb();
+    await outcomeOf(db);
+    const raw = JSON.parse(db.bindings.get(RESOURCE_KEY)!.payload) as Record<string, any>;
+    const complete = structuredClone(raw.template_resolution.pending.plan);
+    complete.resource.id = '8';
+    raw.application.resolution_identity = complete.identity;
+    raw.effective = { source: 'template', revision: 4, resolution_identity: complete.identity, plan: complete };
+
+    expect(() => decodeBindingPayload(raw)).toThrow(BindingPersistenceError);
+  });
+
+  it('accepts the same real B2C plan as this row\'s own effective template snapshot', async () => {
+    const db = await seededDb();
+    await outcomeOf(db);
+    const raw = JSON.parse(db.bindings.get(RESOURCE_KEY)!.payload) as Record<string, any>;
+    const own = structuredClone(raw.template_resolution.pending.plan);
+    raw.application.resolution_identity = own.identity;
+    raw.effective = { source: 'template', revision: 4, resolution_identity: own.identity, plan: own };
+
+    const decoded = decodeBindingPayload(raw);
+    if (decoded.kind !== 'template_pending') throw new Error('unreachable');
+    expect(decoded.effective).toMatchObject({ source: 'template', revision: 4 });
   });
 });

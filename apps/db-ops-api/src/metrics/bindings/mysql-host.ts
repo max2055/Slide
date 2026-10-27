@@ -170,6 +170,21 @@ function uintOf(value: unknown): number | null {
   return null;
 }
 
+/** A stored id/revision that must be a positive safe integer, never 0 or a fraction. */
+function positiveOf(value: unknown): number | null {
+  const parsed = uintOf(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+/** The exact key space the host writes: a text of that pattern inside the column width. */
+function keyOf(value: unknown, pattern: RegExp, limit: number): string | null {
+  const text = textOf(value);
+  if (text === null || text.length === 0 || text.length > limit || Buffer.byteLength(text, 'utf8') > limit) {
+    return null;
+  }
+  return pattern.test(text) ? text : null;
+}
+
 function requireText(value: string, limit: number): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > limit
     || Buffer.byteLength(value, 'utf8') > limit) {
@@ -194,20 +209,37 @@ const applicationStateOf = (decoded: DecodedBindingPayload) => ({
   resolution_identity: decoded.kind === 'template_pending' ? decoded.application.resolution_identity : null,
 });
 
-function operationRowOf(row: Record<string, unknown>): Record<string, unknown> | null {
-  const callerKey = textOf(row.caller_key);
-  const rawReceipt = row.receipt_id;
-  const receiptId = rawReceipt === null ? null : textOf(rawReceipt);
+// The exact key space of the two columns this host writes and queries.
+const CALLER_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const RECEIPT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MAX_REVISION = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Validate one stored operation row against everything this host wrote for it:
+ * both byte-exact keys, the resource type/identity, a positive target revision,
+ * the three digests and one of the two mutually exclusive statuses. A row that
+ * fails any of these is corrupt storage — never a completed operation, never a
+ * "missing" one, and never a trusted receipt consumption.
+ *
+ * `expectedCaller` is the key that was queried, so a row returned under another
+ * key (a collation or trailing-space artefact) is corruption, not a match.
+ */
+function operationRowOf(row: Record<string, unknown>, expectedCaller: string): Record<string, unknown> | null {
+  const callerKey = keyOf(row.caller_key, CALLER_KEY_PATTERN, LIMITS.caller_key);
+  if (callerKey === null || callerKey !== expectedCaller) return null;
+  // Every operation row is written together with the receipt it consumes.
+  const receiptId = keyOf(row.receipt_id, RECEIPT_KEY_PATTERN, LIMITS.receipt_id);
+  if (receiptId === null) return null;
   const resourceType = textOf(row.resource_type);
-  const resourceId = uintOf(row.resource_id);
-  const targetRevision = uintOf(row.target_revision);
-  const candidateDigest = textOf(row.candidate_digest);
-  const resolutionIdentity = textOf(row.resolution_identity);
-  const dependencyDigest = textOf(row.dependency_digest);
+  if (resourceType === null || !ResourceTypeSchema.safeParse(resourceType).success) return null;
+  const resourceId = positiveOf(row.resource_id);
+  const targetRevision = positiveOf(row.target_revision);
+  const candidateDigest = HashIdSchema.safeParse(textOf(row.candidate_digest) ?? undefined);
+  const resolutionIdentity = HashIdSchema.safeParse(textOf(row.resolution_identity) ?? undefined);
+  const dependencyDigest = HashIdSchema.safeParse(textOf(row.dependency_digest) ?? undefined);
   const status = textOf(row.status);
-  if (callerKey === null || (rawReceipt !== null && receiptId === null) || resourceType === null
-    || resourceId === null || targetRevision === null || candidateDigest === null
-    || resolutionIdentity === null || dependencyDigest === null
+  if (resourceId === null || targetRevision === null
+    || !candidateDigest.success || !resolutionIdentity.success || !dependencyDigest.success
     || (status !== 'committed' && status !== 'unknown')) {
     return null;
   }
@@ -215,19 +247,23 @@ function operationRowOf(row: Record<string, unknown>): Record<string, unknown> |
     caller_key: callerKey,
     resource: { type: resourceType, id: resourceId },
     target_revision: targetRevision,
-    candidate_digest: candidateDigest,
-    resolution_identity: resolutionIdentity,
-    dependency_digest: dependencyDigest,
+    candidate_digest: candidateDigest.data,
+    resolution_identity: resolutionIdentity.data,
+    dependency_digest: dependencyDigest.data,
     receipt_id: receiptId,
     status,
   };
+}
+
+/** A consumption row names the caller that used the receipt; a damaged key proves nothing. */
+function consumptionRowOf(row: Record<string, unknown>): string | null {
+  return keyOf(row.caller_key, CALLER_KEY_PATTERN, LIMITS.caller_key);
 }
 
 // --- intent validation ------------------------------------------------------
 
 const IdTextSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 const OperationKeySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:#@-]{0,1023}$/);
-const MAX_REVISION = Number.MAX_SAFE_INTEGER;
 const RevisionSchema = z.number().int().nonnegative().max(MAX_REVISION);
 const TargetRevisionSchema = z.number().int().positive().max(MAX_REVISION);
 
@@ -507,14 +543,15 @@ class MysqlTransactionHost implements BindingApplicationHost {
     const rows = await this.select(MYSQL_BINDING_HOST_SQL.operationRead, callerKey);
     if (rows.length > 1) return { complete: false, operation: null };
     if (rows.length === 0) return { complete: true, operation: null };
-    const operation = operationRowOf(rows[0]);
+    const operation = operationRowOf(rows[0], callerKey);
     return operation === null ? { complete: false, operation: null } : { complete: true, operation };
   }
 
   async findReceiptConsumption(receiptId: string): Promise<unknown> {
     const rows = await this.select(MYSQL_BINDING_HOST_SQL.consumptionRead, receiptId);
     // Two rows prove the global uniqueness invariant is broken; never "consumed".
-    if (rows.length > 1) return { complete: false };
+    // A row whose caller key is damaged proves nothing either.
+    if (rows.length > 1 || rows.some(row => consumptionRowOf(row) === null)) return { complete: false };
     return { complete: true, consumed: rows.length === 1 };
   }
 
@@ -643,11 +680,12 @@ class MysqlTransactionHost implements BindingApplicationHost {
     if (!isDuplicateEntry(error)) return 'UNAVAILABLE';
     try {
       const byCaller = await this.select(MYSQL_BINDING_HOST_SQL.operationRead, valid.operation.caller_key);
-      if (byCaller.some(row => textOf(row.caller_key) === valid.operation.caller_key)) return 'OPERATION_CONFLICT';
+      if (byCaller.some(row => operationRowOf(row, valid.operation.caller_key) !== null)) return 'OPERATION_CONFLICT';
     } catch { return 'UNAVAILABLE'; }
     try {
       const byReceipt = await this.select(MYSQL_BINDING_HOST_SQL.consumptionRead, valid.operation.receipt_id);
-      if (byReceipt.length > 0) return 'RECEIPT_CONSUMED';
+      // A surviving row that cannot be read as a consumption is not a known conflict.
+      if (byReceipt.length > 0 && byReceipt.every(row => consumptionRowOf(row) !== null)) return 'RECEIPT_CONSUMED';
     } catch { return 'UNAVAILABLE'; }
     return 'UNAVAILABLE';
   }
@@ -754,7 +792,10 @@ export class MysqlBindingHost {
    * unavailable answer is not proof that a replay is safe.
    */
   async lookupOperation(callerKey: string): Promise<BindingOperationLookupResult> {
-    if (typeof callerKey !== 'string' || callerKey.length === 0 || callerKey.length > LIMITS.caller_key) {
+    // Only a key this storage can represent is queryable; anything else is refused
+    // before a connection is taken, never answered as "absent".
+    if (typeof callerKey !== 'string' || !CALLER_KEY_PATTERN.test(callerKey)
+      || Buffer.byteLength(callerKey, 'utf8') > LIMITS.caller_key) {
       return fail('HOST_INTENT_INVALID');
     }
     const pool = this.options?.pool?.();
@@ -771,7 +812,7 @@ export class MysqlBindingHost {
       const rows = rowsOf(await connection.execute(MYSQL_BINDING_HOST_SQL.operationRead, [bytes(callerKey)]));
       if (rows.length > 1) return { complete: false, operation: null };
       if (rows.length === 0) return { complete: true, operation: null };
-      const operation = operationRowOf(rows[0]);
+      const operation = operationRowOf(rows[0], callerKey);
       return operation === null ? { complete: false, operation: null } : { complete: true, operation };
     } catch {
       return fail('HOST_QUERY_UNAVAILABLE');
