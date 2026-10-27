@@ -263,7 +263,7 @@ function unsupportedReason(category: OfficialCategory, item: ZabbixItem): Unsupp
   if (type === 'INTERNAL' || key.startsWith('zabbix[')) return 'internal_not_collectable';
   if (category === 'database') {
     if (type === 'ODBC' || key.startsWith('db.odbc.')) return 'odbc_raw_not_a_metric';
-    if (/\.rate$/.test(key)) return 'derived_not_selectable';
+    if (key.endsWith('.rate')) return 'derived_not_selectable';
     return 'no_matching_slide_metric';
   }
   if (category === 'server') {

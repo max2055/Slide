@@ -121,6 +121,11 @@ async function applyToDatabase(args: Args, converted: ConvertedTemplate[]) {
   if (!instance || instance.name !== 'mysql3306' || Number(instance.port) !== 3306) {
     throw new Error(`TARGET_INSTANCE_MISMATCH:${JSON.stringify(instance ?? null)}`);
   }
+  const [dbRows] = await query('SELECT DATABASE() AS db');
+  const database = Array.isArray(dbRows) ? dbRows[0]?.db : undefined;
+  if (!database || (instance.database_name && database !== instance.database_name)) {
+    throw new Error(`TARGET_DATABASE_MISMATCH:${String(database)}`);
+  }
 
   const before: Record<string, number> = {};
   for (const table of [...BUSINESS_TABLES, 'metric_templates']) before[table] = await countRows(query, table);
@@ -192,14 +197,50 @@ async function applyToDatabase(args: Args, converted: ConvertedTemplate[]) {
   for (const table of Object.keys(before)) after[table] = await countRows(query, table);
   const countsPreserved = Object.keys(before).every(table => before[table] === after[table]);
 
+  // Read-only facts that bind the evidence to this database: when the five
+  // tables were created and what the repository actually persisted.
+  const [tableRows] = await query(
+    `SELECT TABLE_NAME AS name, ENGINE AS engine, TABLE_COLLATION AS collation, CREATE_TIME AS create_time
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${EXPECTED_TABLES.map(() => '?').join(',')})
+      ORDER BY TABLE_NAME`,
+    [...EXPECTED_TABLES],
+  );
+  const tableFacts = (Array.isArray(tableRows) ? tableRows : []).map((row: any) => ({
+    name: String(row.name),
+    engine: String(row.engine),
+    collation: String(row.collation),
+    create_time: row.create_time instanceof Date ? row.create_time.toISOString() : String(row.create_time),
+    rows: 0,
+  }));
+  for (const fact of tableFacts) fact.rows = await countRows(query, fact.name);
+
+  const templateFacts = [];
+  for (const template of converted) {
+    const record = await repository.getTemplate(template.template_id);
+    const versions = await repository.listVersions(template.template_id);
+    templateFacts.push({
+      template_id: template.template_id,
+      created_at: record?.created_at ?? null,
+      updated_at: record?.updated_at ?? null,
+      revision: record?.revision ?? null,
+      status: record?.status ?? null,
+      current_published_version: record?.current_published_version ?? null,
+      version_count: versions.length,
+      versions: versions.map(version => ({ version: version.version, status: version.status, content_hash: version.content_hash })),
+    });
+  }
+
   return {
     target: {
       instance_id: instance.id,
       name: instance.name,
       db_type: instance.db_type,
       port: Number(instance.port),
-      // Host and database name are intentionally not echoed beyond the local check.
+      database,
+      // The pool host itself is not echoed; only the verified database name is.
       instance_matches: true,
+      database_matches: true,
     },
     tables: {
       expected: [...EXPECTED_TABLES],
@@ -208,6 +249,8 @@ async function applyToDatabase(args: Args, converted: ConvertedTemplate[]) {
       missing_after: missing,
     },
     business_counts: { before, after, preserved: countsPreserved },
+    table_facts: tableFacts,
+    template_facts: templateFacts,
     imports: imports.map(result => ({
       template_id: result.template_id,
       action: result.action,
@@ -239,7 +282,13 @@ async function main(): Promise<void> {
     }, null, 2));
     return;
   }
-  const evidence = await applyToDatabase(args, converted);
+  let evidence;
+  try {
+    evidence = await applyToDatabase(args, converted);
+  } finally {
+    // One-shot CLI: do not keep the application pool (and the process) alive.
+    await dbConnection.close();
+  }
   writeFileSync(join(args.out, 't3-import.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   console.log(JSON.stringify({
     mode: 'apply',
