@@ -322,3 +322,18 @@ Chief 三条失败探针（`reviews/chief-correction-boundary-probes-20261027.ts
 R2-DIM 只闭合维度键集合比较缺陷。§7 的缺口与 §8 的六项验收状态全部不变：持久化 adapter/迁移/真实事务、base 继承、
 derived 选择、触发器执行、绑定/多 pin、历史查询、路由/UI、真实三类模板与速率/未知边界、共享读取与凭据隔离仍待后续包。
 整单保持 `in_progress`，本文件不构成 T1 或原 Issue 的最终接受。
+
+## 11. 现行入口：T2A 未挂载 MySQL 适配器（2026-10-27）
+
+T1 接受后，`max237-t2a-admission-20261027.md` 准入的 **T2A internal MySQL adapter + 真实独占 MySQL 事务验证**
+已交付到 PR #390（base `1d7f9e1f9`，产品提交 `0b60d1f42`，未合并）。详见
+[t2a/README.md](t2a/README.md)、[t2a/evidence/t2a-fixture.json](t2a/evidence/t2a-fixture.json)、
+[t2a/evidence/t2a-verification.json](t2a/evidence/t2a-verification.json)、
+[t2a/evidence/t2a-cleanup.json](t2a/evidence/t2a-cleanup.json)。
+
+- 新增 `apps/db-ops-api/src/metrics/templates/mysql-repository.ts`（未挂载、显式注入 pool、五张既有表、
+  父行优先锁序、CAS、回滚与未知提交结果）；`repository.ts` 仅导出既有 `itemContent`/`identityConflict`。
+- 真实一次性 MySQL 8.4 容器（`max237_t2a`，utf8mb4_bin）上以两个独立连接验证并发/回滚/commit 丢失；
+  focused 73/73、`tsc` 0、`oxlint` 0/0。
+- 明确未做：路由/进程接线、共享连接池、应用 migration、真实采集闭环、T2B 存储兼容决定；
+  140 候选 DDL 的 INT/VARCHAR/DATETIME 宽度差已记录为 T2A 已知限制，整单仍 `in_progress`。
