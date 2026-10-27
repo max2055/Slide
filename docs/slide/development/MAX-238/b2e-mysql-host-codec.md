@@ -1,6 +1,6 @@
 # MAX-238 B2E：未挂载 MySQL host 与严格 payload codec
 
-2026-10-27。实现 + focused tests 提交 `0493096fdfd245b5e30ecffcb1e2a4c97ce53e3a`，边界收敛（`resource_key` 上限对齐既有 255 字节列）提交 `2a9606c00`，写点前后故障补测提交 `0611256a5`，基线为已接受的 B2D-R1 交付 HEAD `14af2725831aa8c41a97b85f3fb307d7d10620b3`（只在其上追加；本文件为后续文档提交）。**本包是未挂载的内部存储端口**：没有默认连接池、没有进程注册、没有路由/调度/正式采集、没有 receipt issuer、没有真实数据库、没有 DDL 执行。真实接线见 `wiring-gates.md` 与 `b2e-candidate-schema.sql`。
+2026-10-27。实现 + focused tests 提交 `0493096fdfd245b5e30ecffcb1e2a4c97ce53e3a`，边界收敛（`resource_key` 上限对齐既有 255 字节列）提交 `2a9606c00`，写点前后故障补测提交 `0611256a5`，mysql2 端口兼容提交 `21079a9b3`，基线为已接受的 B2D-R1 交付 HEAD `14af2725831aa8c41a97b85f3fb307d7d10620b3`（只在其上追加；本文件为后续文档提交）。**本包是未挂载的内部存储端口**：没有默认连接池、没有进程注册、没有路由/调度/正式采集、没有 receipt issuer、没有真实数据库、没有 DDL 执行。真实接线见 `wiring-gates.md` 与 `b2e-candidate-schema.sql`。
 
 ## 1. 允许文件与实际 diff
 
@@ -9,7 +9,7 @@
 | `apps/db-ops-api/src/metrics/bindings/persistence-codec.ts` | 472 | 新增：`templates-v1` 顶层 envelope、严格候选/pending/effective 编解码、判别/fence、稳定码。 |
 | `apps/db-ops-api/src/metrics/bindings/persistence-codec.test.ts` | 325 | 新增 focused 测试（21 项）。 |
 | `apps/db-ops-api/src/metrics/bindings/mysql-host.ts` | 778 | 新增：单 lease MySQL host、同连接读、原子 staging、settle、清理、只读 caller-key 查询。 |
-| `apps/db-ops-api/src/metrics/bindings/mysql-host.test.ts` | 993 | 新增 focused 测试（22 项）+ 故障注入 SQL fixture。 |
+| `apps/db-ops-api/src/metrics/bindings/mysql-host.test.ts` | 1002 | 新增 focused 测试（23 项）+ 故障注入 SQL fixture + mysql2 端口兼容检查。 |
 | `apps/db-ops-api/src/metrics/bindings/index.ts` | 6 | 增加两行内部 export。 |
 
 未改 `transaction-guard.ts`、`transaction-adapter.ts`、`resolve.ts`、`plan.ts`、`preflight.ts`、`compile.ts`、`policy/*`、`packages/*`、`templates/*`、`scheduler/*`、`config/*`、`bulk/*`、`consumers/*`、`rollout/*`、`contracts/*`、路由、server/runner、前端或正式 migrations。没有新增依赖（fixture 只使用现有 vitest，未 import mysql2）。MAX237 T2B `4ed20d4d9` 仅作只读参考，未 cherry-pick，也未把它当作模板 MySQL 读取验收。
@@ -19,8 +19,8 @@
 ```
 1ef08b9a3f75536474c97e481fb3790f7853a6d9443be222648ce53d95394783  persistence-codec.ts
 37e4e4117621594e6189a970328d4792c61a3abc1bf250ac9f435f4b193b3a51  persistence-codec.test.ts
-e3cf6fbb0f05528e946e9f1a38b168a50ecea47d5e0f19aa29d8d85c263235e9  mysql-host.ts
-090a8567afcc0508c43db40387ef7a6d332534e514e3474a60836e75fae5f37a  mysql-host.test.ts
+0003095ad456ca9b86f2aa783aee3f38e28ffa40c8304240e13ed81dff7a4369  mysql-host.ts
+5091ea4ba270be05fadad1bd3a4403d5c94b49840b8f156d445461bd654060c2  mysql-host.test.ts
 96945471e00c9e13dd810c2aa1f5b0b2c167cf989de593a5f1c4e277cf3890e8  index.ts
 ```
 
@@ -124,9 +124,9 @@ e3cf6fbb0f05528e946e9f1a38b168a50ecea47d5e0f19aa29d8d85c263235e9  mysql-host.ts
 
 | 命令 | 结果 | 退出码 |
 | --- | --- | --- |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings/persistence-codec.test.ts src/metrics/bindings/mysql-host.test.ts` | 2 files / 43 passed | 0 |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings` | 8 files / 259 passed | 0 |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings src/metrics/policy src/metrics/scheduler src/metrics/packages src/contracts/metrics` | 18 passed + 4 skipped files；455 passed + 36 skipped | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings/persistence-codec.test.ts src/metrics/bindings/mysql-host.test.ts` | 2 files / 44 passed | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings` | 8 files / 260 passed | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings src/metrics/policy src/metrics/scheduler src/metrics/packages src/contracts/metrics` | 18 passed + 4 skipped files；456 passed + 36 skipped | 0 |
 | `pnpm --filter slide-api typecheck` | 无错误 | 0 |
 | `pnpm contracts:check` | 无差异（未改契约） | 0 |
 | `pnpm exec oxlint apps/db-ops-api/src/metrics/bindings` | 0 warnings / 0 errors | 0 |
