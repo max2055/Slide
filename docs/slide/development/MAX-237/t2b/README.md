@@ -9,8 +9,9 @@ T1 与 T2A 已接受结论不重做。
 LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间），适配器只改这三类表示/映射/校验，
 保留已接受的事务清理、锁序、CAS 与未知提交语义；并在一次性独占 MySQL 8.4 容器上用三个 schema
 （原样 140 源 / 候选 / 原样 140 回退副本）完成**仅演练**的 up/down 与失败注入验证。**83/83** focused 测试、
-**18/18** 演练步骤、`tsc` 0、`oxlint` 0/0 通过；**没有**接应用库、没有公共契约变更、没有应用 migration、
-没有真实采集闭环，整单保持 `in_progress`。
+**30/30** 演练步骤、`tsc` 0、`oxlint` 0/0 通过。T2B-DRILL-TX-GUARD 有界补修（未知事务终态 discard、
+commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-20261027.md](tx-guard-20261027.md)；
+**没有**接应用库、没有公共契约变更、没有应用 migration、没有真实采集闭环，整单保持 `in_progress`。
 
 ## 1. base / 提交 / 允许面
 
@@ -89,9 +90,14 @@ LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间）�
 `migrate.ts` 只在 `t2b/`，没有产品导出或运行接线；**默认 `plan` 零连接零写**（drill 在
 `MAX237_T2B_FORBID_CONNECT=1` 的独立进程中证明 `connects=false`，而 `execute` 在同标志下被拒）。
 
-- **handle/schema 校验**：静态校验 owner/phase/container/image/volume/三 schema allowlist；`execute` 还证明
-  连接的是记录容器（hostname 前缀）、允许账号，且 `max237_t2b%` 恰好只有三个 schema、每个恰好五张表、
-  候选列类型/ascii collation 与冻结候选一致。
+- **handle/schema/冻结结构校验**：静态校验 owner/phase/container/image/volume/三 schema allowlist；所有写入口
+  （seed/up/down）在第一条 DML 前证明连接的是记录容器（hostname 前缀）、允许账号，`max237_t2b%` 恰好三个
+  schema、每库恰好五张表，并显式比对三 schema 的冻结列集合/类型/nullability/字符集 collation、engine、
+  PK/唯一 `uk_content`/`idx_canonical`（候选 128/16 前缀）/其余索引与四个外键。漂移 → `structure-drift` 拒绝且
+  零写；`plan` 仍零连接。
+- **事务连接**：只在服务端确认 commit/rollback 后 release；begin 失败、rollback 未确认、commit 抛错一律
+  destroy 且 destroy 失败不回退 release。commit 结果不明时以新连接只读重查 source/target manifest，区分
+  `commit-not-applied` / `commit-unconfirmed` / `commit-unknown`，不盲目重放。
 - **up**：源只读，目标必须为空；预检后才在**目标同一连接事务**按 父 → draft/items → item versions →
   template versions 复制。父行后/版本快照后注入失败都会回滚，由两个独立连接确认目标为空、源 manifest 不变。
   目标非空且与期望 manifest 相同 → 明确 `no-op`；漂移 → 拒绝且不覆盖。
@@ -100,7 +106,7 @@ LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间）�
   删除新增合法数据。安全旧数据 round-trip 后五表语义 manifest 与源一致（时间同瞬时、JSON 原值保留）。
 - 没有应用 migration 注册、共享池、负载切换、平台重启或部署；本演练**不能**声称是已上线迁移。
 
-## 6. 验证（绑定 `bc1c66d74`）
+## 6. 验证（存储候选绑定 `bc1c66d74`；TX-GUARD 绑定 `24ad7ec82`）
 
 | 命令（cwd `apps/db-ops-api`，除注明外） | 结果 |
 |---|---|
@@ -108,7 +114,9 @@ LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间）�
 | `npx vitest run src/metrics`（不带 MySQL 变量） | **48 文件通过 / 25 跳过；503 passed / 143 skipped**，exit 0 |
 | `npx tsc --noEmit` | exit 0，无诊断 |
 | `npx oxlint apps/db-ops-api/src/metrics/templates`（仓库根） | 0 warning / 0 error，12 files |
-| `npx tsx t2b/drill.ts --out t2b/evidence/t2b-drill.json` | **18/18 PASS**，exit 0 |
+| `npx oxlint docs/slide/development/MAX-237/t2b`（仓库根，TX-GUARD） | 0 warning / 0 error，2 files（[evidence/t2b-tx-guard-oxlint.txt](evidence/t2b-tx-guard-oxlint.txt)） |
+| `tsc --noEmit`（仅 `t2b/migrate.ts`、`t2b/drill.ts`，严格模式） | exit 0（[evidence/t2b-tx-guard-typecheck.txt](evidence/t2b-tx-guard-typecheck.txt)） |
+| `npx tsx t2b/drill.ts --out t2b/evidence/t2b-drill.json` | **30/30 PASS**，两次 fresh fixture 均 exit 0（[evidence/t2b-drill.json](evidence/t2b-drill.json)） |
 
 真实 MySQL 正例：actor `2147483648`、`9007199254740991`、NULL 两种驱动形态读回；canonical 512 字符与
 semver 100 字符；同 128/16 前缀不同后缀的完整值不混同（同 item 改后缀仍是
@@ -119,6 +127,19 @@ semver 100 字符；同 128/16 前缀不同后缀的完整值不混同（同 ite
 
 保留的 T2A 真实事务证据（TX-CLEANUP 两反例、commit 丢确认、新连接重查、双 CAS、首 item 竞争、
 immutable publish、溢出零部分写）在本包同一套件内继续通过。
+
+### 6.1 MAX237-T2B-DRILL-TX-GUARD 补修
+
+- **R1 事务连接**：`up`/`down` 默认 discard，仅确认 commit/rollback 后 release；begin 失败、rollback 未确认、
+  commit 抛错均 destroy，`destroy` 抛错不覆盖原失败且不回退 release。真实 commit 丢确认时以新连接只读重查
+  source/target manifest，区分 `commit-not-applied` / `commit-unconfirmed` / `commit-unknown`，不重放写入。
+  Chief 在 base 的两个真实 FAIL 反例已有记录；修复后同形状在真实 MySQL 上 `destroys=1/releases=0`，
+  无关 `BEGIN/COMMIT` 前后目标均 0。
+- **R2 冻结结构预检**：`verifyLiveFixture` 对 source/candidate/restore 显式比对列集合/类型/nullability/
+  字符集、engine、PK/`uk_content`/`idx_canonical`（候选 128/16 前缀）/其余索引与四个外键；seed/up/down 的
+  第一条 DML 前执行。真实 DDL 漂移分别对 source(type)、candidate(index)、restore(unique index) 拒绝并零写，
+  恢复后结构快照逐字节相等。
+- 详细对象、命令、mock/真实 DB 标注与限制见 [tx-guard-20261027.md](tx-guard-20261027.md)。
 
 ## 7. 本包没有做（不得当成完成）
 
