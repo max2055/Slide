@@ -1,0 +1,70 @@
+{
+  "task": "MAX237-T2B-DDL-ERROR-GUARD",
+  "checked_at": "2026-10-27",
+  "container_inspect": {
+    "cmd": [
+      "docker",
+      "container",
+      "inspect",
+      "max237-t2b-15coder1-20261027"
+    ],
+    "exit": 1,
+    "stdout": "[]",
+    "stderr": "Error response from daemon: No such container: max237-t2b-15coder1-20261027"
+  },
+  "volume_inspect": {
+    "cmd": [
+      "docker",
+      "volume",
+      "inspect",
+      "max237-t2b-15coder1-20261027-data"
+    ],
+    "exit": 1,
+    "stdout": "[]",
+    "stderr": "Error response from daemon: get max237-t2b-15coder1-20261027-data: no such volume"
+  },
+  "owned_containers": {
+    "cmd": [
+      "docker",
+      "ps",
+      "-a",
+      "--filter",
+      "label=max237.owner=15coder1-t2b",
+      "--format",
+      "{{.ID}} {{.Names}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "owned_volumes": {
+    "cmd": [
+      "docker",
+      "volume",
+      "ls",
+      "--filter",
+      "label=max237.owner=15coder1-t2b",
+      "--format",
+      "{{.Name}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "same_name_containers": {
+    "cmd": [
+      "docker",
+      "ps",
+      "-a",
+      "--filter",
+      "name=^/max237-t2b-15coder1-20261027$",
+      "--format",
+      "{{.ID}} {{.Names}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "state_dir_present": false,
+  "conclusion": "no pre-existing owned or same-named object; no creation record"
+}

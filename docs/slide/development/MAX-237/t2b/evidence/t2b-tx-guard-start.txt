@@ -1,0 +1,4 @@
+<stdin>:10: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+ready: schemas=max237_t2b_d1,max237_t2b,max237_t2b_restore user=max237_t2b_app port=50211 container=max237-t2b-15coder1-20261027
+handle: /Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-4d52319c9c03/worktree/.max237-t2b/handle.json (exact IDs; do not commit)
+test env: source /Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-4d52319c9c03/worktree/.max237-t2b/credentials.env

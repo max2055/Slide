@@ -1,0 +1,25 @@
+# MAX-237 T2A-TX-CLEANUP focused checks (2026-10-27T04:48:21Z)
+# fixture: max237-t2a-15coder1-20261027 / max237_t2a / mysql 8.4.10
+
+## templates focused (real MySQL env)
+
+ Test Files  5 passed (5)
+      Tests  78 passed (78)
+   Start at  12:48:21
+   Duration  518ms (transform 248ms, setup 0ms, import 567ms, tests 428ms, environment 0ms)
+
+
+## metrics suite (no MySQL env)
+
+ Test Files  48 passed | 25 skipped (73)
+      Tests  501 passed | 140 skipped (641)
+   Start at  12:48:22
+   Duration  5.63s (transform 3.14s, setup 0ms, import 28.25s, tests 9.37s, environment 7ms)
+
+
+## API typecheck
+tsc exit=0
+
+## oxlint
+Found 0 warnings and 0 errors.
+Finished in 8ms on 12 files with 101 rules using 10 threads.

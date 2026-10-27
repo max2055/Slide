@@ -1,0 +1,4 @@
+container already recorded; starting verified ID f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36
+ready: schemas=max237_t2b_d1,max237_t2b,max237_t2b_restore user=max237_t2b_app port=50211 container=max237-t2b-15coder1-20261027
+handle: /Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-4d52319c9c03/worktree/.max237-t2b/handle.json (exact IDs; do not commit)
+test env: source /Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-4d52319c9c03/worktree/.max237-t2b/credentials.env

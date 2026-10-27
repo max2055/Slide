@@ -1,0 +1,5 @@
+# command: apps/db-ops-api/node_modules/.bin/tsc -p .max237-tsconfig.tmp.json (strict, noEmit, only t2b/migrate.ts and t2b/drill.ts)
+exit=0
+# files:
+  docs/slide/development/MAX-237/t2b/migrate.ts
+  docs/slide/development/MAX-237/t2b/drill.ts

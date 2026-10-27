@@ -1,0 +1,138 @@
+{
+  "task": "MAX237-T2B",
+  "issue": "MAX-237 (Multica 01a173cf-fb9a-7216-8a01-2070105f8793, GitHub #261)",
+  "package": "T2B owned storage-compatibility candidate + exclusive up/down drill",
+  "authorization": {
+    "admission": "t2b-owned-candidate-admission-20261027.md (attachment 01a17bba-2a42-78a0-8490-85ffb37bfbc2)",
+    "preceding_review": "chief-tx-cleanup-review-20261027.md (attachment 01a17bba-276d-7048-99dd-116ab3afd11a) — T2A accepted at 32dd311af",
+    "scope": "mysql-repository.ts storage representation/mapping/validation, its two tests, docs/slide/development/MAX-237/t2b/**; no public contract, shared pool, application migration, route, runtime, consumer or frontend change"
+  },
+  "branch": "agent/15coder1/max-237",
+  "pr": 390,
+  "base": "32dd311af5ea4e3b2e7424f945f7b4a667f7e068",
+  "code_commit": "bc1c66d74",
+  "candidate_ddl": {
+    "path": "docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql",
+    "lines": 81,
+    "sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323",
+    "tables": 5,
+    "differences_from_140": [
+      "metric_templates_v2.created_by, metric_template_drafts.updated_by → BIGINT UNSIGNED NULL (0..9007199254740991)",
+      "metric_template_item_versions.canonical_metric_id / canonical_semantic_version → LONGTEXT CHARACTER SET ascii COLLATE ascii_bin NOT NULL",
+      "idx_canonical → non-unique prefix index (canonical_metric_id(128), canonical_semantic_version(16)); query acceleration only",
+      "every timestamp → CHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, canonical UTC YYYY-MM-DDTHH:mm:ss.SSSZ (retired_at nullable)"
+    ],
+    "unchanged": "five table names, PK/FK, unique content hash, JSON columns and their semantics; version and revision stay INT because VersionNumberSchema/RevisionSchema cap at 2147483647",
+    "original_140": {
+      "path": "docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql",
+      "sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
+      "role": "migration source and restore target; not modified"
+    }
+  },
+  "allowlist": {
+    "files": [
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.ts",
+        "status": "modified",
+        "lines": 878,
+        "sha256": "a660c1db890ef593280fd7258a50d94a21a8ad575bad56c26fb41ceeb2ecb1c7"
+      },
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts",
+        "status": "modified",
+        "lines": 280,
+        "sha256": "45468356ead0554d8030cdc27e31c0d4d7209f13b3707737c031e8be492bb0a5"
+      },
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts",
+        "status": "modified",
+        "lines": 873,
+        "sha256": "14354a4eaa9efe7cd0b27a38451daeda8cf7d32ec72adec435042b80dbd42356"
+      }
+    ],
+    "outside_allowlist": [],
+    "patch": "docs/slide/development/MAX-237/t2b/evidence/t2b-allowlist.patch",
+    "patch_bytes": 53290,
+    "patch_sha256": "5d01bbbd642aba69f07df3611fa857950f4bafa578f81493ed86875fe23f81ba"
+  },
+  "unchanged": [
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.ts", "sha256": "d722c5e864eeba194a8ca653beb207e23ee8ea28f33a9cdca9081fd235e24153" },
+    { "path": "apps/db-ops-api/src/metrics/templates/model.ts", "sha256": "d3207eb11ddb727399328690b545128c9f8acadc61de1c2f77563bcb8c85d7d1" },
+    { "path": "apps/db-ops-api/src/metrics/templates/errors.ts", "sha256": "4f047fc3d92bb079c5bf4fcb952803f033c42adcfb7d5a800b2b9c162321570c" },
+    { "path": "apps/db-ops-api/src/metrics/templates/index.ts", "sha256": "b63c556b9e9e393541cb8c25cccd6aa37f5afd18c2d865c98c454947b2a7097c" },
+    { "path": "docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql", "sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d" }
+  ],
+  "implementation": {
+    "actor": "sqlActorId accepts 0..9007199254740991 or NULL and refuses unsafe integers; fromSqlActorId reads both mysql2 renderings (string and number) with explicit Number.isSafeInteger/range checks; no bitwise/truncating conversion",
+    "timestamps": "toSqlTimestamp validates the accepted TimestampSchema and writes the exact 24-character canonical UTC form (years 0000..9999, 0–3 fraction digits normalized to 3); fromSqlTimestamp accepts only that exact form; no DATE_FORMAT and no dependency on the pool timezone/dateStrings",
+    "identity": "canonical_metric_id / canonical_semantic_version are copied whole; the accepted ASCII MetricRefSchema is the only textual rule; the prefix index is never used for equality and identity compares the complete key",
+    "preserved": "T2A-TX-CLEANUP transaction disposal (release only after a confirmed commit or rollback, destroy otherwise), parent-first lock order, CAS checks, unknown-commit error and redacted identity are unchanged",
+    "known_limits": "version/revision pointer columns stay INT; LONGTEXT/packet/driver capacity is a real storage boundary that is rejected explicitly, never claimed unlimited"
+  },
+  "checks": [
+    {
+      "command": "npx vitest run src/metrics/templates (cwd apps/db-ops-api, MAX237_T2B_MYSQL_* set)",
+      "result": "5 files, 83/83 tests passed, exit 0",
+      "log": "docs/slide/development/MAX-237/t2b/evidence/t2b-test-log.txt"
+    },
+    {
+      "command": "npx vitest run src/metrics (cwd apps/db-ops-api, no MySQL env)",
+      "result": "48 files passed / 25 skipped; 503 passed / 143 skipped, exit 0"
+    },
+    {
+      "command": "npx tsc --noEmit (cwd apps/db-ops-api)",
+      "result": "exit 0, no diagnostics"
+    },
+    {
+      "command": "npx oxlint apps/db-ops-api/src/metrics/templates (cwd repo root)",
+      "result": "0 warnings / 0 errors on 12 files"
+    },
+    {
+      "command": "npx tsx docs/slide/development/MAX-237/t2b/drill.ts --out docs/slide/development/MAX-237/t2b/evidence/t2b-drill.json",
+      "result": "18/18 drill steps PASS, exit 0",
+      "log": "docs/slide/development/MAX-237/t2b/evidence/t2b-drill.json"
+    }
+  ],
+  "drill": {
+    "plan": "a fresh process runs `plan` with MAX237_T2B_FORBID_CONNECT=1 and reports connects=false/writes=false; `execute` under the same flag is refused with connection-forbidden",
+    "handle": "an unknown handle / wrong schema allowlist is refused (handle-mismatch) before any connection",
+    "failure_injection": "up fails after parent rows and after version snapshot rows; two independent connections read the target empty and the source manifest unchanged",
+    "up": "one target-connection transaction in parent → draft/items → item versions → template versions order; post-copy manifest equals the source aggregate, source unchanged",
+    "adapter_spot_checks": "primary key/revision/pointer, NULL actor, year-0000 and year-9999 instants, full JSON snapshot (interval_ms parameter, Unicode/empty/comma dimension keys), source_chain stays the original 1-digit fraction string; re-read after closing and reopening the pool",
+    "idempotency": "identical re-run reports no-op; a drifted target is refused without overwrite and the candidate row stays drifted until the drill restores it",
+    "down_refusal": "candidate rows with actor 2147483648, a 512-character canonical id, a 100-character semantic version and a year-0000 timestamp make down fail closed; candidate, source and the empty restore schema are unchanged",
+    "down": "a safe aggregate copies into the empty DDL 140 restore schema in one transaction; restore manifest equals the source manifest; candidate and source unchanged; identical re-run is a no-op",
+    "reproducibility": "uses the same cached mysql:8.4 image ID, a new container/volume, and the exact three-schema allowlist; no application migration is registered"
+  },
+  "fixture": {
+    "scope": "the already-authorized disposable non-production fixture only",
+    "container": "max237-t2b-15coder1-20261027",
+    "container_id": "e5e762eaf458a832aac3882c9f450bcf1101b880f900f6daa502193545838fa9",
+    "image": "mysql:8.4 (sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d)",
+    "version": "8.4.10",
+    "schemas": ["max237_t2b_d1", "max237_t2b", "max237_t2b_restore"],
+    "labels": { "max237.owner": "15coder1-t2b", "max237.phase": "T2B-20261027" },
+    "loopback_port": 64065,
+    "volume": "max237-t2b-15coder1-20261027-data",
+    "user_rights": "DML only (SELECT/INSERT/UPDATE/DELETE) on the three schemas; random credentials in a 0600 private file, never written to the repository or evidence",
+    "stale_object_check": "no container, volume or state directory with these selectors existed before creation"
+  },
+  "cleanup": {
+    "method": "docs/slide/development/MAX-237/t2b/env-clean.sh (fresh ID/label/mount/port verification, then stop + rm -v + volume rm)",
+    "command_exit": 0,
+    "container_absent": true,
+    "volume_absent": true,
+    "credentials_file_deleted": true,
+    "state_dir_absent": true,
+    "background_processes": []
+  },
+  "limits": [
+    "Unmounted internal candidate: no route, process registration, shared pool, application migration, scheduler/collector/notification or product-model call.",
+    "Not a real collection business loop; the synthetic template rows on the disposable fixture are not real SSH/SQL/SNMP evidence.",
+    "No production storage compatibility, no shared-application DDL/migration approval, no pool/route/audit contract; those remain the Chief's next gate.",
+    "No public contract change, so contracts:check was not rerun; no full-gate expansion.",
+    "PR #390 remains open and unmerged; no CI watch/polling in this package.",
+    "Issue MAX-237 stays in_progress until the Chief's exact review of T2B."
+  ],
+  "generated_at": "2026-10-27"
+}

@@ -1,0 +1,100 @@
+{
+  "task": "MAX237-T2B-DRILL-TX-GUARD",
+  "base": "0098555a7dfdf2e483892e0b37945a5e17926e26",
+  "code_commit": "24ad7ec82",
+  "branch": "agent/15coder1/max-237",
+  "allowed_surface": [
+    "docs/slide/development/MAX-237/t2b/migrate.ts",
+    "docs/slide/development/MAX-237/t2b/drill.ts",
+    "docs/slide/development/MAX-237/t2b/README.md",
+    "docs/slide/development/MAX-237/t2b/tx-guard-20261027.md",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-drill.json"
+  ],
+  "ddl": {
+    "original_140_sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
+    "candidate_sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323"
+  },
+  "product_diff_since_base": "",
+  "checks": [
+    {
+      "command": "npx tsx t2b/drill.ts --out t2b/evidence/t2b-drill.json (cwd apps/db-ops-api)",
+      "runs": 2,
+      "fresh_fixtures": 2,
+      "result": "30/30 PASS",
+      "exit": 0,
+      "evidence": "evidence/t2b-drill.json"
+    },
+    {
+      "command": "npx oxlint docs/slide/development/MAX-237/t2b (repo root)",
+      "result": "0 warnings / 0 errors, 2 files",
+      "exit": 0,
+      "evidence": "evidence/t2b-tx-guard-oxlint.txt"
+    },
+    {
+      "command": "tsc -p <strict noEmit config> for t2b/migrate.ts + t2b/drill.ts",
+      "result": "exit 0, no diagnostics",
+      "exit": 0,
+      "evidence": "evidence/t2b-tx-guard-typecheck.txt"
+    },
+    {
+      "command": "git diff 0098555a7..HEAD -- apps packages frontend",
+      "result": "empty (no product change)",
+      "exit": 0
+    }
+  ],
+  "reused_accepted_evidence": {
+    "focused_tests": "83/83 passed at accepted HEAD (product files unchanged)",
+    "metrics_without_db": "503 passed / 143 skipped (product files unchanged)",
+    "api_typecheck": "exit 0 (product files unchanged)"
+  },
+  "fixture": {
+    "container_name": "max237-t2b-15coder1-20261027",
+    "container_id": "f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36",
+    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+    "volume": "max237-t2b-15coder1-20261027-data",
+    "port": 50211,
+    "schemas": [
+      "max237_t2b_d1",
+      "max237_t2b",
+      "max237_t2b_restore"
+    ],
+    "server": {
+      "version": "8.4.10",
+      "hostname": "f7604b63ac7d"
+    }
+  },
+  "mock_vs_real": {
+    "synthetic_only": [
+      "frozen-structure comparator mutation matrix (step 6)"
+    ],
+    "fault_wrapper_transaction_boundaries": "steps 11-17 and 26-27 inject begin/rollback/commit faults; all outcome data read by an independent pool",
+    "real_mysql_ddl_drift": "steps 8, 10, 25 on this run's own fixture; frozen DDL files unchanged"
+  },
+  "base_failures_reused": {
+    "source": "5767be919:docs/slide/development/MAX-237/reviews/t2b/migration-probes.json",
+    "result": "up and down both FAIL with releases=1, destroys=0 and 2 externally visible parent rows at base 0098555a7"
+  },
+  "cleanup": {
+    "clean": true,
+    "evidence": "evidence/t2b-tx-guard-cleanup.json"
+  },
+  "file_sha256": {
+    "docs/slide/development/MAX-237/t2b/migrate.ts": "ec5129faf4482c4ba6f45b2a4f89190c17a32438d3310d17333073a813ecc089",
+    "docs/slide/development/MAX-237/t2b/drill.ts": "99135d7a96ef6d5c104ca6f943a77be2d10251ac6fecdd73a71fd0a64cc77ce2",
+    "docs/slide/development/MAX-237/t2b/README.md": "a6a17477542cbbc80ce5e9d38273c4cd5b40fd35689edac534ed9f7b240be43c",
+    "docs/slide/development/MAX-237/t2b/tx-guard-20261027.md": "304e7ffc418688e12fdecab6d8d521c559fd9c0bd195071b364e823134943a99",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-drill.json": "f9ef3b5e051abd3bebe996365a1243e608ac3b02b3478297d165221e7001abdd",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-allowlist.patch": "a50413f214876aa52241bde25b5e7699a7ca4225ca6fadac868239c5039cd1aa",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-fresh-check.txt": "7a016abc23defbd29159759fd8fd62a65850611831405e47062d38cbdf244a6d",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-fixture-live.json": "e8f340d1084c5c352cd1f2071712e9e70dfe5ac7c335b7293b43cbb70b21eda1",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-handle-public.json": "937ec1142239f2ca61238fd108782d33a20f908384357e54a9c60f967832a7f6",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-facts.json": "00d0fdba25d2ce9374a8492c3ad737ed4e2e628303d22d18ed1cf0ad1730e531",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-state-perms.txt": "cc05770e440c29d9fd0624e71e05ed74b47cc0ef0452936e395a689556ec98c4",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-start.txt": "0b09a18c4ef96386f002959cd3fb1a2f873e220f62308ce71a283c60113c2d39",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-restart.txt": "b30ead5bd4d66ce2cbac6409c6166f2386c4a9371158eed6ce68e1b99a96c915",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-clean.txt": "e98033da5d4bf164db32c524e1a21b6d46b931b6c7f46dc3a6d248312ee124b5",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-cleanup.json": "91c1ab878b1f82a05e4993fe1e202f9611d8ca208a0b233aaaf0aa9f2962ffad",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-oxlint.txt": "67a22b96d90ee7523f36d88566ea85611b12201b131cd5f40c9cabab4ccfa916",
+    "docs/slide/development/MAX-237/t2b/evidence/t2b-tx-guard-typecheck.txt": "997edebdabcf3398bce4b102a03fe43a41339cdca808ddebc5b90a116c7435f4"
+  }
+}

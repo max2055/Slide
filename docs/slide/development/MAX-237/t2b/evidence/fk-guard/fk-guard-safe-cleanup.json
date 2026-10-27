@@ -1,0 +1,6 @@
+# fresh absence after safe fixture cleanup (e0d5558005cdebab1733ff544f84724b3177bdb0b55b2ffa1c4c9fd2c0c64cfc)
+containers by owner label: 
+volumes by owner label: 
+recorded container: absent
+recorded volume: absent
+state dir: absent

@@ -1,0 +1,2594 @@
+diff --git a/docs/slide/development/MAX-237/t2b/README.md b/docs/slide/development/MAX-237/t2b/README.md
+index 53c00f08e..83a050cf0 100644
+--- a/docs/slide/development/MAX-237/t2b/README.md
++++ b/docs/slide/development/MAX-237/t2b/README.md
+@@ -12,7 +12,9 @@ LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间）
+ **reject 14/14 + safe 27/27** 演练步骤、`tsc` 0、`oxlint` 0/0 通过。T2B-DRILL-TX-GUARD 有界补修（未知事务
+ 终态 discard、commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-20261027.md](tx-guard-20261027.md)；
+ T2B-FK-GUARD 有界补修（外键引用 schema 与 ON UPDATE/ON DELETE 规则、拒绝场景与安全 roundtrip 分属两具
+-fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；**没有**接应用库、没有公共契约变更、
++fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；T2B-DDL-ERROR-GUARD 有界补修（root DDL
++子进程失败只暴露受控 exit code，不回显 `MYSQL_PWD`/argv/子进程 stderr）见
++[ddl-error-guard-20261027.md](ddl-error-guard-20261027.md)；**没有**接应用库、没有公共契约变更、
+ 没有应用 migration、没有真实采集闭环，整单保持 `in_progress`。
+ 
+ ## 1. base / 提交 / 允许面
+@@ -121,6 +123,8 @@ fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；**没有**接
+ | `tsc --noEmit`（仅 `t2b/migrate.ts`、`t2b/drill.ts`，严格模式，FK-GUARD） | exit 0（[evidence/fk-guard/fk-guard-typecheck.txt](evidence/fk-guard/fk-guard-typecheck.txt)） |
+ | `tsx t2b/drill.ts --scenario reject --out t2b/evidence/fk-guard/fk-guard-reject.json` | **14/14 PASS**，exit 0（[evidence/fk-guard/fk-guard-reject.json](evidence/fk-guard/fk-guard-reject.json)） |
+ | `tsx t2b/drill.ts --scenario safe --out t2b/evidence/fk-guard/fk-guard-safe.json` | **27/27 PASS**，exit 0（[evidence/fk-guard/fk-guard-safe.json](evidence/fk-guard/fk-guard-safe.json)） |
++| `tsx t2b/ddl-error-guard.test.ts`（假 `docker`，无数据库；DDL-ERROR-GUARD） | **4/4 PASS**，exit 0（[evidence/ddl-error-guard/focused-test.txt](evidence/ddl-error-guard/focused-test.txt)） |
++| `python3 -I chief-secret-probe.py <repo> <out>`（fresh 独占 fixture，DDL-ERROR-GUARD） | exit 1、stdout/stderr/`--out` 均无哨兵（[evidence/ddl-error-guard/secret-probe.json](evidence/ddl-error-guard/secret-probe.json)） |
+ 
+ 真实 MySQL 正例：actor `2147483648`、`9007199254740991`、NULL 两种驱动形态读回；canonical 512 字符与
+ semver 100 字符；同 128/16 前缀不同后缀的完整值不混同（同 item 改后缀仍是
+diff --git a/docs/slide/development/MAX-237/t2b/ddl-error-guard-20261027.md b/docs/slide/development/MAX-237/t2b/ddl-error-guard-20261027.md
+new file mode 100644
+index 000000000..f517a6419
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/ddl-error-guard-20261027.md
+@@ -0,0 +1,102 @@
++# MAX237-T2B-DDL-ERROR-GUARD 有界补修交付
++
++本文件只记录 `t2b/drill.ts` 的 root DDL 子进程错误边界补修，依据
++`44063e91f:docs/slide/development/MAX-237/reviews/fk-guard/t2b-ddl-error-guard-instruction-20261027.md`
++与同提交的 `chief-fk-guard-review-20261027.md`、`synthetic-secret-probe.json`、`chief-secret-probe.py`。
++已接受的 T1、T2A+TX-CLEANUP、T2B 存储表示、R1 事务处置与 F1/F2 外键预检结论不重做；`migrate.ts`、产品
++adapter 及其两测试、冻结 DDL、公共契约、应用 migration、共享 pool、runtime/frontend 全部只读。
++
++## 1. 精确对象
++
++| 项 | 值 |
++|---|---|
++| base | `99b9eb0ba392effed2c3df3e149656d7dc276990`（F1/F2 接受点） |
++| code commit | `c38c68485`（`drill.ts`、`ddl-error-guard.test.ts`） |
++| docs commit | 本文件、README 与 `evidence/ddl-error-guard/**` 所在提交 |
++| 分支 | `agent/15coder1/max-237`（仅追加，保留起点与 PR #390，未合并、未改历史） |
++| 修改 | `t2b/drill.ts`：仅 `mysqlRootDdl` 的子进程失败处置（并导出该函数供专属测试调用） |
++| 新增 | `t2b/ddl-error-guard.test.ts`、`t2b/evidence/ddl-error-guard/**` |
++| 未改 | `t2b/migrate.ts`、`env-start.sh`、`env-clean.sh`、候选 DDL、原 140、产品源码/测试 |
++
++`git diff 99b9eb0ba..HEAD -- apps packages frontend` 与工作树产品 diff 均为空
++（[evidence/ddl-error-guard/scope.txt](evidence/ddl-error-guard/scope.txt)），`migrate.ts` 与两具 DDL 在
++base/HEAD 逐字节相同，因此 83 focused / 503 passed-143 skipped metrics / API typecheck 0 的已接受证据继续有效，
++未机械重跑；F1/F2、R1、safe 27/27 与 FK 六入口 DML 0 / 三 manifest 不变亦复用（见 §5）。
++
++## 2. E1：root DDL 子进程失败回显私有 argv
++
++原 `mysqlRootDdl` 直接 `execFileSync('docker', ['exec','-e','MYSQL_PWD=<root>', ...])`，失败时未捕获；
++顶层 catch 把原始 `error.message` 写进 stderr 与 `--out` JSON，而 Node 的子进程错误 message 含完整 argv，
++因此真实 root 口令会回显。补修只在这一边界：
++
++- `execFileSync` 包在 `try/catch` 中；捕获后**不读** `error.message/stack/stderr/stdout/argv`，只取安全的
++  `status` 数字。
++- 抛出受控 `DrillError('root-ddl-failed', …)`：`message` 为
++  `the root DDL subprocess failed with exit code 1 in this fixture`（或无法启动时的固定文案），
++  `detail = { exit_code: 1 }`（无法启动时为 `null`）。
++- 不打日志、不写文件、不含 `cause`；正常 SQL/FK/事务语义与成功路径 argv 未变。
++
++## 3. 专属最小回归（`ddl-error-guard.test.ts`）
++
++用放在 PATH 首位的假 `docker` 驱动真实 `mysqlRootDdl`，不连接任何数据库/容器，4/4 PASS
++（[evidence/ddl-error-guard/focused-test.txt](evidence/ddl-error-guard/focused-test.txt)）：
++
++| 检查 | 断言 |
++|---|---|
++| 成功子进程不变 | docker argv 逐项等于 `exec -e MYSQL_PWD=<pw> -i <cid> mysql -uroot -N -e <sql>`，无输出、不抛错 |
++| 认证失败 | 抛出受控 `DrillError`（`root-ddl-failed`、`exit code 1`、`{exit_code:1}`）；哨兵不出现在 message/stack/自有属性/`cause`/序列化 error/CLI 会写的两类记录中；调用期间 stdout/stderr 零写入 |
++| 子进程无法启动 | 受控 reason 与固定文案，`exit_code:null`，无哨兵 |
++| 独立进程 | 真实子进程 exit=1，stdout/stderr 均无哨兵，记录 reason 仍为 `root-ddl-failed` |
++
++## 4. 真实 CLI 失败回归（fresh 独占 fixture）
++
++先 fresh 核旧对象：同 name 容器/卷不存在、无 `max237.owner=15coder1-t2b` 容器或卷、无创建记录
++（[fresh-absence.json](evidence/ddl-error-guard/fresh-absence.json)）。随后自建唯一 fixture
++`max237-t2b-15coder1-20261027`（container `1bd969bef470…`，缓存 MySQL8.4.10 镜像
++`sha256:c592c15a…1f8d`，专属卷 `max237-t2b-15coder1-20261027-data`，loopback `55467`，三 schema
++`max237_t2b_d1/max237_t2b/max237_t2b_restore`，state `0700`/handle/credentials `0600`；
++[fixture.json](evidence/ddl-error-guard/fixture.json)）。
++
++直接复用 Chief 的 `chief-secret-probe.py`（`44063e91f` 版本，sha256 `eff8bb2e…dca7`，不传 `--expect-leak`）：
++只把该 fixture 的 root 口令临时换为已知非秘密哨兵 `CHIEF_SYNTHETIC_NON_SECRET_ROOT_SENTINEL`，app 口令保持有效，
++首个 root DDL 真实认证失败：
++
++- `exit=1`，`marker_in_stdout=false`，`marker_in_stderr=false`，`marker_in_out_file=false`，`output_exists=true`
++  （[secret-probe.json](evidence/ddl-error-guard/secret-probe.json)）。
++- 同一操作保留的 CLI 记录显示外部可见的只有受控失败
++  `root-ddl-failed / the root DDL subprocess failed with exit code 1 in this fixture / {"exit_code":1}`，
++  前 7 步已完成的受控步骤与（修改前会泄漏的）argv/stderr 无关
++  （[cli-failure-record.json](evidence/ddl-error-guard/cli-failure-record.json)）。
++- `finally` 恢复原私有文件；恢复后 root 认证成功，fixture 仍为空。
++
++恢复原凭据后，在同一仍 fresh 的 fixture 执行真实 reject 场景：**14/14 PASS**，exit 0，stderr 为空；
++第 14 步仍为“合法超界行被 down 拒绝、三 schema 不变且行保留”，超界数据与三库 manifest 留在证据中
++（[reject.json](evidence/ddl-error-guard/reject.json)）。safe 27/27 的相关逻辑（`up`/`down`/manifest/回退校验）
++本次未改，未重建第二具 fixture。
++
++## 5. 复用与未重做
++
++| 已接受证据 | 复用依据 |
++|---|---|
++| F1 外键引用 schema/规则预检、F2 reject/safe 独立场景 | `99b9eb0ba` 接受；本轮未改 `migrate.ts`/场景 |
++| R1 事务清理真实反例、只读重查 | `6dcb16651` 接受；`drill.ts` 仅改 root DDL 错误处置 |
++| safe 27/27、FK 六入口业务 DML 0、三 manifest 不变 | 相关实现与场景未改 |
++| 83 focused（含 22 真实 DB）、503 metrics/143 skipped、API typecheck 0 | `apps`/`packages`/`frontend` diff 为空 |
++
++严格 TypeScript（`migrate.ts`、`drill.ts`、`ddl-error-guard.test.ts`）exit 0
++（[typecheck.txt](evidence/ddl-error-guard/typecheck.txt)），oxlint 3 files 0/0
++（[oxlint.txt](evidence/ddl-error-guard/oxlint.txt)）。
++
++## 6. 清理
++
++`env-clean.sh` 按 handle 的精确 ID 停止并删除容器、删除专属卷，随后 fresh 核验：按 ID 无容器、按名无卷、
++owner label 下无容器/卷，`.max237-t2b` 目录与 handle/credentials 均已删除
++（[cleanup.json](evidence/ddl-error-guard/cleanup.json)）。未读平台 `.env`，未使用 236 旧句柄、共享库、
++未知或生产资源，未做部署/权限/负载，未派发子代理或产品模型调用，未创建回调。
++
++## 7. 边界
++
++这是受控独占 fixture 上的错误边界补修，不等于真实业务/容量/SLO 或生产存储兼容；MySQL DDL 非事务，
++不声称 ALTER 可事务回滚。T2B 仍只是未挂载存储候选；共享应用接线、目标对象与权限、逐列兼容、停写/切换/回退、
++pool 生命周期与 route 决定仍由 Chief 协调存储/运维。MAX237 整项保持 `in_progress`，原六项/五项、A01–A22、
++四标准/D05/O02/O03 与人工读屏排除均未改变。
+diff --git a/docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts b/docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts
+new file mode 100644
+index 000000000..7169409ae
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts
+@@ -0,0 +1,209 @@
++/**
++ * MAX-237 / T2B-DDL-ERROR-GUARD — dedicated minimal regression for the root
++ * DDL subprocess boundary in `drill.ts`.
++ *
++ * It drives the real `mysqlRootDdl` against a fake `docker` executable placed
++ * first on PATH, so no database and no real container are involved:
++ *
++ *   - success: the docker argv is unchanged and the call returns
++ *   - auth failure: the raw child-process error (whose message embeds the whole
++ *     docker argv, including MYSQL_PWD, plus the captured stderr) never reaches
++ *     the caller, a log stream or a serialized evidence record; the failure is
++ *     still signalled as a controlled non-zero failure
++ *   - spawn failure: a controlled failure is reported as well
++ *
++ * The same scenario is re-run end to end through the real CLI on a fresh
++ * exclusive fixture by `chief-secret-probe.py`; this file is the repeatable
++ * committed check of the boundary itself.
++ *
++ *   npx tsx docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts
++ */
++import assert from 'node:assert/strict';
++import { spawnSync } from 'node:child_process';
++import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { dirname, join, resolve } from 'node:path';
++import { fileURLToPath, pathToFileURL } from 'node:url';
++import { mysqlRootDdl } from './drill.js';
++import { DrillError } from './migrate.js';
++
++const HERE = dirname(fileURLToPath(import.meta.url));
++const ROOT = resolve(HERE, '../../../../..');
++const APP_DIR = join(ROOT, 'apps/db-ops-api');
++const TSX = join(APP_DIR, 'node_modules/.bin/tsx');
++const DRILL = join(HERE, 'drill.ts');
++
++/** Known non-secret stand-in for the root password. */
++const MARKER = 'DDL_GUARD_SYNTHETIC_NON_SECRET_ROOT_SENTINEL';
++const CONTAINER_ID = 'f'.repeat(64);
++const SQL = 'ALTER TABLE `max237_t2b`.`metric_templates_v2` ADD COLUMN `probe` INT';
++
++const cfg = { handle: { container_id: CONTAINER_ID } } as unknown as Parameters<typeof mysqlRootDdl>[0];
++
++const checks: string[] = [];
++function pass(check: string): void {
++  checks.push(check);
++}
++
++/** Every string reachable from an error through its own properties. */
++function errorSurface(error: unknown): string {
++  const parts: string[] = [];
++  const seen = new Set<object>();
++  const visit = (value: unknown, depth: number): void => {
++    if (depth > 6 || value === null || value === undefined) return;
++    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
++      parts.push(String(value));
++      return;
++    }
++    if (typeof value !== 'object' || seen.has(value)) return;
++    seen.add(value);
++    for (const key of Reflect.ownKeys(value)) {
++      parts.push(String(key));
++      const descriptor = Object.getOwnPropertyDescriptor(value, key);
++      if (descriptor && 'value' in descriptor) visit(descriptor.value, depth + 1);
++    }
++  };
++  visit(error, 0);
++  return parts.join('\n');
++}
++
++interface StreamCapture { text: string }
++function captureStreams(run: () => void): StreamCapture {
++  const capture: StreamCapture = { text: '' };
++  const stdoutWrite = process.stdout.write;
++  const stderrWrite = process.stderr.write;
++  const sink = (chunk: unknown): boolean => {
++    capture.text += String(chunk);
++    return true;
++  };
++  (process.stdout as unknown as { write: unknown }).write = sink;
++  (process.stderr as unknown as { write: unknown }).write = sink;
++  try {
++    run();
++  } finally {
++    (process.stdout as unknown as { write: unknown }).write = stdoutWrite;
++    (process.stderr as unknown as { write: unknown }).write = stderrWrite;
++  }
++  return capture;
++}
++
++function failureOf(run: () => void): unknown {
++  try {
++    run();
++  } catch (error) {
++    return error;
++  }
++  throw new Error('expected the root DDL call to fail, but it returned');
++}
++
++const workdir = mkdtempSync(join(tmpdir(), 'max237-ddl-guard-'));
++const binDir = join(workdir, 'bin');
++const argsFile = join(workdir, 'docker-args.txt');
++const emptyPathDir = join(workdir, 'empty');
++const realPath = process.env.PATH ?? '';
++const savedEnv = {
++  PATH: process.env.PATH,
++  MAX237_FAKE_DOCKER_MODE: process.env.MAX237_FAKE_DOCKER_MODE,
++  MAX237_FAKE_DOCKER_ARGS: process.env.MAX237_FAKE_DOCKER_ARGS,
++};
++
++try {
++  mkdirSync(binDir, { recursive: true, mode: 0o755 });
++  mkdirSync(emptyPathDir, { recursive: true, mode: 0o755 });
++  const fakeDocker = join(binDir, 'docker');
++  writeFileSync(fakeDocker, [
++    '#!/bin/sh',
++    '# Records the exact argv, then succeeds or fails as instructed.',
++    'printf \'%s\\n\' "$@" > "$MAX237_FAKE_DOCKER_ARGS"',
++    'if [ "${MAX237_FAKE_DOCKER_MODE:-fail}" = "ok" ]; then exit 0; fi',
++    'echo "ERROR 1045 (28000): Access denied for user \'root\'@\'localhost\' (using password: YES)" >&2',
++    'exit 1',
++    '',
++  ].join('\n'), { mode: 0o755 });
++
++  process.env.PATH = `${binDir}:${realPath}`;
++  process.env.MAX237_FAKE_DOCKER_ARGS = argsFile;
++
++  // ---------------------------------------------------------- success unchanged
++  process.env.MAX237_FAKE_DOCKER_MODE = 'ok';
++  const okCapture = captureStreams(() => mysqlRootDdl(cfg, MARKER, SQL));
++  assert.equal(okCapture.text, '', 'a successful DDL subprocess must not write to stdout/stderr');
++  const argv = readFileSync(argsFile, 'utf8').split('\n').filter(line => line !== '');
++  assert.deepEqual(argv, [
++    'exec', '-e', `MYSQL_PWD=${MARKER}`, '-i', CONTAINER_ID, 'mysql', '-uroot', '-N', '-e', SQL,
++  ], 'the successful docker invocation must be unchanged');
++  pass('success: docker argv unchanged, no output, no failure');
++
++  // -------------------------------------------------- auth failure stays private
++  process.env.MAX237_FAKE_DOCKER_MODE = 'fail';
++  let caught: unknown = null;
++  const failCapture = captureStreams(() => { caught = failureOf(() => mysqlRootDdl(cfg, MARKER, SQL)); });
++  assert.equal(failCapture.text, '', 'the converted failure must not write the raw error to a stream');
++  assert.ok(caught instanceof DrillError, 'the boundary must report a controlled DrillError');
++  const failure = caught as DrillError;
++  assert.equal(failure.reason, 'root-ddl-failed');
++  assert.match(failure.message, /exit code 1/);
++  assert.deepEqual(failure.detail, { exit_code: 1 });
++  assert.ok(!errorSurface(failure).includes(MARKER), 'the credential must not reach the caller or its stack');
++  assert.ok(!JSON.stringify(failure).includes(MARKER), 'the credential must not reach a serialized error');
++  assert.equal((failure as { cause?: unknown }).cause, undefined);
++  // The same records the CLI writes to stderr/--out for a DrillError and for a
++  // plain error must stay marker-free.
++  const drillRecords = [
++    JSON.stringify({ reason: failure.reason, message: failure.message, detail: failure.detail }),
++    JSON.stringify({ reason: 'error', message: String(failure.message) }),
++  ];
++  assert.ok(drillRecords.every(record => !record.includes(MARKER)),
++    'the credential must not reach an evidence record');
++  pass('auth failure: controlled reason/exit code, no marker in caller/stack/streams/record');
++
++  // ------------------------------------------------------ spawn failure controlled
++  process.env.PATH = emptyPathDir;
++  const spawnFailure = failureOf(() => mysqlRootDdl(cfg, MARKER, SQL)) as DrillError;
++  assert.equal(spawnFailure.reason, 'root-ddl-failed');
++  assert.match(spawnFailure.message, /could not be started/);
++  assert.deepEqual(spawnFailure.detail, { exit_code: null });
++  assert.ok(!errorSurface(spawnFailure).includes(MARKER));
++  pass('spawn failure: controlled reason, no marker');
++  process.env.PATH = `${binDir}:${realPath}`;
++
++  // -------------------------------------- a separate process still exits non-zero
++  const harness = join(workdir, 'harness.mts');
++  writeFileSync(harness, [
++    `const { mysqlRootDdl } = await import(${JSON.stringify(pathToFileURL(DRILL).href)});`,
++    'const [marker, containerId] = process.argv.slice(2);',
++    'try {',
++    '  mysqlRootDdl({ handle: { container_id: containerId } } as never, marker, "SELECT 1");',
++    '  process.stdout.write(JSON.stringify({ result: "unexpected-success" }) + "\\n");',
++    '} catch (error) {',
++    '  const failure = error as { reason?: string; message?: string; detail?: unknown };',
++    '  process.stdout.write(JSON.stringify({',
++    '    reason: failure.reason, message: failure.message, detail: failure.detail,',
++    '  }) + "\\n");',
++    '  process.exitCode = 1;',
++    '}',
++    '',
++  ].join('\n'));
++  process.env.MAX237_FAKE_DOCKER_MODE = 'fail';
++  const child = spawnSync(TSX, [harness, MARKER, CONTAINER_ID], {
++    env: { ...process.env, MAX237_FAKE_DOCKER_ARGS: argsFile },
++    encoding: 'utf8',
++  });
++  assert.equal(child.status, 1, `child stderr: ${child.stderr}`);
++  assert.equal(child.stdout.includes(MARKER), false, 'marker must not reach the child stdout');
++  assert.equal(child.stderr.includes(MARKER), false, 'marker must not reach the child stderr');
++  const childRecord = JSON.parse(child.stdout.trim()) as { reason?: string; message?: string };
++  assert.equal(childRecord.reason, 'root-ddl-failed');
++  assert.match(String(childRecord.message), /exit code 1/);
++  pass('separate process: exit non-zero, marker absent from stdout and stderr');
++
++  process.stdout.write(`ddl-error-guard: ${checks.length}/${checks.length} PASS\n`);
++  for (const check of checks) process.stdout.write(`  - ${check}\n`);
++} finally {
++  if (savedEnv.PATH === undefined) delete process.env.PATH; else process.env.PATH = savedEnv.PATH;
++  if (savedEnv.MAX237_FAKE_DOCKER_MODE === undefined) delete process.env.MAX237_FAKE_DOCKER_MODE;
++  else process.env.MAX237_FAKE_DOCKER_MODE = savedEnv.MAX237_FAKE_DOCKER_MODE;
++  if (savedEnv.MAX237_FAKE_DOCKER_ARGS === undefined) delete process.env.MAX237_FAKE_DOCKER_ARGS;
++  else process.env.MAX237_FAKE_DOCKER_ARGS = savedEnv.MAX237_FAKE_DOCKER_ARGS;
++  rmSync(workdir, { recursive: true, force: true });
++}
+diff --git a/docs/slide/development/MAX-237/t2b/drill.ts b/docs/slide/development/MAX-237/t2b/drill.ts
+index 512ad7dc3..21dccdc9b 100644
+--- a/docs/slide/development/MAX-237/t2b/drill.ts
++++ b/docs/slide/development/MAX-237/t2b/drill.ts
+@@ -180,13 +180,25 @@ function readRootPassword(cfg: ReturnType<typeof loadConfig>): string {
+ }
+ 
+ /** Root is used only for drift-variant DDL inside this run's own fixture. */
+-function mysqlRootDdl(
++export function mysqlRootDdl(
+   cfg: ReturnType<typeof loadConfig>, rootPassword: string, sql: string,
+ ): void {
+-  execFileSync('docker', [
+-    'exec', '-e', `MYSQL_PWD=${rootPassword}`, '-i', cfg.handle.container_id,
+-    'mysql', '-uroot', '-N', '-e', sql,
+-  ], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
++  try {
++    execFileSync('docker', [
++      'exec', '-e', `MYSQL_PWD=${rootPassword}`, '-i', cfg.handle.container_id,
++      'mysql', '-uroot', '-N', '-e', sql,
++    ], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
++  } catch (error) {
++    // The raw child-process error embeds the whole docker argv (including
++    // MYSQL_PWD) and the captured stderr. Report only a controlled failure.
++    const status = (error as { status?: unknown }).status;
++    const exitCode = typeof status === 'number' ? status : null;
++    throw new DrillError('root-ddl-failed',
++      exitCode === null
++        ? 'the root DDL subprocess could not be started in this fixture'
++        : `the root DDL subprocess failed with exit code ${exitCode} in this fixture`,
++      { exit_code: exitCode });
++  }
+ }
+ 
+ /** Runs the real CLI in a fresh process so "plan opens no connection" is meaningful. */
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cleanup.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cleanup.json
+new file mode 100644
+index 000000000..d4cf6cace
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cleanup.json
+@@ -0,0 +1,65 @@
++{
++  "task": "MAX237-T2B-DDL-ERROR-GUARD",
++  "removed_container_id": "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
++  "removed_volume": "max237-t2b-15coder1-20261027-data",
++  "container_by_id": {
++    "cmd": [
++      "docker",
++      "ps",
++      "-a",
++      "--filter",
++      "id=1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
++      "--format",
++      "{{.ID}} {{.Names}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "volume_by_name": {
++    "cmd": [
++      "docker",
++      "volume",
++      "ls",
++      "--filter",
++      "name=^max237-t2b-15coder1-20261027-data$",
++      "--format",
++      "{{.Name}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "owned_containers": {
++    "cmd": [
++      "docker",
++      "ps",
++      "-a",
++      "--filter",
++      "label=max237.owner=15coder1-t2b",
++      "--format",
++      "{{.ID}} {{.Names}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "owned_volumes": {
++    "cmd": [
++      "docker",
++      "volume",
++      "ls",
++      "--filter",
++      "label=max237.owner=15coder1-t2b",
++      "--format",
++      "{{.Name}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "state_dir_present": false,
++  "credentials_present": false,
++  "handle_present": false,
++  "conclusion": "exact recorded container and volume removed; private handle/credentials gone; no owned residue"
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cli-failure-record.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cli-failure-record.json
+new file mode 100644
+index 000000000..c7cd07f2c
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/cli-failure-record.json
+@@ -0,0 +1,21 @@
++{
++  "exit": 1,
++  "marker_in_stdout": false,
++  "marker_in_stderr": false,
++  "marker_in_record": false,
++  "boundary_reason": "root-ddl-failed",
++  "boundary_message": "the root DDL subprocess failed with exit code 1 in this fixture",
++  "boundary_detail": {
++    "exit_code": 1
++  },
++  "steps_completed": [
++    "plan runs in a fresh process with connections forbidden",
++    "execute refuses to connect while connections are forbidden",
++    "unknown handle / wrong schema allowlist is refused with zero writes",
++    "live fixture proven on two independent connections",
++    "fixture starts empty in all three schemas",
++    "frozen-structure comparator rejects every drift class (synthetic snapshots)",
++    "seed write entry rejects a connection that is not the recorded fixture"
++  ],
++  "scope": "root NONSECRET marker only; app credential unchanged; private file restored"
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fixture.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fixture.json
+new file mode 100644
+index 000000000..16d8af75e
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fixture.json
+@@ -0,0 +1,84 @@
++{
++  "task": "MAX237-T2B-DDL-ERROR-GUARD",
++  "container_name": "max237-t2b-15coder1-20261027",
++  "container_id": "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
++  "image": "mysql:8.4",
++  "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
++  "volume": "max237-t2b-15coder1-20261027-data",
++  "port": {
++    "cmd": [
++      "docker",
++      "port",
++      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
++      "3306/tcp"
++    ],
++    "exit": 0,
++    "stdout": "127.0.0.1:55467",
++    "stderr": ""
++  },
++  "schemas": [
++    "max237_t2b_d1",
++    "max237_t2b",
++    "max237_t2b_restore"
++  ],
++  "app_user": "max237_t2b_app",
++  "container_labels": {
++    "cmd": [
++      "docker",
++      "inspect",
++      "--type",
++      "container",
++      "--format",
++      "{{json .Config.Labels}}",
++      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
++    ],
++    "exit": 0,
++    "stdout": "{\"max237.owner\":\"15coder1-t2b\",\"max237.phase\":\"T2B-20261027\"}",
++    "stderr": ""
++  },
++  "owned_labels": {
++    "cmd": [
++      "docker",
++      "inspect",
++      "--type",
++      "container",
++      "--format",
++      "{{index .Config.Labels \"max237.owner\"}}|{{index .Config.Labels \"max237.phase\"}}",
++      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
++    ],
++    "exit": 0,
++    "stdout": "15coder1-t2b|T2B-20261027",
++    "stderr": ""
++  },
++  "mounts": {
++    "cmd": [
++      "docker",
++      "inspect",
++      "--type",
++      "container",
++      "--format",
++      "{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}};{{end}}",
++      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
++    ],
++    "exit": 0,
++    "stdout": "volume|max237-t2b-15coder1-20261027-data|/var/lib/mysql;",
++    "stderr": ""
++  },
++  "volume_labels": {
++    "cmd": [
++      "docker",
++      "volume",
++      "inspect",
++      "--format",
++      "{{index .Labels \"max237.owner\"}}|{{index .Labels \"max237.phase\"}}",
++      "max237-t2b-15coder1-20261027-data"
++    ],
++    "exit": 0,
++    "stdout": "15coder1-t2b|T2B-20261027",
++    "stderr": ""
++  },
++  "state_dir_mode": "0o700",
++  "handle_mode": "0o600",
++  "credentials_mode": "0o600",
++  "image_matches_admitted": true
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/focused-test.txt b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/focused-test.txt
+new file mode 100644
+index 000000000..c10d5e244
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/focused-test.txt
+@@ -0,0 +1,5 @@
++ddl-error-guard: 4/4 PASS
++  - success: docker argv unchanged, no output, no failure
++  - auth failure: controlled reason/exit code, no marker in caller/stack/streams/record
++  - spawn failure: controlled reason, no marker
++  - separate process: exit non-zero, marker absent from stdout and stderr
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fresh-absence.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fresh-absence.json
+new file mode 100644
+index 000000000..ea17a972a
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/fresh-absence.json
+@@ -0,0 +1,70 @@
++{
++  "task": "MAX237-T2B-DDL-ERROR-GUARD",
++  "checked_at": "2026-10-27",
++  "container_inspect": {
++    "cmd": [
++      "docker",
++      "container",
++      "inspect",
++      "max237-t2b-15coder1-20261027"
++    ],
++    "exit": 1,
++    "stdout": "[]",
++    "stderr": "Error response from daemon: No such container: max237-t2b-15coder1-20261027"
++  },
++  "volume_inspect": {
++    "cmd": [
++      "docker",
++      "volume",
++      "inspect",
++      "max237-t2b-15coder1-20261027-data"
++    ],
++    "exit": 1,
++    "stdout": "[]",
++    "stderr": "Error response from daemon: get max237-t2b-15coder1-20261027-data: no such volume"
++  },
++  "owned_containers": {
++    "cmd": [
++      "docker",
++      "ps",
++      "-a",
++      "--filter",
++      "label=max237.owner=15coder1-t2b",
++      "--format",
++      "{{.ID}} {{.Names}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "owned_volumes": {
++    "cmd": [
++      "docker",
++      "volume",
++      "ls",
++      "--filter",
++      "label=max237.owner=15coder1-t2b",
++      "--format",
++      "{{.Name}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "same_name_containers": {
++    "cmd": [
++      "docker",
++      "ps",
++      "-a",
++      "--filter",
++      "name=^/max237-t2b-15coder1-20261027$",
++      "--format",
++      "{{.ID}} {{.Names}}"
++    ],
++    "exit": 0,
++    "stdout": "",
++    "stderr": ""
++  },
++  "state_dir_present": false,
++  "conclusion": "no pre-existing owned or same-named object; no creation record"
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/oxlint.txt b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/oxlint.txt
+new file mode 100644
+index 000000000..32b1b3f74
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/oxlint.txt
+@@ -0,0 +1,2 @@
++Found 0 warnings and 0 errors.
++Finished in 8ms on 3 files with 101 rules using 10 threads.
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/reject.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/reject.json
+new file mode 100644
+index 000000000..c463a61c5
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/reject.json
+@@ -0,0 +1,1878 @@
++{
++  "task": "MAX237-T2B",
++  "scenario": "reject",
++  "generated_at": "2026-10-27T06:07:55.277Z",
++  "fixture": {
++    "container_name": "max237-t2b-15coder1-20261027",
++    "container_id": "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
++    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
++    "volume": "max237-t2b-15coder1-20261027-data",
++    "port": 55467,
++    "schemas": [
++      "max237_t2b_d1",
++      "max237_t2b",
++      "max237_t2b_restore"
++    ],
++    "source_schema": "max237_t2b_d1",
++    "candidate_schema": "max237_t2b",
++    "restore_schema": "max237_t2b_restore"
++  },
++  "ddl": {
++    "original_140_sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
++    "candidate_sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323"
++  },
++  "server": {
++    "version": "8.4.10",
++    "hostname": "1bd969bef470"
++  },
++  "source_manifest": {
++    "schema": "max237_t2b_d1",
++    "kind": "source",
++    "tables": {
++      "metric_templates_v2": [
++        {
++          "template_id": "tpl-legacy-a",
++          "name": "Legacy A",
++          "status": "active",
++          "current_published_version": 2,
++          "revision": 5,
++          "created_by": 2147483647,
++          "created_at": "1000-01-01T00:00:00.000Z",
++          "updated_at": "2026-10-27T12:34:56.789Z"
++        },
++        {
++          "template_id": "tpl-legacy-b",
++          "name": "Legacy B",
++          "status": "draft",
++          "current_published_version": null,
++          "revision": 0,
++          "created_by": null,
++          "created_at": "1000-01-01T00:00:00.000Z",
++          "updated_at": "1000-01-01T00:00:00.000Z"
++        }
++      ],
++      "metric_template_drafts": [
++        {
++          "template_id": "tpl-legacy-a",
++          "revision": 5,
++          "aggregate": {
++            "base": null,
++            "items": [
++              {
++                "item_id": "uptime",
++                "version": 2
++              }
++            ],
++            "triggers": [],
++            "parameters": {
++              "schema": {
++                "interval_ms": {
++                  "min": 1000,
++                  "type": "integer"
++                }
++              },
++              "defaults": {}
++            },
++            "template_id": "tpl-legacy-a",
++            "capabilities": {
++              "graphs": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              },
++              "discovery": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              }
++            }
++          },
++          "published_version": 2,
++          "updated_by": null,
++          "updated_at": "2026-10-27T12:34:56.789Z"
++        },
++        {
++          "template_id": "tpl-legacy-b",
++          "revision": 0,
++          "aggregate": {
++            "base": null,
++            "items": [
++              {
++                "item_id": "uptime",
++                "version": 1
++              }
++            ],
++            "triggers": [],
++            "parameters": {
++              "schema": {
++                "interval_ms": {
++                  "min": 1000,
++                  "type": "integer"
++                }
++              },
++              "defaults": {}
++            },
++            "template_id": "tpl-legacy-b",
++            "capabilities": {
++              "graphs": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              },
++              "discovery": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              }
++            }
++          },
++          "published_version": null,
++          "updated_by": null,
++          "updated_at": "1000-01-01T00:00:00.000Z"
++        }
++      ],
++      "metric_template_items": [
++        {
++          "template_id": "tpl-legacy-a",
++          "item_id": "queries",
++          "status": "active",
++          "created_at": "2026-01-02T03:04:05.006Z"
++        },
++        {
++          "template_id": "tpl-legacy-a",
++          "item_id": "uptime",
++          "status": "active",
++          "created_at": "2026-01-02T03:04:05.006Z"
++        }
++      ],
++      "metric_template_item_versions": [
++        {
++          "template_id": "tpl-legacy-a",
++          "item_id": "queries",
++          "version": 1,
++          "display_name": "Queries",
++          "canonical_metric_id": "mysql.queries.total",
++          "canonical_semantic_version": "1.0.0",
++          "unit": "count",
++          "dimensions": {
++            "": "empty key",
++            "db,host": "comma key"
++          },
++          "collector_ref": {
++            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++            "implementation_id": "builtin:mysql.status.v1"
++          },
++          "params_default": {},
++          "source_chain": {
++            "base": null,
++            "actor_id": 7,
++            "created_at": "2026-01-01T00:00:00.1Z",
++            "request_id": "req-t2b",
++            "retired_at": null,
++            "published_at": "2026-01-01T00:00:00.1Z",
++            "migration_ref": null
++          }
++        },
++        {
++          "template_id": "tpl-legacy-a",
++          "item_id": "uptime",
++          "version": 1,
++          "display_name": "Uptime",
++          "canonical_metric_id": "db.uptime_seconds",
++          "canonical_semantic_version": "1.0.0",
++          "unit": "s",
++          "dimensions": {
++            "主机": "主机标识"
++          },
++          "collector_ref": {
++            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++            "implementation_id": "builtin:mysql.status.v1"
++          },
++          "params_default": {},
++          "source_chain": {
++            "base": null,
++            "actor_id": 7,
++            "created_at": "2026-01-01T00:00:00.1Z",
++            "request_id": "req-t2b",
++            "retired_at": null,
++            "published_at": "2026-01-01T00:00:00.1Z",
++            "migration_ref": null
++          }
++        },
++        {
++          "template_id": "tpl-legacy-a",
++          "item_id": "uptime",
++          "version": 2,
++          "display_name": "Database uptime",
++          "canonical_metric_id": "db.uptime_seconds",
++          "canonical_semantic_version": "1.0.0",
++          "unit": "s",
++          "dimensions": {
++            "主机": "主机标识"
++          },
++          "collector_ref": {
++            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++            "implementation_id": "builtin:mysql.status.v1"
++          },
++          "params_default": {},
++          "source_chain": {
++            "base": {
++              "id": "uptime",
++              "kind": "item",
++              "version": 1,
++              "template_id": "tpl-legacy-a"
++            },
++            "actor_id": 7,
++            "created_at": "2026-01-01T00:00:00.1Z",
++            "request_id": "req-t2b",
++            "retired_at": null,
++            "published_at": "2026-01-01T00:00:00.1Z",
++            "migration_ref": null
++          }
++        }
++      ],
++      "metric_template_versions": [
++        {
++          "template_id": "tpl-legacy-a",
++          "version": 1,
++          "status": "retired",
++          "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
++          "aggregate": {
++            "base": null,
++            "items": [
++              {
++                "item_id": "uptime",
++                "version": 1
++              }
++            ],
++            "triggers": [],
++            "parameters": {
++              "schema": {
++                "interval_ms": {
++                  "min": 1000,
++                  "type": "integer"
++                }
++              },
++              "defaults": {}
++            },
++            "template_id": "tpl-legacy-a",
++            "capabilities": {
++              "graphs": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              },
++              "discovery": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              }
++            },
++            "package_composition": [
++              {
++                "items": [
++                  "uptime"
++                ],
++                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++              }
++            ]
++          },
++          "items": [
++            {
++              "unit": "s",
++              "item_id": "uptime",
++              "version": 1,
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "template_id": "tpl-legacy-a",
++              "display_name": "Uptime",
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "canonical_metric": {
++                "id": "db.uptime_seconds",
++                "semantic_version": "1.0.0"
++              }
++            }
++          ],
++          "package_composition": [
++            {
++              "items": [
++                "uptime"
++              ],
++              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++            }
++          ],
++          "source_chain": {
++            "base": null,
++            "actor_id": 7,
++            "created_at": "2026-01-01T00:00:00.1Z",
++            "request_id": "req-t2b",
++            "retired_at": "2026-02-03T04:05:06.120Z",
++            "published_at": "2026-01-02T03:04:05.006Z",
++            "migration_ref": null
++          },
++          "published_at": "2026-01-02T03:04:05.006Z",
++          "retired_at": "2026-02-03T04:05:06.120Z"
++        },
++        {
++          "template_id": "tpl-legacy-a",
++          "version": 2,
++          "status": "published",
++          "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
++          "aggregate": {
++            "base": null,
++            "items": [
++              {
++                "item_id": "uptime",
++                "version": 2
++              }
++            ],
++            "triggers": [],
++            "parameters": {
++              "schema": {
++                "interval_ms": {
++                  "min": 1000,
++                  "type": "integer"
++                }
++              },
++              "defaults": {}
++            },
++            "template_id": "tpl-legacy-a",
++            "capabilities": {
++              "graphs": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              },
++              "discovery": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              }
++            },
++            "package_composition": [
++              {
++                "items": [
++                  "uptime"
++                ],
++                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++              }
++            ]
++          },
++          "items": [
++            {
++              "unit": "s",
++              "item_id": "uptime",
++              "version": 2,
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "template_id": "tpl-legacy-a",
++              "display_name": "Database uptime",
++              "source_chain": {
++                "base": {
++                  "id": "uptime",
++                  "kind": "item",
++                  "version": 1,
++                  "template_id": "tpl-legacy-a"
++                },
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "canonical_metric": {
++                "id": "db.uptime_seconds",
++                "semantic_version": "1.0.0"
++              }
++            }
++          ],
++          "package_composition": [
++            {
++              "items": [
++                "uptime"
++              ],
++              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++            }
++          ],
++          "source_chain": {
++            "base": null,
++            "actor_id": 7,
++            "created_at": "2026-01-01T00:00:00.1Z",
++            "request_id": "req-t2b",
++            "retired_at": null,
++            "published_at": "2026-10-27T00:00:00.500Z",
++            "migration_ref": null
++          },
++          "published_at": "2026-10-27T00:00:00.500Z",
++          "retired_at": null
++        }
++      ]
++    },
++    "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
++  },
++  "candidate_manifest": {
++    "schema": "max237_t2b",
++    "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
++    "rows": {
++      "metric_templates_v2": 2,
++      "metric_template_drafts": 2,
++      "metric_template_items": 2,
++      "metric_template_item_versions": 3,
++      "metric_template_versions": 2
++    }
++  },
++  "rejection": {
++    "down_reason": "down-irreversible",
++    "problems": [
++      "metric_templates_v2[t2b-edge-a].created_by=2147483648 exceeds INT",
++      "metric_templates_v2[t2b-edge-a].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++      "metric_templates_v2[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++      "metric_template_drafts[t2b-edge-a].updated_by=9007199254740991 exceeds INT",
++      "metric_template_drafts[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++      "metric_template_items[t2b-edge-a/edge].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++      "metric_template_item_versions[t2b-edge-a/edge/1].canonical_metric_id is 512 chars, not VARCHAR(128)",
++      "metric_template_item_versions[t2b-edge-a/edge/1].canonical_semantic_version is 100 chars, not VARCHAR(16)"
++    ],
++    "manifests": {
++      "candidate": {
++        "schema": "max237_t2b",
++        "kind": "candidate",
++        "tables": {
++          "metric_templates_v2": [
++            {
++              "template_id": "t2b-edge-a",
++              "name": "Edge A",
++              "status": "draft",
++              "current_published_version": null,
++              "revision": 0,
++              "created_by": 2147483648,
++              "created_at": "0000-01-01T00:00:00.000Z",
++              "updated_at": "0000-01-01T00:00:00.000Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "name": "Legacy A",
++              "status": "active",
++              "current_published_version": 2,
++              "revision": 5,
++              "created_by": 2147483647,
++              "created_at": "1000-01-01T00:00:00.000Z",
++              "updated_at": "2026-10-27T12:34:56.789Z"
++            },
++            {
++              "template_id": "tpl-legacy-b",
++              "name": "Legacy B",
++              "status": "draft",
++              "current_published_version": null,
++              "revision": 0,
++              "created_by": null,
++              "created_at": "1000-01-01T00:00:00.000Z",
++              "updated_at": "1000-01-01T00:00:00.000Z"
++            }
++          ],
++          "metric_template_drafts": [
++            {
++              "template_id": "t2b-edge-a",
++              "revision": 0,
++              "aggregate": {
++                "base": null,
++                "items": [],
++                "triggers": [],
++                "parameters": {
++                  "schema": {},
++                  "defaults": {}
++                },
++                "template_id": "t2b-edge-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                }
++              },
++              "published_version": null,
++              "updated_by": 9007199254740991,
++              "updated_at": "0000-01-01T00:00:00.000Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "revision": 5,
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 2
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                }
++              },
++              "published_version": 2,
++              "updated_by": null,
++              "updated_at": "2026-10-27T12:34:56.789Z"
++            },
++            {
++              "template_id": "tpl-legacy-b",
++              "revision": 0,
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 1
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-b",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                }
++              },
++              "published_version": null,
++              "updated_by": null,
++              "updated_at": "1000-01-01T00:00:00.000Z"
++            }
++          ],
++          "metric_template_items": [
++            {
++              "template_id": "t2b-edge-a",
++              "item_id": "edge",
++              "status": "active",
++              "created_at": "0000-01-01T00:00:00.000Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "queries",
++              "status": "active",
++              "created_at": "2026-01-02T03:04:05.006Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "status": "active",
++              "created_at": "2026-01-02T03:04:05.006Z"
++            }
++          ],
++          "metric_template_item_versions": [
++            {
++              "template_id": "t2b-edge-a",
++              "item_id": "edge",
++              "version": 1,
++              "display_name": "Edge",
++              "canonical_metric_id": "a.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++              "canonical_semantic_version": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111.0.0",
++              "unit": "s",
++              "dimensions": {},
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": null,
++                "actor_id": 1,
++                "created_at": "0000-01-01T00:00:00.000Z",
++                "request_id": "req-edge",
++                "retired_at": null,
++                "published_at": "0000-01-01T00:00:00.000Z",
++                "migration_ref": null
++              }
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "queries",
++              "version": 1,
++              "display_name": "Queries",
++              "canonical_metric_id": "mysql.queries.total",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "count",
++              "dimensions": {
++                "": "empty key",
++                "db,host": "comma key"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "version": 1,
++              "display_name": "Uptime",
++              "canonical_metric_id": "db.uptime_seconds",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "s",
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "version": 2,
++              "display_name": "Database uptime",
++              "canonical_metric_id": "db.uptime_seconds",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "s",
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": {
++                  "id": "uptime",
++                  "kind": "item",
++                  "version": 1,
++                  "template_id": "tpl-legacy-a"
++                },
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            }
++          ],
++          "metric_template_versions": [
++            {
++              "template_id": "tpl-legacy-a",
++              "version": 1,
++              "status": "retired",
++              "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 1
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                },
++                "package_composition": [
++                  {
++                    "items": [
++                      "uptime"
++                    ],
++                    "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                  }
++                ]
++              },
++              "items": [
++                {
++                  "unit": "s",
++                  "item_id": "uptime",
++                  "version": 1,
++                  "dimensions": {
++                    "主机": "主机标识"
++                  },
++                  "template_id": "tpl-legacy-a",
++                  "display_name": "Uptime",
++                  "source_chain": {
++                    "base": null,
++                    "actor_id": 7,
++                    "created_at": "2026-01-01T00:00:00.1Z",
++                    "request_id": "req-t2b",
++                    "retired_at": null,
++                    "published_at": "2026-01-01T00:00:00.1Z",
++                    "migration_ref": null
++                  },
++                  "collector_ref": {
++                    "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                    "implementation_id": "builtin:mysql.status.v1"
++                  },
++                  "params_default": {},
++                  "canonical_metric": {
++                    "id": "db.uptime_seconds",
++                    "semantic_version": "1.0.0"
++                  }
++                }
++              ],
++              "package_composition": [
++                {
++                  "items": [
++                    "uptime"
++                  ],
++                  "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                }
++              ],
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": "2026-02-03T04:05:06.120Z",
++                "published_at": "2026-01-02T03:04:05.006Z",
++                "migration_ref": null
++              },
++              "published_at": "2026-01-02T03:04:05.006Z",
++              "retired_at": "2026-02-03T04:05:06.120Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "version": 2,
++              "status": "published",
++              "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 2
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                },
++                "package_composition": [
++                  {
++                    "items": [
++                      "uptime"
++                    ],
++                    "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                  }
++                ]
++              },
++              "items": [
++                {
++                  "unit": "s",
++                  "item_id": "uptime",
++                  "version": 2,
++                  "dimensions": {
++                    "主机": "主机标识"
++                  },
++                  "template_id": "tpl-legacy-a",
++                  "display_name": "Database uptime",
++                  "source_chain": {
++                    "base": {
++                      "id": "uptime",
++                      "kind": "item",
++                      "version": 1,
++                      "template_id": "tpl-legacy-a"
++                    },
++                    "actor_id": 7,
++                    "created_at": "2026-01-01T00:00:00.1Z",
++                    "request_id": "req-t2b",
++                    "retired_at": null,
++                    "published_at": "2026-01-01T00:00:00.1Z",
++                    "migration_ref": null
++                  },
++                  "collector_ref": {
++                    "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                    "implementation_id": "builtin:mysql.status.v1"
++                  },
++                  "params_default": {},
++                  "canonical_metric": {
++                    "id": "db.uptime_seconds",
++                    "semantic_version": "1.0.0"
++                  }
++                }
++              ],
++              "package_composition": [
++                {
++                  "items": [
++                    "uptime"
++                  ],
++                  "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                }
++              ],
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-10-27T00:00:00.500Z",
++                "migration_ref": null
++              },
++              "published_at": "2026-10-27T00:00:00.500Z",
++              "retired_at": null
++            }
++          ]
++        },
++        "sha256": "e19328940c72f21074105c2bf10b01faf3e83d4369816130348995e00c000dbd"
++      },
++      "source": {
++        "schema": "max237_t2b_d1",
++        "kind": "source",
++        "tables": {
++          "metric_templates_v2": [
++            {
++              "template_id": "tpl-legacy-a",
++              "name": "Legacy A",
++              "status": "active",
++              "current_published_version": 2,
++              "revision": 5,
++              "created_by": 2147483647,
++              "created_at": "1000-01-01T00:00:00.000Z",
++              "updated_at": "2026-10-27T12:34:56.789Z"
++            },
++            {
++              "template_id": "tpl-legacy-b",
++              "name": "Legacy B",
++              "status": "draft",
++              "current_published_version": null,
++              "revision": 0,
++              "created_by": null,
++              "created_at": "1000-01-01T00:00:00.000Z",
++              "updated_at": "1000-01-01T00:00:00.000Z"
++            }
++          ],
++          "metric_template_drafts": [
++            {
++              "template_id": "tpl-legacy-a",
++              "revision": 5,
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 2
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                }
++              },
++              "published_version": 2,
++              "updated_by": null,
++              "updated_at": "2026-10-27T12:34:56.789Z"
++            },
++            {
++              "template_id": "tpl-legacy-b",
++              "revision": 0,
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 1
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-b",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                }
++              },
++              "published_version": null,
++              "updated_by": null,
++              "updated_at": "1000-01-01T00:00:00.000Z"
++            }
++          ],
++          "metric_template_items": [
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "queries",
++              "status": "active",
++              "created_at": "2026-01-02T03:04:05.006Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "status": "active",
++              "created_at": "2026-01-02T03:04:05.006Z"
++            }
++          ],
++          "metric_template_item_versions": [
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "queries",
++              "version": 1,
++              "display_name": "Queries",
++              "canonical_metric_id": "mysql.queries.total",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "count",
++              "dimensions": {
++                "": "empty key",
++                "db,host": "comma key"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "version": 1,
++              "display_name": "Uptime",
++              "canonical_metric_id": "db.uptime_seconds",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "s",
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "item_id": "uptime",
++              "version": 2,
++              "display_name": "Database uptime",
++              "canonical_metric_id": "db.uptime_seconds",
++              "canonical_semantic_version": "1.0.0",
++              "unit": "s",
++              "dimensions": {
++                "主机": "主机标识"
++              },
++              "collector_ref": {
++                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                "implementation_id": "builtin:mysql.status.v1"
++              },
++              "params_default": {},
++              "source_chain": {
++                "base": {
++                  "id": "uptime",
++                  "kind": "item",
++                  "version": 1,
++                  "template_id": "tpl-legacy-a"
++                },
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-01-01T00:00:00.1Z",
++                "migration_ref": null
++              }
++            }
++          ],
++          "metric_template_versions": [
++            {
++              "template_id": "tpl-legacy-a",
++              "version": 1,
++              "status": "retired",
++              "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 1
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                },
++                "package_composition": [
++                  {
++                    "items": [
++                      "uptime"
++                    ],
++                    "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                  }
++                ]
++              },
++              "items": [
++                {
++                  "unit": "s",
++                  "item_id": "uptime",
++                  "version": 1,
++                  "dimensions": {
++                    "主机": "主机标识"
++                  },
++                  "template_id": "tpl-legacy-a",
++                  "display_name": "Uptime",
++                  "source_chain": {
++                    "base": null,
++                    "actor_id": 7,
++                    "created_at": "2026-01-01T00:00:00.1Z",
++                    "request_id": "req-t2b",
++                    "retired_at": null,
++                    "published_at": "2026-01-01T00:00:00.1Z",
++                    "migration_ref": null
++                  },
++                  "collector_ref": {
++                    "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                    "implementation_id": "builtin:mysql.status.v1"
++                  },
++                  "params_default": {},
++                  "canonical_metric": {
++                    "id": "db.uptime_seconds",
++                    "semantic_version": "1.0.0"
++                  }
++                }
++              ],
++              "package_composition": [
++                {
++                  "items": [
++                    "uptime"
++                  ],
++                  "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                }
++              ],
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": "2026-02-03T04:05:06.120Z",
++                "published_at": "2026-01-02T03:04:05.006Z",
++                "migration_ref": null
++              },
++              "published_at": "2026-01-02T03:04:05.006Z",
++              "retired_at": "2026-02-03T04:05:06.120Z"
++            },
++            {
++              "template_id": "tpl-legacy-a",
++              "version": 2,
++              "status": "published",
++              "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
++              "aggregate": {
++                "base": null,
++                "items": [
++                  {
++                    "item_id": "uptime",
++                    "version": 2
++                  }
++                ],
++                "triggers": [],
++                "parameters": {
++                  "schema": {
++                    "interval_ms": {
++                      "min": 1000,
++                      "type": "integer"
++                    }
++                  },
++                  "defaults": {}
++                },
++                "template_id": "tpl-legacy-a",
++                "capabilities": {
++                  "graphs": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  },
++                  "discovery": {
++                    "ref": null,
++                    "executable": false,
++                    "contract_version": "1.0.0"
++                  }
++                },
++                "package_composition": [
++                  {
++                    "items": [
++                      "uptime"
++                    ],
++                    "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                  }
++                ]
++              },
++              "items": [
++                {
++                  "unit": "s",
++                  "item_id": "uptime",
++                  "version": 2,
++                  "dimensions": {
++                    "主机": "主机标识"
++                  },
++                  "template_id": "tpl-legacy-a",
++                  "display_name": "Database uptime",
++                  "source_chain": {
++                    "base": {
++                      "id": "uptime",
++                      "kind": "item",
++                      "version": 1,
++                      "template_id": "tpl-legacy-a"
++                    },
++                    "actor_id": 7,
++                    "created_at": "2026-01-01T00:00:00.1Z",
++                    "request_id": "req-t2b",
++                    "retired_at": null,
++                    "published_at": "2026-01-01T00:00:00.1Z",
++                    "migration_ref": null
++                  },
++                  "collector_ref": {
++                    "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++                    "implementation_id": "builtin:mysql.status.v1"
++                  },
++                  "params_default": {},
++                  "canonical_metric": {
++                    "id": "db.uptime_seconds",
++                    "semantic_version": "1.0.0"
++                  }
++                }
++              ],
++              "package_composition": [
++                {
++                  "items": [
++                    "uptime"
++                  ],
++                  "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++                }
++              ],
++              "source_chain": {
++                "base": null,
++                "actor_id": 7,
++                "created_at": "2026-01-01T00:00:00.1Z",
++                "request_id": "req-t2b",
++                "retired_at": null,
++                "published_at": "2026-10-27T00:00:00.500Z",
++                "migration_ref": null
++              },
++              "published_at": "2026-10-27T00:00:00.500Z",
++              "retired_at": null
++            }
++          ]
++        },
++        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
++      },
++      "restore": {
++        "schema": "max237_t2b_restore",
++        "kind": "restore",
++        "tables": {
++          "metric_templates_v2": [],
++          "metric_template_drafts": [],
++          "metric_template_items": [],
++          "metric_template_item_versions": [],
++          "metric_template_versions": []
++        },
++        "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++      }
++    },
++    "retained_rows": {
++      "metric_templates_v2": [
++        {
++          "template_id": "t2b-edge-a",
++          "name": "Edge A",
++          "status": "draft",
++          "current_published_version": null,
++          "revision": 0,
++          "created_by": 2147483648,
++          "created_at": "0000-01-01T00:00:00.000Z",
++          "updated_at": "0000-01-01T00:00:00.000Z"
++        }
++      ],
++      "metric_template_drafts": [
++        {
++          "template_id": "t2b-edge-a",
++          "revision": 0,
++          "aggregate": {
++            "base": null,
++            "items": [],
++            "triggers": [],
++            "parameters": {
++              "schema": {},
++              "defaults": {}
++            },
++            "template_id": "t2b-edge-a",
++            "capabilities": {
++              "graphs": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              },
++              "discovery": {
++                "ref": null,
++                "executable": false,
++                "contract_version": "1.0.0"
++              }
++            }
++          },
++          "published_version": null,
++          "updated_by": 9007199254740991,
++          "updated_at": "0000-01-01T00:00:00.000Z"
++        }
++      ],
++      "metric_template_items": [
++        {
++          "template_id": "t2b-edge-a",
++          "item_id": "edge",
++          "status": "active",
++          "created_at": "0000-01-01T00:00:00.000Z"
++        }
++      ],
++      "metric_template_item_versions": [
++        {
++          "template_id": "t2b-edge-a",
++          "item_id": "edge",
++          "version": 1,
++          "display_name": "Edge",
++          "canonical_metric_id": "a.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++          "canonical_semantic_version": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111.0.0",
++          "unit": "s",
++          "dimensions": {},
++          "collector_ref": {
++            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++            "implementation_id": "builtin:mysql.status.v1"
++          },
++          "params_default": {},
++          "source_chain": {
++            "base": null,
++            "actor_id": 1,
++            "created_at": "0000-01-01T00:00:00.000Z",
++            "request_id": "req-edge",
++            "retired_at": null,
++            "published_at": "0000-01-01T00:00:00.000Z",
++            "migration_ref": null
++          }
++        }
++      ],
++      "metric_template_versions": []
++    },
++    "cleanup": "fixture discarded whole by env-clean.sh after this scenario; no row-level delete"
++  },
++  "steps": [
++    {
++      "step": "plan runs in a fresh process with connections forbidden",
++      "status": "PASS",
++      "detail": {
++        "mode": "plan",
++        "connects": false,
++        "writes": false,
++        "handle": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-7d9471c08d58/worktree/.max237-t2b/handle.json",
++        "container": "max237-t2b-15coder1-20261027",
++        "schemas": [
++          "max237_t2b_d1",
++          "max237_t2b",
++          "max237_t2b_restore"
++        ],
++        "direction": null,
++        "inject": null,
++        "steps": [
++          "preflight source/target",
++          "copy parent → draft/items → item versions → template versions in one target transaction"
++        ]
++      }
++    },
++    {
++      "step": "execute refuses to connect while connections are forbidden",
++      "status": "PASS",
++      "detail": {
++        "reason": "connection-forbidden",
++        "message": "MAX237_T2B_FORBID_CONNECT=1 forbids opening a connection",
++        "detail": null
++      }
++    },
++    {
++      "step": "unknown handle / wrong schema allowlist is refused with zero writes",
++      "status": "PASS",
++      "detail": {
++        "reason": "handle-mismatch",
++        "message": "handle schemas is \"[\\\"max237_t2b_d1\\\",\\\"max237_t2b\\\"]\", expected \"[\\\"max237_t2b_d1\\\",\\\"max237_t2b\\\",\\\"max237_t2b_restore\\\"]\"",
++        "detail": null
++      }
++    },
++    {
++      "step": "live fixture proven on two independent connections",
++      "status": "PASS",
++      "detail": {
++        "version": "8.4.10",
++        "schemas": [
++          "max237_t2b_d1",
++          "max237_t2b",
++          "max237_t2b_restore"
++        ]
++      }
++    },
++    {
++      "step": "fixture starts empty in all three schemas",
++      "status": "PASS",
++      "detail": {
++        "source": {
++          "metric_templates_v2": 0,
++          "metric_template_drafts": 0,
++          "metric_template_items": 0,
++          "metric_template_item_versions": 0,
++          "metric_template_versions": 0
++        },
++        "candidate": {
++          "metric_templates_v2": 0,
++          "metric_template_drafts": 0,
++          "metric_template_items": 0,
++          "metric_template_item_versions": 0,
++          "metric_template_versions": 0
++        },
++        "restore": {
++          "metric_templates_v2": 0,
++          "metric_template_drafts": 0,
++          "metric_template_items": 0,
++          "metric_template_item_versions": 0,
++          "metric_template_versions": 0
++        }
++      }
++    },
++    {
++      "step": "frozen-structure comparator rejects every drift class (synthetic snapshots)",
++      "status": "PASS",
++      "detail": {
++        "drifts": [
++          "missing column: metric_template_items.created_at: column is missing",
++          "extra column: metric_template_items.drift_extra: unexpected column",
++          "narrowed type: metric_templates_v2.name.type: varchar(32) != varchar(128)",
++          "nullability: metric_templates_v2.name.nullable: YES != NO",
++          "charset/collation: metric_template_items.created_at.charset: utf8mb4 != ascii",
++          "engine: metric_template_items.engine: MyISAM != InnoDB",
++          "primary key: metric_template_items.index PRIMARY: UNIQUE(template_id) != UNIQUE(template_id,item_id)",
++          "unique key: metric_template_versions.index uk_content: INDEX(template_id,content_hash) != UNIQUE(template_id,content_hash)",
++          "prefix index: metric_template_item_versions.index idx_canonical: INDEX(canonical_metric_id(64),canonical_semantic_version(16)) != INDEX(canonical_metric_id(128),canonical_semantic_version(16))"
++        ],
++        "foreign_key_drifts": [
++          "source.metric_template_drafts.fk_draft_template cross-schema reference (same table/column names): metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template referenced table: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template referenced columns: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template ON UPDATE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template ON UPDATE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template ON DELETE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_drafts.fk_draft_template ON DELETE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template cross-schema reference (same table/column names): metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template referenced table: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template referenced columns: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template ON UPDATE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template ON UPDATE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template ON DELETE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_items.fk_ti_template ON DELETE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item cross-schema reference (same table/column names): metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item referenced table: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items_drift(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item referenced columns: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id_drift,item_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item ON UPDATE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item ON UPDATE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item ON DELETE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_item_versions.fk_tiv_item ON DELETE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template cross-schema reference (same table/column names): metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template referenced table: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template referenced columns: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template ON UPDATE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template ON UPDATE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template ON DELETE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "source.metric_template_versions.fk_tv_template ON DELETE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template cross-schema reference (same table/column names): metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template referenced table: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template referenced columns: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template ON UPDATE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template ON UPDATE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template ON DELETE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_drafts.fk_draft_template ON DELETE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template cross-schema reference (same table/column names): metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template referenced table: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template referenced columns: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template ON UPDATE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template ON UPDATE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template ON DELETE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_items.fk_ti_template ON DELETE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item cross-schema reference (same table/column names): metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item referenced table: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items_drift(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item referenced columns: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id_drift,item_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item ON UPDATE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item ON UPDATE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item ON DELETE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_item_versions.fk_tiv_item ON DELETE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id,item_id)->max237_t2b.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template cross-schema reference (same table/column names): metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template referenced table: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template referenced columns: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template ON UPDATE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template ON UPDATE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template ON DELETE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "candidate.metric_template_versions.fk_tv_template ON DELETE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template cross-schema reference (same table/column names): metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template referenced table: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template referenced columns: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template ON UPDATE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template ON UPDATE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template ON DELETE CASCADE: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_drafts.fk_draft_template ON DELETE SET NULL: metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template cross-schema reference (same table/column names): metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template referenced table: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template referenced columns: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template ON UPDATE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template ON UPDATE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template ON DELETE CASCADE: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_items.fk_ti_template ON DELETE SET NULL: metric_template_items.foreign key fk_ti_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item cross-schema reference (same table/column names): metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_d1.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item referenced table: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items_drift(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item referenced columns: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id_drift,item_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item ON UPDATE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item ON UPDATE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item ON DELETE CASCADE: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_item_versions.fk_tiv_item ON DELETE SET NULL: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id,item_id)->max237_t2b_restore.metric_template_items(template_id,item_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template cross-schema reference (same table/column names): metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template referenced table: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2_drift(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template referenced columns: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id_drift) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template ON UPDATE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE CASCADE ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template ON UPDATE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE SET NULL ON DELETE NO ACTION != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template ON DELETE CASCADE: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION",
++          "restore.metric_template_versions.fk_tv_template ON DELETE SET NULL: metric_template_versions.foreign key fk_tv_template: (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE SET NULL != (template_id)->max237_t2b_restore.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++        ],
++        "note": "synthetic snapshots; real DDL drift rows follow"
++      }
++    },
++    {
++      "step": "seed write entry rejects a connection that is not the recorded fixture",
++      "status": "PASS",
++      "detail": {
++        "reason": "wrong-fixture",
++        "message": "connected host 1bd969bef470 is not the recorded container 0000000000000000000000000000000000000000000000000000000000000000"
++      }
++    },
++    {
++      "step": "real foreign-key drift is refused before the first business DML",
++      "status": "PASS",
++      "detail": {
++        "label": "candidate fk_draft_template references the source schema",
++        "drift_statement": "ALTER TABLE `max237_t2b`.`metric_template_drafts` ADD CONSTRAINT `fk_draft_template` FOREIGN KEY (`template_id`) REFERENCES `max237_t2b_d1`.`metric_templates_v2` (`template_id`)",
++        "actual_foreign_key": [
++          {
++            "referenced_schema": "max237_t2b_d1",
++            "referenced_table": "metric_templates_v2",
++            "update_rule": "NO ACTION",
++            "delete_rule": "NO ACTION"
++          }
++        ],
++        "entries": [
++          {
++            "entry": "seed",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          },
++          {
++            "entry": "up",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          },
++          {
++            "entry": "down",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b_d1.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          }
++        ],
++        "manifests": {
++          "source": {
++            "schema": "max237_t2b_d1",
++            "kind": "source",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          },
++          "candidate": {
++            "schema": "max237_t2b",
++            "kind": "candidate",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          },
++          "restore": {
++            "schema": "max237_t2b_restore",
++            "kind": "restore",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          }
++        },
++        "source_unchanged": true,
++        "candidate_unchanged": true,
++        "restore_unchanged": true
++      }
++    },
++    {
++      "step": "real foreign-key drift is refused before the first business DML",
++      "status": "PASS",
++      "detail": {
++        "label": "candidate fk_draft_template ON DELETE CASCADE",
++        "drift_statement": "ALTER TABLE `max237_t2b`.`metric_template_drafts` ADD CONSTRAINT `fk_draft_template` FOREIGN KEY (`template_id`) REFERENCES `max237_t2b`.`metric_templates_v2` (`template_id`) ON DELETE CASCADE",
++        "actual_foreign_key": [
++          {
++            "referenced_schema": "max237_t2b",
++            "referenced_table": "metric_templates_v2",
++            "update_rule": "NO ACTION",
++            "delete_rule": "CASCADE"
++          }
++        ],
++        "entries": [
++          {
++            "entry": "seed",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          },
++          {
++            "entry": "up",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          },
++          {
++            "entry": "down",
++            "reason": "structure-drift",
++            "business_dml": 0,
++            "diffs": [
++              "metric_template_drafts.foreign key fk_draft_template: (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE CASCADE != (template_id)->max237_t2b.metric_templates_v2(template_id) ON UPDATE NO ACTION ON DELETE NO ACTION"
++            ]
++          }
++        ],
++        "manifests": {
++          "source": {
++            "schema": "max237_t2b_d1",
++            "kind": "source",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          },
++          "candidate": {
++            "schema": "max237_t2b",
++            "kind": "candidate",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          },
++          "restore": {
++            "schema": "max237_t2b_restore",
++            "kind": "restore",
++            "tables": {
++              "metric_templates_v2": [],
++              "metric_template_drafts": [],
++              "metric_template_items": [],
++              "metric_template_item_versions": [],
++              "metric_template_versions": []
++            },
++            "sha256": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af"
++          }
++        },
++        "source_unchanged": true,
++        "candidate_unchanged": true,
++        "restore_unchanged": true
++      }
++    },
++    {
++      "step": "real source structure drift blocks seed before its first write",
++      "status": "PASS",
++      "detail": {
++        "label": "source narrowed column type",
++        "schema": "max237_t2b_d1",
++        "drift_statement": "ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(32) NOT NULL",
++        "restore_statement": "ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(128) NOT NULL",
++        "diffs": [
++          "metric_templates_v2.name.type: varchar(32) != varchar(128)"
++        ],
++        "structure_sha256": "2770c7f39eab5041da1a82cf8deaf1058537fb2e3ef925515f601d444a7ebaf0"
++      }
++    },
++    {
++      "step": "representative 140 source aggregate seeded",
++      "status": "PASS",
++      "detail": {
++        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
++        "rows": {
++          "metric_templates_v2": 2,
++          "metric_template_drafts": 2,
++          "metric_template_items": 2,
++          "metric_template_item_versions": 3,
++          "metric_template_versions": 2
++        }
++      }
++    },
++    {
++      "step": "real candidate structure drift blocks up before its first write",
++      "status": "PASS",
++      "detail": {
++        "label": "candidate missing query index",
++        "schema": "max237_t2b",
++        "drift_statement": "ALTER TABLE `max237_t2b`.`metric_template_item_versions` DROP INDEX `idx_canonical`",
++        "restore_statement": "ALTER TABLE `max237_t2b`.`metric_template_item_versions` ADD KEY `idx_canonical` (`canonical_metric_id`(128), `canonical_semantic_version`(16))",
++        "diffs": [
++          "metric_template_item_versions.index idx_canonical: index is missing"
++        ],
++        "structure_sha256": "b6c1f3e7a17b386b147d6e6902b2211e8973cc55b8182756805452a32bb29edd"
++      }
++    },
++    {
++      "step": "up copies the whole aggregate into an empty candidate in one transaction",
++      "status": "PASS",
++      "detail": {
++        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
++        "rows": {
++          "metric_templates_v2": 2,
++          "metric_template_drafts": 2,
++          "metric_template_items": 2,
++          "metric_template_item_versions": 3,
++          "metric_template_versions": 2
++        }
++      }
++    },
++    {
++      "step": "legal out-of-range rows are refused by down with all three schemas intact and the rows retained",
++      "status": "PASS",
++      "detail": {
++        "reason": "down-irreversible",
++        "problems": [
++          "metric_templates_v2[t2b-edge-a].created_by=2147483648 exceeds INT",
++          "metric_templates_v2[t2b-edge-a].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++          "metric_templates_v2[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++          "metric_template_drafts[t2b-edge-a].updated_by=9007199254740991 exceeds INT",
++          "metric_template_drafts[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++          "metric_template_items[t2b-edge-a/edge].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
++          "metric_template_item_versions[t2b-edge-a/edge/1].canonical_metric_id is 512 chars, not VARCHAR(128)",
++          "metric_template_item_versions[t2b-edge-a/edge/1].canonical_semantic_version is 100 chars, not VARCHAR(16)"
++        ],
++        "candidate": "e19328940c72f21074105c2bf10b01faf3e83d4369816130348995e00c000dbd",
++        "source": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
++        "restore": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af",
++        "retained": {
++          "metric_templates_v2": 1,
++          "metric_template_drafts": 1,
++          "metric_template_items": 1,
++          "metric_template_item_versions": 1,
++          "metric_template_versions": 0
++        }
++      }
++    }
++  ],
++  "result": "PASS",
++  "generated_at_finished": "2026-10-27T06:07:57.023Z"
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/scope.txt b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/scope.txt
+new file mode 100644
+index 000000000..ca215d5de
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/scope.txt
+@@ -0,0 +1,15 @@
++# MAX237-T2B-DDL-ERROR-GUARD scope; base 99b9eb0ba392effed2c3df3e149656d7dc276990
++# product diff base..HEAD (apps packages frontend; must be empty)
++# working tree product diff (must be empty)
++# changed tracked files base..HEAD
++A	docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts
++M	docs/slide/development/MAX-237/t2b/drill.ts
++# read-only files identical to base
++same docs/slide/development/MAX-237/t2b/migrate.ts 5788420fbe3d64e9860c795eef7275017b672ed1
++same docs/slide/development/MAX-237/t2b/env-start.sh e14b5218553c405d9325cb7d0dfe267fdae219bc
++same docs/slide/development/MAX-237/t2b/env-clean.sh c80ab3137d1831832d424c09cf19c34dacefd759
++same docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql 909008383c9e194450dd29ddcb6bcb1d68d6049d
++same docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql f958ba73b719a0cf84b3546675a9701544f55a27
++same apps/db-ops-api/src/metrics/templates/mysql-repository.ts 01d2904f8d7da3dcafc7e2c815ef307625aff98c
++same apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts 261cecac629bddea5b89bd0ee3b5ea6fa9e528ac
++same apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts 7de98d51a788416b1e92b7f635d6b3b7ca2d756d
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/secret-probe.json b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/secret-probe.json
+new file mode 100644
+index 000000000..afd5c6df4
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/secret-probe.json
+@@ -0,0 +1,9 @@
++{
++  "synthetic_non_secret_marker": "CHIEF_SYNTHETIC_NON_SECRET_ROOT_SENTINEL",
++  "exit": 1,
++  "marker_in_stdout": false,
++  "marker_in_stderr": false,
++  "marker_in_out_file": false,
++  "output_exists": true,
++  "scope": "root NONSECRET marker only; app credential unchanged; private file restored"
++}
+diff --git a/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/typecheck.txt b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/typecheck.txt
+new file mode 100644
+index 000000000..331818a78
+--- /dev/null
++++ b/docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/typecheck.txt
+@@ -0,0 +1,3 @@
++# tsc -p apps/db-ops-api/.max237-ddl-tsconfig.tmp.json (strict, noEmit)
++# files: t2b/migrate.ts, t2b/drill.ts, t2b/ddl-error-guard.test.ts
++tsc exit=0

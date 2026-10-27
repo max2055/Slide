@@ -1,0 +1,916 @@
+diff --git a/apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts b/apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts
+index 981e9bf76..7de98d51a 100644
+--- a/apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts
++++ b/apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts
+@@ -1,17 +1,20 @@
+ /**
+- * MAX-237 / T2A — real MySQL transaction verification for the internal adapter.
++ * MAX-237 / T2B — real MySQL transaction and storage-candidate verification.
+  *
+  * Runs only against the dedicated, disposable schema started by
+- * `docs/slide/development/MAX-237/t2a/env-start.sh` (database `max237_t2a`,
+- * utf8mb4/utf8mb4_bin, one-time DML-only test user). Skipped when the four
+- * `MAX237_T2A_MYSQL_*` variables are absent, so the default suite needs no
+- * database. Never points at an application `.env`, the platform pool or a
+- * production target.
++ * `docs/slide/development/MAX-237/t2b/env-start.sh` (candidate database
++ * `max237_t2b`, tables utf8mb4_bin, one-time DML-only test user). Skipped when
++ * the four `MAX237_T2B_MYSQL_*` variables are absent or when the database is not
++ * exactly `max237_t2b`, so the default suite needs no database and this file can
++ * never point at another schema. Never points at an application `.env`, the
++ * platform pool or a production target.
+  *
+  * Two independent pools (`A`, `B`) stand in for two connections/processes: the
+  * parent-row lock in the adapter, not an in-process lock, is what serialises
+  * them. Fault-injecting wrappers around a third pool fail at one exact SQL
+- * stage; they never change the product interface.
++ * stage; they never change the product interface. The pools enable
++ * `supportBigNumbers`/`bigNumberStrings`, and a second number-form pool proves
++ * the adapter accepts both BIGINT renderings.
+  */
+ import mysql, { type Pool, type PoolConnection } from 'mysql2/promise';
+ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+@@ -21,16 +24,18 @@ import {
+   type TemplateItemVersion, type TemplatePublishedAggregate, type TemplateRecord,
+ } from './model.js';
+ import {
+-  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlDateTime,
++  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlTimestamp,
+   type TemplateSqlConnection, type TemplateSqlPool,
+ } from './mysql-repository.js';
+ import type { ItemVersionInput, PublishCommand } from './repository.js';
+ 
+-const port = Number(process.env.MAX237_T2A_MYSQL_PORT);
+-const user = process.env.MAX237_T2A_MYSQL_USER;
+-const password = process.env.MAX237_T2A_MYSQL_PASSWORD;
+-const database = process.env.MAX237_T2A_MYSQL_DATABASE ?? 'max237_t2a';
+-const enabled = Number.isInteger(port) && port > 0 && Boolean(user) && password !== undefined;
++const FIXED_DATABASE = 'max237_t2b';
++const port = Number(process.env.MAX237_T2B_MYSQL_PORT);
++const user = process.env.MAX237_T2B_MYSQL_USER;
++const password = process.env.MAX237_T2B_MYSQL_PASSWORD;
++const database = process.env.MAX237_T2B_MYSQL_DATABASE ?? FIXED_DATABASE;
++const enabled = Number.isInteger(port) && port > 0 && Boolean(user) && password !== undefined
++  && database === FIXED_DATABASE;
+ 
+ const AT = '2026-10-27T00:00:00.000Z';
+ const RELEASE = `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`;
+@@ -135,13 +140,14 @@ class FaultyPool implements TemplateSqlPool {
+   }
+ }
+ 
+-describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+-  let poolA: Pool, poolB: Pool;
++describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
++  let poolA: Pool, poolB: Pool, poolNumbers: Pool;
+   let repositoryA: MySqlTemplateRepository, repositoryB: MySqlTemplateRepository;
+ 
+   const poolOptions = {
+     host: '127.0.0.1', port, user, password, database,
+     waitForConnections: true, connectionLimit: 2,
++    supportBigNumbers: true, bigNumberStrings: true,
+   };
+   const newPool = (overrides: Partial<typeof poolOptions> = {}): Pool => mysql.createPool({ ...poolOptions, ...overrides });
+ 
+@@ -150,11 +156,14 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     poolB = mysql.createPool({ ...poolOptions });
+     repositoryA = new MySqlTemplateRepository(poolA);
+     repositoryB = new MySqlTemplateRepository(poolB);
++    // Same fixture, number-form BIGINT rendering (no bigNumberStrings).
++    poolNumbers = mysql.createPool({ ...poolOptions, bigNumberStrings: false });
+   });
+ 
+   afterAll(async () => {
+     await poolA?.end();
+     await poolB?.end();
++    await poolNumbers?.end();
+   });
+ 
+   beforeEach(async () => {
+@@ -181,6 +190,53 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     );
+     expect(columns.map(column => column.COLLATION_NAME)).toEqual(['utf8mb4_bin', 'utf8mb4_bin']);
+ 
++    // Candidate representations: BIGINT UNSIGNED actors, ascii LONGTEXT
++    // identities, and 24-char ascii timestamps.
++    const [candidate] = await poolA.query<any[]>(
++      `SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME
++         FROM information_schema.COLUMNS
++        WHERE TABLE_SCHEMA = ? AND (
++          (TABLE_NAME = 'metric_templates_v2' AND COLUMN_NAME IN ('created_by', 'created_at', 'updated_at'))
++          OR (TABLE_NAME = 'metric_template_drafts' AND COLUMN_NAME IN ('updated_by', 'updated_at'))
++          OR (TABLE_NAME = 'metric_template_versions' AND COLUMN_NAME IN ('published_at', 'retired_at'))
++          OR (TABLE_NAME = 'metric_template_items' AND COLUMN_NAME = 'created_at')
++          OR (TABLE_NAME = 'metric_template_item_versions' AND COLUMN_NAME IN ('canonical_metric_id', 'canonical_semantic_version'))
++        )
++        ORDER BY TABLE_NAME, COLUMN_NAME`,
++      [database],
++    );
++    const byColumn = new Map(candidate.map(column => [`${column.TABLE_NAME}.${column.COLUMN_NAME}`, column]));
++    expect(byColumn.get('metric_templates_v2.created_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
++    expect(byColumn.get('metric_template_drafts.updated_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
++    expect(byColumn.get('metric_template_item_versions.canonical_metric_id')).toMatchObject({
++      COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
++    });
++    expect(byColumn.get('metric_template_item_versions.canonical_semantic_version')).toMatchObject({
++      COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
++    });
++    for (const key of [
++      'metric_templates_v2.created_at', 'metric_templates_v2.updated_at', 'metric_template_drafts.updated_at',
++      'metric_template_versions.published_at', 'metric_template_versions.retired_at', 'metric_template_items.created_at',
++    ]) {
++      expect(byColumn.get(key)).toMatchObject({
++        COLUMN_TYPE: 'char(24)', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
++      });
++    }
++    // The canonical prefix index accelerates lookups only; it is not unique.
++    const [indexes] = await poolA.query<any[]>(
++      `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SUB_PART FROM information_schema.STATISTICS
++        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'metric_template_item_versions' AND INDEX_NAME = 'idx_canonical'
++        ORDER BY SEQ_IN_INDEX`,
++      [database],
++    );
++    expect(indexes.map(index => ({
++      name: index.INDEX_NAME, nonUnique: Number(index.NON_UNIQUE),
++      column: index.COLUMN_NAME, subPart: Number(index.SUB_PART),
++    }))).toEqual([
++      { name: 'idx_canonical', nonUnique: 1, column: 'canonical_metric_id', subPart: 128 },
++      { name: 'idx_canonical', nonUnique: 1, column: 'canonical_semantic_version', subPart: 16 },
++    ]);
++
+     await repositoryA.create(template(), draft());
+     const connection = await poolA.getConnection();
+     try {
+@@ -222,12 +278,11 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     expect(await repositoryA.getDraft('tpl-a')).toMatchObject({ revision: 0, published_version: null, updated_by: 1 });
+     expect((await repositoryA.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
+     const [identity] = await poolA.query<any[]>(
+-      `SELECT status, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS created_at
+-         FROM metric_template_items WHERE template_id = ? AND item_id = ?`,
++      'SELECT status, created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
+       ['tpl-a', 'uptime'],
+     );
+     expect(identity[0].status).toBe('active');
+-    expect(fromSqlDateTime(identity[0].created_at)).toBe(AT);
++    expect(identity[0].created_at).toBe(AT);
+ 
+     expect(await code(repositoryA.create(template(), draft()))).toBe('TEMPLATE_EXISTS');
+     expect(await code(repositoryA.create(template('tpl-b'), draft('tpl-b'), [itemInput()])))
+@@ -257,7 +312,7 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+         + ' (SELECT COUNT(*) FROM metric_template_item_versions WHERE template_id = ?) AS versions',
+         ['tpl-e', 'tpl-e'],
+       );
+-      expect(rows[0]).toMatchObject({ items: 0, versions: 0 });
++      expect({ items: Number(rows[0].items), versions: Number(rows[0].versions) }).toEqual({ items: 0, versions: 0 });
+     } finally {
+       await inner.end();
+     }
+@@ -295,11 +350,11 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     expect((await repositoryA.getItemVersion('tpl-a', 'uptime', 1))!.display_name).toBe('Uptime');
+     expect((await repositoryA.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([2]);
+     const [identity] = await poolA.query<any[]>(
+-      'SELECT status, DATE_FORMAT(created_at, \'%Y-%m-%dT%H:%i:%s.%fZ\') AS created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
++      'SELECT status, created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
+       ['tpl-a', 'uptime'],
+     );
+     expect(identity[0].status).toBe('active');
+-    expect(fromSqlDateTime(identity[0].created_at)).toBe(AT);
++    expect(identity[0].created_at).toBe(AT);
+ 
+     expect(await code(repositoryA.putItemVersion(itemInput({ canonical_metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' } }))))
+       .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+@@ -592,7 +647,7 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     }
+   });
+ 
+-  it('maps SQL NULL and 0–3 digit UTC timestamps without inventing values', async () => {
++  it('maps SQL NULL and canonical UTC timestamps without inventing values', async () => {
+     await repositoryA.create(
+       template('tpl-null', { created_by: null, created_at: '2026-10-27T00:00:00Z', updated_at: '2026-10-27T00:00:00.1Z' }),
+       draft('tpl-null', { updated_by: null, updated_at: '2026-10-27T00:00:00.12Z' }),
+@@ -605,12 +660,15 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     expect(stored).toMatchObject({ published_version: null, updated_by: null });
+     expect(stored!.updated_at).toBe('2026-10-27T00:00:00.120Z');
+     const [raw] = await poolA.query<any[]>(
+-      'SELECT created_by, current_published_version, DATE_FORMAT(created_at, \'%Y-%m-%dT%H:%i:%s.%fZ\') AS created_at FROM metric_templates_v2 WHERE template_id = ?',
++      'SELECT created_by, current_published_version, created_at FROM metric_templates_v2 WHERE template_id = ?',
+       ['tpl-null'],
+     );
+     expect(raw[0].created_by).toBeNull();
+     expect(raw[0].current_published_version).toBeNull();
+-    expect(fromSqlDateTime(raw[0].created_at)).toBe('2026-10-27T00:00:00.000Z');
++    // The column stores the 24-character canonical form verbatim.
++    expect(raw[0].created_at).toBe('2026-10-27T00:00:00.000Z');
++    expect(raw[0].created_at).toHaveLength(24);
++    expect(fromSqlTimestamp(raw[0].created_at)).toBe('2026-10-27T00:00:00.000Z');
+ 
+     // The original source_chain JSON is stored as given (no timestamp rewrite).
+     await repositoryA.putItemVersion(itemInput({ template_id: 'tpl-null', source_chain: {
+@@ -624,31 +682,149 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+     expect(sourceChain.created_at).toBe('2026-10-27T00:00:00.1Z');
+   });
+ 
+-  it('rejects values the five tables cannot represent before writing', async () => {
+-    await expect(repositoryA.create(template('tpl-actor', { created_by: 2147483648 }), draft('tpl-actor')))
++  it('stores the full BIGINT actor range across both driver renderings', async () => {
++    await repositoryA.create(
++      template('tpl-actor-big', { created_by: 2147483648 }),
++      draft('tpl-actor-big', { updated_by: 9007199254740991 }),
++    );
++    expect((await repositoryA.getTemplate('tpl-actor-big'))!.created_by).toBe(2147483648);
++    expect((await repositoryA.getDraft('tpl-actor-big'))!.updated_by).toBe(9007199254740991);
++
++    // The bigNumberStrings pool renders BIGINT as a string; the adapter maps it.
++    const [raw] = await poolA.query<any[]>(
++      'SELECT created_by FROM metric_templates_v2 WHERE template_id = ?', ['tpl-actor-big'],
++    );
++    expect(raw[0].created_by).toBe('2147483648');
++
++    // The number-form pool renders the same row as a number; the adapter maps it too.
++    const numbers = new MySqlTemplateRepository(poolNumbers);
++    expect((await numbers.getTemplate('tpl-actor-big'))!.created_by).toBe(2147483648);
++    expect((await numbers.getDraft('tpl-actor-big'))!.updated_by).toBe(9007199254740991);
++
++    // A row written outside the adapter beyond the safe range is refused on read.
++    await poolA.query(
++      `INSERT INTO metric_templates_v2
++        (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
++       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
++      ['tpl-actor-unsafe', 'Unsafe', 'draft', null, 0, '9007199254740992', AT, AT],
++    );
++    await expect(repositoryA.getTemplate('tpl-actor-unsafe'))
+       .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+-    expect(await repositoryA.getTemplate('tpl-actor')).toBeNull();
+ 
++    // The accepted record schema still rejects a non-safe integer input.
++    await expect(repositoryA.create(
++      template('tpl-actor-schema', { created_by: 9007199254740992 }), draft('tpl-actor-schema'),
++    )).rejects.toThrow();
++    expect(await repositoryA.getTemplate('tpl-actor-schema')).toBeNull();
++  });
++
++  it('stores canonical identities beyond the old widths and never matches on the prefix', async () => {
+     await repositoryA.create(template('tpl-len'), draft('tpl-len'));
++    const longId = `a.${'b'.repeat(510)}`;
++    const longVersion = `${'1'.repeat(96)}.0.0`;
++    expect(longId).toHaveLength(512);
++    expect(longVersion).toHaveLength(100);
++    const long = await repositoryA.putItemVersion(itemInput({
++      template_id: 'tpl-len', item_id: 'long',
++      canonical_metric: { id: longId, semantic_version: longVersion },
++    }));
++    expect(long.item.canonical_metric).toEqual({ id: longId, semantic_version: longVersion });
++    expect((await repositoryA.getItemVersion('tpl-len', 'long', 1))!.canonical_metric.id).toBe(longId);
++    expect((await repositoryA.getItemVersion('tpl-len', 'long', 1))!.canonical_metric.semantic_version).toBe(longVersion);
++
++    // Same 128/16 prefix, different suffix: complete values stay distinct.
++    const prefix = `a.${'c'.repeat(126)}`;
++    const suffixA = `${prefix}${'d'.repeat(10)}`;
++    const suffixB = `${prefix}${'e'.repeat(10)}`;
++    expect(prefix).toHaveLength(128);
++    await repositoryA.putItemVersion(itemInput({
++      template_id: 'tpl-len', item_id: 'prefix-a', canonical_metric: { id: suffixA, semantic_version: '1.0.0' },
++    }));
++    await repositoryA.putItemVersion(itemInput({
++      template_id: 'tpl-len', item_id: 'prefix-b', canonical_metric: { id: suffixB, semantic_version: '1.0.0' },
++    }));
++    expect((await repositoryA.getItemVersion('tpl-len', 'prefix-a', 1))!.canonical_metric.id).toBe(suffixA);
++    expect((await repositoryA.getItemVersion('tpl-len', 'prefix-b', 1))!.canonical_metric.id).toBe(suffixB);
++    // The prefix index sees only the shared 128 characters — it is an accelerator,
++    // never an identity criterion.
++    const [byPrefix] = await poolA.query<any[]>(
++      'SELECT COUNT(*) AS matched FROM metric_template_item_versions WHERE canonical_metric_id LIKE ?', [`${prefix}%`],
++    );
++    expect(Number(byPrefix[0].matched)).toBe(2);
+     await expect(repositoryA.putItemVersion(itemInput({
+-      template_id: 'tpl-len', item_id: 'long', canonical_metric: { id: `a.${'b'.repeat(127)}`, semantic_version: '1.0.0' },
+-    }))).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
++      template_id: 'tpl-len', item_id: 'prefix-a', canonical_metric: { id: suffixB, semantic_version: '1.0.0' },
++    }))).rejects.toMatchObject({ code: 'TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE' });
++
++    // The accepted ASCII/semver rules still reject non-ASCII ids and malformed versions.
+     await expect(repositoryA.putItemVersion(itemInput({
+-      template_id: 'tpl-len', item_id: 'semver', canonical_metric: { id: 'db.uptime_seconds', semantic_version: `${'1'.repeat(17)}.0.0` },
+-    }))).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+-    expect(await repositoryA.latestItemVersions('tpl-len')).toEqual([]);
++      template_id: 'tpl-len', item_id: 'unicode', canonical_metric: { id: 'db.主机', semantic_version: '1.0.0' },
++    }))).rejects.toThrow();
++    await expect(repositoryA.putItemVersion(itemInput({
++      template_id: 'tpl-len', item_id: 'bad-semver', canonical_metric: { id: 'db.uptime_seconds', semantic_version: '1.0' },
++    }))).rejects.toThrow();
++    expect(await repositoryA.getItemVersion('tpl-len', 'unicode', 1)).toBeNull();
++    expect(await repositoryA.getItemVersion('tpl-len', 'bad-semver', 1)).toBeNull();
++  });
++
++  it('stores years 0000..9999 and canonical fractions, and refuses invalid instants', async () => {
++    const cases = [
++      ['tpl-y0', '0000-01-01T00:00:00.000Z', '0000-01-01T00:00:00.000Z'],
++      ['tpl-y999', '0999-12-31T23:59:59Z', '0999-12-31T23:59:59.000Z'],
++      ['tpl-y1000', '1000-01-01T00:00:00.1Z', '1000-01-01T00:00:00.100Z'],
++      ['tpl-y9999', '9999-12-31T23:59:59.123Z', '9999-12-31T23:59:59.123Z'],
++    ] as const;
++    for (const [id, input, canonical] of cases) {
++      await repositoryA.create(
++        template(id, { created_at: input, updated_at: input }),
++        draft(id, { updated_at: input }),
++      );
++      const record = await repositoryA.getTemplate(id);
++      expect(record!.created_at).toBe(canonical);
++      expect(record!.updated_at).toBe(canonical);
++      const [raw] = await poolA.query<any[]>(
++        'SELECT created_at, updated_at FROM metric_templates_v2 WHERE template_id = ?', [id],
++      );
++      expect(raw[0]).toMatchObject({ created_at: canonical, updated_at: canonical });
++    }
++
++    // Published timestamps use the same canonical representation.
++    await repositoryA.create(
++      template('tpl-y-pub', { created_at: '0000-01-01T00:00:00.000Z', updated_at: '0000-01-01T00:00:00.000Z' }),
++      draft('tpl-y-pub'),
++    );
++    await repositoryA.putItemVersion(itemInput({ template_id: 'tpl-y-pub' }));
++    await repositoryA.publish(command({
++      templateId: 'tpl-y-pub', publishedAt: '0000-01-01T00:00:00.5Z', draftUpdatedAt: '0000-01-01T00:00:00.5Z',
++      sourceChain: {
++        ...chain(), created_at: '0000-01-01T00:00:00.000Z', published_at: '0000-01-01T00:00:00.5Z',
++      },
++      aggregate: aggregate('tpl-y-pub'), items: [item('tpl-y-pub')],
++    }));
++    expect((await repositoryA.getVersion('tpl-y-pub', 1))!.published_at).toBe('0000-01-01T00:00:00.500Z');
++
++    // Closing and reopening a connection keeps the exact instants.
++    const inner = newPool();
++    try {
++      const fresh = new MySqlTemplateRepository(inner);
++      expect((await fresh.getTemplate('tpl-y999'))!.created_at).toBe('0999-12-31T23:59:59.000Z');
++      expect((await fresh.getVersion('tpl-y-pub', 1))!.published_at).toBe('0000-01-01T00:00:00.500Z');
++    } finally {
++      await inner.end();
++    }
+ 
+     await expect(repositoryA.create(
+-      template('tpl-year', { created_at: '0999-12-31T23:59:59.000Z', updated_at: '2026-10-27T00:00:00.000Z' }),
+-      draft('tpl-year'),
+-    )).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+-    expect(await repositoryA.getTemplate('tpl-year')).toBeNull();
++      template('tpl-bad-date', { created_at: '2026-13-01T00:00:00.000Z', updated_at: AT }),
++      draft('tpl-bad-date'),
++    )).rejects.toThrow();
++    expect(await repositoryA.getTemplate('tpl-bad-date')).toBeNull();
++  });
+ 
++  it('still refuses version and revision increments at the INT ceiling', async () => {
+     await poolA.query(
+       `INSERT INTO metric_templates_v2
+         (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+-      ['tpl-max', 'Max', 'draft', null, 2147483647, 1, '2026-10-27 00:00:00.000', '2026-10-27 00:00:00.000'],
++      ['tpl-max', 'Max', 'draft', null, 2147483647, 1, AT, AT],
+     );
+     await expect(repositoryA.updateTemplate('tpl-max', 2147483647, { name: 'X', updated_at: AT }))
+       .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+@@ -656,8 +832,8 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
+ 
+     await repositoryA.create(template('tpl-item-max'), draft('tpl-item-max'));
+     await poolA.query(
+-      `INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)`,
+-      ['tpl-item-max', 'uptime', 'active', '2026-10-27 00:00:00.000'],
++      'INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)',
++      ['tpl-item-max', 'uptime', 'active', AT],
+     );
+     await poolA.query(
+       `INSERT INTO metric_template_item_versions
+diff --git a/apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts b/apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts
+index 7e0aea59f..261cecac6 100644
+--- a/apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts
++++ b/apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts
+@@ -1,5 +1,5 @@
+ /**
+- * MAX-237 / T2A — focused adapter checks that need no database.
++ * MAX-237 / T2B — focused adapter checks that need no database.
+  *
+  * Everything transactional (CAS, first-item races, rollback, commit-loss) is
+  * exercised against real MySQL in `mysql-repository.mysql.test.ts`; these tests
+@@ -8,10 +8,10 @@
+  */
+ import { describe, expect, it } from 'vitest';
+ import { TemplateError } from './errors.js';
+-import { emptyDraftAggregate, type TemplateDraft, type TemplateRecord } from './model.js';
++import { emptyDraftAggregate, TemplateItemVersionSchema, type TemplateDraft, type TemplateRecord } from './model.js';
+ import {
+-  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlDateTime, sqlCanonicalId, sqlInt,
+-  sqlNextRevision, sqlNextVersion, sqlSemanticVersion, toSqlDateTime,
++  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlActorId, fromSqlTimestamp,
++  sqlActorId, sqlInt, sqlNextRevision, sqlNextVersion, toSqlTimestamp,
+   type TemplateSqlConnection, type TemplateSqlPool,
+ } from './mysql-repository.js';
+ 
+@@ -36,9 +36,6 @@ function codeOf(run: () => unknown): string {
+   throw new Error('expected the call to fail');
+ }
+ 
+-/** The rendering `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%fZ')` produces for a DATETIME(3). */
+-const readBack = (sqlDateTime: string): string => `${sqlDateTime.replace(' ', 'T')}000Z`;
+-
+ class FakeConnection implements TemplateSqlConnection {
+   readonly statements: string[] = [];
+   commits = 0;
+@@ -90,17 +87,33 @@ const poolOf = (connection: TemplateSqlConnection): TemplateSqlPool => ({
+   getConnection: async () => connection,
+ });
+ 
+-describe('T2A SQL value boundaries', () => {
+-  it('rejects INT values outside 0..2147483647 instead of truncating', () => {
+-    expect(sqlInt('actor', 0)).toBe(0);
+-    expect(sqlInt('actor', 2147483647)).toBe(2147483647);
+-    expect(sqlInt('actor', null)).toBeNull();
+-    expect(codeOf(() => sqlInt('actor', 2147483648))).toBe('TEMPLATE_INVALID_INPUT');
+-    expect(codeOf(() => sqlInt('actor', -1))).toBe('TEMPLATE_INVALID_INPUT');
+-    expect(codeOf(() => sqlInt('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
++describe('T2B SQL value boundaries', () => {
++  it('accepts the full BIGINT UNSIGNED actor range and refuses unsafe integers', () => {
++    expect(sqlActorId('actor', 0)).toBe(0);
++    expect(sqlActorId('actor', 2147483648)).toBe(2147483648);
++    expect(sqlActorId('actor', 9007199254740991)).toBe(9007199254740991);
++    expect(sqlActorId('actor', null)).toBeNull();
++    expect(codeOf(() => sqlActorId('actor', 9007199254740992))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => sqlActorId('actor', -1))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => sqlActorId('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => sqlActorId('actor', Number.NaN))).toBe('TEMPLATE_INVALID_INPUT');
++  });
++
++  it('reads both driver forms and refuses values outside the safe range', () => {
++    expect(fromSqlActorId('actor', null)).toBeNull();
++    expect(fromSqlActorId('actor', 42)).toBe(42);
++    expect(fromSqlActorId('actor', '9007199254740991')).toBe(9007199254740991);
++    expect(fromSqlActorId('actor', 2147483648n)).toBe(2147483648);
++    expect(codeOf(() => fromSqlActorId('actor', '9007199254740992'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => fromSqlActorId('actor', '12x'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => fromSqlActorId('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
+   });
+ 
+-  it('refuses revision/version increments at the INT ceiling', () => {
++  it('keeps version/pointer INT boundaries unchanged', () => {
++    expect(sqlInt('pointer', 0)).toBe(0);
++    expect(sqlInt('pointer', 2147483647)).toBe(2147483647);
++    expect(sqlInt('pointer', null)).toBeNull();
++    expect(codeOf(() => sqlInt('pointer', 2147483648))).toBe('TEMPLATE_INVALID_INPUT');
+     expect(sqlNextRevision('revision', 0)).toBe(1);
+     expect(sqlNextRevision('revision', 2147483646)).toBe(2147483647);
+     expect(codeOf(() => sqlNextRevision('revision', 2147483647))).toBe('TEMPLATE_INVALID_INPUT');
+@@ -108,46 +121,65 @@ describe('T2A SQL value boundaries', () => {
+     expect(codeOf(() => sqlNextVersion('version', 2147483647))).toBe('TEMPLATE_INVALID_INPUT');
+   });
+ 
+-  it('enforces the VARCHAR widths of the canonical columns', () => {
+-    expect(sqlCanonicalId('id', 'a'.repeat(128))).toHaveLength(128);
+-    expect(codeOf(() => sqlCanonicalId('id', 'a'.repeat(129)))).toBe('TEMPLATE_INVALID_INPUT');
+-    expect(sqlSemanticVersion('semver', '1'.repeat(16))).toHaveLength(16);
+-    expect(codeOf(() => sqlSemanticVersion('semver', '1'.repeat(17)))).toBe('TEMPLATE_INVALID_INPUT');
++  it('accepts full canonical identities and keeps the accepted ASCII rule', () => {
++    const longId = `a.${'b'.repeat(510)}`;
++    const longVersion = `${'1'.repeat(96)}.0.0`;
++    expect(longId).toHaveLength(512);
++    expect(longVersion).toHaveLength(100);
++    const shape = (id: string, semanticVersion: string) => ({
++      template_id: 'tpl-a', item_id: 'uptime', version: 1, display_name: 'Uptime',
++      canonical_metric: { id, semantic_version: semanticVersion }, unit: 's', dimensions: {},
++      collector_ref: { package_release: `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`, implementation_id: 'builtin:mysql.status.v1' },
++      params_default: {}, source_chain: {
++        actor_id: 1, request_id: 'req-1', base: null, created_at: AT, published_at: AT, retired_at: null, migration_ref: null,
++      },
++    });
++    expect(TemplateItemVersionSchema.safeParse(shape(longId, longVersion)).success).toBe(true);
++    expect(TemplateItemVersionSchema.safeParse(shape('db.uptime_seconds', '1.0.0')).success).toBe(true);
++    expect(TemplateItemVersionSchema.safeParse(shape('db.主机', '1.0.0')).success).toBe(false);
++    expect(TemplateItemVersionSchema.safeParse(shape('db.uptime_seconds', '1.0')).success).toBe(false);
+   });
+ 
+   it('names the internal storage boundary, not the public contract', () => {
+     try {
+-      sqlCanonicalId('canonical', 'a'.repeat(129));
++      sqlActorId('actor', 9007199254740992);
+       throw new Error('expected a rejection');
+     } catch (error) {
+-      expect((error as TemplateError).message).toContain('internal T2A storage boundary');
++      expect((error as TemplateError).message).toContain('internal T2B storage boundary');
+       expect((error as TemplateError).code).toBe('TEMPLATE_INVALID_INPUT');
+     }
+   });
+ });
+ 
+-describe('T2A DATETIME(3) round-trip', () => {
+-  it('writes UTC wall clock and preserves the instant for 0–3 digit fractions', () => {
++describe('T2B canonical CHAR(24) timestamp round-trip', () => {
++  it('normalizes 0–3 fraction digits to the same canonical instant', () => {
+     for (const fraction of ['', '.1', '.12', '.123']) {
+       const iso = `2026-10-27T01:02:03${fraction}Z`;
+-      const stored = toSqlDateTime('at', iso);
+-      expect(stored).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+-      const rendered = fromSqlDateTime(readBack(stored));
+-      expect(Date.parse(rendered)).toBe(Date.parse(iso));
+-      expect(rendered).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
++      const stored = toSqlTimestamp('at', iso);
++      expect(stored).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
++      expect(stored).toHaveLength(24);
++      expect(Date.parse(fromSqlTimestamp(stored))).toBe(Date.parse(iso));
+     }
+-    expect(fromSqlDateTime(readBack(toSqlDateTime('at', '2026-10-27T01:02:03.1Z'))))
+-      .toBe('2026-10-27T01:02:03.100Z');
++    expect(toSqlTimestamp('at', '2026-10-27T01:02:03.1Z')).toBe('2026-10-27T01:02:03.100Z');
++  });
++
++  it('preserves years 0000..9999 instead of clipping them', () => {
++    expect(toSqlTimestamp('at', '0000-01-01T00:00:00.000Z')).toBe('0000-01-01T00:00:00.000Z');
++    expect(toSqlTimestamp('at', '0999-12-31T23:59:59.000Z')).toBe('0999-12-31T23:59:59.000Z');
++    expect(toSqlTimestamp('at', '1000-01-01T00:00:00.000Z')).toBe('1000-01-01T00:00:00.000Z');
++    expect(toSqlTimestamp('at', '9999-12-31T23:59:59.999Z')).toBe('9999-12-31T23:59:59.999Z');
+   });
+ 
+-  it('rejects years the DATETIME column cannot store', () => {
+-    expect(toSqlDateTime('at', '1000-01-01T00:00:00.000Z')).toBe('1000-01-01 00:00:00.000');
+-    expect(toSqlDateTime('at', '9999-12-31T23:59:59.999Z')).toBe('9999-12-31 23:59:59.999');
+-    expect(codeOf(() => toSqlDateTime('at', '0999-12-31T23:59:59.000Z'))).toBe('TEMPLATE_INVALID_INPUT');
++  it('rejects non-canonical contract timestamps and non-canonical stored values', () => {
++    expect(codeOf(() => toSqlTimestamp('at', '2026-10-27 01:02:03'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => toSqlTimestamp('at', '2026-13-01T00:00:00.000Z'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => toSqlTimestamp('at', '2026-10-27T01:02:03.1234Z'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => fromSqlTimestamp('2026-10-27 01:02:03.000'))).toBe('TEMPLATE_INVALID_INPUT');
++    expect(codeOf(() => fromSqlTimestamp('2026-10-27T01:02:03.100'))).toBe('TEMPLATE_INVALID_INPUT');
+   });
+ });
+ 
+-describe('T2A adapter error branches', () => {
++describe('T2B adapter error branches', () => {
+   it('checks SQL-bound values before acquiring a connection', async () => {
+     let acquired = 0;
+     const repository = new MySqlTemplateRepository({
+@@ -156,8 +188,9 @@ describe('T2A adapter error branches', () => {
+         throw new Error('must not connect');
+       },
+     });
+-    await expect(repository.create({ ...template(), created_by: 2147483648 }, draft()))
+-      .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
++    await expect(repository.updateDraft('tpl-a', 0, {
++      aggregate: emptyDraftAggregate('tpl-a'), updated_by: 1.5, updated_at: AT,
++    })).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+     expect(acquired).toBe(0);
+   });
+ 
+diff --git a/apps/db-ops-api/src/metrics/templates/mysql-repository.ts b/apps/db-ops-api/src/metrics/templates/mysql-repository.ts
+index a93d0196b..01d2904f8 100644
+--- a/apps/db-ops-api/src/metrics/templates/mysql-repository.ts
++++ b/apps/db-ops-api/src/metrics/templates/mysql-repository.ts
+@@ -1,16 +1,18 @@
+ /**
+- * MAX-237 / T2A — internal MySQL adapter for the template repository port.
++ * MAX-237 / T2B — internal MySQL adapter for the template repository port.
+  *
+  * Unmounted: no route, process registration, shared pool, migration or consumer
+  * imports this file. The only way it reaches a database is the `mysql2` pool a
+  * caller passes to the constructor; this module never creates, connects or
+  * closes a pool itself and never reads an application `.env`.
+  *
+- * Storage shape is the accepted MAX-236 D1 candidate DDL 140
++ * Storage shape is the T2B candidate DDL
++ * (`docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql`),
++ * derived from the accepted MAX-236 D1 candidate DDL 140
+  * (`docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql`,
+  * byte-identical copy of
+  * `b5377142497282afa364a53b7aeab38088d095fb:docs/slide/development/MAX-236/real-a/sql/140_metric_template_aggregate.sql`).
+- * Five fixed tables, no sixth shadow table, no column or DDL change here:
++ * Five fixed tables, no sixth shadow table, same PK/FK/hash:
+  *
+  * | port value            | column(s)                                                        |
+  * |-----------------------|------------------------------------------------------------------|
+@@ -20,6 +22,14 @@
+  * | item identity         | `metric_template_items`; `status='active'` and `created_at` set only on the first item input |
+  * | TemplateVersion       | `metric_template_versions`; JSON snapshots stored as given        |
+  *
++ * T2B column representations (the only differences from DDL 140):
++ * `created_by`/`updated_by` are `BIGINT UNSIGNED NULL` (0..9007199254740991),
++ * the canonical columns are `LONGTEXT ascii`, and every timestamp is a 24-char
++ * canonical UTC string in `CHAR(24) ascii` (years 0000..9999). The canonical
++ * prefix index is query acceleration only and is never used as an identity
++ * criterion; identity compares the complete values. Version/revision columns
++ * stay `INT` because the accepted schemas cap them at 2147483647.
++ *
+  * Guarantees, in the order the port documents them:
+  *
+  * - Every write transaction locks the template parent row first, then the draft
+@@ -41,17 +51,17 @@
+  *   `START TRANSACTION` runs on that connection, so releasing it would let an
+  *   unrelated later write persist the failed/unknown operation's rows.
+  * - SQL-bound values are checked for representability **before any write**
+- *   ({@link toSqlDateTime}, {@link sqlInt}, {@link sqlCanonicalId},
+- *   {@link sqlSemanticVersion}, {@link sqlNextVersion}, {@link sqlNextRevision}).
+- *   These are internal storage boundaries of this candidate DDL, reported as
+- *   `TEMPLATE_INVALID_INPUT` with an explicit "internal storage boundary" note —
+- *   never as a claim that the public schema rejects the value.
++ *   ({@link toSqlTimestamp}, {@link sqlActorId}, {@link sqlInt},
++ *   {@link sqlNextVersion}, {@link sqlNextRevision}). These are internal storage
++ *   boundaries of this candidate DDL, reported as `TEMPLATE_INVALID_INPUT` with
++ *   an explicit "internal storage boundary" note — never as a claim that the
++ *   public schema rejects the value.
+  *
+- * Known limits carried into T2B (see `docs/slide/development/MAX-237/t2a/README.md`):
+- * `created_by`/`updated_by` are INT, canonical ids VARCHAR(128), semantic
+- * versions VARCHAR(16) and DATETIME years 1000..9999 — all narrower than the
+- * accepted schemas.
++ * Remaining limits (see `docs/slide/development/MAX-237/t2b/README.md`): version
++ * and revision stay `INT`, and `LONGTEXT`/driver packet capacity is a real
++ * storage boundary — it is rejected explicitly, never claimed unlimited.
+  */
++import { TimestampSchema } from '../../contracts/metrics/index.js';
+ import { TemplateError } from './errors.js';
+ import {
+   TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema,
+@@ -107,17 +117,45 @@ export class TemplateStorageUnknownCommitError extends Error {
+ }
+ 
+ const MAX_SQL_INT = 2147483647;
+-const CANONICAL_ID_MAX = 128;
+-const SEMANTIC_VERSION_MAX = 16;
++/** `BIGINT UNSIGNED` still cannot round-trip a JavaScript number beyond this. */
++const MAX_ACTOR_ID = 9007199254740991;
+ 
+ const storageBoundary = (detail: string): never => {
+   throw new TemplateError(
+     'TEMPLATE_INVALID_INPUT',
+-    `${detail}; this is the internal T2A storage boundary of the candidate DDL, not a public contract violation`,
++    `${detail}; this is the internal T2B storage boundary of the candidate DDL, not a public contract violation`,
+   );
+ };
+ 
+-/** `INT` columns hold 0..2147483647 or NULL; anything else is refused, never truncated. */
++/** `BIGINT UNSIGNED` actor columns hold 0..9007199254740991 or NULL; never truncated or rounded. */
++export const sqlActorId = (name: string, value: number | null): number | null => {
++  if (value === null) return null;
++  if (!Number.isInteger(value) || value < 0 || value > MAX_ACTOR_ID) {
++    return storageBoundary(`${name}=${String(value)} does not fit the BIGINT UNSIGNED actor column (0..${MAX_ACTOR_ID})`);
++  }
++  return value;
++};
++
++/**
++ * Reads an actor back from either driver form: `mysql2` returns a string when
++ * `bigNumberStrings` is on (or the value exceeds the safe range) and a number
++ * otherwise. Both are checked explicitly; a value outside the representable
++ * range is refused instead of being silently rounded.
++ */
++export const fromSqlActorId = (name: string, value: unknown): number | null => {
++  if (value === null || value === undefined) return null;
++  let numeric: number;
++  if (typeof value === 'number') numeric = value;
++  else if (typeof value === 'bigint') numeric = Number(value);
++  else if (typeof value === 'string' && /^\d+$/.test(value)) numeric = Number(value);
++  else return storageBoundary(`${name} read back as ${typeof value}, not a BIGINT rendering`);
++  if (!Number.isSafeInteger(numeric) || numeric < 0 || numeric > MAX_ACTOR_ID) {
++    return storageBoundary(`${name}=${String(value)} read back outside 0..${MAX_ACTOR_ID}`);
++  }
++  return numeric;
++};
++
++/** `INT` version/pointer columns hold 0..2147483647 or NULL; anything else is refused, never truncated. */
+ export const sqlInt = (name: string, value: number | null): number | null => {
+   if (value === null) return null;
+   if (!Number.isInteger(value) || value < 0 || value > MAX_SQL_INT) {
+@@ -142,54 +180,35 @@ export const sqlNextVersion = (name: string, current: number): number => {
+   return current + 1;
+ };
+ 
+-export const sqlCanonicalId = (name: string, value: string): string => {
+-  if (value.length > CANONICAL_ID_MAX) {
+-    return storageBoundary(`${name}=${JSON.stringify(value)} is ${value.length} characters; canonical_metric_id is VARCHAR(${CANONICAL_ID_MAX})`);
+-  }
+-  return value;
+-};
+-
+-export const sqlSemanticVersion = (name: string, value: string): string => {
+-  if (value.length > SEMANTIC_VERSION_MAX) {
+-    return storageBoundary(`${name}=${JSON.stringify(value)} is ${value.length} characters; canonical_semantic_version is VARCHAR(${SEMANTIC_VERSION_MAX})`);
+-  }
+-  return value;
+-};
+-
+-const pad = (value: number, width = 2): string => String(value).padStart(width, '0');
++/** The exact 24-character canonical UTC form stored in every `CHAR(24) ascii` column. */
++const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+ 
+ /**
+- * ISO-8601 UTC instant → MySQL `DATETIME(3)` literal `YYYY-MM-DD HH:MM:SS.mmm`.
+- * The value is written as the same UTC wall clock, so it round-trips as the same
+- * instant; `.1Z` becomes `.100` (allowed) and 3-digit fractions are preserved.
+- * Years outside the `DATETIME` range are rejected instead of being clipped.
++ * Contract timestamp → the canonical 24-character UTC string
++ * `YYYY-MM-DDTHH:mm:ss.SSSZ` written to `CHAR(24) ascii`.
++ *
++ * Validation is the accepted `TimestampSchema` (UTC `Z`, 0–3 fraction digits);
++ * `.1Z` is normalized to `.100Z`, so a value and its canonical form describe the
++ * same instant and the same year (0000..9999) without a `DATETIME` cast.
+  */
+-export const toSqlDateTime = (name: string, iso: string): string => {
+-  const instant = Date.parse(iso);
+-  if (!Number.isFinite(instant)) {
+-    throw new TemplateError('TEMPLATE_INVALID_INPUT', `${name}=${JSON.stringify(iso)} is not a valid instant`);
+-  }
+-  const date = new Date(instant);
+-  const year = date.getUTCFullYear();
+-  if (year < 1000 || year > 9999) {
+-    return storageBoundary(`${name}=${JSON.stringify(iso)} is outside the DATETIME year range 1000..9999`);
+-  }
+-  return `${pad(year, 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} `
+-    + `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}`;
++export const toSqlTimestamp = (name: string, iso: string): string => {
++  if (!TimestampSchema.safeParse(iso).success) {
++    throw new TemplateError('TEMPLATE_INVALID_INPUT', `${name}=${JSON.stringify(iso)} is not a valid contract timestamp`);
++  }
++  const canonical = new Date(Date.parse(iso)).toISOString();
++  if (!CANONICAL_TIMESTAMP.test(canonical)) {
++    return storageBoundary(`${name}=${JSON.stringify(iso)} cannot be rendered as the 24-character canonical form`);
++  }
++  return canonical;
+ };
+ 
+-/**
+- * `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%fZ')` → the contract's
+- * `YYYY-MM-DDTHH:mm:ss.SSSZ`. `DATETIME(3)` always has six microsecond digits
+- * from `%f`, of which only the first three can be non-zero.
+- */
+-export const fromSqlDateTime = (value: unknown): string => {
++/** A stored `CHAR(24)` value must already be the exact canonical form; no silent re-parsing. */
++export const fromSqlTimestamp = (value: unknown): string => {
+   const text = typeof value === 'string' ? value : String(value ?? '');
+-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{6})Z$/.exec(text);
+-  if (!match) {
+-    throw new TemplateError('TEMPLATE_INVALID_INPUT', `unexpected DATETIME(3) rendering ${JSON.stringify(text)}`);
++  if (!CANONICAL_TIMESTAMP.test(text)) {
++    throw new TemplateError('TEMPLATE_INVALID_INPUT', `unexpected CHAR(24) timestamp rendering ${JSON.stringify(text)}`);
+   }
+-  return `${match[1]}.${match[2]!.slice(0, 3)}Z`;
++  return text;
+ };
+ 
+ type Row = Record<string, unknown>;
+@@ -232,19 +251,18 @@ const itemValues = (item: TemplateItemVersion): unknown[] => [
+   JSON.stringify(item.source_chain),
+ ];
+ 
+-/** Explicit UTC/wall-clock rendering; never relies on the pool's `dateStrings`/`timezone` config. */
+-const DATE = (column: string): string => `DATE_FORMAT(${column}, '%Y-%m-%dT%H:%i:%s.%fZ') AS ${column}`;
+-
++// Timestamps are stored as canonical UTC strings, so no DATE_FORMAT/dateStrings
++// rendering is involved and the pool's `timezone` config cannot shift them.
+ const TEMPLATE_SELECT = `template_id, name, status, current_published_version, revision, created_by,
+-  ${DATE('created_at')}, ${DATE('updated_at')}`;
+-const DRAFT_SELECT = `template_id, revision, aggregate, published_version, updated_by, ${DATE('updated_at')}`;
++  created_at, updated_at`;
++const DRAFT_SELECT = `template_id, revision, aggregate, published_version, updated_by, updated_at`;
+ const ITEM_FIELDS = [
+   'template_id', 'item_id', 'version', 'display_name', 'canonical_metric_id', 'canonical_semantic_version',
+   'unit', 'dimensions', 'collector_ref', 'params_default', 'source_chain',
+ ];
+ const itemSelect = (prefix = ''): string => ITEM_FIELDS.map(field => `${prefix}${field}`).join(', ');
+ const VERSION_SELECT = `template_id, version, status, content_hash, aggregate, items,
+-  package_composition, source_chain, ${DATE('published_at')}, ${DATE('retired_at')}`;
++  package_composition, source_chain, published_at, retired_at`;
+ 
+ /** `SET` statement applied to every freshly acquired connection (once per object). */
+ const SESSION_SQL = "SET SESSION time_zone = '+00:00', SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'";
+@@ -345,9 +363,9 @@ export class MySqlTemplateRepository implements TemplateRepository {
+       status: row.status,
+       current_published_version: intOrNull(row.current_published_version),
+       revision: Number(row.revision),
+-      created_by: intOrNull(row.created_by),
+-      created_at: fromSqlDateTime(row.created_at),
+-      updated_at: fromSqlDateTime(row.updated_at),
++      created_by: fromSqlActorId('created_by', row.created_by),
++      created_at: fromSqlTimestamp(row.created_at),
++      updated_at: fromSqlTimestamp(row.updated_at),
+     });
+   }
+ 
+@@ -357,8 +375,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
+       revision: Number(row.revision),
+       aggregate: jsonColumn(row.aggregate),
+       published_version: intOrNull(row.published_version),
+-      updated_by: intOrNull(row.updated_by),
+-      updated_at: fromSqlDateTime(row.updated_at),
++      updated_by: fromSqlActorId('updated_by', row.updated_by),
++      updated_at: fromSqlTimestamp(row.updated_at),
+     });
+   }
+ 
+@@ -390,8 +408,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
+       items: jsonColumn(row.items),
+       package_composition: jsonColumn(row.package_composition),
+       source_chain: jsonColumn(row.source_chain),
+-      published_at: fromSqlDateTime(row.published_at),
+-      retired_at: row.retired_at === null || row.retired_at === undefined ? null : fromSqlDateTime(row.retired_at),
++      published_at: fromSqlTimestamp(row.published_at),
++      retired_at: row.retired_at === null || row.retired_at === undefined ? null : fromSqlTimestamp(row.retired_at),
+     });
+   }
+ 
+@@ -425,19 +443,17 @@ export class MySqlTemplateRepository implements TemplateRepository {
+     }
+     // Every SQL-bound value is checked before the first INSERT, so a storage
+     // boundary never leaves a parent or draft row behind through a partial write.
+-    const createdAt = toSqlDateTime('template.created_at', record.created_at);
+-    const updatedAt = toSqlDateTime('template.updated_at', record.updated_at);
+-    const draftUpdatedAt = toSqlDateTime('draft.updated_at', next.updated_at);
+-    const createdBy = sqlInt('template.created_by', record.created_by);
++    const createdAt = toSqlTimestamp('template.created_at', record.created_at);
++    const updatedAt = toSqlTimestamp('template.updated_at', record.updated_at);
++    const draftUpdatedAt = toSqlTimestamp('draft.updated_at', next.updated_at);
++    const createdBy = sqlActorId('template.created_by', record.created_by);
+     const currentPublishedVersion = sqlInt('template.current_published_version', record.current_published_version);
+-    const draftUpdatedBy = sqlInt('draft.updated_by', next.updated_by);
++    const draftUpdatedBy = sqlActorId('draft.updated_by', next.updated_by);
+     const draftPublishedVersion = sqlInt('draft.published_version', next.published_version);
+     const ordered = [...copies.values()].sort((a, b) => asciiCompare(a.item_id, b.item_id));
+     const itemCreatedAt = new Map<string, string>();
+     for (const item of ordered) {
+-      sqlCanonicalId(`item ${item.item_id} canonical_metric.id`, item.canonical_metric.id);
+-      sqlSemanticVersion(`item ${item.item_id} canonical_metric.semantic_version`, item.canonical_metric.semantic_version);
+-      itemCreatedAt.set(item.item_id, toSqlDateTime(`item ${item.item_id} source_chain.created_at`, item.source_chain.created_at));
++      itemCreatedAt.set(item.item_id, toSqlTimestamp(`item ${item.item_id} source_chain.created_at`, item.source_chain.created_at));
+     }
+ 
+     await this.transaction('create', { template_id: record.template_id }, async connection => {
+@@ -485,7 +501,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
+   }
+ 
+   async updateTemplate(templateId: string, expectedRevision: Revision, patch: TemplatePatch): Promise<TemplateRecord> {
+-    toSqlDateTime('patch.updated_at', patch.updated_at);
++    toSqlTimestamp('patch.updated_at', patch.updated_at);
+     return this.transaction('updateTemplate', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
+       const row = firstRow(await connection.execute(
+         `SELECT ${TEMPLATE_SELECT} FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE`,
+@@ -508,7 +524,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
+         updated_at: patch.updated_at,
+       });
+       const currentPublishedVersion = sqlInt('template.current_published_version', next.current_published_version);
+-      const updatedAt = toSqlDateTime('template.updated_at', next.updated_at);
++      const updatedAt = toSqlTimestamp('template.updated_at', next.updated_at);
+       const [result] = await connection.execute(
+         `UPDATE metric_templates_v2
+             SET name = ?, status = ?, current_published_version = ?, revision = ?, updated_at = ?
+@@ -524,8 +540,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
+   }
+ 
+   async updateDraft(templateId: string, expectedRevision: Revision, next: DraftUpdate): Promise<TemplateDraft> {
+-    toSqlDateTime('draft.updated_at', next.updated_at);
+-    sqlInt('draft.updated_by', next.updated_by);
++    toSqlTimestamp('draft.updated_at', next.updated_at);
++    sqlActorId('draft.updated_by', next.updated_by);
+     return this.transaction('updateDraft', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
+       // Lock order: template parent row first, then the draft row.
+       const parent = firstRow(await connection.execute(
+@@ -551,8 +567,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
+         updated_by: next.updated_by,
+         updated_at: next.updated_at,
+       });
+-      const updatedAt = toSqlDateTime('draft.updated_at', updated.updated_at);
+-      const updatedBy = sqlInt('draft.updated_by', updated.updated_by);
++      const updatedAt = toSqlTimestamp('draft.updated_at', updated.updated_at);
++      const updatedBy = sqlActorId('draft.updated_by', updated.updated_by);
+       const [result] = await connection.execute(
+         `UPDATE metric_template_drafts
+             SET revision = ?, aggregate = ?, updated_by = ?, updated_at = ?
+@@ -569,10 +585,10 @@ export class MySqlTemplateRepository implements TemplateRepository {
+ 
+   async putItemVersion(input: ItemVersionInput): Promise<ItemVersionResult> {
+     // Content shape and SQL-bound item columns are checked before locking/writing.
++    // The accepted MetricRefSchema proves ASCII canonical identity; the LONGTEXT
++    // columns impose no length cap, so no artificial width check exists here.
+     TemplateItemVersionSchema.parse({ ...input, version: 1 });
+-    sqlCanonicalId(`item ${input.item_id} canonical_metric.id`, input.canonical_metric.id);
+-    sqlSemanticVersion(`item ${input.item_id} canonical_metric.semantic_version`, input.canonical_metric.semantic_version);
+-    toSqlDateTime(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at);
++    toSqlTimestamp(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at);
+ 
+     return this.transaction('putItemVersion', { template_id: input.template_id, item_id: input.item_id }, async connection => {
+       // The existing template row is the lock that serialises first-item races;
+@@ -607,7 +623,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
+           await connection.execute(
+             'INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)',
+             [input.template_id, input.item_id, 'active',
+-              toSqlDateTime(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at)],
++              toSqlTimestamp(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at)],
+           );
+         } catch (error) {
+           if (isDuplicateKey(error)) {
+@@ -643,9 +659,9 @@ export class MySqlTemplateRepository implements TemplateRepository {
+       published_at: command.publishedAt,
+       retired_at: null,
+     });
+-    const publishedAt = toSqlDateTime('publish.published_at', command.publishedAt);
+-    const draftUpdatedAt = toSqlDateTime('publish.draft_updated_at', command.draftUpdatedAt);
+-    const actorId = sqlInt('publish.actor_id', command.actorId);
++    const publishedAt = toSqlTimestamp('publish.published_at', command.publishedAt);
++    const draftUpdatedAt = toSqlTimestamp('publish.draft_updated_at', command.draftUpdatedAt);
++    const actorId = sqlActorId('publish.actor_id', command.actorId);
+ 
+     return this.transaction('publish', {
+       template_id: command.templateId,

@@ -1,0 +1,94 @@
+MAX-237 / T2A focused test log
+command: npx vitest run src/metrics/templates  (cwd apps/db-ops-api; MAX237_T2A_MYSQL_* pointing at the disposable fixture)
+environment: container b232577f0f27..., mysql 8.4.10, database max237_t2a, utf8mb4_bin, DDL sha256 3fab3958...
+result: exit 0, 5 files, 73 passed / 0 failed / 0 skipped
+
+catalog.test.ts: 6/6 passed
+  [PASS] registered capability selection offers only metrics a collector really maps, with pin, raw field and cadence
+  [PASS] registered capability selection never lists a derived metric as directly selectable and says why
+  [PASS] registered capability selection autofills unit, dimensions, cadence and the explicit implementation pin
+  [PASS] registered capability selection rejects an unknown pin, an unknown metric and a derived metric with distinct codes
+  [PASS] registered capability selection rejects a deprecated definition and never offers it
+  [PASS] registered capability selection orders candidates deterministically by release then metric
+
+mysql-repository.mysql.test.ts: 16/16 passed
+  [PASS] MAX-237 T2A MySQL template repository uses utf8mb4_bin tables and a strict UTC session
+  [PASS] MAX-237 T2A MySQL template repository keeps ASCII identities case-sensitive and pages by ascending id
+  [PASS] MAX-237 T2A MySQL template repository creates template, draft and copied items atomically
+  [PASS] MAX-237 T2A MySQL template repository rolls back a half-written create when a statement fails
+  [PASS] MAX-237 T2A MySQL template repository applies template and draft writes only at the expected revision
+  [PASS] MAX-237 T2A MySQL template repository initializes the first item identity once and appends only on real content change
+  [PASS] MAX-237 T2A MySQL template repository compares dimension key sets without delimiter collisions and round-trips JSON
+  [PASS] MAX-237 T2A MySQL template repository serialises colliding first-item writes across two independent connections
+  [PASS] MAX-237 T2A MySQL template repository publishes immutable versions with CAS, idempotency and unchanged snapshots
+  [PASS] MAX-237 T2A MySQL template repository lets exactly one concurrent publish at the same revision win the CAS
+  [PASS] MAX-237 T2A MySQL template repository rolls back the new snapshot when the pointer update fails
+  [PASS] MAX-237 T2A MySQL template repository keeps an unknown outcome when the commit acknowledgement is lost
+  [PASS] MAX-237 T2A MySQL template repository rolls back server-side when the connection drops before commit
+  [PASS] MAX-237 T2A MySQL template repository reads persisted state through a fresh repository connection
+  [PASS] MAX-237 T2A MySQL template repository maps SQL NULL and 0–3 digit UTC timestamps without inventing values
+  [PASS] MAX-237 T2A MySQL template repository rejects values the five tables cannot represent before writing
+
+mysql-repository.test.ts: 11/11 passed
+  [PASS] T2A SQL value boundaries rejects INT values outside 0..2147483647 instead of truncating
+  [PASS] T2A SQL value boundaries refuses revision/version increments at the INT ceiling
+  [PASS] T2A SQL value boundaries enforces the VARCHAR widths of the canonical columns
+  [PASS] T2A SQL value boundaries names the internal storage boundary, not the public contract
+  [PASS] T2A DATETIME(3) round-trip writes UTC wall clock and preserves the instant for 0–3 digit fractions
+  [PASS] T2A DATETIME(3) round-trip rejects years the DATETIME column cannot store
+  [PASS] T2A adapter error branches checks SQL-bound values before acquiring a connection
+  [PASS] T2A adapter error branches maps a duplicate parent insert to TEMPLATE_EXISTS and rolls back
+  [PASS] T2A adapter error branches rolls back and keeps the original error when a statement fails mid-transaction
+  [PASS] T2A adapter error branches reports an unknown commit outcome instead of success or failure
+  [PASS] T2A adapter error branches keeps the unknown-commit outcome even when releasing the connection fails
+
+repository.test.ts: 13/13 passed
+  [PASS] in-memory template repository refuses to reuse a template identity
+  [PASS] in-memory template repository applies draft and template writes only at the expected revision
+  [PASS] in-memory template repository keeps item identity stable and appends only on real content change
+  [PASS] in-memory template repository refuses an incompatible semantic change on a stable item identity
+  [PASS] in-memory template repository applies the identity guard on the conditional append, not only in the service
+  [PASS] in-memory template repository compares dimension key sets without delimiter collisions
+  [PASS] in-memory template repository lets exactly one racing first write with colliding key sets win
+  [PASS] in-memory template repository keeps a published snapshot unchanged when an incompatible key set is rejected
+  [PASS] in-memory template repository publishes v1, treats identical content as a no-op and never rewrites a version
+  [PASS] in-memory template repository leaves no trace when the publish guards fail
+  [PASS] in-memory template repository rejects a version snapshot that disagrees with the aggregate
+  [PASS] in-memory template repository returns detached copies from every read
+  [PASS] in-memory template repository pages templates by ascending id without repeating or skipping rows
+
+service.test.ts: 27/27 passed
+  [PASS] template lifecycle creates a server-identified draft and enforces metric:manage
+  [PASS] template lifecycle auto-fills a selected metric and keeps the item identity across a rename
+  [PASS] template lifecycle auto-fills dimensions and composes a template that spans releases
+  [PASS] template lifecycle publishes an immutable version with a per-item raw-field trace
+  [PASS] template lifecycle treats a rename as history-preserving and republishing as a no-op
+  [PASS] template lifecycle creates a new template version when an item version changes
+  [PASS] template lifecycle copies into a new template identity without continuing the source history
+  [PASS] template lifecycle moves only the current pointer and refuses a stale revision
+  [PASS] template lifecycle lets exactly one of two publishes at the same revision win
+  [PASS] template lifecycle returns detached copies from reads
+  [PASS] publish rejections rejects an empty template, an unresolved base and a blank name
+  [PASS] publish rejections rejects an illegal cadence when the draft is saved and again at publish
+  [PASS] publish rejections rejects an item-level cadence and undeclared item parameters
+  [PASS] publish rejections rejects a unit or dimension mismatch against the canonical definition
+  [PASS] publish rejections rejects an empty dimension key when publish re-validates the stored item
+  [PASS] publish rejections accepts the same dimension key set in another order at publish
+  [PASS] publish rejections rejects a missing implementation pin and an uninstalled release
+  [PASS] publish rejections rejects the same metric selected by two items
+  [PASS] publish rejections rejects stale draft and template revisions without writing a version
+  [PASS] publish rejections rejects references to item versions that do not exist
+  [PASS] publish rejections forbids writes for a metric:view-only actor
+  [PASS] publish rejections maps failure codes to the intended status
+  [PASS] stable item identity refuses to continue a published item under an incompatible metric
+  [PASS] stable item identity lets exactly one of two racing selections under one item_id win
+  [PASS] parameter types accepts one default of every declared type
+  [PASS] parameter types rejects a number that disguises a boolean or string parameter
+  [PASS] parameter types re-validates the stored draft at publish and the item defaults against it
+
+total: 73 tests
+
+Other checks (same code commit 0b60d1f42):
+  npx vitest run src/metrics (no MySQL env): 48 files passed / 25 skipped, 499 passed / 137 skipped, exit 0
+  npx tsc --noEmit: exit 0, no diagnostics
+  npx oxlint apps/db-ops-api/src/metrics/templates (repo root): 0 warnings / 0 errors on 12 files
