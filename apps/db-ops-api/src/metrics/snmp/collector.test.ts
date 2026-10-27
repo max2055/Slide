@@ -127,6 +127,28 @@ describe('SNMP V2 precision and continuity', () => {
     s.transport.get = original; s.advance();
     expect(metric(await s.run(), 'snmp.interface.rx_bits_per_second').quality.reason).toBe('counter_baseline');
   });
+  it('keeps interface rates unknown on first sample, counter reset and missing input — never zero', async () => {
+    // First sample: a counter with no trusted baseline has no rate.
+    const baseline = setup();
+    expect(metric(await baseline.run(), 'snmp.interface.rx_bits_per_second')).toMatchObject({
+      value: null, quality: { status: 'unknown', reason: 'counter_baseline' },
+    });
+    // Counter reset inside the same interface epoch: the delta is not a rate.
+    const reset = setup(); await reset.run(); reset.advance();
+    reset.x[0].values['6'] = '5';
+    expect(metric(await reset.run(), 'snmp.interface.rx_bits_per_second')).toMatchObject({
+      value: null, quality: { status: 'unknown', reason: 'counter_reset' },
+    });
+    // Missing input: an absent varbind is unknown, not a zero counter.
+    const missing = setup();
+    for (const table of [missing.b, missing.x]) {
+      delete table[0].values['5']; delete table[0].values['6']; delete table[0].values['10']; delete table[0].values['16'];
+    }
+    const result = await missing.run();
+    expect(metric(result, 'snmp.interface.rx_octets_total').value).toBeNull();
+    expect(metric(result, 'snmp.interface.rx_bits_per_second').value).toBeNull();
+    expect(metric(result, 'snmp.interface.rx_bits_per_second').value).not.toBe(0);
+  });
   it('removes retired interface counter baselines after a complete empty discovery', async () => {
     const s = setup(); expect((await s.run()).states.size).toBe(6); s.advance(); s.b.length = 0;
     const r = await s.run(); expect(r.states.size).toBe(0); expect(r.observations).toHaveLength(1);
