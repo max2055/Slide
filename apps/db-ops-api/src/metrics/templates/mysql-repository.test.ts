@@ -1,5 +1,5 @@
 /**
- * MAX-237 / T2A — focused adapter checks that need no database.
+ * MAX-237 / T2B — focused adapter checks that need no database.
  *
  * Everything transactional (CAS, first-item races, rollback, commit-loss) is
  * exercised against real MySQL in `mysql-repository.mysql.test.ts`; these tests
@@ -8,10 +8,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TemplateError } from './errors.js';
-import { emptyDraftAggregate, type TemplateDraft, type TemplateRecord } from './model.js';
+import { emptyDraftAggregate, TemplateItemVersionSchema, type TemplateDraft, type TemplateRecord } from './model.js';
 import {
-  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlDateTime, sqlCanonicalId, sqlInt,
-  sqlNextRevision, sqlNextVersion, sqlSemanticVersion, toSqlDateTime,
+  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlActorId, fromSqlTimestamp,
+  sqlActorId, sqlInt, sqlNextRevision, sqlNextVersion, toSqlTimestamp,
   type TemplateSqlConnection, type TemplateSqlPool,
 } from './mysql-repository.js';
 
@@ -35,9 +35,6 @@ function codeOf(run: () => unknown): string {
   }
   throw new Error('expected the call to fail');
 }
-
-/** The rendering `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%fZ')` produces for a DATETIME(3). */
-const readBack = (sqlDateTime: string): string => `${sqlDateTime.replace(' ', 'T')}000Z`;
 
 class FakeConnection implements TemplateSqlConnection {
   readonly statements: string[] = [];
@@ -90,17 +87,33 @@ const poolOf = (connection: TemplateSqlConnection): TemplateSqlPool => ({
   getConnection: async () => connection,
 });
 
-describe('T2A SQL value boundaries', () => {
-  it('rejects INT values outside 0..2147483647 instead of truncating', () => {
-    expect(sqlInt('actor', 0)).toBe(0);
-    expect(sqlInt('actor', 2147483647)).toBe(2147483647);
-    expect(sqlInt('actor', null)).toBeNull();
-    expect(codeOf(() => sqlInt('actor', 2147483648))).toBe('TEMPLATE_INVALID_INPUT');
-    expect(codeOf(() => sqlInt('actor', -1))).toBe('TEMPLATE_INVALID_INPUT');
-    expect(codeOf(() => sqlInt('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
+describe('T2B SQL value boundaries', () => {
+  it('accepts the full BIGINT UNSIGNED actor range and refuses unsafe integers', () => {
+    expect(sqlActorId('actor', 0)).toBe(0);
+    expect(sqlActorId('actor', 2147483648)).toBe(2147483648);
+    expect(sqlActorId('actor', 9007199254740991)).toBe(9007199254740991);
+    expect(sqlActorId('actor', null)).toBeNull();
+    expect(codeOf(() => sqlActorId('actor', 9007199254740992))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => sqlActorId('actor', -1))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => sqlActorId('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => sqlActorId('actor', Number.NaN))).toBe('TEMPLATE_INVALID_INPUT');
   });
 
-  it('refuses revision/version increments at the INT ceiling', () => {
+  it('reads both driver forms and refuses values outside the safe range', () => {
+    expect(fromSqlActorId('actor', null)).toBeNull();
+    expect(fromSqlActorId('actor', 42)).toBe(42);
+    expect(fromSqlActorId('actor', '9007199254740991')).toBe(9007199254740991);
+    expect(fromSqlActorId('actor', 2147483648n)).toBe(2147483648);
+    expect(codeOf(() => fromSqlActorId('actor', '9007199254740992'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => fromSqlActorId('actor', '12x'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => fromSqlActorId('actor', 1.5))).toBe('TEMPLATE_INVALID_INPUT');
+  });
+
+  it('keeps version/pointer INT boundaries unchanged', () => {
+    expect(sqlInt('pointer', 0)).toBe(0);
+    expect(sqlInt('pointer', 2147483647)).toBe(2147483647);
+    expect(sqlInt('pointer', null)).toBeNull();
+    expect(codeOf(() => sqlInt('pointer', 2147483648))).toBe('TEMPLATE_INVALID_INPUT');
     expect(sqlNextRevision('revision', 0)).toBe(1);
     expect(sqlNextRevision('revision', 2147483646)).toBe(2147483647);
     expect(codeOf(() => sqlNextRevision('revision', 2147483647))).toBe('TEMPLATE_INVALID_INPUT');
@@ -108,46 +121,65 @@ describe('T2A SQL value boundaries', () => {
     expect(codeOf(() => sqlNextVersion('version', 2147483647))).toBe('TEMPLATE_INVALID_INPUT');
   });
 
-  it('enforces the VARCHAR widths of the canonical columns', () => {
-    expect(sqlCanonicalId('id', 'a'.repeat(128))).toHaveLength(128);
-    expect(codeOf(() => sqlCanonicalId('id', 'a'.repeat(129)))).toBe('TEMPLATE_INVALID_INPUT');
-    expect(sqlSemanticVersion('semver', '1'.repeat(16))).toHaveLength(16);
-    expect(codeOf(() => sqlSemanticVersion('semver', '1'.repeat(17)))).toBe('TEMPLATE_INVALID_INPUT');
+  it('accepts full canonical identities and keeps the accepted ASCII rule', () => {
+    const longId = `a.${'b'.repeat(510)}`;
+    const longVersion = `${'1'.repeat(96)}.0.0`;
+    expect(longId).toHaveLength(512);
+    expect(longVersion).toHaveLength(100);
+    const shape = (id: string, semanticVersion: string) => ({
+      template_id: 'tpl-a', item_id: 'uptime', version: 1, display_name: 'Uptime',
+      canonical_metric: { id, semantic_version: semanticVersion }, unit: 's', dimensions: {},
+      collector_ref: { package_release: `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`, implementation_id: 'builtin:mysql.status.v1' },
+      params_default: {}, source_chain: {
+        actor_id: 1, request_id: 'req-1', base: null, created_at: AT, published_at: AT, retired_at: null, migration_ref: null,
+      },
+    });
+    expect(TemplateItemVersionSchema.safeParse(shape(longId, longVersion)).success).toBe(true);
+    expect(TemplateItemVersionSchema.safeParse(shape('db.uptime_seconds', '1.0.0')).success).toBe(true);
+    expect(TemplateItemVersionSchema.safeParse(shape('db.主机', '1.0.0')).success).toBe(false);
+    expect(TemplateItemVersionSchema.safeParse(shape('db.uptime_seconds', '1.0')).success).toBe(false);
   });
 
   it('names the internal storage boundary, not the public contract', () => {
     try {
-      sqlCanonicalId('canonical', 'a'.repeat(129));
+      sqlActorId('actor', 9007199254740992);
       throw new Error('expected a rejection');
     } catch (error) {
-      expect((error as TemplateError).message).toContain('internal T2A storage boundary');
+      expect((error as TemplateError).message).toContain('internal T2B storage boundary');
       expect((error as TemplateError).code).toBe('TEMPLATE_INVALID_INPUT');
     }
   });
 });
 
-describe('T2A DATETIME(3) round-trip', () => {
-  it('writes UTC wall clock and preserves the instant for 0–3 digit fractions', () => {
+describe('T2B canonical CHAR(24) timestamp round-trip', () => {
+  it('normalizes 0–3 fraction digits to the same canonical instant', () => {
     for (const fraction of ['', '.1', '.12', '.123']) {
       const iso = `2026-10-27T01:02:03${fraction}Z`;
-      const stored = toSqlDateTime('at', iso);
-      expect(stored).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
-      const rendered = fromSqlDateTime(readBack(stored));
-      expect(Date.parse(rendered)).toBe(Date.parse(iso));
-      expect(rendered).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      const stored = toSqlTimestamp('at', iso);
+      expect(stored).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(stored).toHaveLength(24);
+      expect(Date.parse(fromSqlTimestamp(stored))).toBe(Date.parse(iso));
     }
-    expect(fromSqlDateTime(readBack(toSqlDateTime('at', '2026-10-27T01:02:03.1Z'))))
-      .toBe('2026-10-27T01:02:03.100Z');
+    expect(toSqlTimestamp('at', '2026-10-27T01:02:03.1Z')).toBe('2026-10-27T01:02:03.100Z');
   });
 
-  it('rejects years the DATETIME column cannot store', () => {
-    expect(toSqlDateTime('at', '1000-01-01T00:00:00.000Z')).toBe('1000-01-01 00:00:00.000');
-    expect(toSqlDateTime('at', '9999-12-31T23:59:59.999Z')).toBe('9999-12-31 23:59:59.999');
-    expect(codeOf(() => toSqlDateTime('at', '0999-12-31T23:59:59.000Z'))).toBe('TEMPLATE_INVALID_INPUT');
+  it('preserves years 0000..9999 instead of clipping them', () => {
+    expect(toSqlTimestamp('at', '0000-01-01T00:00:00.000Z')).toBe('0000-01-01T00:00:00.000Z');
+    expect(toSqlTimestamp('at', '0999-12-31T23:59:59.000Z')).toBe('0999-12-31T23:59:59.000Z');
+    expect(toSqlTimestamp('at', '1000-01-01T00:00:00.000Z')).toBe('1000-01-01T00:00:00.000Z');
+    expect(toSqlTimestamp('at', '9999-12-31T23:59:59.999Z')).toBe('9999-12-31T23:59:59.999Z');
+  });
+
+  it('rejects non-canonical contract timestamps and non-canonical stored values', () => {
+    expect(codeOf(() => toSqlTimestamp('at', '2026-10-27 01:02:03'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => toSqlTimestamp('at', '2026-13-01T00:00:00.000Z'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => toSqlTimestamp('at', '2026-10-27T01:02:03.1234Z'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => fromSqlTimestamp('2026-10-27 01:02:03.000'))).toBe('TEMPLATE_INVALID_INPUT');
+    expect(codeOf(() => fromSqlTimestamp('2026-10-27T01:02:03.100'))).toBe('TEMPLATE_INVALID_INPUT');
   });
 });
 
-describe('T2A adapter error branches', () => {
+describe('T2B adapter error branches', () => {
   it('checks SQL-bound values before acquiring a connection', async () => {
     let acquired = 0;
     const repository = new MySqlTemplateRepository({
@@ -156,8 +188,9 @@ describe('T2A adapter error branches', () => {
         throw new Error('must not connect');
       },
     });
-    await expect(repository.create({ ...template(), created_by: 2147483648 }, draft()))
-      .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+    await expect(repository.updateDraft('tpl-a', 0, {
+      aggregate: emptyDraftAggregate('tpl-a'), updated_by: 1.5, updated_at: AT,
+    })).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
     expect(acquired).toBe(0);
   });
 

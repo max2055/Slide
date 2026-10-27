@@ -1,16 +1,18 @@
 /**
- * MAX-237 / T2A — internal MySQL adapter for the template repository port.
+ * MAX-237 / T2B — internal MySQL adapter for the template repository port.
  *
  * Unmounted: no route, process registration, shared pool, migration or consumer
  * imports this file. The only way it reaches a database is the `mysql2` pool a
  * caller passes to the constructor; this module never creates, connects or
  * closes a pool itself and never reads an application `.env`.
  *
- * Storage shape is the accepted MAX-236 D1 candidate DDL 140
+ * Storage shape is the T2B candidate DDL
+ * (`docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql`),
+ * derived from the accepted MAX-236 D1 candidate DDL 140
  * (`docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql`,
  * byte-identical copy of
  * `b5377142497282afa364a53b7aeab38088d095fb:docs/slide/development/MAX-236/real-a/sql/140_metric_template_aggregate.sql`).
- * Five fixed tables, no sixth shadow table, no column or DDL change here:
+ * Five fixed tables, no sixth shadow table, same PK/FK/hash:
  *
  * | port value            | column(s)                                                        |
  * |-----------------------|------------------------------------------------------------------|
@@ -19,6 +21,14 @@
  * | TemplateItemVersion   | `metric_template_item_versions`; `canonical_metric.id`/`semantic_version` split into `canonical_metric_id`/`canonical_semantic_version` |
  * | item identity         | `metric_template_items`; `status='active'` and `created_at` set only on the first item input |
  * | TemplateVersion       | `metric_template_versions`; JSON snapshots stored as given        |
+ *
+ * T2B column representations (the only differences from DDL 140):
+ * `created_by`/`updated_by` are `BIGINT UNSIGNED NULL` (0..9007199254740991),
+ * the canonical columns are `LONGTEXT ascii`, and every timestamp is a 24-char
+ * canonical UTC string in `CHAR(24) ascii` (years 0000..9999). The canonical
+ * prefix index is query acceleration only and is never used as an identity
+ * criterion; identity compares the complete values. Version/revision columns
+ * stay `INT` because the accepted schemas cap them at 2147483647.
  *
  * Guarantees, in the order the port documents them:
  *
@@ -41,17 +51,17 @@
  *   `START TRANSACTION` runs on that connection, so releasing it would let an
  *   unrelated later write persist the failed/unknown operation's rows.
  * - SQL-bound values are checked for representability **before any write**
- *   ({@link toSqlDateTime}, {@link sqlInt}, {@link sqlCanonicalId},
- *   {@link sqlSemanticVersion}, {@link sqlNextVersion}, {@link sqlNextRevision}).
- *   These are internal storage boundaries of this candidate DDL, reported as
- *   `TEMPLATE_INVALID_INPUT` with an explicit "internal storage boundary" note —
- *   never as a claim that the public schema rejects the value.
+ *   ({@link toSqlTimestamp}, {@link sqlActorId}, {@link sqlInt},
+ *   {@link sqlNextVersion}, {@link sqlNextRevision}). These are internal storage
+ *   boundaries of this candidate DDL, reported as `TEMPLATE_INVALID_INPUT` with
+ *   an explicit "internal storage boundary" note — never as a claim that the
+ *   public schema rejects the value.
  *
- * Known limits carried into T2B (see `docs/slide/development/MAX-237/t2a/README.md`):
- * `created_by`/`updated_by` are INT, canonical ids VARCHAR(128), semantic
- * versions VARCHAR(16) and DATETIME years 1000..9999 — all narrower than the
- * accepted schemas.
+ * Remaining limits (see `docs/slide/development/MAX-237/t2b/README.md`): version
+ * and revision stay `INT`, and `LONGTEXT`/driver packet capacity is a real
+ * storage boundary — it is rejected explicitly, never claimed unlimited.
  */
+import { TimestampSchema } from '../../contracts/metrics/index.js';
 import { TemplateError } from './errors.js';
 import {
   TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema,
@@ -107,17 +117,45 @@ export class TemplateStorageUnknownCommitError extends Error {
 }
 
 const MAX_SQL_INT = 2147483647;
-const CANONICAL_ID_MAX = 128;
-const SEMANTIC_VERSION_MAX = 16;
+/** `BIGINT UNSIGNED` still cannot round-trip a JavaScript number beyond this. */
+const MAX_ACTOR_ID = 9007199254740991;
 
 const storageBoundary = (detail: string): never => {
   throw new TemplateError(
     'TEMPLATE_INVALID_INPUT',
-    `${detail}; this is the internal T2A storage boundary of the candidate DDL, not a public contract violation`,
+    `${detail}; this is the internal T2B storage boundary of the candidate DDL, not a public contract violation`,
   );
 };
 
-/** `INT` columns hold 0..2147483647 or NULL; anything else is refused, never truncated. */
+/** `BIGINT UNSIGNED` actor columns hold 0..9007199254740991 or NULL; never truncated or rounded. */
+export const sqlActorId = (name: string, value: number | null): number | null => {
+  if (value === null) return null;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_ACTOR_ID) {
+    return storageBoundary(`${name}=${String(value)} does not fit the BIGINT UNSIGNED actor column (0..${MAX_ACTOR_ID})`);
+  }
+  return value;
+};
+
+/**
+ * Reads an actor back from either driver form: `mysql2` returns a string when
+ * `bigNumberStrings` is on (or the value exceeds the safe range) and a number
+ * otherwise. Both are checked explicitly; a value outside the representable
+ * range is refused instead of being silently rounded.
+ */
+export const fromSqlActorId = (name: string, value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  let numeric: number;
+  if (typeof value === 'number') numeric = value;
+  else if (typeof value === 'bigint') numeric = Number(value);
+  else if (typeof value === 'string' && /^\d+$/.test(value)) numeric = Number(value);
+  else return storageBoundary(`${name} read back as ${typeof value}, not a BIGINT rendering`);
+  if (!Number.isSafeInteger(numeric) || numeric < 0 || numeric > MAX_ACTOR_ID) {
+    return storageBoundary(`${name}=${String(value)} read back outside 0..${MAX_ACTOR_ID}`);
+  }
+  return numeric;
+};
+
+/** `INT` version/pointer columns hold 0..2147483647 or NULL; anything else is refused, never truncated. */
 export const sqlInt = (name: string, value: number | null): number | null => {
   if (value === null) return null;
   if (!Number.isInteger(value) || value < 0 || value > MAX_SQL_INT) {
@@ -142,54 +180,35 @@ export const sqlNextVersion = (name: string, current: number): number => {
   return current + 1;
 };
 
-export const sqlCanonicalId = (name: string, value: string): string => {
-  if (value.length > CANONICAL_ID_MAX) {
-    return storageBoundary(`${name}=${JSON.stringify(value)} is ${value.length} characters; canonical_metric_id is VARCHAR(${CANONICAL_ID_MAX})`);
-  }
-  return value;
-};
-
-export const sqlSemanticVersion = (name: string, value: string): string => {
-  if (value.length > SEMANTIC_VERSION_MAX) {
-    return storageBoundary(`${name}=${JSON.stringify(value)} is ${value.length} characters; canonical_semantic_version is VARCHAR(${SEMANTIC_VERSION_MAX})`);
-  }
-  return value;
-};
-
-const pad = (value: number, width = 2): string => String(value).padStart(width, '0');
+/** The exact 24-character canonical UTC form stored in every `CHAR(24) ascii` column. */
+const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
- * ISO-8601 UTC instant → MySQL `DATETIME(3)` literal `YYYY-MM-DD HH:MM:SS.mmm`.
- * The value is written as the same UTC wall clock, so it round-trips as the same
- * instant; `.1Z` becomes `.100` (allowed) and 3-digit fractions are preserved.
- * Years outside the `DATETIME` range are rejected instead of being clipped.
+ * Contract timestamp → the canonical 24-character UTC string
+ * `YYYY-MM-DDTHH:mm:ss.SSSZ` written to `CHAR(24) ascii`.
+ *
+ * Validation is the accepted `TimestampSchema` (UTC `Z`, 0–3 fraction digits);
+ * `.1Z` is normalized to `.100Z`, so a value and its canonical form describe the
+ * same instant and the same year (0000..9999) without a `DATETIME` cast.
  */
-export const toSqlDateTime = (name: string, iso: string): string => {
-  const instant = Date.parse(iso);
-  if (!Number.isFinite(instant)) {
-    throw new TemplateError('TEMPLATE_INVALID_INPUT', `${name}=${JSON.stringify(iso)} is not a valid instant`);
+export const toSqlTimestamp = (name: string, iso: string): string => {
+  if (!TimestampSchema.safeParse(iso).success) {
+    throw new TemplateError('TEMPLATE_INVALID_INPUT', `${name}=${JSON.stringify(iso)} is not a valid contract timestamp`);
   }
-  const date = new Date(instant);
-  const year = date.getUTCFullYear();
-  if (year < 1000 || year > 9999) {
-    return storageBoundary(`${name}=${JSON.stringify(iso)} is outside the DATETIME year range 1000..9999`);
+  const canonical = new Date(Date.parse(iso)).toISOString();
+  if (!CANONICAL_TIMESTAMP.test(canonical)) {
+    return storageBoundary(`${name}=${JSON.stringify(iso)} cannot be rendered as the 24-character canonical form`);
   }
-  return `${pad(year, 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} `
-    + `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}`;
+  return canonical;
 };
 
-/**
- * `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%s.%fZ')` → the contract's
- * `YYYY-MM-DDTHH:mm:ss.SSSZ`. `DATETIME(3)` always has six microsecond digits
- * from `%f`, of which only the first three can be non-zero.
- */
-export const fromSqlDateTime = (value: unknown): string => {
+/** A stored `CHAR(24)` value must already be the exact canonical form; no silent re-parsing. */
+export const fromSqlTimestamp = (value: unknown): string => {
   const text = typeof value === 'string' ? value : String(value ?? '');
-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{6})Z$/.exec(text);
-  if (!match) {
-    throw new TemplateError('TEMPLATE_INVALID_INPUT', `unexpected DATETIME(3) rendering ${JSON.stringify(text)}`);
+  if (!CANONICAL_TIMESTAMP.test(text)) {
+    throw new TemplateError('TEMPLATE_INVALID_INPUT', `unexpected CHAR(24) timestamp rendering ${JSON.stringify(text)}`);
   }
-  return `${match[1]}.${match[2]!.slice(0, 3)}Z`;
+  return text;
 };
 
 type Row = Record<string, unknown>;
@@ -232,19 +251,18 @@ const itemValues = (item: TemplateItemVersion): unknown[] => [
   JSON.stringify(item.source_chain),
 ];
 
-/** Explicit UTC/wall-clock rendering; never relies on the pool's `dateStrings`/`timezone` config. */
-const DATE = (column: string): string => `DATE_FORMAT(${column}, '%Y-%m-%dT%H:%i:%s.%fZ') AS ${column}`;
-
+// Timestamps are stored as canonical UTC strings, so no DATE_FORMAT/dateStrings
+// rendering is involved and the pool's `timezone` config cannot shift them.
 const TEMPLATE_SELECT = `template_id, name, status, current_published_version, revision, created_by,
-  ${DATE('created_at')}, ${DATE('updated_at')}`;
-const DRAFT_SELECT = `template_id, revision, aggregate, published_version, updated_by, ${DATE('updated_at')}`;
+  created_at, updated_at`;
+const DRAFT_SELECT = `template_id, revision, aggregate, published_version, updated_by, updated_at`;
 const ITEM_FIELDS = [
   'template_id', 'item_id', 'version', 'display_name', 'canonical_metric_id', 'canonical_semantic_version',
   'unit', 'dimensions', 'collector_ref', 'params_default', 'source_chain',
 ];
 const itemSelect = (prefix = ''): string => ITEM_FIELDS.map(field => `${prefix}${field}`).join(', ');
 const VERSION_SELECT = `template_id, version, status, content_hash, aggregate, items,
-  package_composition, source_chain, ${DATE('published_at')}, ${DATE('retired_at')}`;
+  package_composition, source_chain, published_at, retired_at`;
 
 /** `SET` statement applied to every freshly acquired connection (once per object). */
 const SESSION_SQL = "SET SESSION time_zone = '+00:00', SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION'";
@@ -345,9 +363,9 @@ export class MySqlTemplateRepository implements TemplateRepository {
       status: row.status,
       current_published_version: intOrNull(row.current_published_version),
       revision: Number(row.revision),
-      created_by: intOrNull(row.created_by),
-      created_at: fromSqlDateTime(row.created_at),
-      updated_at: fromSqlDateTime(row.updated_at),
+      created_by: fromSqlActorId('created_by', row.created_by),
+      created_at: fromSqlTimestamp(row.created_at),
+      updated_at: fromSqlTimestamp(row.updated_at),
     });
   }
 
@@ -357,8 +375,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
       revision: Number(row.revision),
       aggregate: jsonColumn(row.aggregate),
       published_version: intOrNull(row.published_version),
-      updated_by: intOrNull(row.updated_by),
-      updated_at: fromSqlDateTime(row.updated_at),
+      updated_by: fromSqlActorId('updated_by', row.updated_by),
+      updated_at: fromSqlTimestamp(row.updated_at),
     });
   }
 
@@ -390,8 +408,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
       items: jsonColumn(row.items),
       package_composition: jsonColumn(row.package_composition),
       source_chain: jsonColumn(row.source_chain),
-      published_at: fromSqlDateTime(row.published_at),
-      retired_at: row.retired_at === null || row.retired_at === undefined ? null : fromSqlDateTime(row.retired_at),
+      published_at: fromSqlTimestamp(row.published_at),
+      retired_at: row.retired_at === null || row.retired_at === undefined ? null : fromSqlTimestamp(row.retired_at),
     });
   }
 
@@ -425,19 +443,17 @@ export class MySqlTemplateRepository implements TemplateRepository {
     }
     // Every SQL-bound value is checked before the first INSERT, so a storage
     // boundary never leaves a parent or draft row behind through a partial write.
-    const createdAt = toSqlDateTime('template.created_at', record.created_at);
-    const updatedAt = toSqlDateTime('template.updated_at', record.updated_at);
-    const draftUpdatedAt = toSqlDateTime('draft.updated_at', next.updated_at);
-    const createdBy = sqlInt('template.created_by', record.created_by);
+    const createdAt = toSqlTimestamp('template.created_at', record.created_at);
+    const updatedAt = toSqlTimestamp('template.updated_at', record.updated_at);
+    const draftUpdatedAt = toSqlTimestamp('draft.updated_at', next.updated_at);
+    const createdBy = sqlActorId('template.created_by', record.created_by);
     const currentPublishedVersion = sqlInt('template.current_published_version', record.current_published_version);
-    const draftUpdatedBy = sqlInt('draft.updated_by', next.updated_by);
+    const draftUpdatedBy = sqlActorId('draft.updated_by', next.updated_by);
     const draftPublishedVersion = sqlInt('draft.published_version', next.published_version);
     const ordered = [...copies.values()].sort((a, b) => asciiCompare(a.item_id, b.item_id));
     const itemCreatedAt = new Map<string, string>();
     for (const item of ordered) {
-      sqlCanonicalId(`item ${item.item_id} canonical_metric.id`, item.canonical_metric.id);
-      sqlSemanticVersion(`item ${item.item_id} canonical_metric.semantic_version`, item.canonical_metric.semantic_version);
-      itemCreatedAt.set(item.item_id, toSqlDateTime(`item ${item.item_id} source_chain.created_at`, item.source_chain.created_at));
+      itemCreatedAt.set(item.item_id, toSqlTimestamp(`item ${item.item_id} source_chain.created_at`, item.source_chain.created_at));
     }
 
     await this.transaction('create', { template_id: record.template_id }, async connection => {
@@ -485,7 +501,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
   }
 
   async updateTemplate(templateId: string, expectedRevision: Revision, patch: TemplatePatch): Promise<TemplateRecord> {
-    toSqlDateTime('patch.updated_at', patch.updated_at);
+    toSqlTimestamp('patch.updated_at', patch.updated_at);
     return this.transaction('updateTemplate', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
       const row = firstRow(await connection.execute(
         `SELECT ${TEMPLATE_SELECT} FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE`,
@@ -508,7 +524,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
         updated_at: patch.updated_at,
       });
       const currentPublishedVersion = sqlInt('template.current_published_version', next.current_published_version);
-      const updatedAt = toSqlDateTime('template.updated_at', next.updated_at);
+      const updatedAt = toSqlTimestamp('template.updated_at', next.updated_at);
       const [result] = await connection.execute(
         `UPDATE metric_templates_v2
             SET name = ?, status = ?, current_published_version = ?, revision = ?, updated_at = ?
@@ -524,8 +540,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
   }
 
   async updateDraft(templateId: string, expectedRevision: Revision, next: DraftUpdate): Promise<TemplateDraft> {
-    toSqlDateTime('draft.updated_at', next.updated_at);
-    sqlInt('draft.updated_by', next.updated_by);
+    toSqlTimestamp('draft.updated_at', next.updated_at);
+    sqlActorId('draft.updated_by', next.updated_by);
     return this.transaction('updateDraft', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
       // Lock order: template parent row first, then the draft row.
       const parent = firstRow(await connection.execute(
@@ -551,8 +567,8 @@ export class MySqlTemplateRepository implements TemplateRepository {
         updated_by: next.updated_by,
         updated_at: next.updated_at,
       });
-      const updatedAt = toSqlDateTime('draft.updated_at', updated.updated_at);
-      const updatedBy = sqlInt('draft.updated_by', updated.updated_by);
+      const updatedAt = toSqlTimestamp('draft.updated_at', updated.updated_at);
+      const updatedBy = sqlActorId('draft.updated_by', updated.updated_by);
       const [result] = await connection.execute(
         `UPDATE metric_template_drafts
             SET revision = ?, aggregate = ?, updated_by = ?, updated_at = ?
@@ -569,10 +585,10 @@ export class MySqlTemplateRepository implements TemplateRepository {
 
   async putItemVersion(input: ItemVersionInput): Promise<ItemVersionResult> {
     // Content shape and SQL-bound item columns are checked before locking/writing.
+    // The accepted MetricRefSchema proves ASCII canonical identity; the LONGTEXT
+    // columns impose no length cap, so no artificial width check exists here.
     TemplateItemVersionSchema.parse({ ...input, version: 1 });
-    sqlCanonicalId(`item ${input.item_id} canonical_metric.id`, input.canonical_metric.id);
-    sqlSemanticVersion(`item ${input.item_id} canonical_metric.semantic_version`, input.canonical_metric.semantic_version);
-    toSqlDateTime(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at);
+    toSqlTimestamp(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at);
 
     return this.transaction('putItemVersion', { template_id: input.template_id, item_id: input.item_id }, async connection => {
       // The existing template row is the lock that serialises first-item races;
@@ -607,7 +623,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
           await connection.execute(
             'INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)',
             [input.template_id, input.item_id, 'active',
-              toSqlDateTime(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at)],
+              toSqlTimestamp(`item ${input.item_id} source_chain.created_at`, input.source_chain.created_at)],
           );
         } catch (error) {
           if (isDuplicateKey(error)) {
@@ -643,9 +659,9 @@ export class MySqlTemplateRepository implements TemplateRepository {
       published_at: command.publishedAt,
       retired_at: null,
     });
-    const publishedAt = toSqlDateTime('publish.published_at', command.publishedAt);
-    const draftUpdatedAt = toSqlDateTime('publish.draft_updated_at', command.draftUpdatedAt);
-    const actorId = sqlInt('publish.actor_id', command.actorId);
+    const publishedAt = toSqlTimestamp('publish.published_at', command.publishedAt);
+    const draftUpdatedAt = toSqlTimestamp('publish.draft_updated_at', command.draftUpdatedAt);
+    const actorId = sqlActorId('publish.actor_id', command.actorId);
 
     return this.transaction('publish', {
       template_id: command.templateId,

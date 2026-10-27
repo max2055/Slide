@@ -1,17 +1,20 @@
 /**
- * MAX-237 / T2A — real MySQL transaction verification for the internal adapter.
+ * MAX-237 / T2B — real MySQL transaction and storage-candidate verification.
  *
  * Runs only against the dedicated, disposable schema started by
- * `docs/slide/development/MAX-237/t2a/env-start.sh` (database `max237_t2a`,
- * utf8mb4/utf8mb4_bin, one-time DML-only test user). Skipped when the four
- * `MAX237_T2A_MYSQL_*` variables are absent, so the default suite needs no
- * database. Never points at an application `.env`, the platform pool or a
- * production target.
+ * `docs/slide/development/MAX-237/t2b/env-start.sh` (candidate database
+ * `max237_t2b`, tables utf8mb4_bin, one-time DML-only test user). Skipped when
+ * the four `MAX237_T2B_MYSQL_*` variables are absent or when the database is not
+ * exactly `max237_t2b`, so the default suite needs no database and this file can
+ * never point at another schema. Never points at an application `.env`, the
+ * platform pool or a production target.
  *
  * Two independent pools (`A`, `B`) stand in for two connections/processes: the
  * parent-row lock in the adapter, not an in-process lock, is what serialises
  * them. Fault-injecting wrappers around a third pool fail at one exact SQL
- * stage; they never change the product interface.
+ * stage; they never change the product interface. The pools enable
+ * `supportBigNumbers`/`bigNumberStrings`, and a second number-form pool proves
+ * the adapter accepts both BIGINT renderings.
  */
 import mysql, { type Pool, type PoolConnection } from 'mysql2/promise';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -21,16 +24,18 @@ import {
   type TemplateItemVersion, type TemplatePublishedAggregate, type TemplateRecord,
 } from './model.js';
 import {
-  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlDateTime,
+  MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlTimestamp,
   type TemplateSqlConnection, type TemplateSqlPool,
 } from './mysql-repository.js';
 import type { ItemVersionInput, PublishCommand } from './repository.js';
 
-const port = Number(process.env.MAX237_T2A_MYSQL_PORT);
-const user = process.env.MAX237_T2A_MYSQL_USER;
-const password = process.env.MAX237_T2A_MYSQL_PASSWORD;
-const database = process.env.MAX237_T2A_MYSQL_DATABASE ?? 'max237_t2a';
-const enabled = Number.isInteger(port) && port > 0 && Boolean(user) && password !== undefined;
+const FIXED_DATABASE = 'max237_t2b';
+const port = Number(process.env.MAX237_T2B_MYSQL_PORT);
+const user = process.env.MAX237_T2B_MYSQL_USER;
+const password = process.env.MAX237_T2B_MYSQL_PASSWORD;
+const database = process.env.MAX237_T2B_MYSQL_DATABASE ?? FIXED_DATABASE;
+const enabled = Number.isInteger(port) && port > 0 && Boolean(user) && password !== undefined
+  && database === FIXED_DATABASE;
 
 const AT = '2026-10-27T00:00:00.000Z';
 const RELEASE = `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`;
@@ -135,13 +140,14 @@ class FaultyPool implements TemplateSqlPool {
   }
 }
 
-describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
-  let poolA: Pool, poolB: Pool;
+describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
+  let poolA: Pool, poolB: Pool, poolNumbers: Pool;
   let repositoryA: MySqlTemplateRepository, repositoryB: MySqlTemplateRepository;
 
   const poolOptions = {
     host: '127.0.0.1', port, user, password, database,
     waitForConnections: true, connectionLimit: 2,
+    supportBigNumbers: true, bigNumberStrings: true,
   };
   const newPool = (overrides: Partial<typeof poolOptions> = {}): Pool => mysql.createPool({ ...poolOptions, ...overrides });
 
@@ -150,11 +156,14 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     poolB = mysql.createPool({ ...poolOptions });
     repositoryA = new MySqlTemplateRepository(poolA);
     repositoryB = new MySqlTemplateRepository(poolB);
+    // Same fixture, number-form BIGINT rendering (no bigNumberStrings).
+    poolNumbers = mysql.createPool({ ...poolOptions, bigNumberStrings: false });
   });
 
   afterAll(async () => {
     await poolA?.end();
     await poolB?.end();
+    await poolNumbers?.end();
   });
 
   beforeEach(async () => {
@@ -180,6 +189,53 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
       [database],
     );
     expect(columns.map(column => column.COLLATION_NAME)).toEqual(['utf8mb4_bin', 'utf8mb4_bin']);
+
+    // Candidate representations: BIGINT UNSIGNED actors, ascii LONGTEXT
+    // identities, and 24-char ascii timestamps.
+    const [candidate] = await poolA.query<any[]>(
+      `SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND (
+          (TABLE_NAME = 'metric_templates_v2' AND COLUMN_NAME IN ('created_by', 'created_at', 'updated_at'))
+          OR (TABLE_NAME = 'metric_template_drafts' AND COLUMN_NAME IN ('updated_by', 'updated_at'))
+          OR (TABLE_NAME = 'metric_template_versions' AND COLUMN_NAME IN ('published_at', 'retired_at'))
+          OR (TABLE_NAME = 'metric_template_items' AND COLUMN_NAME = 'created_at')
+          OR (TABLE_NAME = 'metric_template_item_versions' AND COLUMN_NAME IN ('canonical_metric_id', 'canonical_semantic_version'))
+        )
+        ORDER BY TABLE_NAME, COLUMN_NAME`,
+      [database],
+    );
+    const byColumn = new Map(candidate.map(column => [`${column.TABLE_NAME}.${column.COLUMN_NAME}`, column]));
+    expect(byColumn.get('metric_templates_v2.created_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
+    expect(byColumn.get('metric_template_drafts.updated_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
+    expect(byColumn.get('metric_template_item_versions.canonical_metric_id')).toMatchObject({
+      COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
+    });
+    expect(byColumn.get('metric_template_item_versions.canonical_semantic_version')).toMatchObject({
+      COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
+    });
+    for (const key of [
+      'metric_templates_v2.created_at', 'metric_templates_v2.updated_at', 'metric_template_drafts.updated_at',
+      'metric_template_versions.published_at', 'metric_template_versions.retired_at', 'metric_template_items.created_at',
+    ]) {
+      expect(byColumn.get(key)).toMatchObject({
+        COLUMN_TYPE: 'char(24)', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
+      });
+    }
+    // The canonical prefix index accelerates lookups only; it is not unique.
+    const [indexes] = await poolA.query<any[]>(
+      `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SUB_PART FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'metric_template_item_versions' AND INDEX_NAME = 'idx_canonical'
+        ORDER BY SEQ_IN_INDEX`,
+      [database],
+    );
+    expect(indexes.map(index => ({
+      name: index.INDEX_NAME, nonUnique: Number(index.NON_UNIQUE),
+      column: index.COLUMN_NAME, subPart: Number(index.SUB_PART),
+    }))).toEqual([
+      { name: 'idx_canonical', nonUnique: 1, column: 'canonical_metric_id', subPart: 128 },
+      { name: 'idx_canonical', nonUnique: 1, column: 'canonical_semantic_version', subPart: 16 },
+    ]);
 
     await repositoryA.create(template(), draft());
     const connection = await poolA.getConnection();
@@ -222,12 +278,11 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     expect(await repositoryA.getDraft('tpl-a')).toMatchObject({ revision: 0, published_version: null, updated_by: 1 });
     expect((await repositoryA.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
     const [identity] = await poolA.query<any[]>(
-      `SELECT status, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.%fZ') AS created_at
-         FROM metric_template_items WHERE template_id = ? AND item_id = ?`,
+      'SELECT status, created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
       ['tpl-a', 'uptime'],
     );
     expect(identity[0].status).toBe('active');
-    expect(fromSqlDateTime(identity[0].created_at)).toBe(AT);
+    expect(identity[0].created_at).toBe(AT);
 
     expect(await code(repositoryA.create(template(), draft()))).toBe('TEMPLATE_EXISTS');
     expect(await code(repositoryA.create(template('tpl-b'), draft('tpl-b'), [itemInput()])))
@@ -257,7 +312,7 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
         + ' (SELECT COUNT(*) FROM metric_template_item_versions WHERE template_id = ?) AS versions',
         ['tpl-e', 'tpl-e'],
       );
-      expect(rows[0]).toMatchObject({ items: 0, versions: 0 });
+      expect({ items: Number(rows[0].items), versions: Number(rows[0].versions) }).toEqual({ items: 0, versions: 0 });
     } finally {
       await inner.end();
     }
@@ -295,11 +350,11 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     expect((await repositoryA.getItemVersion('tpl-a', 'uptime', 1))!.display_name).toBe('Uptime');
     expect((await repositoryA.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([2]);
     const [identity] = await poolA.query<any[]>(
-      'SELECT status, DATE_FORMAT(created_at, \'%Y-%m-%dT%H:%i:%s.%fZ\') AS created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
+      'SELECT status, created_at FROM metric_template_items WHERE template_id = ? AND item_id = ?',
       ['tpl-a', 'uptime'],
     );
     expect(identity[0].status).toBe('active');
-    expect(fromSqlDateTime(identity[0].created_at)).toBe(AT);
+    expect(identity[0].created_at).toBe(AT);
 
     expect(await code(repositoryA.putItemVersion(itemInput({ canonical_metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' } }))))
       .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
@@ -592,7 +647,7 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     }
   });
 
-  it('maps SQL NULL and 0–3 digit UTC timestamps without inventing values', async () => {
+  it('maps SQL NULL and canonical UTC timestamps without inventing values', async () => {
     await repositoryA.create(
       template('tpl-null', { created_by: null, created_at: '2026-10-27T00:00:00Z', updated_at: '2026-10-27T00:00:00.1Z' }),
       draft('tpl-null', { updated_by: null, updated_at: '2026-10-27T00:00:00.12Z' }),
@@ -605,12 +660,15 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     expect(stored).toMatchObject({ published_version: null, updated_by: null });
     expect(stored!.updated_at).toBe('2026-10-27T00:00:00.120Z');
     const [raw] = await poolA.query<any[]>(
-      'SELECT created_by, current_published_version, DATE_FORMAT(created_at, \'%Y-%m-%dT%H:%i:%s.%fZ\') AS created_at FROM metric_templates_v2 WHERE template_id = ?',
+      'SELECT created_by, current_published_version, created_at FROM metric_templates_v2 WHERE template_id = ?',
       ['tpl-null'],
     );
     expect(raw[0].created_by).toBeNull();
     expect(raw[0].current_published_version).toBeNull();
-    expect(fromSqlDateTime(raw[0].created_at)).toBe('2026-10-27T00:00:00.000Z');
+    // The column stores the 24-character canonical form verbatim.
+    expect(raw[0].created_at).toBe('2026-10-27T00:00:00.000Z');
+    expect(raw[0].created_at).toHaveLength(24);
+    expect(fromSqlTimestamp(raw[0].created_at)).toBe('2026-10-27T00:00:00.000Z');
 
     // The original source_chain JSON is stored as given (no timestamp rewrite).
     await repositoryA.putItemVersion(itemInput({ template_id: 'tpl-null', source_chain: {
@@ -624,31 +682,149 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     expect(sourceChain.created_at).toBe('2026-10-27T00:00:00.1Z');
   });
 
-  it('rejects values the five tables cannot represent before writing', async () => {
-    await expect(repositoryA.create(template('tpl-actor', { created_by: 2147483648 }), draft('tpl-actor')))
-      .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
-    expect(await repositoryA.getTemplate('tpl-actor')).toBeNull();
+  it('stores the full BIGINT actor range across both driver renderings', async () => {
+    await repositoryA.create(
+      template('tpl-actor-big', { created_by: 2147483648 }),
+      draft('tpl-actor-big', { updated_by: 9007199254740991 }),
+    );
+    expect((await repositoryA.getTemplate('tpl-actor-big'))!.created_by).toBe(2147483648);
+    expect((await repositoryA.getDraft('tpl-actor-big'))!.updated_by).toBe(9007199254740991);
 
-    await repositoryA.create(template('tpl-len'), draft('tpl-len'));
-    await expect(repositoryA.putItemVersion(itemInput({
-      template_id: 'tpl-len', item_id: 'long', canonical_metric: { id: `a.${'b'.repeat(127)}`, semantic_version: '1.0.0' },
-    }))).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
-    await expect(repositoryA.putItemVersion(itemInput({
-      template_id: 'tpl-len', item_id: 'semver', canonical_metric: { id: 'db.uptime_seconds', semantic_version: `${'1'.repeat(17)}.0.0` },
-    }))).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
-    expect(await repositoryA.latestItemVersions('tpl-len')).toEqual([]);
+    // The bigNumberStrings pool renders BIGINT as a string; the adapter maps it.
+    const [raw] = await poolA.query<any[]>(
+      'SELECT created_by FROM metric_templates_v2 WHERE template_id = ?', ['tpl-actor-big'],
+    );
+    expect(raw[0].created_by).toBe('2147483648');
 
-    await expect(repositoryA.create(
-      template('tpl-year', { created_at: '0999-12-31T23:59:59.000Z', updated_at: '2026-10-27T00:00:00.000Z' }),
-      draft('tpl-year'),
-    )).rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
-    expect(await repositoryA.getTemplate('tpl-year')).toBeNull();
+    // The number-form pool renders the same row as a number; the adapter maps it too.
+    const numbers = new MySqlTemplateRepository(poolNumbers);
+    expect((await numbers.getTemplate('tpl-actor-big'))!.created_by).toBe(2147483648);
+    expect((await numbers.getDraft('tpl-actor-big'))!.updated_by).toBe(9007199254740991);
 
+    // A row written outside the adapter beyond the safe range is refused on read.
     await poolA.query(
       `INSERT INTO metric_templates_v2
         (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['tpl-max', 'Max', 'draft', null, 2147483647, 1, '2026-10-27 00:00:00.000', '2026-10-27 00:00:00.000'],
+      ['tpl-actor-unsafe', 'Unsafe', 'draft', null, 0, '9007199254740992', AT, AT],
+    );
+    await expect(repositoryA.getTemplate('tpl-actor-unsafe'))
+      .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
+
+    // The accepted record schema still rejects a non-safe integer input.
+    await expect(repositoryA.create(
+      template('tpl-actor-schema', { created_by: 9007199254740992 }), draft('tpl-actor-schema'),
+    )).rejects.toThrow();
+    expect(await repositoryA.getTemplate('tpl-actor-schema')).toBeNull();
+  });
+
+  it('stores canonical identities beyond the old widths and never matches on the prefix', async () => {
+    await repositoryA.create(template('tpl-len'), draft('tpl-len'));
+    const longId = `a.${'b'.repeat(510)}`;
+    const longVersion = `${'1'.repeat(96)}.0.0`;
+    expect(longId).toHaveLength(512);
+    expect(longVersion).toHaveLength(100);
+    const long = await repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'long',
+      canonical_metric: { id: longId, semantic_version: longVersion },
+    }));
+    expect(long.item.canonical_metric).toEqual({ id: longId, semantic_version: longVersion });
+    expect((await repositoryA.getItemVersion('tpl-len', 'long', 1))!.canonical_metric.id).toBe(longId);
+    expect((await repositoryA.getItemVersion('tpl-len', 'long', 1))!.canonical_metric.semantic_version).toBe(longVersion);
+
+    // Same 128/16 prefix, different suffix: complete values stay distinct.
+    const prefix = `a.${'c'.repeat(126)}`;
+    const suffixA = `${prefix}${'d'.repeat(10)}`;
+    const suffixB = `${prefix}${'e'.repeat(10)}`;
+    expect(prefix).toHaveLength(128);
+    await repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'prefix-a', canonical_metric: { id: suffixA, semantic_version: '1.0.0' },
+    }));
+    await repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'prefix-b', canonical_metric: { id: suffixB, semantic_version: '1.0.0' },
+    }));
+    expect((await repositoryA.getItemVersion('tpl-len', 'prefix-a', 1))!.canonical_metric.id).toBe(suffixA);
+    expect((await repositoryA.getItemVersion('tpl-len', 'prefix-b', 1))!.canonical_metric.id).toBe(suffixB);
+    // The prefix index sees only the shared 128 characters — it is an accelerator,
+    // never an identity criterion.
+    const [byPrefix] = await poolA.query<any[]>(
+      'SELECT COUNT(*) AS matched FROM metric_template_item_versions WHERE canonical_metric_id LIKE ?', [`${prefix}%`],
+    );
+    expect(Number(byPrefix[0].matched)).toBe(2);
+    await expect(repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'prefix-a', canonical_metric: { id: suffixB, semantic_version: '1.0.0' },
+    }))).rejects.toMatchObject({ code: 'TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE' });
+
+    // The accepted ASCII/semver rules still reject non-ASCII ids and malformed versions.
+    await expect(repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'unicode', canonical_metric: { id: 'db.主机', semantic_version: '1.0.0' },
+    }))).rejects.toThrow();
+    await expect(repositoryA.putItemVersion(itemInput({
+      template_id: 'tpl-len', item_id: 'bad-semver', canonical_metric: { id: 'db.uptime_seconds', semantic_version: '1.0' },
+    }))).rejects.toThrow();
+    expect(await repositoryA.getItemVersion('tpl-len', 'unicode', 1)).toBeNull();
+    expect(await repositoryA.getItemVersion('tpl-len', 'bad-semver', 1)).toBeNull();
+  });
+
+  it('stores years 0000..9999 and canonical fractions, and refuses invalid instants', async () => {
+    const cases = [
+      ['tpl-y0', '0000-01-01T00:00:00.000Z', '0000-01-01T00:00:00.000Z'],
+      ['tpl-y999', '0999-12-31T23:59:59Z', '0999-12-31T23:59:59.000Z'],
+      ['tpl-y1000', '1000-01-01T00:00:00.1Z', '1000-01-01T00:00:00.100Z'],
+      ['tpl-y9999', '9999-12-31T23:59:59.123Z', '9999-12-31T23:59:59.123Z'],
+    ] as const;
+    for (const [id, input, canonical] of cases) {
+      await repositoryA.create(
+        template(id, { created_at: input, updated_at: input }),
+        draft(id, { updated_at: input }),
+      );
+      const record = await repositoryA.getTemplate(id);
+      expect(record!.created_at).toBe(canonical);
+      expect(record!.updated_at).toBe(canonical);
+      const [raw] = await poolA.query<any[]>(
+        'SELECT created_at, updated_at FROM metric_templates_v2 WHERE template_id = ?', [id],
+      );
+      expect(raw[0]).toMatchObject({ created_at: canonical, updated_at: canonical });
+    }
+
+    // Published timestamps use the same canonical representation.
+    await repositoryA.create(
+      template('tpl-y-pub', { created_at: '0000-01-01T00:00:00.000Z', updated_at: '0000-01-01T00:00:00.000Z' }),
+      draft('tpl-y-pub'),
+    );
+    await repositoryA.putItemVersion(itemInput({ template_id: 'tpl-y-pub' }));
+    await repositoryA.publish(command({
+      templateId: 'tpl-y-pub', publishedAt: '0000-01-01T00:00:00.5Z', draftUpdatedAt: '0000-01-01T00:00:00.5Z',
+      sourceChain: {
+        ...chain(), created_at: '0000-01-01T00:00:00.000Z', published_at: '0000-01-01T00:00:00.5Z',
+      },
+      aggregate: aggregate('tpl-y-pub'), items: [item('tpl-y-pub')],
+    }));
+    expect((await repositoryA.getVersion('tpl-y-pub', 1))!.published_at).toBe('0000-01-01T00:00:00.500Z');
+
+    // Closing and reopening a connection keeps the exact instants.
+    const inner = newPool();
+    try {
+      const fresh = new MySqlTemplateRepository(inner);
+      expect((await fresh.getTemplate('tpl-y999'))!.created_at).toBe('0999-12-31T23:59:59.000Z');
+      expect((await fresh.getVersion('tpl-y-pub', 1))!.published_at).toBe('0000-01-01T00:00:00.500Z');
+    } finally {
+      await inner.end();
+    }
+
+    await expect(repositoryA.create(
+      template('tpl-bad-date', { created_at: '2026-13-01T00:00:00.000Z', updated_at: AT }),
+      draft('tpl-bad-date'),
+    )).rejects.toThrow();
+    expect(await repositoryA.getTemplate('tpl-bad-date')).toBeNull();
+  });
+
+  it('still refuses version and revision increments at the INT ceiling', async () => {
+    await poolA.query(
+      `INSERT INTO metric_templates_v2
+        (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['tpl-max', 'Max', 'draft', null, 2147483647, 1, AT, AT],
     );
     await expect(repositoryA.updateTemplate('tpl-max', 2147483647, { name: 'X', updated_at: AT }))
       .rejects.toMatchObject({ code: 'TEMPLATE_INVALID_INPUT' });
@@ -656,8 +832,8 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
 
     await repositoryA.create(template('tpl-item-max'), draft('tpl-item-max'));
     await poolA.query(
-      `INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)`,
-      ['tpl-item-max', 'uptime', 'active', '2026-10-27 00:00:00.000'],
+      'INSERT INTO metric_template_items (template_id, item_id, status, created_at) VALUES (?, ?, ?, ?)',
+      ['tpl-item-max', 'uptime', 'active', AT],
     );
     await poolA.query(
       `INSERT INTO metric_template_item_versions
