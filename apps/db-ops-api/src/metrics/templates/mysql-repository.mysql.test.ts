@@ -85,11 +85,18 @@ async function code(run: Promise<unknown>): Promise<string> {
 
 type FaultHooks = {
   execute?: (sql: string) => 'throw' | undefined;
-  commit?: () => 'commit-then-throw' | 'destroy-then-throw' | undefined;
+  commit?: () => 'throw-before-forward' | 'commit-then-throw' | 'destroy-then-throw' | undefined;
+  rollback?: () => 'throw' | undefined;
 };
 
-/** Wraps one dedicated pool so a single SQL stage (or the commit) can fail. */
+/**
+ * Wraps one dedicated pool so a single SQL stage (or the transaction end) can
+ * fail. It counts release/destroy so a test can prove which one the adapter chose.
+ */
 class FaultyPool implements TemplateSqlPool {
+  releases = 0;
+  destroys = 0;
+
   constructor(private readonly inner: Pool, private readonly hooks: FaultHooks) {}
 
   async getConnection(): Promise<TemplateSqlConnection> {
@@ -104,6 +111,7 @@ class FaultyPool implements TemplateSqlPool {
       beginTransaction: () => connection.beginTransaction(),
       commit: async () => {
         const mode = this.hooks.commit?.();
+        if (mode === 'throw-before-forward') throw new Error('commit not sent; socket remains live');
         if (mode === 'destroy-then-throw') {
           connection.destroy();
           throw new Error('connection lost before commit');
@@ -111,8 +119,18 @@ class FaultyPool implements TemplateSqlPool {
         await connection.commit();
         if (mode === 'commit-then-throw') throw new Error('commit acknowledgement lost');
       },
-      rollback: () => connection.rollback(),
-      release: () => connection.release(),
+      rollback: async () => {
+        if (this.hooks.rollback?.() === 'throw') throw new Error('rollback unavailable; socket remains live');
+        return connection.rollback();
+      },
+      release: () => {
+        this.releases += 1;
+        connection.release();
+      },
+      destroy: () => {
+        this.destroys += 1;
+        connection.destroy();
+      },
     };
   }
 }
@@ -125,7 +143,7 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     host: '127.0.0.1', port, user, password, database,
     waitForConnections: true, connectionLimit: 2,
   };
-  const newPool = (): Pool => mysql.createPool({ ...poolOptions });
+  const newPool = (overrides: Partial<typeof poolOptions> = {}): Pool => mysql.createPool({ ...poolOptions, ...overrides });
 
   beforeAll(async () => {
     poolA = mysql.createPool({ ...poolOptions });
@@ -411,38 +429,145 @@ describe.skipIf(!enabled)('MAX-237 T2A MySQL template repository', () => {
     await repositoryA.create(template(), draft());
     await repositoryA.putItemVersion(itemInput());
     const inner = newPool();
+    const fresh = newPool();
     try {
-      const faulty = new MySqlTemplateRepository(new FaultyPool(inner, {
+      const fault = new FaultyPool(inner, {
         commit: () => 'commit-then-throw',
-      }));
+      });
+      const faulty = new MySqlTemplateRepository(fault);
       const error = await faulty.publish(command()).catch(caught => caught);
       expect(error).toBeInstanceOf(TemplateStorageUnknownCommitError);
       expect(error).toMatchObject({
         operation: 'publish',
         identity: { template_id: 'tpl-a', content_hash: command().contentHash },
       });
-      // The transaction really committed; the adapter did not claim failure or success.
-      expect((await repositoryA.listVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
-      expect((await repositoryA.getTemplate('tpl-a'))!.current_published_version).toBe(1);
-      // A re-read then a retry with fresh revisions is an idempotent no-op, not v2.
-      const retry = await repositoryA.publish(command({ expectedTemplateRevision: 1, expectedDraftRevision: 1 }));
+      // The end state is unknown, so the live connection must not go back to the pool.
+      expect(fault.destroys).toBe(1);
+      expect(fault.releases).toBe(0);
+      // The transaction really committed; a NEW connection reads the exact result
+      // and neither the adapter nor the retry appends an extra version.
+      const reread = new MySqlTemplateRepository(fresh);
+      expect((await reread.listVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
+      expect(await reread.getVersion('tpl-a', 1)).toMatchObject({ content_hash: command().contentHash });
+      expect((await reread.getTemplate('tpl-a'))!.current_published_version).toBe(1);
+      const retry = await reread.publish(command({ expectedTemplateRevision: 1, expectedDraftRevision: 1 }));
       expect(retry).toMatchObject({ noop: true, version: 1 });
-      expect(await repositoryA.listVersions('tpl-a')).toHaveLength(1);
+      expect(await reread.listVersions('tpl-a')).toHaveLength(1);
+    } finally {
+      await inner.end();
+      await fresh.end();
+    }
+  });
+
+  it('discards the connection after an unconfirmed rollback and never reuses its transaction', async () => {
+    const inner = newPool({ connectionLimit: 1 });
+    const observer = newPool();
+    try {
+      const fault = new FaultyPool(inner, {
+        execute: sql => (sql.startsWith('INSERT INTO metric_template_drafts') ? 'throw' : undefined),
+        rollback: () => 'throw',
+      });
+      const faulty = new MySqlTemplateRepository(fault);
+      await expect(faulty.create(template('tpl-tx-rollback'), draft('tpl-tx-rollback')))
+        .rejects.toThrow(/injected failure: INSERT INTO metric_template_drafts/);
+      expect(fault.destroys).toBe(1);
+      expect(fault.releases).toBe(0);
+
+      const counts = async () => {
+        const [rows] = await observer.query<any[]>(
+          'SELECT (SELECT COUNT(*) FROM metric_templates_v2 WHERE template_id = ?) AS parents,'
+          + ' (SELECT COUNT(*) FROM metric_template_drafts WHERE template_id = ?) AS drafts',
+          ['tpl-tx-rollback', 'tpl-tx-rollback'],
+        );
+        return { parents: Number(rows[0].parents), drafts: Number(rows[0].drafts) };
+      };
+      // Independent observer: the server never received a commit.
+      expect(await counts()).toEqual({ parents: 0, drafts: 0 });
+      // The single-connection pool must have handed out a NEW connection to this
+      // read; the old uncommitted parent is not visible through it.
+      const reread = new MySqlTemplateRepository(inner);
+      expect(await reread.getTemplate('tpl-tx-rollback')).toBeNull();
+      // An unrelated valid write must not implicitly commit the old pending rows.
+      await reread.create(template('tpl-tx-rollback-next'), draft('tpl-tx-rollback-next'));
+      expect(await counts()).toEqual({ parents: 0, drafts: 0 });
+    } finally {
+      await inner.end();
+      await observer.end();
+    }
+  }, 30_000);
+
+  it('discards a live connection whose commit was never sent and cannot replay it', async () => {
+    const inner = newPool({ connectionLimit: 1 });
+    const observer = newPool();
+    try {
+      const fault = new FaultyPool(inner, { commit: () => 'throw-before-forward' });
+      const faulty = new MySqlTemplateRepository(fault);
+      const error = await faulty.create(template('tpl-tx-unknown'), draft('tpl-tx-unknown')).catch(caught => caught);
+      expect(error).toBeInstanceOf(TemplateStorageUnknownCommitError);
+      expect(error).toMatchObject({
+        code: 'TEMPLATE_STORAGE_UNKNOWN_COMMIT',
+        operation: 'create',
+        identity: { template_id: 'tpl-tx-unknown' },
+      });
+      expect(fault.destroys).toBe(1);
+      expect(fault.releases).toBe(0);
+      // A fresh connection on the same single-connection pool sees nothing, and a
+      // later unrelated create cannot commit the aborted rows.
+      const reread = new MySqlTemplateRepository(inner);
+      expect(await reread.getTemplate('tpl-tx-unknown')).toBeNull();
+      await reread.create(template('tpl-tx-unknown-next'), draft('tpl-tx-unknown-next'));
+      expect(await reread.getTemplate('tpl-tx-unknown')).toBeNull();
+      const [rows] = await observer.query<any[]>(
+        'SELECT (SELECT COUNT(*) FROM metric_templates_v2 WHERE template_id = ?) AS parents,'
+        + ' (SELECT COUNT(*) FROM metric_template_drafts WHERE template_id = ?) AS drafts',
+        ['tpl-tx-unknown', 'tpl-tx-unknown'],
+      );
+      expect({ parents: Number(rows[0].parents), drafts: Number(rows[0].drafts) }).toEqual({ parents: 0, drafts: 0 });
+    } finally {
+      await inner.end();
+      await observer.end();
+    }
+  }, 30_000);
+
+  it('keeps the pool usable after repeated failed transactions', async () => {
+    const inner = newPool({ connectionLimit: 1 });
+    try {
+      const fault = new FaultyPool(inner, {
+        execute: sql => (sql.startsWith('INSERT INTO metric_template_drafts') ? 'throw' : undefined),
+        rollback: () => 'throw',
+      });
+      const faulty = new MySqlTemplateRepository(fault);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await expect(faulty.create(template(`tpl-repeat-${attempt}`), draft(`tpl-repeat-${attempt}`)))
+          .rejects.toThrow(/injected failure/);
+      }
+      expect(fault.destroys).toBe(3);
+      expect(fault.releases).toBe(0);
+      // The single-connection pool still serves a healthy connection; the failed
+      // transactions left no rows and no locks behind.
+      const healthy = new MySqlTemplateRepository(inner);
+      await healthy.create(template('tpl-after-failures'), draft('tpl-after-failures'));
+      expect(await healthy.getTemplate('tpl-after-failures')).not.toBeNull();
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        expect(await healthy.getTemplate(`tpl-repeat-${attempt}`)).toBeNull();
+      }
     } finally {
       await inner.end();
     }
-  });
+  }, 30_000);
 
   it('rolls back server-side when the connection drops before commit', async () => {
     await repositoryA.create(template(), draft());
     await repositoryA.putItemVersion(itemInput());
     const inner = newPool();
     try {
-      const faulty = new MySqlTemplateRepository(new FaultyPool(inner, {
+      const fault = new FaultyPool(inner, {
         commit: () => 'destroy-then-throw',
-      }));
+      });
+      const faulty = new MySqlTemplateRepository(fault);
       const error = await faulty.publish(command()).catch(caught => caught);
       expect(error).toBeInstanceOf(TemplateStorageUnknownCommitError);
+      expect(fault.releases).toBe(0);
       expect(await repositoryA.listVersions('tpl-a')).toEqual([]);
       expect(await repositoryA.getTemplate('tpl-a')).toMatchObject({ revision: 0, current_published_version: null });
       expect((await repositoryA.getDraft('tpl-a'))!.published_version).toBeNull();

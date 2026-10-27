@@ -44,11 +44,15 @@ class FakeConnection implements TemplateSqlConnection {
   commits = 0;
   rollbacks = 0;
   releases = 0;
+  destroys = 0;
+  failBegin: Error | null = null;
+  failRollback: Error | null = null;
 
   constructor(
     private readonly beforeExecute: (sql: string) => void = () => {},
     private readonly beforeCommit: () => void = () => {},
     private readonly onRelease: () => void = () => {},
+    private readonly onDestroy: () => void = () => {},
   ) {}
 
   async execute(sql: string): Promise<[unknown, unknown]> {
@@ -57,7 +61,9 @@ class FakeConnection implements TemplateSqlConnection {
     return [{ affectedRows: 1 }, []];
   }
 
-  async beginTransaction(): Promise<void> {}
+  async beginTransaction(): Promise<void> {
+    if (this.failBegin) throw this.failBegin;
+  }
 
   async commit(): Promise<void> {
     this.commits += 1;
@@ -66,11 +72,17 @@ class FakeConnection implements TemplateSqlConnection {
 
   async rollback(): Promise<void> {
     this.rollbacks += 1;
+    if (this.failRollback) throw this.failRollback;
   }
 
   release(): void {
     this.releases += 1;
     this.onRelease();
+  }
+
+  destroy(): void {
+    this.destroys += 1;
+    this.onDestroy();
   }
 }
 
@@ -160,6 +172,7 @@ describe('T2A adapter error branches', () => {
     expect(connection.rollbacks).toBe(1);
     expect(connection.commits).toBe(0);
     expect(connection.releases).toBe(1);
+    expect(connection.destroys).toBe(0);
   });
 
   it('rolls back and keeps the original error when a statement fails mid-transaction', async () => {
@@ -172,6 +185,33 @@ describe('T2A adapter error branches', () => {
     expect(connection.rollbacks).toBe(1);
     expect(connection.commits).toBe(0);
     expect(connection.releases).toBe(1);
+    expect(connection.destroys).toBe(0);
+  });
+
+  it('discards the connection and keeps the original error when rollback is unconfirmed', async () => {
+    const failure = new Error('injected statement failure');
+    const connection = new FakeConnection(sql => {
+      if (sql.startsWith('INSERT INTO metric_template_drafts')) throw failure;
+    });
+    connection.failRollback = new Error('rollback unavailable; socket remains live');
+    const repository = new MySqlTemplateRepository(poolOf(connection));
+    await expect(repository.create(template(), draft())).rejects.toBe(failure);
+    expect(connection.rollbacks).toBe(1);
+    expect(connection.commits).toBe(0);
+    expect(connection.releases).toBe(0);
+    expect(connection.destroys).toBe(1);
+  });
+
+  it('discards the connection when the transaction cannot be started', async () => {
+    const failure = new Error('begin failed');
+    const connection = new FakeConnection();
+    connection.failBegin = failure;
+    const repository = new MySqlTemplateRepository(poolOf(connection));
+    await expect(repository.create(template(), draft())).rejects.toBe(failure);
+    expect(connection.commits).toBe(0);
+    expect(connection.rollbacks).toBe(0);
+    expect(connection.releases).toBe(0);
+    expect(connection.destroys).toBe(1);
   });
 
   it('reports an unknown commit outcome instead of success or failure', async () => {
@@ -188,17 +228,20 @@ describe('T2A adapter error branches', () => {
     });
     expect(connection.commits).toBe(1);
     expect(connection.rollbacks).toBe(0);
-    expect(connection.releases).toBe(1);
+    expect(connection.releases).toBe(0);
+    expect(connection.destroys).toBe(1);
   });
 
-  it('keeps the unknown-commit outcome even when releasing the connection fails', async () => {
+  it('keeps the unknown-commit outcome even when discarding the connection fails', async () => {
     const connection = new FakeConnection(() => {}, () => {
       throw new Error('acknowledgement lost');
-    }, () => {
-      throw new Error('release failed');
+    }, () => {}, () => {
+      throw new Error('discard failed');
     });
     const repository = new MySqlTemplateRepository(poolOf(connection));
     await expect(repository.create(template(), draft()))
       .rejects.toBeInstanceOf(TemplateStorageUnknownCommitError);
+    expect(connection.releases).toBe(0);
+    expect(connection.destroys).toBe(1);
   });
 });

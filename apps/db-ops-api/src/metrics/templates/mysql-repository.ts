@@ -34,6 +34,12 @@
  * - A commit whose acknowledgement is lost is reported as
  *   {@link TemplateStorageUnknownCommitError} (adapter-local, no public error
  *   code change) with a redacted operation identity for a read-only re-check.
+ * - A connection goes back to the pool only after a confirmed commit or a
+ *   confirmed rollback. When the transaction's end state is unknown (lost commit
+ *   acknowledgement, unconfirmed rollback, failed begin) the socket is destroyed
+ *   instead: MySQL implicitly commits an open transaction when the next
+ *   `START TRANSACTION` runs on that connection, so releasing it would let an
+ *   unrelated later write persist the failed/unknown operation's rows.
  * - SQL-bound values are checked for representability **before any write**
  *   ({@link toSqlDateTime}, {@link sqlInt}, {@link sqlCanonicalId},
  *   {@link sqlSemanticVersion}, {@link sqlNextVersion}, {@link sqlNextRevision}).
@@ -69,6 +75,12 @@ export interface TemplateSqlConnection {
   commit(): Promise<void>;
   rollback(): Promise<void>;
   release(): void;
+  /**
+   * Closes the socket instead of returning the connection to the pool. Required
+   * when the server may still hold an open transaction on it; `mysql2`'s
+   * `PoolConnection.destroy()` satisfies it.
+   */
+  destroy(): void;
 }
 
 export interface TemplateSqlPool {
@@ -255,6 +267,27 @@ export class MySqlTemplateRepository implements TemplateRepository {
     }
   }
 
+  private discard(connection: TemplateSqlConnection): void {
+    try {
+      connection.destroy();
+    } catch {
+      // A failed discard must not replace the operation's own outcome; the
+      // connection is never released instead.
+    }
+  }
+
+  /** True only when the server acknowledged the rollback. */
+  private async rollbackConfirmed(connection: TemplateSqlConnection): Promise<boolean> {
+    try {
+      await connection.rollback();
+      return true;
+    } catch {
+      // An unconfirmed rollback may leave an open transaction on a live socket;
+      // keep the original operation outcome and discard the connection.
+      return false;
+    }
+  }
+
   private async prepare(connection: TemplateSqlConnection): Promise<void> {
     if (this.prepared.has(connection as unknown as object)) return;
     await connection.execute(SESSION_SQL);
@@ -277,6 +310,9 @@ export class MySqlTemplateRepository implements TemplateRepository {
     run: (connection: TemplateSqlConnection) => Promise<T>,
   ): Promise<T> {
     const connection = await this.pool.getConnection();
+    // Only a confirmed commit or a confirmed rollback makes a connection safe to
+    // reuse; every other outcome is destroyed, never released and never retried.
+    let reusable = false;
     try {
       await this.prepare(connection);
       await connection.beginTransaction();
@@ -284,12 +320,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
       try {
         result = await run(connection);
       } catch (error) {
-        try {
-          await connection.rollback();
-        } catch {
-          // If rollback itself cannot be observed, keep the original outcome; a
-          // closed connection rolls back server-side.
-        }
+        reusable = await this.rollbackConfirmed(connection);
         throw error;
       }
       try {
@@ -297,9 +328,11 @@ export class MySqlTemplateRepository implements TemplateRepository {
       } catch (cause) {
         throw new TemplateStorageUnknownCommitError(operation, identity, cause);
       }
+      reusable = true;
       return result;
     } finally {
-      this.release(connection);
+      if (reusable) this.release(connection);
+      else this.discard(connection);
     }
   }
 
