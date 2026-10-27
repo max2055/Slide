@@ -123,7 +123,9 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
     if(refs.length>1){
     const [servers]=existing?await target.query<any[]>('SELECT * FROM servers WHERE id=3 AND host=?',['192.168.49.130']):[[]];
     const source=servers[0];
-    if(existing)expect(source).toMatchObject({id:3,host:'192.168.49.130',...(!switching?{collection_enabled:0}:{})});
+    // The live platform already collects server 3, so this read-only trial copies the
+    // source row instead of requiring it disabled; afterAll proves it was left unchanged.
+    if(existing)expect(source).toMatchObject({id:3,host:'192.168.49.130'});
     const credentials=source?JSON.parse(decryptData(source.credential_encrypted,configured.ENCRYPTION_KEY)):null;
     const password=credentials?.password??process.env.SLIDE_DEBUG_VM_PASSWORD??execFileSync('security',['find-generic-password','-s','com.slide.debug.vmware-fusion.192.168.49.130','-a','root','-w'],{encoding:'utf8'}).trim();
     const fingerprint=await new Promise<string>((resolve,reject)=>{

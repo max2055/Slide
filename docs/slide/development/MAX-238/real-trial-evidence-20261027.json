@@ -1,0 +1,5131 @@
+{
+ "run": {
+  "date": "2026-10-27",
+  "branch": "agent/15coder1/max-238",
+  "base_sha": "97c5626a3e42ca33ac606b2927d27193b4ed5c3b",
+  "code_head": "97c5626a3e42ca33ac606b2927d27193b4ed5c3b",
+  "test": "apps/db-ops-api/src/metrics/config/unified.real.test.ts",
+  "env": {
+   "UNIFIED_METRICS_REAL": "true",
+   "UNIFIED_METRICS_EXISTING": "true",
+   "UNIFIED_METRICS_UI": "unset",
+   "UNIFIED_METRICS_SWITCH": "unset",
+   "UNIFIED_METRICS_CUSTOM": "unset",
+   "METRICS_TEST_MYSQL_PORT": 13306
+  },
+  "targets": {
+   "instance": {
+    "id": 1,
+    "name": "mysql3306",
+    "host": "localhost",
+    "port": 3306,
+    "version": "9.6.0"
+   },
+   "server": {
+    "id": 3,
+    "host": "192.168.49.130",
+    "port": 22,
+    "fingerprint": "SHA256:Fm+RarQJbqLeHkhPWPEcvPSL9HxN5gXMv6+9Q6n3OPA"
+   }
+  },
+  "packages": {
+   "mysql-diagnostics@1.1.0": {
+    "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+   },
+   "linux-host@1.1.0": {
+    "digest": "sha256:b5797402cec6302f57563b644f442fffd45b75c0a67c843b73356c2be67f8d2f"
+   }
+  },
+  "disposable_schema": {
+   "port": 13306,
+   "name_pattern": "max189_real_*",
+   "dropped_after_run": true
+  }
+ },
+ "readonly_proof": {
+  "source_configuration_digest": "90f3ef2ee223fd2ff0371b1513d1293bb9ce0ea32610a9fe247f2c83055ae15a",
+  "source_configuration_unchanged": true,
+  "live_row_counts_before": {
+   "database_instances": 5,
+   "servers": 1,
+   "metric_policy_bindings": {
+    "instance:1": 4,
+    "instance:8": 1,
+    "server:3": 3
+   }
+  },
+  "live_row_counts_after": {
+   "database_instances": 5,
+   "servers": 1,
+   "metric_policy_bindings": {
+    "instance:1": 4,
+    "instance:8": 1,
+    "server:3": 3
+   }
+  },
+  "leftover_disposable_schemas_on_3306": 0,
+  "server_collection_enabled_unchanged": 1,
+  "application_metrics_history_write": "none"
+ },
+ "trial": {
+  "instance": {
+   "trial": true,
+   "persisted": false,
+   "decision": "attempted",
+   "lifecycle_evidence": "unavailable",
+   "attempts": [
+    {
+     "collector_id": "diagnostics_connections",
+     "implementation_ref": "builtin:database.mysql.diagnostics_connections.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.092Z",
+     "duration_ms": 21.0,
+     "observation_ids": [
+      "sha256:32b6cf62bf2b1c960381eda09dda30a4899cb4ae19ff9a9d199c721ea1c65ff8"
+     ]
+    },
+    {
+     "collector_id": "diagnostics_limit",
+     "implementation_ref": "builtin:database.mysql.diagnostics_limit.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.109Z",
+     "duration_ms": 38.0,
+     "observation_ids": [
+      "sha256:75029c3ff2312fb2a468bda93ee9f0aef59a25216d98c648ac96afc0d06c4100"
+     ]
+    },
+    {
+     "collector_id": "diagnostics_transactions",
+     "implementation_ref": "builtin:database.mysql.diagnostics_transactions.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.125Z",
+     "duration_ms": 54.0,
+     "observation_ids": [
+      "sha256:6f79acb98cbdacd9da07f0f1f3343b410fa12856c9a49bfccfbb75e6057c1a53",
+      "sha256:6b119aed07bd4bda6a5cd31cfb88239f5d5c782edd4ccade020cfe5d64cfd999"
+     ]
+    },
+    {
+     "collector_id": "diagnostics_size",
+     "implementation_ref": "builtin:database.mysql.diagnostics_size.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.143Z",
+     "duration_ms": 72.0,
+     "observation_ids": [
+      "sha256:45fbf92222532ef3c66b8aa5372615b04dab009c616393cb8c6eb37c2c4ef6b8"
+     ]
+    },
+    {
+     "collector_id": "diagnostics_queries",
+     "implementation_ref": "builtin:database.mysql.diagnostics_queries.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.157Z",
+     "duration_ms": 86.0,
+     "observation_ids": [
+      "sha256:580d06ed89c06e1f910ef3999a97cd0040199bf478a6beb12dfb96feaa05f1ce"
+     ]
+    },
+    {
+     "collector_id": "diagnostic_counters",
+     "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.173Z",
+     "duration_ms": 102.0,
+     "observation_ids": [
+      "sha256:fb5359af9322d3caf68e670ae76bced695b9690a545fb4166c9725a6ad3b95dd",
+      "sha256:aa962fcd084c1974c0d6be6239ee137381f23b4bf410823ff4f6a01437f73756",
+      "sha256:d806ef9171b161f074f69a16badc98e70aa5c6f2627d08b584556fe71be1bc38",
+      "sha256:a352a783174487b935d1813e3129c4eab26579d68b2e13e09d6db436b4d38791",
+      "sha256:28a6a1cdd01b222418c9ffc45ed987b4ffe81b0dce323cfaf5acc461446513f4"
+     ]
+    },
+    {
+     "collector_id": "buffer_pages",
+     "implementation_ref": "builtin:database.mysql.buffer_pages.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.188Z",
+     "duration_ms": 117.0,
+     "observation_ids": [
+      "sha256:9978398b9d9f34b53fd28cc2314950e7b5ac1a173facbe200f26ff862c0f2368"
+     ]
+    },
+    {
+     "collector_id": "uptime_diagnostics",
+     "implementation_ref": "builtin:database.mysql.uptime_diagnostics.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.203Z",
+     "duration_ms": 132.0,
+     "observation_ids": [
+      "sha256:9bccf04c46191a51e685633a576c4bcf3e09b39b2ba4c59880f82836fe5385cf"
+     ]
+    },
+    {
+     "collector_id": "diagnostic_gauges",
+     "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.217Z",
+     "duration_ms": 146.0,
+     "observation_ids": [
+      "sha256:24f45bf47da13d4a52e0a8e6427341711bf18152a018904f22dc56bf0ad4d9be",
+      "sha256:9d98d698cd322d3f215f44f6f2689774e6898c6494a6bf5e6e90b3dc0995b61c",
+      "sha256:b997dbfac3eee7d1bf081f4ea5f10081e4668f28c98c6e131407dd193dfd208a",
+      "sha256:bbac7a70ac11d49ca6ac31527d5fff63186cb7858fdd03d84741f8fe6c9b4623",
+      "sha256:643c7e4dc327b0735f00f0ee0893b49d3e5f138bfda70f734c9e01c84a7d8bc4"
+     ]
+    },
+    {
+     "collector_id": "diagnostic_ratios",
+     "implementation_ref": "builtin:database.mysql.diagnostic_ratios.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.232Z",
+     "duration_ms": 161.0,
+     "observation_ids": [
+      "sha256:d3e1df932fc82d74896a6e60db5c8d073b179c47c0f86a9188e0c8ade1c72c35",
+      "sha256:c218f2927e9c88a87b6bd9c813f20756c015c33aee70c6794c719001496e2c84",
+      "sha256:d0c35c278c432432b85f055e95dfadda78d0a6518922cee2a8944cd1901a20a6"
+     ]
+    },
+    {
+     "collector_id": "innodb_diagnostics",
+     "implementation_ref": "builtin:database.mysql.innodb_diagnostics.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.246Z",
+     "duration_ms": 175.0,
+     "observation_ids": [
+      "sha256:3cb024e880cc4cfed75e3e6153d043855874c8e32a2ac2e6b9e5f23b407008b7",
+      "sha256:16d5ffaae57165ddcd3584a27747ccdfdfccaaa2c503a8f33642913cef2b7bb6",
+      "sha256:65539268b4d76e5c2784a2278abd8d6f29e4f7ce893501ec237587f0c831545d"
+     ]
+    },
+    {
+     "collector_id": "thread_cache",
+     "implementation_ref": "builtin:database.mysql.thread_cache.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.265Z",
+     "duration_ms": 194.0,
+     "observation_ids": [
+      "sha256:906f0bfedb0981f92d5ce5f7d4501c97598fa97355343108e94b65bf252d1cbf"
+     ]
+    },
+    {
+     "collector_id": "active_transactions",
+     "implementation_ref": "builtin:database.mysql.active_transactions.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.280Z",
+     "duration_ms": 209.0,
+     "observation_ids": [
+      "sha256:f594f3827d0fc2a708985038e968a9339016c88d20f02baf50dc858c0865a9e1"
+     ]
+    },
+    {
+     "collector_id": "replication_channels",
+     "implementation_ref": "builtin:database.mysql.replication_channels.v1",
+     "method": "sql",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.071Z",
+     "ended_at": "2026-10-27T13:48:04.294Z",
+     "duration_ms": 223.0,
+     "observation_ids": []
+    }
+   ],
+   "metrics": [
+    {
+     "metric": "mysql.processlist.count",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "13"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.connections.limit",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "151"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.transaction_commands.commit_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "901398"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.transaction_commands.rollback_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "32"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.tables.estimated_allocated_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "2117173248"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.queries.total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "16204318"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.slow_queries.total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "4"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.protocol.received_bytes_total",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "1641071378"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.protocol.sent_bytes_total",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "77954923474"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.handler.read_next_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "10408920"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.connections.aborted_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "21"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.buffer_pool.pages_used_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 96.8842
+      }
+     ]
+    },
+    {
+     "metric": "db.uptime_seconds",
+     "unit": "s",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 137273
+      }
+     ]
+    },
+    {
+     "metric": "mysql.threads.running",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.threads.connected",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "12"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.files.open",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "10"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.key_cache.used_blocks",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.key_cache.unused_blocks",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "6698"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.buffer_pool.read_hit_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 99.68
+      }
+     ]
+    },
+    {
+     "metric": "mysql.table_cache.hit_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 99.9915
+      }
+     ]
+    },
+    {
+     "metric": "mysql.key_cache.used_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0
+      }
+     ]
+    },
+    {
+     "metric": "mysql.innodb.row_lock_average_ms",
+     "unit": "ms",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "7"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.innodb.deadlocks_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "unknown",
+       "reason": "source_error"
+      }
+     ],
+     "values": [
+      null
+     ]
+    },
+    {
+     "metric": "mysql.temporary.disk_tables_total",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "3793"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.thread_cache.hit_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 99.96
+      }
+     ]
+    },
+    {
+     "metric": "mysql.transactions.active",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "metric": "mysql.transaction_commands.commit_rate",
+     "unit": "count/s",
+     "quality": [
+      {
+       "status": "unknown",
+       "reason": "counter_baseline"
+      }
+     ],
+     "values": [
+      null
+     ]
+    },
+    {
+     "metric": "mysql.transaction_commands.rollback_rate",
+     "unit": "count/s",
+     "quality": [
+      {
+       "status": "unknown",
+       "reason": "counter_baseline"
+      }
+     ],
+     "values": [
+      null
+     ]
+    },
+    {
+     "metric": "mysql.transaction_commands.completed_rate",
+     "unit": "count/s",
+     "quality": [
+      {
+       "status": "unknown",
+       "reason": "counter_baseline"
+      }
+     ],
+     "values": [
+      null
+     ]
+    },
+    {
+     "metric": "mysql.queries.per_second",
+     "unit": "count/s",
+     "quality": [
+      {
+       "status": "unknown",
+       "reason": "counter_baseline"
+      }
+     ],
+     "values": [
+      null
+     ]
+    }
+   ],
+   "capabilities": [
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.processlist.count",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.connections.limit",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transaction_commands.commit_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transaction_commands.rollback_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.tables.estimated_allocated_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.queries.total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.slow_queries.total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.protocol.received_bytes_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.protocol.sent_bytes_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.handler.read_next_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.connections.aborted_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.buffer_pool.pages_used_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "db.uptime_seconds",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.threads.running",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.threads.connected",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.files.open",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.key_cache.used_blocks",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.key_cache.unused_blocks",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.buffer_pool.read_hit_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.table_cache.hit_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.key_cache.used_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.innodb.row_lock_average_ms",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.innodb.deadlocks_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "unknown"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.temporary.disk_tables_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.thread_cache.hit_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transactions.active",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.replication.behind_source_seconds",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.replication.io_running",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.replication.sql_running",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "sql",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transaction_commands.commit_rate",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "derived",
+     "basis": [
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transaction_commands.rollback_rate",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "derived",
+     "basis": [
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.transaction_commands.completed_rate",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "derived",
+     "basis": [
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      },
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    },
+    {
+     "resource_id": "1",
+     "metric": {
+      "id": "mysql.queries.per_second",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "derived",
+     "basis": [
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:instance;required:instance"
+      },
+      {
+       "kind": "resource",
+       "evidence": "db.engine:matched;allowed:mysql"
+      },
+      {
+       "kind": "version",
+       "evidence": "db.version:matched;allowed:5.7,8.0,8.4,9.6"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.071Z",
+     "valid_until": "2026-10-27T13:50:04.071Z"
+    }
+   ],
+   "applicability": [
+    {
+     "attribute": "db.engine",
+     "value": "mysql",
+     "supported_values": [
+      "mysql"
+     ],
+     "status": "supported"
+    },
+    {
+     "attribute": "db.version",
+     "value": "9.6.0",
+     "supported_values": [
+      "5.7",
+      "8.0",
+      "8.4",
+      "9.6"
+     ],
+     "status": "supported"
+    }
+   ]
+  },
+  "server": {
+   "trial": true,
+   "persisted": false,
+   "decision": "attempted",
+   "lifecycle_evidence": "unavailable",
+   "attempts": [
+    {
+     "collector_id": "linux-basic",
+     "implementation_ref": "builtin:linux.basic.v1",
+     "method": "ssh",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:05.094Z",
+     "duration_ms": 474.0,
+     "observation_ids": [
+      "sha256:6e480827f0ce172c13c197517a6d0a11a2b28f52fa57aaf91ec18322ac478a24",
+      "sha256:17a05b3fef81a0a4c7e7cba27ae92a596283e3e49a581e1f30b3c51e66030d3d"
+     ]
+    },
+    {
+     "collector_id": "linux-host-gauges",
+     "implementation_ref": "builtin:linux.host-gauges.v1",
+     "method": "ssh",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:05.608Z",
+     "duration_ms": 988.0,
+     "observation_ids": [
+      "sha256:c56f9fd53491287ea9895fa1628b250e88d19bda58a1a34a2cdbe338a8c09d6e",
+      "sha256:2319a468005978fd16dcd311439002ffb3ce4a9cdd197ae35d7e231b6df7d0d3"
+     ]
+    },
+    {
+     "collector_id": "linux-filesystem",
+     "implementation_ref": "builtin:linux.filesystem.v1",
+     "method": "ssh",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:06.039Z",
+     "duration_ms": 1419.0,
+     "observation_ids": [
+      "sha256:a3bd0437c9448fdb1e02f3b94da762799354f62b1c241e477ac465810c66e189",
+      "sha256:e1e775f0f57f0620f5bb493fc35201b24aaafa0d7ef0a723da2d1ab0e56f11a5",
+      "sha256:06eb35b2f34a28a083346a48ceeb1f56b5a09e7b9bd27986348e1f52885ea7b6",
+      "sha256:a2cf64b3a62afbea8a3b7a6a5026bd38f11ceb4dc88d7b89f75862b9bce84408",
+      "sha256:3e36c02aad98f7846695e84a146010b559215f5d3cae46ff8097d87df198d3ac",
+      "sha256:feb13a468b14098b527ad4fba1588d0c3c62116788fb27a901673498b42028bd",
+      "sha256:7dc3a6324e74b3098a1b0210131633831b8161d521995569dc5614cec482bf68",
+      "sha256:5a308a3afe9f99f0b052af81d261a3c8f4f23591b1079735004eedee9ec46775",
+      "sha256:13bc9f9cb39f8e9298ac8c02cd869a73212e53ee0bc83820c30b72f4615fbd46",
+      "sha256:2558ea2ec4e086d4dd6d3a26c6520c6e87631f954aafd245244261f16d3fc08b",
+      "sha256:5ae2fe8661942dd30f83b7c1d8260e604dff915812fa29afd16509619f3b4c56",
+      "sha256:f360e50bc10061d16041a5ea8d639b23c80c3497a7ef6a73328a9c86312b9432",
+      "sha256:917a8c1815cb900278f9a824ba4acc3edb1d7e409d82662e037ef99ffebc736e",
+      "sha256:9c37466632a9207cce3750755fd1ef3eeecbd05ab6b04ab7993a97412678ef63",
+      "sha256:5c693604d328cc521ae8a254055ded7005f823ef06aa2475644441bec57edfa1",
+      "sha256:638465bb2ad75dbaadc91d20495916e97b444c7e5d0a13e45155cb964d5658f0",
+      "sha256:143c226367160d136f427acc18cc4b8a06d08f9e3b5ee08b28f30f86105a014c",
+      "sha256:1edfff973d48a6bfb704341da66749f1784326dc2b1feb6053802ac548848826",
+      "sha256:e55400a9f3c76550f485b9a69b5f6eae7af9b1fb1f4f9556a8ea7e1e11fc922e",
+      "sha256:b850ee46b766cee68f7a1dc15e2b4e4e57d68dce77e346cb7eda65e05d4e13d9",
+      "sha256:20eef8b3ee9e372492d8d4bfa358ba889d081985e638a457abf7619734545bb4",
+      "sha256:eede4ebe5c7b88a9ddc476137e3074ebed9b2a5912c5146048c580d0c5ed34fb"
+     ]
+    },
+    {
+     "collector_id": "linux-network",
+     "implementation_ref": "builtin:linux.network.v1",
+     "method": "ssh",
+     "status": "failed",
+     "error": "parse_error",
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:06.172Z",
+     "duration_ms": 1552.0,
+     "observation_ids": []
+    },
+    {
+     "collector_id": "linux-block",
+     "implementation_ref": "builtin:linux.block.v1",
+     "method": "ssh",
+     "status": "failed",
+     "error": "parse_error",
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:06.318Z",
+     "duration_ms": 1698.0,
+     "observation_ids": []
+    },
+    {
+     "collector_id": "linux-diagnostic-gauges-v1",
+     "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+     "method": "ssh",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:07.325Z",
+     "duration_ms": 2705.0,
+     "observation_ids": [
+      "sha256:99b7be1020205a916538382e6b908e01c0fa48dde4676f86f8e778da08ceed2f",
+      "sha256:048567b495df0f426c87eed37cc7d236870f3388c43335e233cf005714b50492",
+      "sha256:1171b7e74f5e57e01f3687caca9a77fdc7bf427797121b98464c346631f4f448",
+      "sha256:ff90311946d9d6d3c46972d0e58330cf68354e6f37527fbea4293d15d13708aa",
+      "sha256:f09f9c191153b45d85ef1fc4a5337b856676155b425ee8f6906b73a000be4f45",
+      "sha256:078fed005187a35cb056b88c9241c46b0aae3a9aaa133fd156ef18a059d317b5",
+      "sha256:a62798739b490243bd207e2cf2992a99a5cc813444553a2dc5c214e456574a22",
+      "sha256:cce2725a07d7020847d1c6044546b67d1a1956e71b4f34d256c34d9bb65deddb"
+     ]
+    },
+    {
+     "collector_id": "linux-filesystem-diagnostics-v1",
+     "implementation_ref": "builtin:linux.filesystem-diagnostics.v1",
+     "method": "ssh",
+     "status": "succeeded",
+     "error": null,
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:07.745Z",
+     "duration_ms": 3125.0,
+     "observation_ids": [
+      "sha256:e3e60698e5a75d4e3a1c22858e12731779f9c9cfdb6597fb85b5c995e5740434",
+      "sha256:dbe2661e540238c299b45c572774c31c58729c1324a24a9186c5a2181690d86b",
+      "sha256:967c15b8c425c5c12f48b38d2127752744d220e3452b58d48b5f0e3bf88da9ac",
+      "sha256:4c9896e6114d8dcb79587485d4ea2ca7d476b2ca6c6ed1370f6ecac6419b1f13",
+      "sha256:423f622d86c03c60b20b047616a4d05c684268ef9ca2500f6cc17d92a1662424",
+      "sha256:1c0ffa60686cd27a53a23a3d0f970f302dc48ee525498073a537bed9040e5ede",
+      "sha256:8cc1dc7cabaeea278a7e37a44af89bd4c503fbd9924c0ea3c3d47d6c5ac8523e",
+      "sha256:a595ece86af06f605ebc53f0245620bf17ea3ff747cf2bb183d71943f97743dd",
+      "sha256:2bfb56b0ca847d9f486a8b12fa6abe4ab463c67954e223895ce9f58483d1d66c",
+      "sha256:fe9afe4160c5a51d0c37d7ab78c18bd468dc8a32c95a9f5d8231e129d559e3fc",
+      "sha256:fdfe50233185af60091fd6ebdb9d394316c941fcc152a807c6b3bf865f091453",
+      "sha256:0ef2da39c8e40e077b06b1020f759c69895c531192df74318e6a41f012499f81",
+      "sha256:ed6160f7cb5df723c41b078340ceef6def5868efd8c52ff673329b84932d9d06",
+      "sha256:7f8eb39ddd38b74500c07d4f47f480bafc033f11ac22f4c437d1f339177a3d57",
+      "sha256:1b5b9f667ee5dac34b287d05ab3343552ad59463f54d29b24fdfd1549661487e",
+      "sha256:adaa6dc91862ea08c690acd79d8577c72b06c3baa16b2b1f10b132a234278340",
+      "sha256:409910eb2f67e6df1f47678f8af002c3cf4c388bf32f8fdbffaf47d7d7658e97",
+      "sha256:c7d4bcf135229e5633f7e6651e99b1dc57588a6ab4b9803c856547f4bfba3696",
+      "sha256:e796aeae9f536cf108ad5acb660f9f77fc289e515a7ec0f567e5c9c75c3153de",
+      "sha256:fbd9fe0bbfa2982bae8409bd5ae02c8a477b676be8cfb29f5d8dfb821e9023ce",
+      "sha256:a3b92b062031e541d2575e4b3f4f8402b875990f2b31b6eff2a2bd604e199236",
+      "sha256:e3ab3bb06ead1b56c8f576058c442f35986cd08226a5644cac3fe11002a2532f"
+     ]
+    },
+    {
+     "collector_id": "linux-network-diagnostics-v1",
+     "implementation_ref": "builtin:linux.network-diagnostics.v1",
+     "method": "ssh",
+     "status": "failed",
+     "error": "parse_error",
+     "started_at": "2026-10-27T13:48:04.620Z",
+     "ended_at": "2026-10-27T13:48:07.890Z",
+     "duration_ms": 3270.0,
+     "observation_ids": []
+    }
+   ],
+   "metrics": [
+    {
+     "metric": "linux.uptime.seconds",
+     "unit": "s",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 209312.55
+      }
+     ]
+    },
+    {
+     "metric": "linux.load.one_minute",
+     "unit": "1",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0
+      }
+     ]
+    },
+    {
+     "metric": "linux.cpu.user_system_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 9.1
+      }
+     ]
+    },
+    {
+     "metric": "linux.memory.used_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 31.49
+      }
+     ]
+    },
+    {
+     "metric": "host.filesystem.used_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "7963566080"
+      },
+      {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      {
+       "encoding": "uint64",
+       "value": "33730"
+      },
+      {
+       "encoding": "uint64",
+       "value": "58040320"
+      },
+      {
+       "encoding": "uint64",
+       "value": "16384"
+      },
+      {
+       "encoding": "uint64",
+       "value": "372379648"
+      },
+      {
+       "encoding": "uint64",
+       "value": "7421952"
+      },
+      {
+       "encoding": "uint64",
+       "value": "12288"
+      },
+      {
+       "encoding": "uint64",
+       "value": "4096"
+      }
+     ]
+    },
+    {
+     "metric": "host.filesystem.size_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "21416116224"
+      },
+      {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      {
+       "encoding": "uint64",
+       "value": "262128"
+      },
+      {
+       "encoding": "uint64",
+       "value": "570941440"
+      },
+      {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      {
+       "encoding": "uint64",
+       "value": "1006632960"
+      },
+      {
+       "encoding": "uint64",
+       "value": "627900416"
+      },
+      {
+       "encoding": "uint64",
+       "value": "285470720"
+      },
+      {
+       "encoding": "uint64",
+       "value": "285470720"
+      }
+     ]
+    },
+    {
+     "metric": "linux.memory.used_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "898793472"
+      }
+     ]
+    },
+    {
+     "metric": "linux.memory.total_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "2854707200"
+      }
+     ]
+    },
+    {
+     "metric": "linux.load.five_minutes",
+     "unit": "1",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0.03
+      }
+     ]
+    },
+    {
+     "metric": "linux.load.fifteen_minutes",
+     "unit": "1",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0.01
+      }
+     ]
+    },
+    {
+     "metric": "linux.swap.used_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0
+      }
+     ]
+    },
+    {
+     "metric": "linux.processes.count",
+     "unit": "count",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "215"
+      }
+     ]
+    },
+    {
+     "metric": "linux.processes.sample_max_cpu_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 1.1
+      }
+     ]
+    },
+    {
+     "metric": "linux.processes.cpu_sample_max_memory_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 8.3
+      }
+     ]
+    },
+    {
+     "metric": "linux.filesystem.available_bytes",
+     "unit": "By",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "uint64",
+       "value": "13452550144"
+      },
+      {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      {
+       "encoding": "uint64",
+       "value": "228398"
+      },
+      {
+       "encoding": "uint64",
+       "value": "512901120"
+      },
+      {
+       "encoding": "uint64",
+       "value": "1427337216"
+      },
+      {
+       "encoding": "uint64",
+       "value": "634253312"
+      },
+      {
+       "encoding": "uint64",
+       "value": "620478464"
+      },
+      {
+       "encoding": "uint64",
+       "value": "285458432"
+      },
+      {
+       "encoding": "uint64",
+       "value": "285466624"
+      }
+     ]
+    },
+    {
+     "metric": "linux.filesystem.inode_used_percent",
+     "unit": "%",
+     "quality": [
+      {
+       "status": "good",
+       "reason": "none"
+      },
+      {
+       "status": "unknown",
+       "reason": "not_applicable"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 2
+      },
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      {
+       "encoding": "float64",
+       "value": 2
+      },
+      null,
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      null,
+      {
+       "encoding": "float64",
+       "value": 1
+      },
+      {
+       "encoding": "float64",
+       "value": 1
+      }
+     ]
+    },
+    {
+     "metric": "linux.filesystem.used_ratio",
+     "unit": "1",
+     "quality": [
+      {
+       "status": "partial",
+       "reason": "precision_loss"
+      },
+      {
+       "status": "good",
+       "reason": "none"
+      }
+     ],
+     "values": [
+      {
+       "encoding": "float64",
+       "value": 0.37184921844398744
+      },
+      {
+       "encoding": "float64",
+       "value": 0
+      },
+      {
+       "encoding": "float64",
+       "value": 0
+      },
+      {
+       "encoding": "float64",
+       "value": 0
+      },
+      {
+       "encoding": "float64",
+       "value": 0.12867759262650308
+      },
+      {
+       "encoding": "float64",
+       "value": 0.10165722074754287
+      },
+      {
+       "encoding": "float64",
+       "value": 1.1478585264366167e-05
+      },
+      {
+       "encoding": "float64",
+       "value": 0.3699259440104167
+      },
+      {
+       "encoding": "float64",
+       "value": 0.01182026928295585
+      },
+      {
+       "encoding": "float64",
+       "value": 4.3044694741373124e-05
+      },
+      {
+       "encoding": "float64",
+       "value": 1.4348231580457709e-05
+      }
+     ]
+    }
+   ],
+   "capabilities": [
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.uptime.seconds",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.load.one_minute",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.cpu.user_system_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.memory.used_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "host.filesystem.used_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "host.filesystem.size_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "host.network.bytes_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "method",
+       "evidence": "HOST_INTERFACE_LIFECYCLE_UNAVAILABLE"
+      },
+      {
+       "kind": "method",
+       "evidence": "parse_error"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.block.read_bytes_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "method",
+       "evidence": "parse_error"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.block.write_bytes_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "method",
+       "evidence": "parse_error"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.block.io_time_ms_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "method",
+       "evidence": "parse_error"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.memory.used_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.memory.total_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.load.five_minutes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.load.fifteen_minutes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.swap.used_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.processes.count",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.processes.sample_max_cpu_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.processes.cpu_sample_max_memory_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.filesystem.available_bytes",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.filesystem.inode_used_percent",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.network.events_total",
+      "semantic_version": "1.0.0"
+     },
+     "status": "unknown",
+     "method": "ssh",
+     "basis": [
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "method",
+       "evidence": "HOST_INTERFACE_LIFECYCLE_UNAVAILABLE"
+      },
+      {
+       "kind": "method",
+       "evidence": "parse_error"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    },
+    {
+     "resource_id": "3",
+     "metric": {
+      "id": "linux.filesystem.used_ratio",
+      "semantic_version": "1.0.0"
+     },
+     "status": "supported",
+     "method": "derived",
+     "basis": [
+      {
+       "kind": "method",
+       "evidence": "public_processor:derive@1.0.0"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      },
+      {
+       "kind": "resource",
+       "evidence": "resource_type:server;required:server"
+      },
+      {
+       "kind": "resource",
+       "evidence": "os.family:matched;allowed:linux"
+      },
+      {
+       "kind": "permission",
+       "evidence": "fixed_read_succeeded"
+      }
+     ],
+     "evaluated_at": "2026-10-27T13:48:04.620Z",
+     "valid_until": "2026-10-27T13:50:04.620Z"
+    }
+   ],
+   "applicability": [
+    {
+     "attribute": "os.family",
+     "value": "linux",
+     "supported_values": [
+      "linux"
+     ],
+     "status": "supported"
+    }
+   ]
+  }
+ },
+ "formal_collection": {
+  "instance": [
+   {
+    "metric": "db.uptime_seconds",
+    "unit": "s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "uptime_diagnostics",
+    "implementation_ref": "builtin:database.mysql.uptime_diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 137333
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 137333
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.processlist.count",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostics_connections",
+    "implementation_ref": "builtin:database.mysql.diagnostics_connections.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "13"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "13"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.connections.limit",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostics_limit",
+    "implementation_ref": "builtin:database.mysql.diagnostics_limit.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "151"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "151"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.transaction_commands.commit_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostics_transactions",
+    "implementation_ref": "builtin:database.mysql.diagnostics_transactions.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 21.774895964385948
+      },
+      "last_observed_at": "2026-10-27T13:48:54.436Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 21.774895964385948
+    },
+    "last_observed_at": "2026-10-27T13:48:54.436Z"
+   },
+   {
+    "metric": "mysql.transaction_commands.rollback_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostics_transactions",
+    "implementation_ref": "builtin:database.mysql.diagnostics_transactions.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:54.436Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:48:54.436Z"
+   },
+   {
+    "metric": "mysql.tables.estimated_allocated_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostics_size",
+    "implementation_ref": "builtin:database.mysql.diagnostics_size.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "2117173248"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "2117173248"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.transaction_commands.commit_rate",
+    "unit": "count/s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "derived",
+    "implementation_ref": null,
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 21.774895964385948
+      },
+      "last_observed_at": "2026-10-27T13:49:04.769Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 21.774895964385948
+    },
+    "last_observed_at": "2026-10-27T13:49:04.769Z"
+   },
+   {
+    "metric": "mysql.transaction_commands.rollback_rate",
+    "unit": "count/s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "derived",
+    "implementation_ref": null,
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:04.769Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:49:04.769Z"
+   },
+   {
+    "metric": "mysql.transaction_commands.completed_rate",
+    "unit": "count/s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "derived",
+    "implementation_ref": null,
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 21.774895964385948
+      },
+      "last_observed_at": "2026-10-27T13:49:04.769Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 21.774895964385948
+    },
+    "last_observed_at": "2026-10-27T13:49:04.769Z"
+   },
+   {
+    "metric": "mysql.queries.total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostics_queries",
+    "implementation_ref": "builtin:database.mysql.diagnostics_queries.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 412.31126596980255
+      },
+      "last_observed_at": "2026-10-27T13:48:54.501Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 412.31126596980255
+    },
+    "last_observed_at": "2026-10-27T13:48:54.501Z"
+   },
+   {
+    "metric": "mysql.queries.per_second",
+    "unit": "count/s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "derived",
+    "implementation_ref": null,
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 412.31126596980255
+      },
+      "last_observed_at": "2026-10-27T13:49:04.833Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 412.31126596980255
+    },
+    "last_observed_at": "2026-10-27T13:49:04.833Z"
+   },
+   {
+    "metric": "mysql.slow_queries.total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostic_counters",
+    "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:54.526Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:48:54.526Z"
+   },
+   {
+    "metric": "mysql.protocol.received_bytes_total",
+    "unit": "By",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostic_counters",
+    "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 38773.30364921111
+      },
+      "last_observed_at": "2026-10-27T13:48:54.526Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 38773.30364921111
+    },
+    "last_observed_at": "2026-10-27T13:48:54.526Z"
+   },
+   {
+    "metric": "mysql.protocol.sent_bytes_total",
+    "unit": "By",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostic_counters",
+    "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1655505.2753847642
+      },
+      "last_observed_at": "2026-10-27T13:48:54.526Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 1655505.2753847642
+    },
+    "last_observed_at": "2026-10-27T13:48:54.526Z"
+   },
+   {
+    "metric": "mysql.handler.read_next_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostic_counters",
+    "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 227.567515245378
+      },
+      "last_observed_at": "2026-10-27T13:48:54.526Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 227.567515245378
+    },
+    "last_observed_at": "2026-10-27T13:48:54.526Z"
+   },
+   {
+    "metric": "mysql.connections.aborted_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "diagnostic_counters",
+    "implementation_ref": "builtin:database.mysql.diagnostic_counters.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 6,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:54.526Z"
+     }
+    ],
+    "points": 6,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:48:54.526Z"
+   },
+   {
+    "metric": "mysql.buffer_pool.pages_used_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "buffer_pages",
+    "implementation_ref": "builtin:database.mysql.buffer_pages.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 96.875
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 96.875
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.threads.running",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_gauges",
+    "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "2"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "2"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.threads.connected",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_gauges",
+    "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "12"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "12"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.files.open",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_gauges",
+    "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "10"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "10"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.key_cache.used_blocks",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_gauges",
+    "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "0"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.key_cache.unused_blocks",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_gauges",
+    "implementation_ref": "builtin:database.mysql.diagnostic_gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "6698"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "6698"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.buffer_pool.read_hit_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_ratios",
+    "implementation_ref": "builtin:database.mysql.diagnostic_ratios.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 99.68
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 99.68
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.table_cache.hit_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_ratios",
+    "implementation_ref": "builtin:database.mysql.diagnostic_ratios.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 99.9914
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 99.9914
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.key_cache.used_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "diagnostic_ratios",
+    "implementation_ref": "builtin:database.mysql.diagnostic_ratios.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.innodb.row_lock_average_ms",
+    "unit": "ms",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "innodb_diagnostics",
+    "implementation_ref": "builtin:database.mysql.innodb_diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "7"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.975Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "7"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.975Z"
+   },
+   {
+    "metric": "mysql.innodb.deadlocks_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "innodb_diagnostics",
+    "implementation_ref": "builtin:database.mysql.innodb_diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 0,
+      "last_value": null,
+      "last_observed_at": null
+     }
+    ],
+    "points": 0,
+    "last_value": null,
+    "last_observed_at": null
+   },
+   {
+    "metric": "mysql.temporary.disk_tables_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "innodb_diagnostics",
+    "implementation_ref": "builtin:database.mysql.innodb_diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.09682416731216112
+      },
+      "last_observed_at": "2026-10-27T13:48:54.647Z"
+     }
+    ],
+    "points": 5,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0.09682416731216112
+    },
+    "last_observed_at": "2026-10-27T13:48:54.647Z"
+   },
+   {
+    "metric": "mysql.thread_cache.hit_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "thread_cache",
+    "implementation_ref": "builtin:database.mysql.thread_cache.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 99.96
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 99.96
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.transactions.active",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "active_transactions",
+    "implementation_ref": "builtin:database.mysql.active_transactions.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      "last_observed_at": "2026-10-27T13:49:04.640Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "0"
+    },
+    "last_observed_at": "2026-10-27T13:49:04.640Z"
+   },
+   {
+    "metric": "mysql.replication.behind_source_seconds",
+    "unit": "s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "replication_channels",
+    "implementation_ref": "builtin:database.mysql.replication_channels.v1",
+    "series": [],
+    "points": 0,
+    "last_value": null,
+    "last_observed_at": null
+   },
+   {
+    "metric": "mysql.replication.io_running",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "replication_channels",
+    "implementation_ref": "builtin:database.mysql.replication_channels.v1",
+    "series": [],
+    "points": 0,
+    "last_value": null,
+    "last_observed_at": null
+   },
+   {
+    "metric": "mysql.replication.sql_running",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "replication_channels",
+    "implementation_ref": "builtin:database.mysql.replication_channels.v1",
+    "series": [],
+    "points": 0,
+    "last_value": null,
+    "last_observed_at": null
+   }
+  ],
+  "server": [
+   {
+    "metric": "host.filesystem.used_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-filesystem",
+    "implementation_ref": "builtin:linux.filesystem.v1",
+    "series": [
+     {
+      "dimensions": {
+       "mount": "/boot",
+       "device": "/dev/nvme0n1p2",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "372379648"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/",
+       "device": "/dev/mapper/klas-root",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "7963566080"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot/efi",
+       "device": "/dev/nvme0n1p1",
+       "fs_type": "vfat"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "7421952"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/tmp",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "16384"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "58040320"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/0",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "4096"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/fs/cgroup",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/991",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "12288"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev",
+       "device": "devtmpfs",
+       "fs_type": "devtmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev/shm",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "0"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/firmware/efi/efivars",
+       "device": "efivarfs",
+       "fs_type": "efivarfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "33730"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 44,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "33730"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "host.filesystem.size_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-filesystem",
+    "implementation_ref": "builtin:linux.filesystem.v1",
+    "series": [
+     {
+      "dimensions": {
+       "mount": "/sys/fs/cgroup",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev",
+       "device": "devtmpfs",
+       "fs_type": "devtmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/0",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "285470720"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/991",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "285470720"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot/efi",
+       "device": "/dev/nvme0n1p1",
+       "fs_type": "vfat"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "627900416"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot",
+       "device": "/dev/nvme0n1p2",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "1006632960"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev/shm",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/tmp",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/",
+       "device": "/dev/mapper/klas-root",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "21416116224"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/firmware/efi/efivars",
+       "device": "efivarfs",
+       "fs_type": "efivarfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "262128"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "570941440"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 44,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "570941440"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "host.network.bytes_total",
+    "unit": "By",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "linux-network",
+    "implementation_ref": "builtin:linux.network.v1",
+    "series": [
+     {
+      "dimensions": {
+       "direction": "in",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 2069.969159599075
+      },
+      "last_observed_at": "2026-10-27T13:48:56.170Z"
+     },
+     {
+      "dimensions": {
+       "direction": "out",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 3283.9244410177334
+      },
+      "last_observed_at": "2026-10-27T13:48:56.170Z"
+     }
+    ],
+    "points": 10,
+    "last_value": {
+     "encoding": "float64",
+     "value": 3283.9244410177334
+    },
+    "last_observed_at": "2026-10-27T13:48:56.170Z"
+   },
+   {
+    "metric": "linux.uptime.seconds",
+    "unit": "s",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-basic",
+    "implementation_ref": "builtin:linux.basic.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 209372.86
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 209372.86
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.load.one_minute",
+    "unit": "1",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-basic",
+    "implementation_ref": "builtin:linux.basic.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.06
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0.06
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.cpu.user_system_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-host-gauges",
+    "implementation_ref": "builtin:linux.host-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 10
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 10
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.memory.used_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-host-gauges",
+    "implementation_ref": "builtin:linux.host-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 31.43
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 31.43
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.block.read_bytes_total",
+    "unit": "By",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "linux-block",
+    "implementation_ref": "builtin:linux.block.v1",
+    "series": [
+     {
+      "dimensions": {
+       "device": "nvme0n1"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     },
+     {
+      "dimensions": {
+       "device": "dm-0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     },
+     {
+      "dimensions": {
+       "device": "dm-1"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     }
+    ],
+    "points": 15,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:48:56.317Z"
+   },
+   {
+    "metric": "linux.block.write_bytes_total",
+    "unit": "By",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "linux-block",
+    "implementation_ref": "builtin:linux.block.v1",
+    "series": [
+     {
+      "dimensions": {
+       "device": "dm-0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 2365.578977764944
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     },
+     {
+      "dimensions": {
+       "device": "dm-1"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     },
+     {
+      "dimensions": {
+       "device": "nvme0n1"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 2365.578977764944
+      },
+      "last_observed_at": "2026-10-27T13:48:56.317Z"
+     }
+    ],
+    "points": 15,
+    "last_value": {
+     "encoding": "float64",
+     "value": 2365.578977764944
+    },
+    "last_observed_at": "2026-10-27T13:48:56.317Z"
+   },
+   {
+    "metric": "linux.block.io_time_ms_total",
+    "unit": "ms",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "linux-block",
+    "implementation_ref": "builtin:linux.block.v1",
+    "series": [],
+    "points": 0,
+    "last_value": null,
+    "last_observed_at": null
+   },
+   {
+    "metric": "linux.filesystem.used_ratio",
+    "unit": "1",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "derived",
+    "implementation_ref": null,
+    "series": [
+     {
+      "dimensions": {
+       "mount": "/dev",
+       "device": "devtmpfs",
+       "fs_type": "devtmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.10165722074754287
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/",
+       "device": "/dev/mapper/klas-root",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.37184921844398744
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/fs/cgroup",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot",
+       "device": "/dev/nvme0n1p2",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.3699259440104167
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot/efi",
+       "device": "/dev/nvme0n1p1",
+       "fs_type": "vfat"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.01182026928295585
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/0",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1.4348231580457709e-05
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/tmp",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1.1478585264366167e-05
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/991",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 4.3044694741373124e-05
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev/shm",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/firmware/efi/efivars",
+       "device": "efivarfs",
+       "fs_type": "efivarfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.12867759262650308
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 44,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0.12867759262650308
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.memory.used_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "897503232"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "897503232"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.memory.total_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "2854707200"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "2854707200"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.load.five_minutes",
+    "unit": "1",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.03
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0.03
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.load.fifteen_minutes",
+    "unit": "1",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.swap.used_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.processes.count",
+    "unit": "count",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "215"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "215"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.processes.sample_max_cpu_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0.3
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0.3
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.processes.cpu_sample_max_memory_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-diagnostic-gauges-v1",
+    "implementation_ref": "builtin:linux.diagnostic-gauges.v1",
+    "series": [
+     {
+      "dimensions": {},
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 8.3
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 4,
+    "last_value": {
+     "encoding": "float64",
+     "value": 8.3
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.filesystem.available_bytes",
+    "unit": "By",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-filesystem-diagnostics-v1",
+    "implementation_ref": "builtin:linux.filesystem-diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {
+       "mount": "/boot",
+       "device": "/dev/nvme0n1p2",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "634253312"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/tmp",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "1427337216"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/",
+       "device": "/dev/mapper/klas-root",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "13452550144"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot/efi",
+       "device": "/dev/nvme0n1p1",
+       "fs_type": "vfat"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "620478464"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "512901120"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev/shm",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "1427353600"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev",
+       "device": "devtmpfs",
+       "fs_type": "devtmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/fs/cgroup",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "4194304"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/firmware/efi/efivars",
+       "device": "efivarfs",
+       "fs_type": "efivarfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "228398"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/991",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "285458432"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/0",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "uint64",
+       "value": "285466624"
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 44,
+    "last_value": {
+     "encoding": "uint64",
+     "value": "285466624"
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.filesystem.inode_used_percent",
+    "unit": "%",
+    "kind": "gauge",
+    "temporality": "instant",
+    "collector": "linux-filesystem-diagnostics-v1",
+    "implementation_ref": "builtin:linux.filesystem-diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {
+       "mount": "/run/user/991",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot",
+       "device": "/dev/nvme0n1p2",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run/user/0",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/fs/cgroup",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 2
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/sys/firmware/efi/efivars",
+       "device": "efivarfs",
+       "fs_type": "efivarfs"
+      },
+      "points": 0,
+      "last_value": null,
+      "last_observed_at": null
+     },
+     {
+      "dimensions": {
+       "mount": "/",
+       "device": "/dev/mapper/klas-root",
+       "fs_type": "xfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 2
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/tmp",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/dev/shm",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/run",
+       "device": "tmpfs",
+       "fs_type": "tmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     },
+     {
+      "dimensions": {
+       "mount": "/boot/efi",
+       "device": "/dev/nvme0n1p1",
+       "fs_type": "vfat"
+      },
+      "points": 0,
+      "last_value": null,
+      "last_observed_at": null
+     },
+     {
+      "dimensions": {
+       "mount": "/dev",
+       "device": "devtmpfs",
+       "fs_type": "devtmpfs"
+      },
+      "points": 4,
+      "last_value": {
+       "encoding": "float64",
+       "value": 1
+      },
+      "last_observed_at": "2026-10-27T13:49:05.164Z"
+     }
+    ],
+    "points": 36,
+    "last_value": {
+     "encoding": "float64",
+     "value": 1
+    },
+    "last_observed_at": "2026-10-27T13:49:05.164Z"
+   },
+   {
+    "metric": "linux.network.events_total",
+    "unit": "count",
+    "kind": "counter",
+    "temporality": "cumulative",
+    "collector": "linux-network-diagnostics-v1",
+    "implementation_ref": "builtin:linux.network-diagnostics.v1",
+    "series": [
+     {
+      "dimensions": {
+       "event": "drop",
+       "direction": "in",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:57.902Z"
+     },
+     {
+      "dimensions": {
+       "event": "error",
+       "direction": "out",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:57.902Z"
+     },
+     {
+      "dimensions": {
+       "event": "drop",
+       "direction": "out",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:57.902Z"
+     },
+     {
+      "dimensions": {
+       "event": "error",
+       "direction": "in",
+       "interface": "enp2s0"
+      },
+      "points": 5,
+      "last_value": {
+       "encoding": "float64",
+       "value": 0
+      },
+      "last_observed_at": "2026-10-27T13:48:57.902Z"
+     }
+    ],
+    "points": 20,
+    "last_value": {
+     "encoding": "float64",
+     "value": 0
+    },
+    "last_observed_at": "2026-10-27T13:48:57.902Z"
+   }
+  ]
+ },
+ "formal_cycles": [
+  {
+   "resource_type": "instance",
+   "cycles": 20
+  },
+  {
+   "resource_type": "server",
+   "cycles": 16
+  }
+ ],
+ "failures": [
+  {
+   "resource": "server:3",
+   "collector_id": "linux-network",
+   "status": "failed",
+   "error": "parse_error"
+  },
+  {
+   "resource": "server:3",
+   "collector_id": "linux-block",
+   "status": "failed",
+   "error": "parse_error"
+  },
+  {
+   "resource": "server:3",
+   "collector_id": "linux-network-diagnostics-v1",
+   "status": "failed",
+   "error": "parse_error"
+  }
+ ],
+ "paused_resumed": {
+  "paused": {
+   "attempts_before": 40,
+   "attempts_after": 40,
+   "effective_enabled": {
+    "enabled": false,
+    "global_enabled": true,
+    "asset_enabled": false,
+    "policy_enabled": true,
+    "source": "asset"
+   }
+  },
+  "resumed": {
+   "effective_enabled": {
+    "enabled": true,
+    "global_enabled": true,
+    "asset_enabled": true,
+    "policy_enabled": true,
+    "source": "package"
+   },
+   "formal_visibility": {
+    "state": "available",
+    "source": "semantic",
+    "last_observed_at": "2026-10-27T13:49:19.170Z",
+    "generation": 1,
+    "freshness": "fresh"
+   }
+  }
+ }
+}
