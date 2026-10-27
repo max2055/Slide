@@ -102,6 +102,58 @@ describe('in-memory template repository', () => {
     expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([2]);
   });
 
+  it('refuses an incompatible semantic change on a stable item identity', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create(template(), draft());
+    const base = {
+      template_id: 'tpl-a', item_id: 'uptime', display_name: 'Uptime', canonical_metric: item().canonical_metric,
+      unit: 's' as const, dimensions: {}, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
+    };
+    const first = await repository.putItemVersion(base);
+    expect(first.item.version).toBe(1);
+    // A different canonical metric under the same item_id is a new identity, not v2.
+    expect(await code(repository.putItemVersion({
+      ...base, canonical_metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' },
+    }))).toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    // Same for a unit change and a dimension key change.
+    expect(await code(repository.putItemVersion({ ...base, unit: 'ms' }))).toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    expect(await code(repository.putItemVersion({ ...base, dimensions: { host: 'host identifier' } })))
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    // A compatible implementation pin update and a rename still append under the same identity.
+    const repinned = await repository.putItemVersion({
+      ...base,
+      display_name: 'Database uptime',
+      collector_ref: { package_release: `mysql-basic@1.0.0#sha256:${'b'.repeat(64)}`, implementation_id: 'builtin:mysql.status.v1' },
+    });
+    expect(repinned.reused).toBe(false);
+    expect(repinned.item.version).toBe(2);
+    expect(repinned.item.item_id).toBe('uptime');
+    expect(repinned.item.canonical_metric).toEqual(item().canonical_metric);
+    // A rejected append leaves the stored versions untouched.
+    expect(await repository.getItemVersion('tpl-a', 'uptime', 1)).toEqual(first.item);
+    expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([2]);
+  });
+
+  it('applies the identity guard on the conditional append, not only in the service', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create(template(), draft());
+    const base = {
+      template_id: 'tpl-a', item_id: 'uptime', display_name: 'Uptime', canonical_metric: item().canonical_metric,
+      unit: 's' as const, dimensions: {}, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
+    };
+    const results = await Promise.allSettled([
+      repository.putItemVersion(base),
+      repository.putItemVersion({ ...base, canonical_metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' } }),
+    ]);
+    const fulfilled = results.filter(result => result.status === 'fulfilled');
+    const rejected = results.filter(result => result.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(((rejected[0] as PromiseRejectedResult).reason as TemplateError).code)
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
+  });
+
   it('publishes v1, treats identical content as a no-op and never rewrites a version', async () => {
     const repository = new InMemoryTemplateRepository();
     await repository.create(template(), draft());

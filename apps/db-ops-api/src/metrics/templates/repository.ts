@@ -9,7 +9,7 @@
  * | `create`      | INSERT template + draft in one transaction; PK `template_id` rejects a re-used identity (`TEMPLATE_EXISTS`) |
  * | `updateDraft` | `UPDATE … WHERE template_id=? AND revision=?`; 0 affected rows ⇒ `TEMPLATE_DRAFT_CONFLICT` |
  * | `updateTemplate` | `UPDATE … WHERE template_id=? AND revision=?`; 0 rows ⇒ `TEMPLATE_REVISION_CONFLICT` |
- * | `putItemVersion` | append-only `MAX(version)+1` under `SELECT … FOR UPDATE`; `UNIQUE(template_id,item_id,version)`; identical latest content returns the existing row instead of writing |
+ * | `putItemVersion` | append-only `MAX(version)+1` under `SELECT … FOR UPDATE`; the locked row must also stay compatible with the stable item identity (canonical metric, unit, dimension key set) or `TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`; `UNIQUE(template_id,item_id,version)`; identical latest content returns the existing row instead of writing |
  * | `publish`     | one transaction: `SELECT template FOR UPDATE` → check `revision` → `SELECT version WHERE (template_id, content_hash)` (hit ⇒ idempotent no-op) → INSERT version with `UNIQUE(template_id,version)`+`UNIQUE(template_id,content_hash)` → `UPDATE template SET revision=revision+1, current_published_version=?` → `UPDATE draft SET revision=revision+1, published_version=?` |
  *
  * The in-memory implementation below is a **test double only**. Each method body
@@ -19,7 +19,7 @@
  */
 import { TemplateError, requireTemplate } from './errors.js';
 import {
-  TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema,
+  TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema, canonicalKey,
   type HashId, type MetricRef, type PackageCompositionEntry, type ParameterValue, type Revision,
   type SourceChain, type TemplateDraft, type TemplateDraftAggregate, type TemplateItemVersion,
   type TemplatePublishedAggregate, type TemplateRecord, type TemplateStatus, type TemplateVersion,
@@ -129,6 +129,24 @@ const itemContent = (item: Omit<ItemVersionInput, 'source_chain'>): string => st
   params_default: item.params_default,
 });
 
+/**
+ * A stable item identity is `(template_id, item_id)`. Only compatible content may
+ * append a new version under it: the canonical metric reference, the unit and the
+ * dimension key set are the identity's semantics, and they are the same three
+ * things publish re-checks against the canonical definition. A display rename, a
+ * default-parameter change or a compatible implementation pin update keep it.
+ */
+const identityConflict = (latest: TemplateItemVersion, next: Omit<ItemVersionInput, 'source_chain'>): string | null => {
+  const before = canonicalKey(latest.canonical_metric);
+  const after = canonicalKey(next.canonical_metric);
+  if (before !== after) return `canonical metric ${before} → ${after}`;
+  if (latest.unit !== next.unit) return `unit ${latest.unit} → ${next.unit}`;
+  const declared = Object.keys(latest.dimensions).sort().join(',');
+  const incoming = Object.keys(next.dimensions).sort().join(',');
+  if (declared !== incoming) return `dimensions [${declared}] → [${incoming}]`;
+  return null;
+};
+
 export class InMemoryTemplateRepository implements TemplateRepository {
   private readonly templates = new Map<string, TemplateRecord>();
   private readonly drafts = new Map<string, TemplateDraft>();
@@ -233,8 +251,17 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     const perItem = perTemplate.get(input.item_id) ?? [];
     perTemplate.set(input.item_id, perItem);
     const latest = perItem[perItem.length - 1];
-    if (latest && itemContent(latest) === itemContent(input)) {
-      return { item: clone(latest), reused: true };
+    // The compatibility check sits on the conditional append itself, so a racing
+    // caller cannot bypass the service's read by interleaving between the two.
+    if (latest) {
+      const conflict = identityConflict(latest, input);
+      if (conflict) {
+        throw new TemplateError('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE',
+          `item ${input.item_id} is v${latest.version} with ${conflict}; a stable item identity cannot switch to incompatible semantics, use a new item_id`);
+      }
+      if (itemContent(latest) === itemContent(input)) {
+        return { item: clone(latest), reused: true };
+      }
     }
     const version = (latest?.version ?? 0) + 1;
     const item = TemplateItemVersionSchema.parse({ ...input, version });

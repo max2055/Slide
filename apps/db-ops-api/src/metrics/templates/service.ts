@@ -550,21 +550,27 @@ export class MetricTemplateService {
   }
 
   private checkParameterValue(name: string, spec: { type: 'number' | 'integer' | 'boolean' | 'string'; min?: number; max?: number }, value: ParameterValue): void {
-    const invalid = (detail: string) => {
+    const invalid = (detail: string): never => {
       throw new TemplateError(name === 'interval_ms' ? 'TEMPLATE_INVALID_PERIOD' : 'TEMPLATE_PARAMETER_INVALID',
         `${name}: ${detail}`);
     };
-    if (typeof value === 'boolean' || typeof value === 'string') {
-      if (spec.type !== typeof value) invalid(`expected ${spec.type}`);
+    // The declared type selects the branch, so a number can never satisfy a
+    // boolean/string parameter (and a boolean/string never satisfies a numeric one).
+    if (spec.type === 'boolean' || spec.type === 'string') {
+      if (typeof value !== spec.type) invalid(`expected ${spec.type}`);
       return;
     }
-    if (typeof value !== 'number' || !Number.isFinite(value)) invalid(`expected ${spec.type}`);
-    if (spec.type === 'integer' && !Number.isInteger(value)) invalid('expected an integer');
-    if (spec.min !== undefined && value < spec.min) invalid(`below minimum ${spec.min}`);
-    if (spec.max !== undefined && value > spec.max) invalid(`above maximum ${spec.max}`);
-    if (name === 'interval_ms' && (value < MIN_INTERVAL_MS || value > MAX_INTERVAL_MS)) {
-      invalid(`must stay within [${MIN_INTERVAL_MS}, ${MAX_INTERVAL_MS}]`);
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) invalid(`expected ${spec.type}`);
+      if (spec.type === 'integer' && !Number.isInteger(value)) invalid('expected an integer');
+      if (spec.min !== undefined && value < spec.min) invalid(`below minimum ${spec.min}`);
+      if (spec.max !== undefined && value > spec.max) invalid(`above maximum ${spec.max}`);
+      if (name === 'interval_ms' && (value < MIN_INTERVAL_MS || value > MAX_INTERVAL_MS)) {
+        invalid(`must stay within [${MIN_INTERVAL_MS}, ${MAX_INTERVAL_MS}]`);
+      }
+      return;
     }
+    invalid(`expected ${spec.type}`);
   }
 
   /** Per-item defaults must be declared template parameters, and cadence stays template-level. */

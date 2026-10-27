@@ -476,3 +476,136 @@ describe('publish rejections', () => {
     }
   });
 });
+
+describe('stable item identity', () => {
+  it('refuses to continue a published item under an incompatible metric', async () => {
+    const { service, repository } = setup();
+    const created = await service.create(manager(), { name: 'Stable' });
+    const first = await service.selectMetric(manager(), created.template_id, {
+      item_id: 'stable-item', package: pin(), metric: UPTIME,
+    });
+    await service.updateDraft(manager(), created.template_id, {
+      expected_draft_revision: 0,
+      aggregate: { ...emptyDraftAggregate(created.template_id), items: [{ item_id: 'stable-item', version: first.item.version }] },
+    });
+    const published = await service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 });
+    const snapshot = await repository.getVersion(created.template_id, published.version);
+    // The same item_id with a different canonical metric is a new identity, not item v2.
+    expect(await code(service.selectMetric(manager(), created.template_id, {
+      item_id: 'stable-item', package: pin(), metric: QUERIES,
+    }))).toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    // The rejected write leaves the published snapshot and the latest item as they were.
+    expect(await repository.getVersion(created.template_id, published.version)).toEqual(snapshot);
+    expect(await repository.listVersions(created.template_id)).toHaveLength(1);
+    const detail = await service.detail(manager(), created.template_id);
+    expect(detail.items).toHaveLength(1);
+    expect(detail.items[0]).toMatchObject({ item_id: 'stable-item', version: 1, canonical_metric: UPTIME, unit: 's' });
+    // A rename stays on the same identity.
+    const renamed = await service.selectMetric(manager(), created.template_id, {
+      item_id: 'stable-item', display_name: 'Renamed uptime', package: pin(), metric: UPTIME,
+    });
+    expect(renamed.item.version).toBe(2);
+    expect(renamed.item.canonical_metric).toEqual(UPTIME);
+  });
+
+  it('lets exactly one of two racing selections under one item_id win', async () => {
+    const { service } = setup();
+    const created = await service.create(manager(), { name: 'Race' });
+    const results = await Promise.allSettled([
+      service.selectMetric(manager(), created.template_id, { item_id: 'stable', package: pin(), metric: UPTIME }),
+      service.selectMetric(manager(), created.template_id, { item_id: 'stable', package: pin(), metric: QUERIES }),
+    ]);
+    const fulfilled = results.filter(result => result.status === 'fulfilled');
+    const rejected = results.filter(result => result.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(TemplateError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as TemplateError).code)
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    const detail = await service.detail(manager(), created.template_id);
+    expect(detail.items).toHaveLength(1);
+    expect(detail.items[0]!.version).toBe(1);
+    expect(detail.items[0]!.canonical_metric).toEqual(
+      (fulfilled[0] as PromiseFulfilledResult<{ item: { canonical_metric: unknown } }>).value.item.canonical_metric,
+    );
+  });
+});
+
+describe('parameter types', () => {
+  it('accepts one default of every declared type', async () => {
+    const { service } = setup();
+    const created = await service.create(manager(), { name: 'Types' });
+    const draft = await service.updateDraft(manager(), created.template_id, {
+      expected_draft_revision: 0,
+      aggregate: {
+        ...emptyDraftAggregate(created.template_id),
+        parameters: {
+          schema: {
+            timeout_s: { type: 'number', min: 1, max: 30 },
+            retries: { type: 'integer', min: 0, max: 5 },
+            enabled: { type: 'boolean' },
+            label: { type: 'string' },
+          },
+          defaults: { timeout_s: 2.5, retries: 3, enabled: true, label: 'x' },
+        },
+      },
+    });
+    expect(draft.revision).toBe(1);
+    expect(draft.aggregate.parameters.defaults).toEqual({ timeout_s: 2.5, retries: 3, enabled: true, label: 'x' });
+  });
+
+  it('rejects a number that disguises a boolean or string parameter', async () => {
+    const { service } = setup();
+    const created = await service.create(manager(), { name: 'Disguise' });
+    for (const [type, value] of [['boolean', 1], ['string', 0]] as const) {
+      expect(await code(service.updateDraft(manager(), created.template_id, {
+        expected_draft_revision: 0,
+        aggregate: {
+          ...emptyDraftAggregate(created.template_id),
+          parameters: { schema: { flag: { type } }, defaults: { flag: value } },
+        },
+      }))).toBe('TEMPLATE_PARAMETER_INVALID');
+    }
+    // The reverse direction keeps failing too: a boolean or string is not a number.
+    expect(await code(service.updateDraft(manager(), created.template_id, {
+      expected_draft_revision: 0,
+      aggregate: {
+        ...emptyDraftAggregate(created.template_id),
+        parameters: { schema: { timeout_s: { type: 'number' } }, defaults: { timeout_s: true as unknown as number } },
+      },
+    }))).toBe('TEMPLATE_PARAMETER_INVALID');
+  });
+
+  it('re-validates the stored draft at publish and the item defaults against it', async () => {
+    const { service, repository } = setup();
+    const created = await service.create(manager(), { name: 'Revalidate' });
+    const item = await repository.putItemVersion(hostileItem(created.template_id, { params_default: { enabled: 1 } }));
+    // A stored draft that bypassed the service still cannot publish a numeric default.
+    await repository.updateDraft(created.template_id, 0, {
+      aggregate: {
+        ...emptyDraftAggregate(created.template_id),
+        items: [{ item_id: 'uptime', version: item.item.version }],
+        parameters: { schema: { enabled: { type: 'boolean' } }, defaults: { enabled: true } },
+      },
+      updated_by: 7,
+      updated_at: AT,
+    });
+    // The item's own default is the numeric-instead-of-boolean case.
+    expect(await code(service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 })))
+      .toBe('TEMPLATE_PARAMETER_INVALID');
+    expect(await repository.listVersions(created.template_id)).toEqual([]);
+    // The same draft with a bad template default is rejected before any item work.
+    await repository.updateDraft(created.template_id, 1, {
+      aggregate: {
+        ...emptyDraftAggregate(created.template_id),
+        items: [{ item_id: 'uptime', version: item.item.version }],
+        parameters: { schema: { enabled: { type: 'boolean' } }, defaults: { enabled: 1 } },
+      },
+      updated_by: 7,
+      updated_at: AT,
+    });
+    expect(await code(service.publish(manager(), created.template_id, { expected_draft_revision: 2, expected_revision: 0 })))
+      .toBe('TEMPLATE_PARAMETER_INVALID');
+    expect(await repository.listVersions(created.template_id)).toEqual([]);
+  });
+});
