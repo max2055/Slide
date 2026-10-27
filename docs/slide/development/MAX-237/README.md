@@ -7,9 +7,13 @@
 - 不注册路由或进程、不写 DB、不加迁移、不调用真实采集/通知/模型、不派子代理、不自建 wakeup。
 - 这是“P0 未整体接受时的独立内部实现准入”，**不是**生产放行；整单保持 `in_progress`。
 
-**一句话结论**：一个未挂载的 TypeScript 模板领域模块已经实现并通过 **34 项 focused 测试**；它复用了既有
-`PackageRegistry`/builtin releases/`canonicalDefinitions`/`stable()`/`hasPermission()`，没有新增第二套
-catalog、采集器、速率引擎或权限码。模板触发器执行、持久化、路由/UI、真实三类模板、历史和通知集成仍然全部待办。
+**一句话结论**：一个未挂载的 TypeScript 模板领域模块已经实现并通过 **41 项 focused 测试**；它复用了既有
+`PackageRegistry`/builtin releases/`canonicalDefinitions`/`stable()`/`hasPermission()`，也直接复用已接受的
+`contracts/metrics/templates.ts` 模板 schema（不再自定义同义 schema），没有新增第二套 catalog、采集器、速率引擎或权限码。
+模板触发器执行、持久化、路由/UI、真实三类模板、历史和通知集成仍然全部待办。
+
+> 2026-10-27 补修：Chief 终态复审（`e91b79c84:docs/slide/development/MAX-237/reviews/chief-t1-review-20261027.md`）
+> 要求的有界补修 R1–R3 已完成，见 §9。整单仍 `in_progress`。
 
 ## 1. 实际 base / HEAD / 变更面
 
@@ -18,8 +22,9 @@ catalog、采集器、速率引擎或权限码。模板触发器执行、持久�
 | 任务分支 | `agent/15coder1/max-237`（未切换分支、未 rebase/squash） |
 | 交付 base | `06cca0ca8d522f433cd035f14b597d983514bde3` |
 | 本包代码提交 | `ac9270324`（9 个新增文件，未修改任何既有文件） |
+| R1–R3 补修提交 | `ed501a077`（新增 1 个逐字节提取文件 + 修改本包 6 个文件，仍不触碰任何其他产品文件），见 §9 |
 | 输入基线（只读，不合并） | `afa5b3d25d1bf4f72d017a8cf6a952d7591356b0`：`MAX-236/08`、`MAX-236/14`、候选 `apps/db-ops-api/src/contracts/metrics/templates.ts` |
-| 未改 | `contracts/metrics/**`、`public-api.ts`、`server.ts`、`routes.ts`、`policy/**`、`packages/**`（只导入）、SQL/迁移、前端、`docs/slide/development/MAX-236/**` |
+| 未改 | `contracts/metrics/{definitions,index,observations,configuration,validation,schema,public-api,fixtures,export,bulk,configuration-status}.ts`、`public-api.ts`、`server.ts`、`routes.ts`、`policy/**`、`packages/**`（只导入）、SQL/迁移、前端、`docs/slide/development/MAX-236/**` |
 
 | 文件 | 行数 | sha256 |
 |---|---|---|
@@ -33,11 +38,14 @@ catalog、采集器、速率引擎或权限码。模板触发器执行、持久�
 | `apps/db-ops-api/src/metrics/templates/repository.test.ts` | 177 | `87715b2304bbe90cac8fbf358ff12e80200777a8926a613a67e0c8833ec051d9` |
 | `apps/db-ops-api/src/metrics/templates/service.test.ts` | 478 | `a62c7fb48e222b83f4d2d42207e60c2d0b58fe9b4e4d6883788a6059cea6ca2c` |
 
-机器可读证据见 [evidence/t1-internal-template-domain.json](evidence/t1-internal-template-domain.json)。
+机器可读证据见 [evidence/t1-internal-template-domain.json](evidence/t1-internal-template-domain.json)（原始交付）
+与 [evidence/t1-r1-r3-correction.json](evidence/t1-r1-r3-correction.json)（R1–R3 补修）。
 
 ## 2. D1 子集字段对照
 
 D1 整体仍未冻结（`MAX-236/08` §0、`MAX-236/14` §8/§10）。下表只列本包获准实现的模板相关子集，并逐项说明落点。
+这些字段的 Zod 定义**不在本包内**：`model.ts` 从逐字节提取的 `apps/db-ops-api/src/contracts/metrics/templates.ts`
+（见 §9.1）导入并 re-export，本身只保留派生类型别名与领域 helper，不存在第二份模板协议。
 
 | 本模块字段 | 来源 | 本包状态 | 说明 |
 |---|---|---|---|
@@ -70,7 +78,7 @@ D1 整体仍未冻结（`MAX-236/08` §0、`MAX-236/14` §8/§10）。下表只�
 
 | 文件 | 职责 |
 |---|---|
-| `model.ts` | D1 子集 Zod schema 与推导类型、`content_hash` 计算、release 引用编解码、占位能力 |
+| `model.ts` | 从 `contracts/metrics/templates.ts` 导入并 re-export 模板 schema/type；只额外提供派生类型别名、`content_hash` 计算、release 引用编解码、占位能力与空草稿 |
 | `catalog.ts` | 只读视图：从 `PackageRegistry` 列出**真正可采集**的指标（含 release/pin/raw field/转换/默认周期/维度），并解释不可选项的原因 |
 | `repository.ts` | 持久化**端口**（每个写方法都是一次条件写）+ 仅测试用的 `InMemoryTemplateRepository` |
 | `service.ts` | 草稿创建/编辑/复制、item 版本创建、发布、`current` 指针切换、读取；权限与拒绝判定 |
@@ -88,8 +96,9 @@ D1 整体仍未冻结（`MAX-236/08` §0、`MAX-236/14` §8/§10）。下表只�
 | `TEMPLATE_BASE_INHERITANCE_UNAVAILABLE` | 草稿声明了非空 `base` |
 | `TEMPLATE_INVALID_PERIOD` | `interval_ms` 非 integer 类型、声明边界越出平台区间、默认值越界或非整数 |
 | `TEMPLATE_ITEM_CADENCE` | item 自己设置 `interval_ms`（既有 `compilePlan` 一个资源只有一个节奏） |
-| `TEMPLATE_PARAMETER_UNDECLARED` / `TEMPLATE_PARAMETER_INVALID` | item 默认值未在模板声明 / 类型或边界不符 |
+| `TEMPLATE_PARAMETER_UNDECLARED` / `TEMPLATE_PARAMETER_INVALID` | item 默认值未在模板声明 / 类型或边界不符（按声明类型分支：`boolean`、`string` 参数只接受同类型值，数字不能冒充；`number`、`integer` 参数只接受有限数） |
 | `TEMPLATE_ITEM_NOT_FOUND` | 草稿引用了不存在的 `(item_id, version)` |
+| `TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE` | 同一 `template_id` + `item_id` 试图改用不兼容的 canonical 指标（`id@semantic_version`）、单位或维度键集合；稳定 item 身份不能换口径，必须新建 `item_id` |
 | `TEMPLATE_METRIC_DUPLICATE` | 同一 canonical 指标被两个 item 选择 |
 | `TEMPLATE_PIN_NOT_FOUND` | release pin 未安装或 digest 不匹配 |
 | `TEMPLATE_MAPPING_MISSING` | 该 release 没有这个实现/指标映射，或 item 钉的实现与 release 不符 |
@@ -113,25 +122,28 @@ D1 整体仍未冻结（`MAX-236/08` §0、`MAX-236/14` §8/§10）。下表只�
 |---|---|
 | `create` | 一个事务插入模板、草稿、（复制时）全部 item 版本；`template_id` 主键拒绝复用 |
 | `updateDraft` / `updateTemplate` | `WHERE template_id=? AND revision=?`；0 行受影响即冲突 |
-| `putItemVersion` | `SELECT … FOR UPDATE` 后 `MAX(version)+1` 追加；`UNIQUE(template_id,item_id,version)`；最近版本内容相同则复用不追加 |
+| `putItemVersion` | `SELECT … FOR UPDATE` 后校验锁住的最近版本与稳定 item 身份兼容（canonical 指标、单位、维度键集合），不兼容即 `TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`；随后 `MAX(version)+1` 追加；`UNIQUE(template_id,item_id,version)`；最近版本内容相同则复用不追加 |
 | `publish` | 单事务：锁模板行 → 校验模板/草稿 revision → 按 `content_hash` 判幂等 → 插入版本（`UNIQUE(template_id,version)`、`UNIQUE(template_id,content_hash)`）→ 模板 `revision+1` + 指针 → 草稿 `revision+1` + `published_version` |
 
 内存实现的方法体全同步执行，所以读-判-写在单事件循环内原子；**这不是多进程安全**，也没有任何进程锁。模块里不存在锁、单例或全局状态。
 
-## 6. 验证（绑定 `ac9270324`）
+## 6. 验证（绑定 R1–R3 补修提交 `ed501a077`）
 
-| 命令（cwd `apps/db-ops-api`） | 结果 |
+| 命令（cwd `apps/db-ops-api`，除注明外） | 结果 |
 |---|---|
-| `npx vitest run src/metrics/templates` | **34 passed / 34**（catalog 6、repository 8、service 20） |
-| `npx vitest run src/metrics` | **47 文件通过 / 24 跳过；476 passed / 121 skipped**（跳过的都是需要 `METRICS_TEST_MYSQL_PORT` 等真实后端的用例，本包未触碰这些模块） |
-| `npx tsc --noEmit` | 退出码 0 |
-| `npx oxlint apps/db-ops-api/src/metrics/templates` | 0 warning / 0 error |
-| `grep -rn "metrics/templates" apps/db-ops-api` | 除本目录外无命中（未挂载） |
-| `pnpm contracts:check` | **未运行**：未改任何公共契约文件，注册图不变，该检查看不到本目录 |
+| `npx vitest run src/metrics/templates` | **41 passed / 41**（catalog 6、repository 10、service 25；补修前为 34） |
+| `npx vitest run src/metrics` | **47 文件通过 / 24 跳过；483 passed / 121 skipped**（补修前 476/121；跳过的都是需要 `METRICS_TEST_MYSQL_PORT` 等真实后端的用例） |
+| `npx tsc --noEmit` | 退出码 0（含逐字节提取的 `src/contracts/metrics/templates.ts`） |
+| `npx oxlint apps/db-ops-api/src/metrics/templates`（cwd 仓库根） | 0 warning / 0 error |
+| `pnpm contracts:check`（cwd 仓库根） | 退出码 0，生成物无差异：`contracts/metrics/index.ts`、`public-api.ts` 未改，注册图不含本目录 |
+| `git hash-object` / `shasum -a 256` 比对提取文件 | blob `bdd455ccc218c9e8543eaee6ad5bc5686f414170`、sha256 `76bcdfeb…79a45`，与 `afa5b3d25d…` 一致 |
+| Chief 复审 probe `reviews/chief-t1-probes-20261027.ts`（`e91b79c84`）对本 HEAD 重跑 | **3/3 pass，exit 0**：R2 → `TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`、R3 → `TEMPLATE_PARAMETER_INVALID`、权限控制 → `TEMPLATE_FORBIDDEN`；补修前为 1 通过 / 2 反例失败 |
+| `grep -rn "metrics/templates" apps/db-ops-api/src` | 除本目录外无命中（未挂载） |
 
-focused 覆盖：注册能力选择与自动带入、derived/退役/未注册/未安装 pin 的拒绝、item 改名保持身份、发布后的 raw field 追踪、
-跨 release 组合、空模板/空名/非法周期/item 级节奏、单位与维度错配、缺实现、缺映射、重复指标、草稿与模板 CAS、
-并发发布只有一个赢家、幂等重发 noop、复制生成新身份且不续历史、current 只动指针、返回值为深拷贝、越权写入被拒。
+focused 覆盖：注册能力选择与自动带入、derived/退役/未注册/未安装 pin 的拒绝、item 改名保持身份、稳定身份拒绝不兼容口径
+（顺序、竞态、旧快照不变）、发布后的 raw field 追踪、跨 release 组合、空模板/空名/非法周期/item 级节奏、
+四种参数类型正例与“数字冒充 boolean/string”反例（草稿、发布重校验、item 默认值）、单位与维度错配、缺实现、缺映射、
+重复指标、草稿与模板 CAS、并发发布只有一个赢家、幂等重发 noop、复制生成新身份且不续历史、current 只动指针、返回值为深拷贝、越权写入被拒。
 
 ## 7. 代码已实现 / 未接线 / 仍然缺的
 
@@ -154,7 +166,7 @@ focused 覆盖：注册能力选择与自动带入、derived/退役/未注册/�
 
 | 验收项 | 状态 |
 |---|---|
-| 名称修改不丢历史，单位/口径不兼容阻止误续接 | **局部已证明**：改名保持 `template_id`/`item_id` 且旧版本快照不变；单位不兼容在 item 选择与发布两处拒绝。模板级“口径不兼容阻止误续接”需要版本退役与绑定解析（MAX-238），未完成 |
+| 名称修改不丢历史，单位/口径不兼容阻止误续接 | **局部已证明**：改名保持 `template_id`/`item_id` 且旧版本快照不变；稳定 item 身份不能换 canonical 指标/单位/维度口径（`TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`），item 选择与发布两处另有 unit/dimension 校验。模板级“绑定续接”仍需要版本退役与绑定解析（MAX-238），未完成 |
 | 从原始输出到指标、项、序列和规则引用可逐项追踪 | **局部已证明**：raw field → canonical → item → 模板版本的 trace 有测试；“序列”和“规则引用”依赖 MAX-239/240 |
 | 注册能力选择自动填充；空名、非法周期、重复与缺实现均有阻断和明确反馈 | **本包已实现**（针对模板域）：见 §4 |
 | MySQL 使用率、计数速率、Linux MemAvailable、SNMP 接口速率的正常与未知边界有真实证据 | **未做**：需要真实采集与历史，属后续实现/验收 |
@@ -162,3 +174,83 @@ focused 覆盖：注册能力选择与自动带入、derived/退役/未注册/�
 | 共享读取、不同凭据隔离、只读权限/超时/输出限制及脱敏验证 | **未做**（本包不采集资源） |
 
 因此整单保持 `in_progress`；本文件不代表原 Issue 完成，也不构成生产放行。
+
+## 9. R1–R3 有界补修（提交 `ed501a077`）
+
+依据：Chief 终态复审 `e91b79c84:docs/slide/development/MAX-237/reviews/chief-t1-review-20261027.md` 与
+`t1-correction-instruction-20261027.md`。只修 R1–R3，不重做设计、不接持久化、不新增路由/DDL/真实资源，沿用 PR #390。
+准确补修基点：`919bc0d29b919e850e2b8b706bdcfe26ddf8dea4`（分支上另有运行时生成的 `42d200204 docs/CLAUDE.md` chore，不在本项交付面内）。
+
+### 9.1 R1 — 复用已接受 schema，删除同义定义
+
+- 目标路径 `apps/db-ops-api/src/contracts/metrics/templates.ts` 补修前不存在，因此按授权**逐字节提取**
+  `afa5b3d25d1bf4f72d017a8cf6a952d7591356b0` 的同名文件：
+
+  | 证据 | 值 |
+  |---|---|
+  | git blob（源与目标） | `bdd455ccc218c9e8543eaee6ad5bc5686f414170`（两侧相同） |
+  | sha256（源与目标） | `76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45`（两侧相同） |
+  | 行数 | 556 |
+
+  提取文件与源对象逐字节一致；依赖的 `contracts/metrics/definitions.ts`、`index.ts`、`public-api.ts`、
+  `metrics/packages/{model,builtins}.ts` 与 `afa5b3d25d` 无差异（`git diff --stat afa5b3d25 HEAD -- <这些路径>` 为空）。
+- `metrics/templates/model.ts`（404 → 91 行）删除了与提取文件同义的 schema/type/函数定义
+  （`TemplateIdSchema`、`ItemIdSchema`、`HashIdSchema`、`VersionNumberSchema`、`RevisionSchema`、`sortedUnique`、
+  `TemplateCapabilitiesSchema`、`Parameter*Schema`、`PackageReleaseRefSchema`、`PackageCompositionEntrySchema`、
+  `TemplateItemRefSchema`、`TemplateBaseRefSchema`、`TemplateTrigger*Schema`、`Template{Draft,Published}AggregateSchema`、
+  `SourceBaseRefSchema`、`SourceChainSchema`、`TemplateItemVersionSchema`、`TemplateVersion*Schema`、
+  `Template{Status,Record,Draft,Pin}Schema`），改为从提取文件 `import` 并 `export`；本文件只保留
+  派生类型别名（`MetricRef`/`ParameterValue`/`TemplateStatus`/`TemplateVersionSummary`）与领域 helper
+  （`canonicalKey`、`packageReleaseRef`/`parsePackageReleaseRef`、`placeholderCapabilities`、`emptyDraftAggregate`、
+  `templateContentHash`）。
+- 不复用、也不 re-export 提取文件里的 HTTP 请求/响应与资源绑定 schema（`Create/Update/Preview/Publish/Switch/Retire/List/Detail`、
+  `TemplatePin(s)`、`ResourceBinding*`）：它们不属于 T1 模板域；服务仍使用自己的私有请求形状。
+- 不新增第二份协议；`contracts/metrics/index.ts` 与 `public-api.ts` 未改，`pnpm contracts:check` 退出码 0。
+- 局部语义差异随之消除：`display_name`/`name` 上的 `.trim()` 只保留在服务层 `requireName`（改名/建模板时仍然去空白并拒绝空名）。
+
+### 9.2 R2 — 稳定 item 身份不能再换不兼容口径
+
+- 边界（复用既有语义定义，不造新兼容协议）：`(template_id, item_id)` 的语义 = `canonical_metric` 的
+  `id@semantic_version` + `unit` + 维度**键集合**，与发布时对 canonical 定义的三项校验同源。
+  改名、改默认参数、兼容的 implementation pin 更新仍在同一身份下追加版本。
+- 拒绝码：`TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`（422），消息明确“须使用新 `item_id`”。
+- 位置：`InMemoryTemplateRepository.putItemVersion` 的条件追加内（端口注释同步为生产 `SELECT … FOR UPDATE` 后必须同一条件），
+  因此服务读取与仓库写入之间不存在可绕过的窗口；并未把该缺陷推给 MAX-238。
+- 反例与证据（`service.test.ts` / `repository.test.ts`）：
+  - 顺序：`stable-item` v1 = `db.uptime_seconds@1.0.0 / s` 发布后，同一 `item_id` 选 `mysql.queries.total@1.0.0 / count` → 拒绝；
+    `getVersion` 旧快照逐字段不变、`listVersions` 仍 1 条、`latestItemVersions` 仍是 v1。
+  - 单位/维度：改 `unit`、改维度键集合同样被拒。
+  - 竞态：同一 `item_id` 并发两次选择（不同指标）→ 恰好 1 成功 1 拒绝；仓库层直接并发 `putItemVersion` 也只留 v1。
+  - 兼容：改名与换 pin 追加 v2，身份与 canonical 指标不变。
+- 生产事务仍只是端口要求；内存实现为同步测试替身，**不冒充**持久化或多进程安全（未新增 DB adapter/DDL）。
+
+### 9.3 R3 — 声明类型决定参数校验分支
+
+- `checkParameterValue` 改为按 `spec.type` 分支：`boolean`/`string` 参数只接受同类型值，`number`/`integer` 参数只接受有限数
+  （`integer` 另要求整数）；数字不再能冒充 `boolean`/`string`。
+- 反例与证据（`service.test.ts`）：四种类型各一条合法默认值；`{type:'boolean'} + 1`、`{type:'string'} + 0` 在 `updateDraft` 被拒；
+  反向（`number` 参数给 boolean）仍被拒；绕过服务直接 `repository.updateDraft` 存入的坏草稿在 `publish` 重校验被拒且不产生版本；
+  item 的 `params_default` 数值冒充模板 `boolean` 参数在发布时被拒。
+- 非法周期（`TEMPLATE_INVALID_PERIOD`）、item 级 `interval_ms`、未声明参数等既有行为保持不变。
+
+### 9.4 允许清单与文件 hash（`ed501a077`）
+
+允许清单 patch：`evidence/t1-r1-r3-allowlist.patch`（69 424 bytes，sha256 `685d0cd86a80ec7050f230b51b4da1df10bdc9c6b43eae407bbe7247b5bf49b8`）。
+
+| 文件 | 行数 | sha256 |
+|---|---|---|
+| `apps/db-ops-api/src/contracts/metrics/templates.ts`（新增，逐字节提取） | 556 | `76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45` |
+| `apps/db-ops-api/src/metrics/templates/model.ts` | 91 | `d3207eb11ddb727399328690b545128c9f8acadc61de1c2f77563bcb8c85d7d1` |
+| `apps/db-ops-api/src/metrics/templates/errors.ts` | 56 | `4f047fc3d92bb079c5bf4fcb952803f033c42adcfb7d5a800b2b9c162321570c` |
+| `apps/db-ops-api/src/metrics/templates/repository.ts` | 352 | `05c33d5abe987b4eee27a48a09c6b2e0342ef68829ba83c57b4b9eb3dc806829` |
+| `apps/db-ops-api/src/metrics/templates/service.ts` | 591 | `b2190c1c169f40120c0cffdc07efc0a5838c4b330114161585a1ff5d781cf254` |
+| `apps/db-ops-api/src/metrics/templates/repository.test.ts` | 229 | `52cb28cce7894b8f6c474f94311d9f8a82acec97eee9b13b0c7818c7204c0071` |
+| `apps/db-ops-api/src/metrics/templates/service.test.ts` | 611 | `b97c9f28299cff4545866bb82680314bf559969867a1a2e77b33b9adb96d4ce9` |
+
+未改动、hash 与 §1 一致：`catalog.ts`（`371ac164…`）、`index.ts`（`b63c556b…`）、`catalog.test.ts`（`854c6262…`）。
+允许清单之外没有任何修改：路由、进程注册、DB/DDL/迁移、真实资源/通知/模型调用、前端、其他共享 schema 均未触碰。
+
+### 9.5 补修后仍然缺的（不得当成完成）
+
+R1–R3 只闭合复审提出的三项缺陷。§7 的缺口清单（持久化 adapter/迁移/真实事务、base 继承、derived 选择、触发器执行、
+绑定/多 pin、历史查询、路由/UI、真实三类模板与速率/未知边界、共享读取与凭据隔离）全部不变，整单保持 `in_progress`。
