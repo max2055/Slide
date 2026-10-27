@@ -323,7 +323,7 @@ R2-DIM 只闭合维度键集合比较缺陷。§7 的缺口与 §8 的六项验�
 derived 选择、触发器执行、绑定/多 pin、历史查询、路由/UI、真实三类模板与速率/未知边界、共享读取与凭据隔离仍待后续包。
 整单保持 `in_progress`，本文件不构成 T1 或原 Issue 的最终接受。
 
-## 11. 现行入口：T2A 未挂载 MySQL 适配器（2026-10-27）
+## 11. T2A 未挂载 MySQL 适配器（已被 T2B 接续，2026-10-27）
 
 T1 接受后，`max237-t2a-admission-20261027.md` 准入的 **T2A internal MySQL adapter + 真实独占 MySQL 事务验证**
 已交付到 PR #390（base `1d7f9e1f9`，产品提交 `0b60d1f42`，未合并）。详见
@@ -335,5 +335,23 @@ T1 接受后，`max237-t2a-admission-20261027.md` 准入的 **T2A internal MySQL
   父行优先锁序、CAS、回滚与未知提交结果）；`repository.ts` 仅导出既有 `itemContent`/`identityConflict`。
 - 真实一次性 MySQL 8.4 容器（`max237_t2a`，utf8mb4_bin）上以两个独立连接验证并发/回滚/commit 丢失；
   focused 73/73、`tsc` 0、`oxlint` 0/0。
-- 明确未做：路由/进程接线、共享连接池、应用 migration、真实采集闭环、T2B 存储兼容决定；
-  140 候选 DDL 的 INT/VARCHAR/DATETIME 宽度差已记录为 T2A 已知限制，整单仍 `in_progress`。
+- T2A 的 TX-CLEANUP 补修由 Chief 在 `32dd311af` 接受；其 INT/VARCHAR/DATETIME 宽度差是本包记录的已知限制，
+  已由 §12 的 T2B 候选处理。整单仍 `in_progress`。
+
+## 12. 现行入口：T2B 未挂载存储兼容候选（2026-10-27）
+
+`t2b-owned-candidate-admission-20261027.md` 准入的 **T2B storage-compatibility candidate + 独占 up/down 演练**
+已交付到 PR #390（base `32dd311af`，产品提交 `bc1c66d74`，未合并）。详见
+[t2b/README.md](t2b/README.md)、[t2b/evidence/t2b-verification.json](t2b/evidence/t2b-verification.json)、
+[t2b/evidence/t2b-drill.json](t2b/evidence/t2b-drill.json)、
+[t2b/evidence/t2b-fixture.json](t2b/evidence/t2b-fixture.json)、
+[t2b/evidence/t2b-cleanup.json](t2b/evidence/t2b-cleanup.json)。
+
+- 候选 DDL 仍五张同名表，只把 actor 改 `BIGINT UNSIGNED`、canonical 列改 `LONGTEXT ascii`、
+  时间改 24 字符 canonical UTC `CHAR(24) ascii`；版本/revision 仍 `INT`。
+- 适配器删除 128/16 与 DATETIME 年份的人工拒绝，读取 BIGINT 两种驱动形态均显式安全整数校验；
+  已接受的事务清理、锁序、CAS 与未知提交语义不变。
+- 独占一次性 MySQL 8.4 容器的源/候选/回退三 schema 上完成仅演练 up/down、失败注入、漂移拒绝与不可回退拒绝：
+  focused 83/83、drill 18/18、`tsc` 0、`oxlint` 0/0。
+- 明确未做：共享应用 DDL/migration 授权、应用切换/回退、pool/权限/审计/route 契约、真实采集闭环；
+  PR #390 未合并，整单仍 `in_progress`。

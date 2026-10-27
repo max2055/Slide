@@ -1,0 +1,1052 @@
+{
+  "task": "MAX237-T2B",
+  "generated_at": "2026-10-27T05:11:09.317Z",
+  "fixture": {
+    "container_name": "max237-t2b-15coder1-20261027",
+    "container_id": "e5e762eaf458a832aac3882c9f450bcf1101b880f900f6daa502193545838fa9",
+    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+    "volume": "max237-t2b-15coder1-20261027-data",
+    "port": 64065,
+    "schemas": [
+      "max237_t2b_d1",
+      "max237_t2b",
+      "max237_t2b_restore"
+    ],
+    "source_schema": "max237_t2b_d1",
+    "candidate_schema": "max237_t2b",
+    "restore_schema": "max237_t2b_restore"
+  },
+  "ddl": {
+    "original_140_sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
+    "candidate_sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323"
+  },
+  "server": {
+    "version": "8.4.10",
+    "hostname": "e5e762eaf458"
+  },
+  "source_manifest": {
+    "schema": "max237_t2b_d1",
+    "kind": "source",
+    "tables": {
+      "metric_templates_v2": [
+        {
+          "template_id": "tpl-legacy-a",
+          "name": "Legacy A",
+          "status": "active",
+          "current_published_version": 2,
+          "revision": 5,
+          "created_by": 2147483647,
+          "created_at": "1000-01-01T00:00:00.000Z",
+          "updated_at": "2026-10-27T12:34:56.789Z"
+        },
+        {
+          "template_id": "tpl-legacy-b",
+          "name": "Legacy B",
+          "status": "draft",
+          "current_published_version": null,
+          "revision": 0,
+          "created_by": null,
+          "created_at": "1000-01-01T00:00:00.000Z",
+          "updated_at": "1000-01-01T00:00:00.000Z"
+        }
+      ],
+      "metric_template_drafts": [
+        {
+          "template_id": "tpl-legacy-a",
+          "revision": 5,
+          "aggregate": {
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 2
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "min": 1000,
+                  "type": "integer"
+                }
+              },
+              "defaults": {}
+            },
+            "template_id": "tpl-legacy-a",
+            "capabilities": {
+              "graphs": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              },
+              "discovery": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              }
+            }
+          },
+          "published_version": 2,
+          "updated_by": null,
+          "updated_at": "2026-10-27T12:34:56.789Z"
+        },
+        {
+          "template_id": "tpl-legacy-b",
+          "revision": 0,
+          "aggregate": {
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 1
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "min": 1000,
+                  "type": "integer"
+                }
+              },
+              "defaults": {}
+            },
+            "template_id": "tpl-legacy-b",
+            "capabilities": {
+              "graphs": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              },
+              "discovery": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              }
+            }
+          },
+          "published_version": null,
+          "updated_by": null,
+          "updated_at": "1000-01-01T00:00:00.000Z"
+        }
+      ],
+      "metric_template_items": [
+        {
+          "template_id": "tpl-legacy-a",
+          "item_id": "queries",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.006Z"
+        },
+        {
+          "template_id": "tpl-legacy-a",
+          "item_id": "uptime",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.006Z"
+        }
+      ],
+      "metric_template_item_versions": [
+        {
+          "template_id": "tpl-legacy-a",
+          "item_id": "queries",
+          "version": 1,
+          "display_name": "Queries",
+          "canonical_metric_id": "mysql.queries.total",
+          "canonical_semantic_version": "1.0.0",
+          "unit": "count",
+          "dimensions": {
+            "": "empty key",
+            "db,host": "comma key"
+          },
+          "collector_ref": {
+            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "implementation_id": "builtin:mysql.status.v1"
+          },
+          "params_default": {},
+          "source_chain": {
+            "base": null,
+            "actor_id": 7,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "request_id": "req-t2b",
+            "retired_at": null,
+            "published_at": "2026-01-01T00:00:00.1Z",
+            "migration_ref": null
+          }
+        },
+        {
+          "template_id": "tpl-legacy-a",
+          "item_id": "uptime",
+          "version": 1,
+          "display_name": "Uptime",
+          "canonical_metric_id": "db.uptime_seconds",
+          "canonical_semantic_version": "1.0.0",
+          "unit": "s",
+          "dimensions": {
+            "主机": "主机标识"
+          },
+          "collector_ref": {
+            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "implementation_id": "builtin:mysql.status.v1"
+          },
+          "params_default": {},
+          "source_chain": {
+            "base": null,
+            "actor_id": 7,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "request_id": "req-t2b",
+            "retired_at": null,
+            "published_at": "2026-01-01T00:00:00.1Z",
+            "migration_ref": null
+          }
+        },
+        {
+          "template_id": "tpl-legacy-a",
+          "item_id": "uptime",
+          "version": 2,
+          "display_name": "Database uptime",
+          "canonical_metric_id": "db.uptime_seconds",
+          "canonical_semantic_version": "1.0.0",
+          "unit": "s",
+          "dimensions": {
+            "主机": "主机标识"
+          },
+          "collector_ref": {
+            "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "implementation_id": "builtin:mysql.status.v1"
+          },
+          "params_default": {},
+          "source_chain": {
+            "base": {
+              "id": "uptime",
+              "kind": "item",
+              "version": 1,
+              "template_id": "tpl-legacy-a"
+            },
+            "actor_id": 7,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "request_id": "req-t2b",
+            "retired_at": null,
+            "published_at": "2026-01-01T00:00:00.1Z",
+            "migration_ref": null
+          }
+        }
+      ],
+      "metric_template_versions": [
+        {
+          "template_id": "tpl-legacy-a",
+          "version": 1,
+          "status": "retired",
+          "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "aggregate": {
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 1
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "min": 1000,
+                  "type": "integer"
+                }
+              },
+              "defaults": {}
+            },
+            "template_id": "tpl-legacy-a",
+            "capabilities": {
+              "graphs": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              },
+              "discovery": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              }
+            },
+            "package_composition": [
+              {
+                "items": [
+                  "uptime"
+                ],
+                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ]
+          },
+          "items": [
+            {
+              "unit": "s",
+              "item_id": "uptime",
+              "version": 1,
+              "dimensions": {
+                "主机": "主机标识"
+              },
+              "template_id": "tpl-legacy-a",
+              "display_name": "Uptime",
+              "source_chain": {
+                "base": null,
+                "actor_id": 7,
+                "created_at": "2026-01-01T00:00:00.1Z",
+                "request_id": "req-t2b",
+                "retired_at": null,
+                "published_at": "2026-01-01T00:00:00.1Z",
+                "migration_ref": null
+              },
+              "collector_ref": {
+                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "implementation_id": "builtin:mysql.status.v1"
+              },
+              "params_default": {},
+              "canonical_metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              }
+            }
+          ],
+          "package_composition": [
+            {
+              "items": [
+                "uptime"
+              ],
+              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "source_chain": {
+            "base": null,
+            "actor_id": 7,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "request_id": "req-t2b",
+            "retired_at": "2026-02-03T04:05:06.120Z",
+            "published_at": "2026-01-02T03:04:05.006Z",
+            "migration_ref": null
+          },
+          "published_at": "2026-01-02T03:04:05.006Z",
+          "retired_at": "2026-02-03T04:05:06.120Z"
+        },
+        {
+          "template_id": "tpl-legacy-a",
+          "version": 2,
+          "status": "published",
+          "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "aggregate": {
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 2
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "min": 1000,
+                  "type": "integer"
+                }
+              },
+              "defaults": {}
+            },
+            "template_id": "tpl-legacy-a",
+            "capabilities": {
+              "graphs": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              },
+              "discovery": {
+                "ref": null,
+                "executable": false,
+                "contract_version": "1.0.0"
+              }
+            },
+            "package_composition": [
+              {
+                "items": [
+                  "uptime"
+                ],
+                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ]
+          },
+          "items": [
+            {
+              "unit": "s",
+              "item_id": "uptime",
+              "version": 2,
+              "dimensions": {
+                "主机": "主机标识"
+              },
+              "template_id": "tpl-legacy-a",
+              "display_name": "Database uptime",
+              "source_chain": {
+                "base": {
+                  "id": "uptime",
+                  "kind": "item",
+                  "version": 1,
+                  "template_id": "tpl-legacy-a"
+                },
+                "actor_id": 7,
+                "created_at": "2026-01-01T00:00:00.1Z",
+                "request_id": "req-t2b",
+                "retired_at": null,
+                "published_at": "2026-01-01T00:00:00.1Z",
+                "migration_ref": null
+              },
+              "collector_ref": {
+                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "implementation_id": "builtin:mysql.status.v1"
+              },
+              "params_default": {},
+              "canonical_metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              }
+            }
+          ],
+          "package_composition": [
+            {
+              "items": [
+                "uptime"
+              ],
+              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "source_chain": {
+            "base": null,
+            "actor_id": 7,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "request_id": "req-t2b",
+            "retired_at": null,
+            "published_at": "2026-10-27T00:00:00.500Z",
+            "migration_ref": null
+          },
+          "published_at": "2026-10-27T00:00:00.500Z",
+          "retired_at": null
+        }
+      ]
+    },
+    "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+  },
+  "candidate_manifest": {
+    "schema": "max237_t2b",
+    "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+    "rows": {
+      "metric_templates_v2": 2,
+      "metric_template_drafts": 2,
+      "metric_template_items": 2,
+      "metric_template_item_versions": 3,
+      "metric_template_versions": 2
+    }
+  },
+  "restore_manifest": {
+    "schema": "max237_t2b_restore",
+    "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+    "rows": {
+      "metric_templates_v2": 2,
+      "metric_template_drafts": 2,
+      "metric_template_items": 2,
+      "metric_template_item_versions": 3,
+      "metric_template_versions": 2
+    }
+  },
+  "final_manifests": {
+    "source": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+    "candidate": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+    "restore": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+  },
+  "steps": [
+    {
+      "step": "plan runs in a fresh process with connections forbidden",
+      "status": "PASS",
+      "detail": {
+        "mode": "plan",
+        "connects": false,
+        "writes": false,
+        "handle": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-3affe86f5614/worktree/.max237-t2b/handle.json",
+        "container": "max237-t2b-15coder1-20261027",
+        "schemas": [
+          "max237_t2b_d1",
+          "max237_t2b",
+          "max237_t2b_restore"
+        ],
+        "direction": null,
+        "inject": null,
+        "steps": [
+          "preflight source/target",
+          "copy parent → draft/items → item versions → template versions in one target transaction"
+        ]
+      }
+    },
+    {
+      "step": "execute refuses to connect while connections are forbidden",
+      "status": "PASS",
+      "detail": {
+        "reason": "connection-forbidden",
+        "message": "MAX237_T2B_FORBID_CONNECT=1 forbids opening a connection",
+        "detail": null
+      }
+    },
+    {
+      "step": "unknown handle / wrong schema allowlist is refused with zero writes",
+      "status": "PASS",
+      "detail": {
+        "reason": "handle-mismatch",
+        "message": "handle schemas is \"[\\\"max237_t2b_d1\\\",\\\"max237_t2b\\\"]\", expected \"[\\\"max237_t2b_d1\\\",\\\"max237_t2b\\\",\\\"max237_t2b_restore\\\"]\"",
+        "detail": null
+      }
+    },
+    {
+      "step": "live fixture proven on two independent connections",
+      "status": "PASS",
+      "detail": {
+        "version": "8.4.10",
+        "schemas": [
+          "max237_t2b_d1",
+          "max237_t2b",
+          "max237_t2b_restore"
+        ]
+      }
+    },
+    {
+      "step": "fixture starts empty in all three schemas",
+      "status": "PASS",
+      "detail": {
+        "source": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "candidate": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "restore": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        }
+      }
+    },
+    {
+      "step": "representative 140 source aggregate seeded",
+      "status": "PASS",
+      "detail": {
+        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "rows": {
+          "metric_templates_v2": 2,
+          "metric_template_drafts": 2,
+          "metric_template_items": 2,
+          "metric_template_item_versions": 3,
+          "metric_template_versions": 2
+        }
+      }
+    },
+    {
+      "step": "up failure injected after-parents leaves target empty and source unchanged",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure after copying parent rows",
+        "target": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "first_connection": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "second_connection": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "source_first": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "source_second": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    },
+    {
+      "step": "up failure injected after-versions leaves target empty and source unchanged",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure after copying version snapshot rows",
+        "target": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "first_connection": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "second_connection": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "source_first": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "source_second": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    },
+    {
+      "step": "up copies the whole aggregate into an empty candidate in one transaction",
+      "status": "PASS",
+      "detail": {
+        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "rows": {
+          "metric_templates_v2": 2,
+          "metric_template_drafts": 2,
+          "metric_template_items": 2,
+          "metric_template_item_versions": 3,
+          "metric_template_versions": 2
+        }
+      }
+    },
+    {
+      "step": "adapter reads persisted candidate rows: PK, revision, pointer, NULL, JSON and instants",
+      "status": "PASS",
+      "detail": {
+        "legacyA": {
+          "template_id": "tpl-legacy-a",
+          "name": "Legacy A",
+          "status": "active",
+          "current_published_version": 2,
+          "revision": 5,
+          "created_by": 2147483647,
+          "created_at": "1000-01-01T00:00:00.000Z",
+          "updated_at": "2026-10-27T12:34:56.789Z"
+        },
+        "legacyB": {
+          "template_id": "tpl-legacy-b",
+          "name": "Legacy B",
+          "status": "draft",
+          "current_published_version": null,
+          "revision": 0,
+          "created_by": null,
+          "created_at": "1000-01-01T00:00:00.000Z",
+          "updated_at": "1000-01-01T00:00:00.000Z"
+        },
+        "draftA": {
+          "template_id": "tpl-legacy-a",
+          "revision": 5,
+          "aggregate": {
+            "template_id": "tpl-legacy-a",
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 2
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "type": "integer",
+                  "min": 1000
+                }
+              },
+              "defaults": {}
+            },
+            "capabilities": {
+              "discovery": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              },
+              "graphs": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              }
+            }
+          },
+          "published_version": 2,
+          "updated_by": null,
+          "updated_at": "2026-10-27T12:34:56.789Z"
+        },
+        "itemsA": [
+          {
+            "template_id": "tpl-legacy-a",
+            "item_id": "queries",
+            "version": 1,
+            "display_name": "Queries",
+            "canonical_metric": {
+              "id": "mysql.queries.total",
+              "semantic_version": "1.0.0"
+            },
+            "unit": "count",
+            "dimensions": {
+              "": "empty key",
+              "db,host": "comma key"
+            },
+            "collector_ref": {
+              "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "implementation_id": "builtin:mysql.status.v1"
+            },
+            "params_default": {},
+            "source_chain": {
+              "actor_id": 7,
+              "request_id": "req-t2b",
+              "base": null,
+              "created_at": "2026-01-01T00:00:00.1Z",
+              "published_at": "2026-01-01T00:00:00.1Z",
+              "retired_at": null,
+              "migration_ref": null
+            }
+          },
+          {
+            "template_id": "tpl-legacy-a",
+            "item_id": "uptime",
+            "version": 2,
+            "display_name": "Database uptime",
+            "canonical_metric": {
+              "id": "db.uptime_seconds",
+              "semantic_version": "1.0.0"
+            },
+            "unit": "s",
+            "dimensions": {
+              "主机": "主机标识"
+            },
+            "collector_ref": {
+              "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "implementation_id": "builtin:mysql.status.v1"
+            },
+            "params_default": {},
+            "source_chain": {
+              "actor_id": 7,
+              "request_id": "req-t2b",
+              "base": {
+                "kind": "item",
+                "template_id": "tpl-legacy-a",
+                "id": "uptime",
+                "version": 1
+              },
+              "created_at": "2026-01-01T00:00:00.1Z",
+              "published_at": "2026-01-01T00:00:00.1Z",
+              "retired_at": null,
+              "migration_ref": null
+            }
+          }
+        ],
+        "version1": {
+          "template_id": "tpl-legacy-a",
+          "version": 1,
+          "status": "retired",
+          "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "aggregate": {
+            "template_id": "tpl-legacy-a",
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 1
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "type": "integer",
+                  "min": 1000
+                }
+              },
+              "defaults": {}
+            },
+            "capabilities": {
+              "discovery": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              },
+              "graphs": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              }
+            },
+            "package_composition": [
+              {
+                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "items": [
+                  "uptime"
+                ]
+              }
+            ]
+          },
+          "items": [
+            {
+              "template_id": "tpl-legacy-a",
+              "item_id": "uptime",
+              "version": 1,
+              "display_name": "Uptime",
+              "canonical_metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              },
+              "unit": "s",
+              "dimensions": {
+                "主机": "主机标识"
+              },
+              "collector_ref": {
+                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "implementation_id": "builtin:mysql.status.v1"
+              },
+              "params_default": {},
+              "source_chain": {
+                "actor_id": 7,
+                "request_id": "req-t2b",
+                "base": null,
+                "created_at": "2026-01-01T00:00:00.1Z",
+                "published_at": "2026-01-01T00:00:00.1Z",
+                "retired_at": null,
+                "migration_ref": null
+              }
+            }
+          ],
+          "package_composition": [
+            {
+              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "items": [
+                "uptime"
+              ]
+            }
+          ],
+          "source_chain": {
+            "actor_id": 7,
+            "request_id": "req-t2b",
+            "base": null,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "published_at": "2026-01-02T03:04:05.006Z",
+            "retired_at": "2026-02-03T04:05:06.120Z",
+            "migration_ref": null
+          },
+          "published_at": "2026-01-02T03:04:05.006Z",
+          "retired_at": "2026-02-03T04:05:06.120Z"
+        },
+        "version2": {
+          "template_id": "tpl-legacy-a",
+          "version": 2,
+          "status": "published",
+          "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "aggregate": {
+            "template_id": "tpl-legacy-a",
+            "base": null,
+            "items": [
+              {
+                "item_id": "uptime",
+                "version": 2
+              }
+            ],
+            "triggers": [],
+            "parameters": {
+              "schema": {
+                "interval_ms": {
+                  "type": "integer",
+                  "min": 1000
+                }
+              },
+              "defaults": {}
+            },
+            "capabilities": {
+              "discovery": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              },
+              "graphs": {
+                "contract_version": "1.0.0",
+                "ref": null,
+                "executable": false
+              }
+            },
+            "package_composition": [
+              {
+                "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "items": [
+                  "uptime"
+                ]
+              }
+            ]
+          },
+          "items": [
+            {
+              "template_id": "tpl-legacy-a",
+              "item_id": "uptime",
+              "version": 2,
+              "display_name": "Database uptime",
+              "canonical_metric": {
+                "id": "db.uptime_seconds",
+                "semantic_version": "1.0.0"
+              },
+              "unit": "s",
+              "dimensions": {
+                "主机": "主机标识"
+              },
+              "collector_ref": {
+                "package_release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "implementation_id": "builtin:mysql.status.v1"
+              },
+              "params_default": {},
+              "source_chain": {
+                "actor_id": 7,
+                "request_id": "req-t2b",
+                "base": {
+                  "kind": "item",
+                  "template_id": "tpl-legacy-a",
+                  "id": "uptime",
+                  "version": 1
+                },
+                "created_at": "2026-01-01T00:00:00.1Z",
+                "published_at": "2026-01-01T00:00:00.1Z",
+                "retired_at": null,
+                "migration_ref": null
+              }
+            }
+          ],
+          "package_composition": [
+            {
+              "release": "mysql-basic@1.0.0#sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "items": [
+                "uptime"
+              ]
+            }
+          ],
+          "source_chain": {
+            "actor_id": 7,
+            "request_id": "req-t2b",
+            "base": null,
+            "created_at": "2026-01-01T00:00:00.1Z",
+            "published_at": "2026-10-27T00:00:00.500Z",
+            "retired_at": null,
+            "migration_ref": null
+          },
+          "published_at": "2026-10-27T00:00:00.500Z",
+          "retired_at": null
+        },
+        "sourceChainCreatedAt": "2026-01-01T00:00:00.1Z"
+      }
+    },
+    {
+      "step": "identical re-run is an explicit no-op and writes nothing",
+      "status": "PASS",
+      "detail": {
+        "status": "no-op",
+        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    },
+    {
+      "step": "drifted target is refused without overwriting",
+      "status": "PASS",
+      "detail": {
+        "reason": "target-drift",
+        "detail": {
+          "counts": {
+            "metric_templates_v2": 2,
+            "metric_template_drafts": 2,
+            "metric_template_items": 2,
+            "metric_template_item_versions": 3,
+            "metric_template_versions": 2
+          },
+          "expected": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "observed": "784fe49fcfefb9ab31b92521d663adf9a473a38eed764239425b67f2c1a5daa2"
+        }
+      }
+    },
+    {
+      "step": "candidate manifest restored after the drift trial",
+      "status": "PASS",
+      "detail": {
+        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    },
+    {
+      "step": "candidate rows not representable in DDL 140 make down fail closed",
+      "status": "PASS",
+      "detail": {
+        "reason": "down-irreversible",
+        "problems": [
+          "metric_templates_v2[t2b-edge-a].created_by=2147483648 exceeds INT",
+          "metric_templates_v2[t2b-edge-a].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
+          "metric_templates_v2[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
+          "metric_template_drafts[t2b-edge-a].updated_by=9007199254740991 exceeds INT",
+          "metric_template_drafts[t2b-edge-a].updated_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
+          "metric_template_items[t2b-edge-a/edge].created_at=0000-01-01T00:00:00.000Z precedes DATETIME year 1000",
+          "metric_template_item_versions[t2b-edge-a/edge/1].canonical_metric_id is 512 chars, not VARCHAR(128)",
+          "metric_template_item_versions[t2b-edge-a/edge/1].canonical_semantic_version is 100 chars, not VARCHAR(16)"
+        ],
+        "restore": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "candidate": "e19328940c72f21074105c2bf10b01faf3e83d4369816130348995e00c000dbd"
+      }
+    },
+    {
+      "step": "injected edge fixture removed; candidate equals the up copy again",
+      "status": "PASS",
+      "detail": {
+        "sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    },
+    {
+      "step": "safe down copies into the empty restore schema and round-trips the source manifest",
+      "status": "PASS",
+      "detail": {
+        "restore_sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "source_sha256": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "rows": {
+          "metric_templates_v2": 2,
+          "metric_template_drafts": 2,
+          "metric_template_items": 2,
+          "metric_template_item_versions": 3,
+          "metric_template_versions": 2
+        }
+      }
+    },
+    {
+      "step": "identical down re-run is an explicit no-op",
+      "status": "PASS",
+      "detail": {
+        "status": "no-op"
+      }
+    },
+    {
+      "step": "final state verified on the second connection: source intact, candidate copy, restore equal",
+      "status": "PASS",
+      "detail": {
+        "source": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "candidate": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "restore": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+      }
+    }
+  ],
+  "result": "PASS",
+  "generated_at_finished": "2026-10-27T05:11:10.553Z"
+}

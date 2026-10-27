@@ -1,0 +1,89 @@
+{
+  "ddl": {
+    "candidate": {
+      "applied_to": [
+        "max237_t2b"
+      ],
+      "path": "docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql",
+      "sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323"
+    },
+    "original_140": {
+      "applied_to": [
+        "max237_t2b_d1",
+        "max237_t2b_restore"
+      ],
+      "path": "docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql",
+      "sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d"
+    }
+  },
+  "fixture": {
+    "app_user": "max237_t2b_app",
+    "app_user_rights": "SELECT/INSERT/UPDATE/DELETE on the three allowlisted schemas only; no DDL/GRANT",
+    "candidate_schema": "max237_t2b",
+    "container_id": "e5e762eaf458a832aac3882c9f450bcf1101b880f900f6daa502193545838fa9",
+    "container_name": "max237-t2b-15coder1-20261027",
+    "created_at": "2026-10-27T05:08:40Z",
+    "credentials": "random per-run values in a 0600 private file under the untracked state directory; not written to the repository or evidence and deleted with the fixture",
+    "hostname_prefix": "e5e762eaf458",
+    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+    "image_ref": "mysql:8.4",
+    "labels": {
+      "max237.owner": "15coder1-t2b",
+      "max237.phase": "T2B-20261027"
+    },
+    "loopback_port": 64065,
+    "mounts": "volume only; no host path, no shared volume",
+    "network_objects_created": [],
+    "restore_schema": "max237_t2b_restore",
+    "schema_defaults": {
+      "max237_t2b": {
+        "character_set": "utf8mb4",
+        "collation": "utf8mb4_bin"
+      },
+      "max237_t2b_d1": {
+        "character_set": "utf8mb4",
+        "collation": "utf8mb4_bin"
+      },
+      "max237_t2b_restore": {
+        "character_set": "utf8mb4",
+        "collation": "utf8mb4_bin"
+      }
+    },
+    "schemas": [
+      "max237_t2b_d1",
+      "max237_t2b",
+      "max237_t2b_restore"
+    ],
+    "server_version": "8.4.10",
+    "setup": "docs/slide/development/MAX-237/t2b/env-start.sh",
+    "source_schema": "max237_t2b_d1",
+    "stale_object_check": "container max237-t2b-15coder1-20261027, volume max237-t2b-15coder1-20261027-data and the state directory were all absent before this run",
+    "table_collations": {
+      "max237_t2b.metric_template_drafts": "utf8mb4_bin",
+      "max237_t2b.metric_template_item_versions": "utf8mb4_bin",
+      "max237_t2b.metric_template_items": "utf8mb4_bin",
+      "max237_t2b.metric_template_versions": "utf8mb4_bin",
+      "max237_t2b.metric_templates_v2": "utf8mb4_bin",
+      "max237_t2b_d1.metric_template_drafts": "utf8mb4_bin",
+      "max237_t2b_d1.metric_template_item_versions": "utf8mb4_bin",
+      "max237_t2b_d1.metric_template_items": "utf8mb4_bin",
+      "max237_t2b_d1.metric_template_versions": "utf8mb4_bin",
+      "max237_t2b_d1.metric_templates_v2": "utf8mb4_bin",
+      "max237_t2b_restore.metric_template_drafts": "utf8mb4_bin",
+      "max237_t2b_restore.metric_template_item_versions": "utf8mb4_bin",
+      "max237_t2b_restore.metric_template_items": "utf8mb4_bin",
+      "max237_t2b_restore.metric_template_versions": "utf8mb4_bin",
+      "max237_t2b_restore.metric_templates_v2": "utf8mb4_bin"
+    },
+    "volume": {
+      "destination": "/var/lib/mysql",
+      "labels": {
+        "max237.owner": "15coder1-t2b",
+        "max237.phase": "T2B-20261027"
+      },
+      "name": "max237-t2b-15coder1-20261027-data"
+    }
+  },
+  "generated_at": "2026-10-27",
+  "package": "MAX237-T2B"
+}
