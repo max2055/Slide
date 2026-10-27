@@ -318,7 +318,7 @@ interface OperationRecord {
 }
 interface BindingRow { payload: string; group_id: string; capabilities: string }
 interface AuditRecord { target: string; payload: string }
-interface SqlEvent { connection: number; at: string; params: unknown[] }
+interface SqlEvent { connection: number; at: string; sql: string | null; params: unknown[] }
 interface TxState {
   bindings: Map<string, BindingRow>;
   operations: OperationRecord[];
@@ -376,8 +376,8 @@ class FakeSqlConnection implements BindingSqlConnection {
   }
 
   private mode(at: string): FaultMode | undefined { return this.faults[at]; }
-  private record(at: string, params: unknown[] = []): void {
-    this.db.log.push({ connection: this.id, at, params });
+  private record(at: string, params: unknown[] = [], sql: string | null = null): void {
+    this.db.log.push({ connection: this.id, at, sql, params });
     this.db.events.push(`${this.id}:${at}`);
   }
   private openTx(): TxState {
@@ -415,7 +415,7 @@ class FakeSqlConnection implements BindingSqlConnection {
   async execute(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
     const key = sqlKeyOf(sql);
     if (key === null) throw new Error(`fixture: unexpected SQL ${sql}`);
-    this.record(key, params);
+    this.record(key, params, sql);
     const mode = this.mode(key);
     const isRead = ['lock', 'bindingRead', 'bindingLock', 'receiptRead', 'operationRead', 'consumptionRead'].includes(key);
     const tx = isRead ? this.readState() : this.openTx();
@@ -668,6 +668,12 @@ describe('MySQL binding host', () => {
     });
     expect(db.audits).toHaveLength(1);
 
+    // The recorded statement text is exactly the host's declared SQL.
+    expect(db.log.find(entry => entry.at === 'operationInsert')!.sql)
+      .toBe(MYSQL_BINDING_HOST_SQL.operationInsert);
+    expect(db.log.find(entry => entry.at === 'bindingUpdate')!.sql)
+      .toBe(MYSQL_BINDING_HOST_SQL.bindingUpdate);
+
     // Real parameters: keys are UTF-8 bytes, the CAS revision is the trusted base.
     const write = (at: string) => db.log.find(entry => entry.at === at)!;
     const inserted = write('operationInsert').params;
@@ -876,6 +882,18 @@ describe('MySQL binding host', () => {
     expect(db.eventNames().filter(at => at === 'rollback')).toHaveLength(1);
     expect(db.eventNames().filter(at => at === 'release')).toHaveLength(1);
     expect(db.connections[0].state).toBe('released');
+  });
+
+  it('rolls back a write that reached the transaction before failing, at every write point', async () => {
+    for (const at of ['operationInsert', 'bindingUpdate', 'auditInsert']) {
+      const db = await seededDb();
+      const { outcome } = await outcomeOf(db, { faults: { [at]: 'throw-after' } });
+
+      expect(outcome).toMatchObject({ kind: 'rejected', code: 'UNAVAILABLE', persisted: false });
+      expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+      expect(db.eventNames().filter(name => name === 'rollback')).toHaveLength(1);
+      expect(db.connections[0].state).toBe('released');
+    }
   });
 
   it('reports commit_unknown and quarantines the connection when a failed write cannot be rolled back', async () => {
