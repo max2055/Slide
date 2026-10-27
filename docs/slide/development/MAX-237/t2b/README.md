@@ -9,9 +9,11 @@ T1 与 T2A 已接受结论不重做。
 LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间），适配器只改这三类表示/映射/校验，
 保留已接受的事务清理、锁序、CAS 与未知提交语义；并在一次性独占 MySQL 8.4 容器上用三个 schema
 （原样 140 源 / 候选 / 原样 140 回退副本）完成**仅演练**的 up/down 与失败注入验证。**83/83** focused 测试、
-**30/30** 演练步骤、`tsc` 0、`oxlint` 0/0 通过。T2B-DRILL-TX-GUARD 有界补修（未知事务终态 discard、
-commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-20261027.md](tx-guard-20261027.md)；
-**没有**接应用库、没有公共契约变更、没有应用 migration、没有真实采集闭环，整单保持 `in_progress`。
+**reject 14/14 + safe 27/27** 演练步骤、`tsc` 0、`oxlint` 0/0 通过。T2B-DRILL-TX-GUARD 有界补修（未知事务
+终态 discard、commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-20261027.md](tx-guard-20261027.md)；
+T2B-FK-GUARD 有界补修（外键引用 schema 与 ON UPDATE/ON DELETE 规则、拒绝场景与安全 roundtrip 分属两具
+fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；**没有**接应用库、没有公共契约变更、
+没有应用 migration、没有真实采集闭环，整单保持 `in_progress`。
 
 ## 1. base / 提交 / 允许面
 
@@ -20,7 +22,7 @@ commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-202610
 | 任务分支 | `agent/15coder1/max-237`（未切分支、未 rebase/squash） |
 | 交付 base（T2A 接受点） | `32dd311af5ea4e3b2e7424f945f7b4a667f7e068` |
 | 产品提交 | `bc1c66d74` |
-| 新增 | `t2b/sql/t2b_metric_template_aggregate.sql`、`t2b/env-start.sh`、`t2b/env-clean.sh`、`t2b/migrate.ts`、`t2b/drill.ts`、本 README、`t2b/evidence/**` |
+| 新增 | `t2b/sql/t2b_metric_template_aggregate.sql`、`t2b/env-start.sh`、`t2b/env-clean.sh`、`t2b/migrate.ts`、`t2b/drill.ts`、本 README、`t2b/evidence/**`、`t2b/fk-guard-20261027.md`、`t2b/evidence/fk-guard/**` |
 | 修改 | `apps/db-ops-api/src/metrics/templates/mysql-repository.ts` 及其两个测试 |
 | 只读未改 | `service.ts`、`model.ts`、`errors.ts`、`repository.ts`、`index.ts`、公共契约、共享 pool/db-connection、应用 migration、236 文件、runtime/scheduler/resolver/collector、consumer/routes/前端 |
 | 允许清单 patch | [evidence/t2b-allowlist.patch](evidence/t2b-allowlist.patch)（53 290 bytes，sha256 `5d01bbbd642aba69f07df3611fa857950f4bafa578f81493ed86875fe23f81ba`） |
@@ -93,8 +95,8 @@ commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-202610
 - **handle/schema/冻结结构校验**：静态校验 owner/phase/container/image/volume/三 schema allowlist；所有写入口
   （seed/up/down）在第一条 DML 前证明连接的是记录容器（hostname 前缀）、允许账号，`max237_t2b%` 恰好三个
   schema、每库恰好五张表，并显式比对三 schema 的冻结列集合/类型/nullability/字符集 collation、engine、
-  PK/唯一 `uk_content`/`idx_canonical`（候选 128/16 前缀）/其余索引与四个外键。漂移 → `structure-drift` 拒绝且
-  零写；`plan` 仍零连接。
+  PK/唯一 `uk_content`/`idx_canonical`（候选 128/16 前缀）/其余索引与四个外键（引用 schema、引用表、列序、
+  `ON UPDATE`/`ON DELETE` 规则）。漂移 → `structure-drift` 拒绝且零写；`plan` 仍零连接。
 - **事务连接**：只在服务端确认 commit/rollback 后 release；begin 失败、rollback 未确认、commit 抛错一律
   destroy 且 destroy 失败不回退 release。commit 结果不明时以新连接只读重查 source/target manifest，区分
   `commit-not-applied` / `commit-unconfirmed` / `commit-unknown`，不盲目重放。
@@ -103,10 +105,11 @@ commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-202610
   目标非空且与期望 manifest 相同 → 明确 `no-op`；漂移 → 拒绝且不覆盖。
 - **down**：先全量检查是否可无损回 140（actor ≤ 2147483647、canonical ≤ 128、semver ≤ 16、UTC 年 ≥ 1000）；
   任一不满足即**拒绝且不写**，candidate/source/restore 三库不变，restore 仍为空；不做截断/DROP/TRUNCATE 或
-  删除新增合法数据。安全旧数据 round-trip 后五表语义 manifest 与源一致（时间同瞬时、JSON 原值保留）。
+  删除新增合法数据。超界拒绝现场与安全旧数据 round-trip 现在是**两个独立场景、两具 fresh fixture**：
+  拒绝场景保留超界行并整体销毁 fixture，安全场景只含旧数据完成 down（见 6.2）。
 - 没有应用 migration 注册、共享池、负载切换、平台重启或部署；本演练**不能**声称是已上线迁移。
 
-## 6. 验证（存储候选绑定 `bc1c66d74`；TX-GUARD 绑定 `24ad7ec82`）
+## 6. 验证（存储候选绑定 `bc1c66d74`；TX-GUARD 绑定 `24ad7ec82`；FK-GUARD 绑定 `219a7e3dc`）
 
 | 命令（cwd `apps/db-ops-api`，除注明外） | 结果 |
 |---|---|
@@ -114,9 +117,10 @@ commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-202610
 | `npx vitest run src/metrics`（不带 MySQL 变量） | **48 文件通过 / 25 跳过；503 passed / 143 skipped**，exit 0 |
 | `npx tsc --noEmit` | exit 0，无诊断 |
 | `npx oxlint apps/db-ops-api/src/metrics/templates`（仓库根） | 0 warning / 0 error，12 files |
-| `npx oxlint docs/slide/development/MAX-237/t2b`（仓库根，TX-GUARD） | 0 warning / 0 error，2 files（[evidence/t2b-tx-guard-oxlint.txt](evidence/t2b-tx-guard-oxlint.txt)） |
-| `tsc --noEmit`（仅 `t2b/migrate.ts`、`t2b/drill.ts`，严格模式） | exit 0（[evidence/t2b-tx-guard-typecheck.txt](evidence/t2b-tx-guard-typecheck.txt)） |
-| `npx tsx t2b/drill.ts --out t2b/evidence/t2b-drill.json` | **30/30 PASS**，两次 fresh fixture 均 exit 0（[evidence/t2b-drill.json](evidence/t2b-drill.json)） |
+| `npx oxlint docs/slide/development/MAX-237/t2b`（仓库根，FK-GUARD） | 0 warning / 0 error，2 files（[evidence/fk-guard/fk-guard-oxlint.txt](evidence/fk-guard/fk-guard-oxlint.txt)） |
+| `tsc --noEmit`（仅 `t2b/migrate.ts`、`t2b/drill.ts`，严格模式，FK-GUARD） | exit 0（[evidence/fk-guard/fk-guard-typecheck.txt](evidence/fk-guard/fk-guard-typecheck.txt)） |
+| `tsx t2b/drill.ts --scenario reject --out t2b/evidence/fk-guard/fk-guard-reject.json` | **14/14 PASS**，exit 0（[evidence/fk-guard/fk-guard-reject.json](evidence/fk-guard/fk-guard-reject.json)） |
+| `tsx t2b/drill.ts --scenario safe --out t2b/evidence/fk-guard/fk-guard-safe.json` | **27/27 PASS**，exit 0（[evidence/fk-guard/fk-guard-safe.json](evidence/fk-guard/fk-guard-safe.json)） |
 
 真实 MySQL 正例：actor `2147483648`、`9007199254740991`、NULL 两种驱动形态读回；canonical 512 字符与
 semver 100 字符；同 128/16 前缀不同后缀的完整值不混同（同 item 改后缀仍是
@@ -140,6 +144,21 @@ immutable publish、溢出零部分写）在本包同一套件内继续通过。
   第一条 DML 前执行。真实 DDL 漂移分别对 source(type)、candidate(index)、restore(unique index) 拒绝并零写，
   恢复后结构快照逐字节相等。
 - 详细对象、命令、mock/真实 DB 标注与限制见 [tx-guard-20261027.md](tx-guard-20261027.md)。
+
+### 6.2 MAX237-T2B-FK-GUARD 补修
+
+- **外键语义**：`readSchemaStructure` 现在读取 `REFERENCED_TABLE_SCHEMA` 与
+  `REFERENTIAL_CONSTRAINTS.UPDATE_RULE/DELETE_RULE`；冻结结构用 `$self` 占位表示“本 schema”，
+  跨库同名表不再被当作同一对象。
+- **真实反例**：候选 FK 跨库指 source、同库 FK 改 `ON DELETE CASCADE` 两例，`seed`/`up`/`down` 均在第一条
+  业务 DML 前 `structure-drift` 拒绝，业务 DML 计数 0，三库完整 manifest 不变（base 两例均为 acceptance
+  并通过 up 写入 2/2/2/3/2 条）。
+- **合成矩阵**：三个 schema × 四个 FK × 7 类变异（跨 schema、引用表、引用列、`ON UPDATE` 两种、
+  `ON DELETE` 两种）共 84 例全部被比较器捕获。
+- **场景分离**：`--scenario reject` 保存超界 actor/canonical/semver/year 原因、三库完整 manifest 与保留行后
+  整体销毁 fixture；`--scenario safe` 另用 fresh fixture 只跑安全旧数据的 up/down roundtrip。旧“删除超界行再
+  down”路径已移除；`evidence/t2b-drill.json` 仅作为 base `6dcb16651` 的历史记录。
+- 详细对象、命令与两具 fixture 的清理证据见 [fk-guard-20261027.md](fk-guard-20261027.md)。
 
 ## 7. 本包没有做（不得当成完成）
 

@@ -1,6 +1,9 @@
 {
   "task": "MAX237-T2B-FK-GUARD",
   "base": "6dcb1665185aca6f65aa96238ed6a5e6bb928071",
+  "code_commit": "219a7e3dc",
+  "docs": "docs/slide/development/MAX-237/t2b/fk-guard-20261027.md",
+  "allowlist_patch": "evidence/fk-guard/fk-guard-allowlist.patch (6dcb16651..HEAD for docs/slide/development/MAX-237/t2b, excluding itself)",
   "branch": "agent/15coder1/max-237",
   "allowed_surface": [
     "docs/slide/development/MAX-237/t2b/migrate.ts",
