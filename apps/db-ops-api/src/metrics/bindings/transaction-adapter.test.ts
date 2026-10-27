@@ -26,6 +26,8 @@ const T0 = '2026-10-01T00:00:00Z';
 const T1 = '2026-10-02T00:00:00Z';
 const AT = '2026-09-18T00:00:00.000Z';
 const NOW = '2026-10-03T00:00:00Z';
+/** After {@link NOW}: evidence that does not exist at the trusted decision time. */
+const FUTURE_AT = '2026-10-03T12:00:00Z';
 const ISSUED = '2026-10-02T12:00:00Z';
 const EXPIRES = '2026-10-04T00:00:00Z';
 const DEP = `sha256:${'d'.repeat(64)}`;
@@ -227,11 +229,37 @@ const trustedResource = () => ({
 const trustedGroup = (overrides: Record<string, unknown> = {}) => ({
   id: 'web', revision: 2, policy_revision: 2, overrides,
 });
+/**
+ * The trusted capabilities the success fixtures rely on. The window must contain
+ * both the context read (`AT`) and the final trusted clock (`NOW`); a capability
+ * that already ended before `NOW` cannot be a legitimate success premise.
+ */
 const supported = (...metrics: ExtensionDefinition[]) => metrics.map(definition => ({
   resource_id: '7', metric: metricRef(definition), method: 'sql' as const, status: 'supported' as const,
   basis: [{ kind: 'permission' as const, evidence: 'fixed_read_succeeded' }],
-  evaluated_at: AT, valid_until: '2026-09-19T00:00:00.000Z',
+  evaluated_at: AT, valid_until: '2026-10-05T00:00:00.000Z',
 }));
+
+/** Capabilities that were valid when the context was read but expired long before `NOW`. */
+const expiredCapabilities = () => supported(alpha, beta).map(capability => ({
+  ...capability, valid_until: '2026-09-19T00:00:00.000Z',
+}));
+
+/** Capability evidence evaluated only after `NOW`. */
+const futureCapabilities = () => supported(alpha, beta).map(capability => ({
+  ...capability, evaluated_at: FUTURE_AT,
+}));
+
+/** A receipt bound to the same resolution the host will compute from `context`. */
+async function receiptFor(
+  context: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
+) {
+  return boundReceipt({
+    resolution_identity: await identityFor(candidate(), resolutionContext(context)),
+    ...overrides,
+  });
+}
 
 function applicationContext(overrides: Record<string, unknown> = {}) {
   return {
@@ -882,6 +910,152 @@ describe('trusted authorization, dependencies and B2C invalidation', () => {
     expect((await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()))).code)
       .toBe('TRANSACTION_BINDING_MISSING');
     expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+});
+
+describe('final enable-time capability window', () => {
+  it('refuses an enable whose receipt is still valid but whose capabilities expired before the final trusted now', async () => {
+    const context = { capabilities: expiredCapabilities() };
+    const fixture = makeHost({
+      context,
+      // Issued while the capability was still valid; only the decision time moved on.
+      receipt: await receiptFor(context, { issued_at: '2026-09-18T12:00:00Z' }),
+    });
+
+    const error = await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_CAPABILITY_TIME_INVALID');
+    expect(error.items).toEqual([alphaRef, betaRef]);
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+
+  it('rejects when a required capability expires between the context read and the decision', async () => {
+    const context = { capabilities: supported(alpha, beta).map(capability => ({
+      ...capability, valid_until: '2026-09-18T00:00:01.000Z',
+    })) };
+    const fixture = makeHost({ context, receipt: await receiptFor(context) });
+
+    const error = await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_CAPABILITY_TIME_INVALID');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+
+  it('treats a capability validity ending exactly at the trusted now as expired', async () => {
+    const context = { capabilities: supported(alpha, beta).map(capability => ({ ...capability, valid_until: NOW })) };
+    const fixture = makeHost({ context, receipt: await receiptFor(context) });
+
+    const error = await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_CAPABILITY_TIME_INVALID');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+
+  it('rejects a future applicationContext.at instead of letting future capability evidence prove the enable', async () => {
+    const context = { at: FUTURE_AT, capabilities: futureCapabilities() };
+    const fixture = makeHost({ context, receipt: await receiptFor(context) });
+
+    const error = await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_CONTEXT_TIME_INVALID');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+
+  it('rejects a future context that admits inventory observed after the trusted now', async () => {
+    const context = {
+      at: FUTURE_AT,
+      resource: {
+        ...trustedResource(),
+        attributes: { 'db.engine': { value: 'fixture', observed_at: FUTURE_AT, source: 'fixture' } },
+      },
+      capabilities: futureCapabilities(),
+    };
+    const fixture = makeHost({ context, receipt: await receiptFor(context) });
+
+    const error = await rejection(applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry()));
+
+    expect(error.code).toBe('TRANSACTION_CONTEXT_TIME_INVALID');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(fixture.state.writes).toEqual(emptyWrites);
+  });
+
+  it('accepts an enable whose used capabilities are still inside their window at the trusted now', async () => {
+    const context = { capabilities: supported(alpha, beta).map(capability => ({
+      ...capability, valid_until: '2026-10-03T00:00:01.000Z',
+    })) };
+    const fixture = makeHost({ context, receipt: await receiptFor(context) });
+
+    const outcome = await applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry());
+
+    expect(outcome.kind).toBe('committed');
+    expect(fixture.calls.stageApplication).toBe(1);
+    expect(fixture.state.writes).toEqual({ binding: 1, operation: 1, receipt: 1, audit: 1 });
+  });
+
+  it('does not apply the window to a disabled item excluded from the plan', async () => {
+    const input = candidate({
+      overrides: {
+        interval_ms: { mode: 'set', value: 30000 },
+        template_parameters: { 'tpl-one': { interval_ms: 40000 } },
+        metrics: { 'fixture.beta@1.0.0': 'disable' },
+      },
+    });
+    const context = { capabilities: supported(alpha, beta).map(capability =>
+      capability.metric.id === beta.id ? { ...capability, valid_until: '2026-09-19T00:00:00.000Z' } : capability) };
+    const receipt = await boundReceipt({
+      candidate_digest: await digestFor(input),
+      resolution_identity: await identityFor(input, resolutionContext(context)),
+    });
+    const fixture = makeHost({ context, receipt });
+
+    const outcome = await applyTemplateBindingMutation(request({ candidate: input }), fixture.host, fixtureRegistry());
+
+    expect(outcome.kind).toBe('committed');
+    expect(fixture.state.intents[0].pending.plan.releases.flatMap(entry => entry.steps)
+      .flatMap(step => step.items.map(entry => entry.item_id))).toEqual(['alpha-item']);
+    expect(fixture.state.writes).toEqual({ binding: 1, operation: 1, receipt: 1, audit: 1 });
+  });
+
+  it('replays a committed operation without re-checking the capability window', async () => {
+    const context = { capabilities: expiredCapabilities() };
+    const state = freshState();
+    state.operations.set('caller-1', {
+      caller_key: 'caller-1', resource: { ...RESOURCE }, target_revision: 5,
+      candidate_digest: await digestFor(),
+      resolution_identity: await identityFor(candidate(), resolutionContext(context)),
+      dependency_digest: DEP, receipt_id: 'receipt-1', status: 'committed',
+    });
+    const before = snapshot(state);
+    const fixture = makeHost({ state, context, receipt: await receiptFor(context) });
+
+    const outcome = await applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry());
+
+    expect(outcome.kind).toBe('replay');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(snapshot(state)).toEqual(before);
+  });
+
+  it('returns the unknown-operation lookup without a capability-window recheck', async () => {
+    const context = { capabilities: expiredCapabilities() };
+    const state = freshState();
+    state.operations.set('caller-1', {
+      caller_key: 'caller-1', resource: { ...RESOURCE }, target_revision: 5,
+      candidate_digest: await digestFor(),
+      resolution_identity: await identityFor(candidate(), resolutionContext(context)),
+      dependency_digest: DEP, receipt_id: null, status: 'unknown',
+    });
+    const before = snapshot(state);
+    const fixture = makeHost({ state, context });
+
+    const outcome = await applyTemplateBindingMutation(request(), fixture.host, fixtureRegistry());
+
+    expect(outcome.kind).toBe('operation_lookup_required');
+    expect(fixture.calls.stageApplication).toBe(0);
+    expect(snapshot(state)).toEqual(before);
   });
 });
 

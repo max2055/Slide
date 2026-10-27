@@ -64,11 +64,13 @@ export type BindingTransactionErrorCode =
   // Explicit v2 (template resolution) entry only; the v1 entry never returns these.
   | 'TRANSACTION_CONTEXT_UNAVAILABLE'
   | 'TRANSACTION_CONTEXT_INVALID'
+  | 'TRANSACTION_CONTEXT_TIME_INVALID'
   | 'TRANSACTION_RECEIPT_CONSUMED'
   | 'TRANSACTION_RESOLUTION_INVALID'
   | 'TRANSACTION_RESOLUTION_DISABLED'
   | 'TRANSACTION_RESOLUTION_BLOCKED'
-  | 'TRANSACTION_RESOLUTION_EMPTY';
+  | 'TRANSACTION_RESOLUTION_EMPTY'
+  | 'TRANSACTION_CAPABILITY_TIME_INVALID';
 
 /** A selected/qualified template item, identified the way the template contract identifies it. */
 export interface BindingItemRef {
@@ -713,6 +715,46 @@ function verifyReceiptItems(
   }
 }
 
+const itemRefOf = (item: { template_id: string; item_id: string; item_version: number }): BindingItemRef => ({
+  template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
+});
+
+/**
+ * The trusted enable-time gate, run inside the synchronous decision segment after
+ * {@link readServerNow}. B2C resolves capabilities at `applicationContext.at`, so a
+ * receipt that was valid then says nothing about the providers at the decision
+ * time: a capability can expire between the context read and the final clock, and
+ * a future `at` can admit evidence that does not exist yet (including inventory
+ * observed after the trusted now). `at` must therefore not be ahead of the trusted
+ * clock, and every capability the enable plan actually uses must satisfy
+ * `evaluated_at <= now < valid_until`. Disabled/excluded items never enter a plan
+ * step, so they add no new permission conclusion here.
+ */
+function assertEnableTime(
+  application: TrustedApplicationContext,
+  plan: TemplateCollectionPlan,
+  now: number,
+): void {
+  const at = TimestampSchema.safeParse(application.at);
+  if (!at.success || Date.parse(at.data) > now) {
+    throw new BindingTransactionError('TRANSACTION_CONTEXT_TIME_INVALID');
+  }
+  const invalid: BindingItemRef[] = [];
+  for (const release of plan.releases) {
+    for (const step of release.steps) {
+      for (const item of step.items) {
+        const evaluated = Date.parse(item.capability.evaluated_at);
+        const validUntil = Date.parse(item.capability.valid_until);
+        // A validity window ending exactly at `now` is already closed.
+        if (!(evaluated <= now) || !(now < validUntil)) invalid.push(itemRefOf(item));
+      }
+    }
+  }
+  if (invalid.length > 0) {
+    throw new BindingTransactionError('TRANSACTION_CAPABILITY_TIME_INVALID', invalid.sort(compareItem));
+  }
+}
+
 /**
  * Decide whether the current candidate may enter a pending application
  * transaction. Contract and behavior:
@@ -994,6 +1036,10 @@ async function verifyTemplateResolution(
  * - A non-executable resolution (disabled, blocking unsupported/unknown item or
  *   empty plan) is never staged for enable, and receipt single use is proven by a
  *   complete exact lookup.
+ * - A new prepared decision also needs the trusted context time not to be in the
+ *   future and every capability the plan actually uses to satisfy
+ *   `evaluated_at <= trusted now < valid_until`; a valid receipt never substitutes
+ *   for that.
  * - The v1 final boundary — last async authorization, then synchronous trusted
  *   clock, then the decision with no further await — is preserved here.
  */
@@ -1094,6 +1140,9 @@ export async function prepareTemplateBindingMutationV2(
   });
   verifyReceiptTime(receipt, now.ms);
   verifyReceiptItems(receipt, selected, mandatory);
+  // Still synchronous and still before a decision exists: a valid receipt proves
+  // the trial happened, not that the capabilities it relied on still hold now.
+  assertEnableTime(verified.application, verified.plan, now.ms);
 
   return {
     kind: 'prepared', prepared: true, persisted: false, applied: false,
