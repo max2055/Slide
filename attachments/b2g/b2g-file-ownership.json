@@ -1,0 +1,198 @@
+{
+  "phase": "MAX238-B2G-TRIAL-RECEIPT-ISSUER",
+  "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+  "writer": "15coder1 / MAX238-B2G",
+  "new_files": [
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-issuer.ts",
+      "scope": "offline v2 receipt compiler only; identities from exported functions"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-writer.ts",
+      "scope": "fixture-capable insert of receipt_id+payload through withPolicyAdmission; no policy lock"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-issuer.test.ts",
+      "scope": "fixture proof only"
+    },
+    {
+      "path": "docs/slide/development/MAX-238/b2g-trial-receipt-issuer.md",
+      "scope": "delivery evidence"
+    }
+  ],
+  "read_only": [
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/transaction-guard.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "610627a62b54593e793670bb7d5235951a26a10b",
+      "sha256": "917ccab2f628ccf6b75a78fe819591b9117554e047f28cbcf6f9cbd86743f1e6",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/mysql-host.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "d5d5ac68a1ba51a4d27ba6ad15ebdfac39669a40",
+      "sha256": "914708b91a9a4d1cc5d1218cbab49eb081a8004a754b177b42cc8e5591a4fc85",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/resolve.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "2f19b806f24cd202e93dcf560d07e88f9acfe1d0",
+      "sha256": "ef1ca6fd8f1f948ebd6867e225a072479b63754bff059f4d31b86fa59aafea52",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/plan.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "b480088a9bb1b07d269447c9fb47dd4d59532ee0",
+      "sha256": "956aaf257f026ce315e4a636cfe3c93630bcb0776eeaace136e2a0db410fddab",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/persistence-codec.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "83e73e9502ac24713925774ea9bdf959104f3dce",
+      "sha256": "f5cd0a64f08a1ee87b1eea4386c5f3a448925276ecb7540a78e3bd31191f1f01",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/package-reader.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "bf9411f1ad9ed349cdd0717d46ef7f14b5953f8c",
+      "sha256": "ae32d2405587a27cf8409307816ff69af00e6d2807f05eb2660c1fa27fbaaf91",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/index.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "afc627889e867b186d07ac6a590505d1cfd2e32b",
+      "sha256": "5a088f54d9c49e9130bbf4fb818b321d5d1a407c2e9efa6fc2e34b62c874f416",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/transaction-adapter.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "66273d0d48c02ddb4b598652ea9d22b2db4adc25",
+      "sha256": "79bd7e2f3765bba0b08f51456125f29054f462312f99cc2b7ecc523af5564659",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/store.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "d0c74f2c69cca3707d1fb1ab9b69355baed246cb",
+      "sha256": "885fe7f7a84d4aed72076df0ef0bd68b0d4aed3307b140cb768fb9ee752f88e7",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/service.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "56ba0746875d46f9b9e4f78f98bfef1bc853d728",
+      "sha256": "7ba4b2ba5351dbc54face1acf13c6bca6d4633fe2f82cbdbfc374c62513db424",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/model.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "b1675afa1d03064eb74ddbbbc3588a45b94d2f89",
+      "sha256": "8a1d67c8a81a7b689860de824a26a77d0e28571a3a4d18e4a94ad9fc9932e323",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/template-gateway.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "44b29f17d4448c50b4ad2ea798128e54ee7df2ea",
+      "sha256": "ad9cef2feb0611fdabe21a1530ac48ba909cb4ed3cbd5c038f491dc0daf1628e",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/service.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "00b5aaf9bfd104d7f905fff49f9056c5a110e65b",
+      "sha256": "a5b68ae8449aedf9bdea4a87ca181b3519500b96ae79815d4e119b3c0be37334",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/store.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "81c90a214d984e473c515722197442f44843b677",
+      "sha256": "221a1183bdf7d3d1f25843cb5b324109631f253b49e5d9d89d731e1566878068",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/service.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "b8523fd0bebbdc4a9182a4a74c6e809ac6f2e66e",
+      "sha256": "3d30a9cb7d66e3fc8d65a3ccfbea2d71c34878af7d782bec3173c264fb6514ad",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/coordinator.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "573eacf107a44c33aa447c5e6381d99fcdf5df03",
+      "sha256": "530ea336708b144ae1a711ff4454076e625b1edac26736299036482c43ebb30a",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/formalization.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "e7d8f3bb180e2670413fdc68dfaae0ca01f77cbb",
+      "sha256": "c108f91a5dffdf147e4e584c94d0babde8be0be192f713e7b799fa5e4e5f5ca8",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/portfolio.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "88098639e91e31bf3cb29472649d0085afebd728",
+      "sha256": "0a34842b1c3142dd4e871f80c456491a0321247ab531bc62a9d4120655c3d9a3",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/monitor-collector.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "92c3799ccfcb23dc8500a3db436d6e52bc3ca9b9",
+      "sha256": "ab5b4c1d8d1937b9c64a148b074f415d6880d9b516cfd44d07a37ca21b70cf0d",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/consistency-checker.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "27326665689891300a806249206fb042faf68ca3",
+      "sha256": "365b862bf1efbabea30e8dfd860435f571c7b1bbfb5d0d529c71ba123364a033",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/status-store.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "b4caaf098ebbc20c4530d0da037408456ddfbba3",
+      "sha256": "4f1b404f051350ace7eea252998a9ca922595a4d0139745d20f28632e94e75e4",
+      "writer": "none / read-only at B2G base"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/formal-store.ts",
+      "base": "d968892b6cea1972d6d1958749a8af6cab5d3301",
+      "blob": "498304a0f91881a598912a1974d96fe556b307a4",
+      "sha256": "8ae14441faf8ede93f5fd7101730b43962301406e7b240b820897fce42e2b708",
+      "writer": "none / read-only at B2G base"
+    }
+  ],
+  "forbidden": [
+    "routes",
+    "contracts",
+    "generated",
+    "frontend",
+    "migrations",
+    "DDL execution",
+    "policy/store.ts",
+    "policy/template-gateway.ts",
+    "bindings/transaction-guard.ts",
+    "bindings/mysql-host.ts",
+    "bindings/resolve.ts",
+    "bindings/persistence-codec.ts",
+    "config activate/trial product changes",
+    "packages/templates 237 repository",
+    "second pool",
+    "metric_policy_lock inside the receipt transaction",
+    "revoke column"
+  ]
+}
