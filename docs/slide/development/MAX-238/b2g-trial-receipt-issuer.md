@@ -2,7 +2,8 @@
 
 - Base: `d968892b6cea1972d6d1958749a8af6cab5d3301` (accepted B2F head)
 - Implementation + focused tests: `a34bff685`
-- Delivery HEAD: this docs commit on top of `a34bff685`
+- Writer hardening (JSON round-trip guard): this commit
+- Delivery HEAD: this commit on top of `a34bff685`
 - Scope: internal, unmounted compile + candidate-table insert only. No route,
   runtime, default pool, DDL execution, real DB, model, resource, CI or
   deployment action. MAX238 and MAX235 remain `in_progress`; production

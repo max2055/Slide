@@ -119,12 +119,20 @@ export async function writeTrialReceipt(
   const { receipt_id: receiptId, payload } = parsed.data;
   if (payload.receipt_id !== receiptId) throw new TrialReceiptWriteError('TRIAL_RECEIPT_WRITE_INVALID');
 
-  const text = JSON.stringify(payload);
+  let text: string;
+  let roundTrip: unknown;
+  try {
+    text = JSON.stringify(payload);
+    roundTrip = JSON.parse(text) as unknown;
+  } catch {
+    // A value JSON cannot represent is never silently dropped or rewritten.
+    throw new TrialReceiptWriteError('TRIAL_RECEIPT_WRITE_INVALID');
+  }
   if (Buffer.byteLength(text, 'utf8') > PAYLOAD_BYTES_LIMIT) {
     throw new TrialReceiptWriteError('TRIAL_RECEIPT_WRITE_INVALID');
   }
   // Never write a payload whose stored form would read back as something else.
-  if (stable(JSON.parse(text) as unknown) !== stable(payload)) {
+  if (stable(roundTrip) !== stable(payload)) {
     throw new TrialReceiptWriteError('TRIAL_RECEIPT_WRITE_INVALID');
   }
 
