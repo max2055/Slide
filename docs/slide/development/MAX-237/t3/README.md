@@ -39,7 +39,9 @@ uuid 读回项数为 **1 / 5 / 9**，与转换报告一致；重复导入为 `no
 - 没有 `ALTER`/`DROP`、停写、复制整库、切换或回退；历史 `metric_templates` 表未动。
 - 业务表行数前后一致：`users` 5、`database_instances` 5、`servers` 1、历史 `metric_templates` 5。
 - 机器证据：[evidence/t3-import.json](evidence/t3-import.json) 的 `target`、`tables`、`business_counts`、
-  `table_facts`、`template_facts`、`readback`。
+  `table_facts`、`template_facts`、`readback`。该文件记录的是最终代码 SHA 上的重复 apply（`created = []`、
+  三份 `noop`）；首次 apply 建表与建模板由 `table_facts.create_time` 及三份模板 `created_at` 均为
+  `2026-10-27T13:54:39Z` 复核。直连 SQL 旁证见 [evidence/t3-direct-readback.json](evidence/t3-direct-readback.json)。
 
 ## 3. 三份官方模板的来源链
 
