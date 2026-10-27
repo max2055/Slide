@@ -30,6 +30,8 @@ import { stable, type PackageRegistry } from '../packages/model.js';
 import {
   compileBindingCandidate, type BindingTemplateCandidate,
 } from './compile.js';
+import { resolveTemplateBinding, templateResolutionIdentity, type ResolvedTemplateBinding } from './resolve.js';
+import { buildTemplateCollectionPlan, type TemplateCollectionPlan } from './plan.js';
 import type { TemplateVersionReadPort } from './preflight.js';
 
 export type ResourceRef = z.infer<typeof ResourceRefSchema>;
@@ -58,7 +60,15 @@ export type BindingTransactionErrorCode =
   | 'TRANSACTION_RECEIPT_EXPIRED'
   | 'TRANSACTION_TIME_UNAVAILABLE'
   | 'TRANSACTION_MANDATORY_UNAVAILABLE'
-  | 'TRANSACTION_MANDATORY_INVALID';
+  | 'TRANSACTION_MANDATORY_INVALID'
+  // Explicit v2 (template resolution) entry only; the v1 entry never returns these.
+  | 'TRANSACTION_CONTEXT_UNAVAILABLE'
+  | 'TRANSACTION_CONTEXT_INVALID'
+  | 'TRANSACTION_RECEIPT_CONSUMED'
+  | 'TRANSACTION_RESOLUTION_INVALID'
+  | 'TRANSACTION_RESOLUTION_DISABLED'
+  | 'TRANSACTION_RESOLUTION_BLOCKED'
+  | 'TRANSACTION_RESOLUTION_EMPTY';
 
 /** A selected/qualified template item, identified the way the template contract identifies it. */
 export interface BindingItemRef {
@@ -127,6 +137,44 @@ export interface BindingTransactionPort {
   serverNow(): unknown;
 }
 
+/**
+ * One caller-key operation already recorded by the explicit v2 protocol. It
+ * carries the three identities a receipt binds — candidate, resolution and
+ * dependency — plus the receipt it consumed. A record without a resolution
+ * identity is a v1 record and can never be an exact v2 replay.
+ */
+export interface TrustedBindingOperationV2 {
+  caller_key: string;
+  resource: ResourceRef;
+  target_revision: number;
+  candidate_digest: HashId;
+  resolution_identity: HashId;
+  dependency_digest: HashId;
+  receipt_id: string | null;
+  status: 'committed' | 'unknown';
+}
+
+/** The trusted previous application state; a pending revision must preserve it. */
+export interface TrustedApplicationState {
+  status: 'pending' | 'applied' | 'failed';
+  applied_revision: number | null;
+  resolution_identity: HashId | null;
+}
+
+/**
+ * Trusted inputs the v2 entry needs on top of {@link BindingTransactionPort}.
+ * `applicationContext` is one same-view read of the B2C inputs, the previous
+ * application state and the audit actor. `findOperationExact` and
+ * `findReceiptConsumption` must assert completeness: they may only answer
+ * `null`/`consumed: false` when a complete exact query proved absence, never
+ * from a truncated audit window.
+ */
+export interface BindingTransactionPortV2 extends BindingTransactionPort {
+  findOperationExact(callerKey: string): Promise<unknown>;
+  findReceiptConsumption(receiptId: string): Promise<unknown>;
+  applicationContext(resource: ResourceRef): Promise<unknown>;
+}
+
 /** The explicit single-package branch; the existing flow owns it, this guard does not rewrite it. */
 export interface LegacyBindingDelegate {
   kind: 'legacy_delegate';
@@ -172,8 +220,31 @@ export interface PreparedBindingMutation {
   next: ResourceBindingCandidate;
 }
 
+/**
+ * The explicit v2 prepared decision: the same pending write as v1 plus the
+ * re-derived B2C view whose identity the receipt binds. It is still only
+ * prepared — no commit, receipt issuance or application happened here.
+ */
+export interface PreparedTemplateBindingMutation extends PreparedBindingMutation {
+  protocol: 'max238.template-binding.v2';
+  receipt_version: 2;
+  dependency_digest: HashId;
+  resolution_identity: HashId;
+  resolution: ResolvedTemplateBinding;
+  plan: TemplateCollectionPlan;
+  /** Preserved as-is; a new pending revision never replaces the effective plan. */
+  previous_application: TrustedApplicationState | null;
+  /** Trusted audit actor; the request never supplies it. */
+  actor_id: number;
+  decided_at: string;
+  receipt_expires_at: string;
+}
+
 export type BindingMutationOutcome =
   | LegacyBindingDelegate | ReplayedBindingMutation | BindingOperationLookup | PreparedBindingMutation;
+
+export type TemplateBindingMutationOutcome =
+  | LegacyBindingDelegate | ReplayedBindingMutation | BindingOperationLookup | PreparedTemplateBindingMutation;
 
 const IdTextSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 const ItemRefSchema = z.strictObject({
@@ -226,7 +297,78 @@ const TrialReceiptSchema = z.strictObject({
 });
 const MandatoryItemsSchema = z.array(ItemRefSchema);
 
+/**
+ * The explicit v2 receipt protocol. `receipt_version` is a discriminant, so a
+ * v1 receipt is not a v2 receipt with optional fields: the old strict schema
+ * rejects v2 rows for the v1 entry and this strict schema rejects v1 rows here.
+ * The three identities are independent: the candidate digest covers the raw
+ * candidate and dependency digest, the resolution identity covers the resolved
+ * parameters/settings/capability semantics, and the dependency digest is also
+ * compared on its own.
+ */
+const TrialReceiptV2Schema = z.strictObject({
+  receipt_version: z.literal(2),
+  receipt_id: IdTextSchema,
+  resource: ResourceRefSchema,
+  base_revision: BaseRevisionSchema,
+  target_revision: TargetRevisionSchema,
+  candidate_digest: HashIdSchema,
+  resolution_identity: HashIdSchema,
+  dependency_digest: HashIdSchema,
+  issued_at: TimestampSchema,
+  expires_at: TimestampSchema,
+  items: z.array(ReceiptItemSchema),
+  optional_exclusions: z.array(ItemRefSchema),
+});
+const TrustedOperationV2Schema = z.strictObject({
+  caller_key: IdTextSchema,
+  resource: ResourceRefSchema,
+  target_revision: TargetRevisionSchema,
+  candidate_digest: HashIdSchema,
+  resolution_identity: HashIdSchema,
+  dependency_digest: HashIdSchema,
+  receipt_id: IdTextSchema.nullable(),
+  status: z.enum(['committed', 'unknown']),
+}).superRefine((operation, ctx) => {
+  if (operation.status === 'committed' && operation.receipt_id === null) {
+    ctx.addIssue({ code: 'custom', path: ['receipt_id'], message: 'OPERATION_RECEIPT_REQUIRED' });
+  }
+});
+/** A lookup only counts when the port asserts it was complete and exact. */
+const OperationLookupV2Schema = z.strictObject({
+  complete: z.literal(true),
+  operation: z.unknown().refine(value => value !== undefined),
+});
+const ReceiptConsumptionSchema = z.strictObject({
+  complete: z.literal(true),
+  consumed: z.boolean(),
+});
+const TrustedApplicationStateSchema = z.strictObject({
+  status: z.enum(['pending', 'applied', 'failed']),
+  applied_revision: BaseRevisionSchema.nullable(),
+  resolution_identity: HashIdSchema.nullable(),
+});
+/** One same-view read: B2C inputs plus the previous application and the audit actor. */
+const ApplicationContextSchema = z.strictObject({
+  resource: z.unknown().refine(value => value !== undefined),
+  group: z.unknown().refine(value => value !== undefined),
+  capabilities: z.unknown().refine(value => value !== undefined),
+  at: z.unknown().refine(value => value !== undefined),
+  actor_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  application: TrustedApplicationStateSchema.nullable(),
+});
+
 type TrialReceipt = z.infer<typeof TrialReceiptSchema>;
+type TrialReceiptV2 = z.infer<typeof TrialReceiptV2Schema>;
+/** Normalized explicitly: nullable schema fields stay `null`, never `undefined`. */
+interface TrustedApplicationContext {
+  resource: unknown;
+  group: unknown;
+  capabilities: unknown;
+  at: unknown;
+  actor_id: number;
+  application: TrustedApplicationState | null;
+}
 
 /** The candidate-identity format version; changing the covered fields requires a new value. */
 export const BINDING_CANDIDATE_DIGEST_FORMAT = 'max238.binding-candidate.v1';
@@ -367,7 +509,7 @@ async function readOperation(
   };
 }
 
-async function readReceipt(port: BindingTransactionPort, receiptId: string): Promise<TrialReceipt> {
+async function readReceiptRaw(port: BindingTransactionPort, receiptId: string): Promise<unknown> {
   if (typeof port?.getTrialReceipt !== 'function') throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
   let raw: unknown;
   try {
@@ -376,7 +518,20 @@ async function readReceipt(port: BindingTransactionPort, receiptId: string): Pro
     throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
   }
   if (raw === null || raw === undefined) throw new BindingTransactionError('TRANSACTION_RECEIPT_NOT_FOUND');
+  return raw;
+}
+
+async function readReceipt(port: BindingTransactionPort, receiptId: string): Promise<TrialReceipt> {
+  const raw = await readReceiptRaw(port, receiptId);
   const parsed = TrialReceiptSchema.safeParse(raw);
+  if (!parsed.success) throw new BindingTransactionError('TRANSACTION_RECEIPT_INVALID');
+  return parsed.data;
+}
+
+async function readReceiptV2(port: BindingTransactionPort, receiptId: string): Promise<TrialReceiptV2> {
+  const raw = await readReceiptRaw(port, receiptId);
+  const parsed = TrialReceiptV2Schema.safeParse(raw);
+  // A v1 receipt (no `receipt_version`) is invalid here, never silently upgraded.
   if (!parsed.success) throw new BindingTransactionError('TRANSACTION_RECEIPT_INVALID');
   return parsed.data;
 }
@@ -422,7 +577,7 @@ const isThenable = (value: unknown): boolean =>
  * promise/thenable or an unparseable timestamp is unavailable time — never
  * `Date.now()` and never a client-supplied value.
  */
-function readServerNow(port: BindingTransactionPort): number {
+function readServerNow(port: BindingTransactionPort): { at: string; ms: number } {
   if (typeof port?.serverNow !== 'function') throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   let raw: unknown;
   try {
@@ -433,9 +588,10 @@ function readServerNow(port: BindingTransactionPort): number {
   if (isThenable(raw)) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   const parsed = TimestampSchema.safeParse(raw);
   if (!parsed.success) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
-  const now = Date.parse(parsed.data);
-  if (!Number.isFinite(now)) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
-  return now;
+  const ms = Date.parse(parsed.data);
+  if (!Number.isFinite(ms)) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
+  // Keep the trusted instance text for audit; the millisecond value drives expiry.
+  return { at: parsed.data, ms };
 }
 
 function assertAuthorized(auth: TrustedAuthorization): void {
@@ -470,10 +626,12 @@ function selectedItems(candidate: BindingTemplateCandidate): Map<string, Binding
 }
 
 function verifyReceiptIdentity(
-  receipt: TrialReceipt,
+  receipt: TrialReceipt | TrialReceiptV2,
   expected: {
     receiptId: string; resource: ResourceRef; base: number; target: number;
     digest: HashId; dependencyDigest: HashId;
+    /** Present only on the v2 entry; the resolution identity is compared as its own fact. */
+    resolutionIdentity?: HashId;
   },
 ): void {
   if (receipt.receipt_id !== expected.receiptId
@@ -484,9 +642,13 @@ function verifyReceiptIdentity(
     || receipt.dependency_digest !== expected.dependencyDigest) {
     throw new BindingTransactionError('TRANSACTION_RECEIPT_MISMATCH');
   }
+  if (expected.resolutionIdentity !== undefined
+    && (!('resolution_identity' in receipt) || receipt.resolution_identity !== expected.resolutionIdentity)) {
+    throw new BindingTransactionError('TRANSACTION_RECEIPT_MISMATCH');
+  }
 }
 
-function verifyReceiptTime(receipt: TrialReceipt, now: number): void {
+function verifyReceiptTime(receipt: TrialReceipt | TrialReceiptV2, now: number): void {
   const issued = Date.parse(receipt.issued_at);
   const expires = Date.parse(receipt.expires_at);
   if (!Number.isFinite(issued) || !Number.isFinite(expires) || expires <= issued || issued > now) {
@@ -502,7 +664,7 @@ function verifyReceiptTime(receipt: TrialReceipt, now: number): void {
  * drop a mandatory one. "Some other item had a good value" never qualifies.
  */
 function verifyReceiptItems(
-  receipt: TrialReceipt,
+  receipt: TrialReceipt | TrialReceiptV2,
   selected: Map<string, BindingItemRef>,
   mandatory: Set<string>,
 ): void {
@@ -652,13 +814,289 @@ export async function prepareTemplateBindingMutation(
     receiptId, resource, base: baseRevision, target: targetRevision,
     digest, dependencyDigest: before.dependency_digest,
   });
-  verifyReceiptTime(receipt, now);
+  verifyReceiptTime(receipt, now.ms);
   verifyReceiptItems(receipt, selected, mandatory);
 
   return {
     kind: 'prepared', prepared: true, persisted: false, applied: false,
     resource: copyResource(resource), base_revision: baseRevision, target_revision: targetRevision,
     candidate_digest: digest,
+    operation: { key, caller_key: callerKey, receipt_id: receiptId, status: 'pending' },
+    current,
+    next: { ...compiled.binding, revision: targetRevision },
+  };
+}
+
+/** The trusted same-transaction inputs the explicit v2 entry needs; never request-supplied. */
+interface VerifiedResolution {
+  application: TrustedApplicationContext;
+  resolution: ResolvedTemplateBinding;
+  plan: TemplateCollectionPlan;
+  identity: HashId;
+}
+
+async function readApplicationContext(
+  port: BindingTransactionPortV2,
+  resource: ResourceRef,
+): Promise<TrustedApplicationContext> {
+  if (typeof port?.applicationContext !== 'function') {
+    throw new BindingTransactionError('TRANSACTION_CONTEXT_UNAVAILABLE');
+  }
+  let raw: unknown;
+  try {
+    raw = await port.applicationContext(resource);
+  } catch {
+    throw new BindingTransactionError('TRANSACTION_CONTEXT_UNAVAILABLE');
+  }
+  const parsed = ApplicationContextSchema.safeParse(raw);
+  if (!parsed.success) throw new BindingTransactionError('TRANSACTION_CONTEXT_INVALID');
+  const application = parsed.data.application;
+  return {
+    resource: parsed.data.resource,
+    group: parsed.data.group,
+    capabilities: parsed.data.capabilities,
+    at: parsed.data.at,
+    actor_id: parsed.data.actor_id,
+    application: application === null ? null : {
+      status: application.status,
+      applied_revision: application.applied_revision ?? null,
+      resolution_identity: application.resolution_identity ?? null,
+    },
+  };
+}
+
+/**
+ * The complete exact operation lookup. A bare `null`, a missing `complete`
+ * assertion or a non-object envelope is "no guarantee", not "no operation";
+ * the v2 entry rejects instead of inventing a fresh operation.
+ */
+async function readOperationV2(
+  port: BindingTransactionPortV2,
+  callerKey: string,
+): Promise<TrustedBindingOperationV2 | null> {
+  if (typeof port?.findOperationExact !== 'function') {
+    throw new BindingTransactionError('TRANSACTION_OPERATION_UNAVAILABLE');
+  }
+  let raw: unknown;
+  try {
+    raw = await port.findOperationExact(callerKey);
+  } catch {
+    throw new BindingTransactionError('TRANSACTION_OPERATION_UNAVAILABLE');
+  }
+  const envelope = OperationLookupV2Schema.safeParse(raw);
+  if (!envelope.success) throw new BindingTransactionError('TRANSACTION_OPERATION_UNAVAILABLE');
+  if (envelope.data.operation === null) return null;
+  const parsed = TrustedOperationV2Schema.safeParse(envelope.data.operation);
+  if (!parsed.success) throw new BindingTransactionError('TRANSACTION_OPERATION_INVALID');
+  return {
+    caller_key: parsed.data.caller_key,
+    resource: parsed.data.resource,
+    target_revision: parsed.data.target_revision,
+    candidate_digest: parsed.data.candidate_digest,
+    resolution_identity: parsed.data.resolution_identity,
+    dependency_digest: parsed.data.dependency_digest,
+    receipt_id: parsed.data.receipt_id ?? null,
+    status: parsed.data.status,
+  };
+}
+
+/** Receipt single-use, proven by a complete exact lookup rather than an audit window. */
+async function readReceiptConsumption(
+  port: BindingTransactionPortV2,
+  receiptId: string,
+): Promise<boolean> {
+  if (typeof port?.findReceiptConsumption !== 'function') {
+    throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
+  }
+  let raw: unknown;
+  try {
+    raw = await port.findReceiptConsumption(receiptId);
+  } catch {
+    throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
+  }
+  const parsed = ReceiptConsumptionSchema.safeParse(raw);
+  if (!parsed.success) throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
+  return parsed.data.consumed;
+}
+
+/**
+ * Re-walk the accepted B2C resolution and plan from the raw candidate inside the
+ * same transaction, and enforce that an enable can only be staged for an
+ * executable, unblocked plan. B2C/B1/B2A rejections propagate unchanged: they
+ * already carry a stable code and a structured location, never a driver text.
+ */
+async function verifyTemplateResolution(
+  compiled: BindingTemplateCandidate,
+  baseRevision: number,
+  resource: ResourceRef,
+  transaction: BindingTransactionPortV2,
+  templates: TemplateVersionReadPort,
+  registry: PackageRegistry,
+): Promise<VerifiedResolution> {
+  const application = await readApplicationContext(transaction, resource);
+  const resolution = await resolveTemplateBinding(compiled.binding, {
+    resource: application.resource,
+    group: application.group,
+    capabilities: application.capabilities,
+    at: application.at,
+  }, templates, registry);
+  if (resolution.kind !== 'template_resolution') {
+    throw new BindingTransactionError('TRANSACTION_RESOLUTION_INVALID');
+  }
+  if (resolution.revision !== baseRevision
+    || resolution.resource.type !== resource.type
+    || resolution.resource.id !== String(resource.id)
+    || stable(resolution.binding) !== stable(compiled.binding)) {
+    throw new BindingTransactionError('TRANSACTION_RESOLUTION_INVALID');
+  }
+
+  const plan = buildTemplateCollectionPlan(resolution);
+  const identity = templateResolutionIdentity(resolution);
+  // The plan's own identity must be the resolution identity; a drift is a defect.
+  if (plan.identity !== identity) throw new BindingTransactionError('TRANSACTION_RESOLUTION_INVALID');
+
+  if (!resolution.settings.enabled) throw new BindingTransactionError('TRANSACTION_RESOLUTION_DISABLED');
+  const blocking = resolution.excluded
+    .filter(entry => entry.blocking)
+    .map(entry => ({ template_id: entry.template_id, item_id: entry.item_id, item_version: entry.item_version }))
+    .sort(compareItem);
+  if (blocking.length > 0) throw new BindingTransactionError('TRANSACTION_RESOLUTION_BLOCKED', blocking);
+  if (!plan.executable || !plan.releases.some(entry => entry.steps.length > 0)) {
+    throw new BindingTransactionError('TRANSACTION_RESOLUTION_EMPTY');
+  }
+
+  return { application, resolution, plan, identity };
+}
+
+/**
+ * Decide whether a template binding may enter an enable transaction, binding a
+ * **v2** receipt to the candidate, the resolved plan identity and the trusted
+ * dependency digest. This is the explicit protocol the atomic adapter uses; the
+ * v1 entry above keeps its own contract.
+ *
+ * Contract and behavior:
+ * - The request carries only the raw candidate, resource, caller key and receipt
+ *   id; every trusted fact (current binding, application context, authorization,
+ *   operation, receipt, mandatory items, clock) comes from the transaction view.
+ * - B1/B2A run first; a legacy candidate is delegated untouched with the shared
+ *   final boundary and no receipt/resolution/write decision.
+ * - Every template path re-runs `resolveTemplateBinding` and
+ *   `buildTemplateCollectionPlan`; the receipt must bind all three identities.
+ * - An existing operation is an exact replay only when caller key, resource,
+ *   target, candidate digest, resolution identity, dependency digest and receipt
+ *   all agree; otherwise it is a collision. Unknown operations are only looked up.
+ * - A non-executable resolution (disabled, blocking unsupported/unknown item or
+ *   empty plan) is never staged for enable, and receipt single use is proven by a
+ *   complete exact lookup.
+ * - The v1 final boundary — last async authorization, then synchronous trusted
+ *   clock, then the decision with no further await — is preserved here.
+ */
+export async function prepareTemplateBindingMutationV2(
+  request: unknown,
+  transaction: BindingTransactionPortV2,
+  templates: TemplateVersionReadPort,
+  registry: PackageRegistry,
+): Promise<TemplateBindingMutationOutcome> {
+  const parsedRequest = PrepareMutationRequestSchema.safeParse(request);
+  if (!parsedRequest.success) throw new BindingTransactionError('TRANSACTION_INPUT_INVALID');
+  const { resource, candidate, receipt_id: receiptId, caller_key: callerKey } = parsedRequest.data;
+
+  const before = await readAuthorization(transaction, resource);
+  assertAuthorized(before);
+
+  const compiled = await compileBindingCandidate(candidate, templates, registry);
+  if (!sameResource(compiled.binding.resource, resource)) {
+    throw new BindingTransactionError('TRANSACTION_BINDING_IDENTITY');
+  }
+  if (compiled.kind === 'legacy') {
+    const after = await readAuthorization(transaction, resource);
+    assertFinalAuthorization(before, after);
+    return { kind: 'legacy_delegate', binding: compiled.binding, package: compiled.package };
+  }
+
+  const rawCurrent = await readCurrentBinding(transaction, resource);
+  if (rawCurrent === null || rawCurrent === undefined) {
+    throw new BindingTransactionError('TRANSACTION_BINDING_MISSING');
+  }
+  const current = parseCurrentBinding(rawCurrent, resource);
+
+  const baseRevision = compiled.binding.revision;
+  const targetRevision = baseRevision + 1;
+  if (!Number.isSafeInteger(targetRevision)) throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT');
+  const digest = bindingCandidateDigest(compiled, targetRevision, before.dependency_digest);
+  const key = bindingOperationKey(resource, targetRevision, digest);
+
+  const operation = await readOperationV2(transaction, callerKey);
+  if (operation !== null) {
+    // Everything except the resolution identity is comparable before the B2C
+    // re-run; a mismatch there is a collision and never a resend.
+    const identityFree = operation.caller_key === callerKey
+      && sameResource(operation.resource, resource)
+      && operation.target_revision === targetRevision
+      && operation.candidate_digest === digest
+      && operation.dependency_digest === before.dependency_digest
+      && (operation.receipt_id === null || operation.receipt_id === receiptId);
+    if (!identityFree) throw new BindingTransactionError('TRANSACTION_OPERATION_CONFLICT');
+
+    const verified = await verifyTemplateResolution(
+      compiled, baseRevision, resource, transaction, templates, registry,
+    );
+    if (operation.resolution_identity !== verified.identity) {
+      throw new BindingTransactionError('TRANSACTION_OPERATION_CONFLICT');
+    }
+
+    const after = await readAuthorization(transaction, resource);
+    assertFinalAuthorization(before, after);
+
+    if (operation.status === 'unknown') {
+      return {
+        kind: 'operation_lookup_required', persisted: false, resource: copyResource(resource),
+        candidate_digest: digest, operation: { key, caller_key: callerKey, status: 'unknown' },
+      };
+    }
+    if (operation.receipt_id === null) throw new BindingTransactionError('TRANSACTION_OPERATION_INVALID');
+    return {
+      kind: 'replay', persisted: false, resource: copyResource(resource),
+      base_revision: targetRevision - 1, target_revision: targetRevision, candidate_digest: digest,
+      operation: { key, caller_key: callerKey, receipt_id: operation.receipt_id, status: 'committed' },
+    };
+  }
+
+  // The trusted revision is the only CAS authority; an outside snapshot cannot prove it.
+  if (current.revision !== baseRevision) throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT');
+
+  const verified = await verifyTemplateResolution(
+    compiled, baseRevision, resource, transaction, templates, registry,
+  );
+  const receipt = await readReceiptV2(transaction, receiptId);
+  const selected = selectedItems(compiled);
+  const mandatory = await readMandatory(transaction, resource, selected);
+  if (await readReceiptConsumption(transaction, receiptId)) {
+    throw new BindingTransactionError('TRANSACTION_RECEIPT_CONSUMED');
+  }
+
+  // Last asynchronous read. Everything below is synchronous: trusted now,
+  // receipt identity/time/items and the prepared decision.
+  const after = await readAuthorization(transaction, resource);
+  assertFinalAuthorization(before, after);
+  const now = readServerNow(transaction);
+
+  verifyReceiptIdentity(receipt, {
+    receiptId, resource, base: baseRevision, target: targetRevision,
+    digest, dependencyDigest: before.dependency_digest,
+    resolutionIdentity: verified.identity,
+  });
+  verifyReceiptTime(receipt, now.ms);
+  verifyReceiptItems(receipt, selected, mandatory);
+
+  return {
+    kind: 'prepared', prepared: true, persisted: false, applied: false,
+    protocol: 'max238.template-binding.v2', receipt_version: 2,
+    resource: copyResource(resource), base_revision: baseRevision, target_revision: targetRevision,
+    candidate_digest: digest, dependency_digest: before.dependency_digest,
+    resolution_identity: verified.identity, resolution: verified.resolution, plan: verified.plan,
+    previous_application: verified.application.application, actor_id: verified.application.actor_id,
+    decided_at: now.at, receipt_expires_at: receipt.expires_at,
     operation: { key, caller_key: callerKey, receipt_id: receiptId, status: 'pending' },
     current,
     next: { ...compiled.binding, revision: targetRevision },
