@@ -117,14 +117,13 @@ export interface TrustedBindingOperation {
 }
 
 /**
- * The trusted transaction view. Every method reads server-side state; none
- * writes. `mandatoryItems` may be absent, which means "every selected item is
- * mandatory" until mandatory semantics are resolved (a later package).
+ * The trusted reads shared by both protocols. Every method reads server-side
+ * state; none writes. `mandatoryItems` may be absent, which means "every
+ * selected item is mandatory" until mandatory semantics are resolved.
  */
-export interface BindingTransactionPort {
+export interface BindingTransactionReads {
   authorize(resource: ResourceRef): Promise<unknown>;
   currentBinding(resource: ResourceRef): Promise<unknown>;
-  findOperation(callerKey: string): Promise<unknown>;
   getTrialReceipt(receiptId: string): Promise<unknown>;
   mandatoryItems?(resource: ResourceRef): Promise<unknown>;
   /**
@@ -135,6 +134,11 @@ export interface BindingTransactionPort {
    * commit-time atomicity true).
    */
   serverNow(): unknown;
+}
+
+/** The accepted v1 transaction view: the shared reads plus the v1 caller-key lookup. */
+export interface BindingTransactionPort extends BindingTransactionReads {
+  findOperation(callerKey: string): Promise<unknown>;
 }
 
 /**
@@ -169,7 +173,7 @@ export interface TrustedApplicationState {
  * `null`/`consumed: false` when a complete exact query proved absence, never
  * from a truncated audit window.
  */
-export interface BindingTransactionPortV2 extends BindingTransactionPort {
+export interface BindingTransactionPortV2 extends BindingTransactionReads {
   findOperationExact(callerKey: string): Promise<unknown>;
   findReceiptConsumption(receiptId: string): Promise<unknown>;
   applicationContext(resource: ResourceRef): Promise<unknown>;
@@ -447,7 +451,7 @@ export const bindingOperationKey = (
 ): string => `${resource.type}:${resource.id}#${targetRevision}@${candidateDigest}`;
 
 async function readAuthorization(
-  port: BindingTransactionPort,
+  port: BindingTransactionReads,
   resource: ResourceRef,
 ): Promise<TrustedAuthorization> {
   if (typeof port?.authorize !== 'function') throw new BindingTransactionError('TRANSACTION_AUTH_UNAVAILABLE');
@@ -463,7 +467,7 @@ async function readAuthorization(
   return parsed.data;
 }
 
-async function readCurrentBinding(port: BindingTransactionPort, resource: ResourceRef): Promise<unknown> {
+async function readCurrentBinding(port: BindingTransactionReads, resource: ResourceRef): Promise<unknown> {
   if (typeof port?.currentBinding !== 'function') throw new BindingTransactionError('TRANSACTION_BINDING_UNAVAILABLE');
   try {
     return await port.currentBinding(resource);
@@ -509,7 +513,7 @@ async function readOperation(
   };
 }
 
-async function readReceiptRaw(port: BindingTransactionPort, receiptId: string): Promise<unknown> {
+async function readReceiptRaw(port: BindingTransactionReads, receiptId: string): Promise<unknown> {
   if (typeof port?.getTrialReceipt !== 'function') throw new BindingTransactionError('TRANSACTION_RECEIPT_UNAVAILABLE');
   let raw: unknown;
   try {
@@ -521,14 +525,14 @@ async function readReceiptRaw(port: BindingTransactionPort, receiptId: string): 
   return raw;
 }
 
-async function readReceipt(port: BindingTransactionPort, receiptId: string): Promise<TrialReceipt> {
+async function readReceipt(port: BindingTransactionReads, receiptId: string): Promise<TrialReceipt> {
   const raw = await readReceiptRaw(port, receiptId);
   const parsed = TrialReceiptSchema.safeParse(raw);
   if (!parsed.success) throw new BindingTransactionError('TRANSACTION_RECEIPT_INVALID');
   return parsed.data;
 }
 
-async function readReceiptV2(port: BindingTransactionPort, receiptId: string): Promise<TrialReceiptV2> {
+async function readReceiptV2(port: BindingTransactionReads, receiptId: string): Promise<TrialReceiptV2> {
   const raw = await readReceiptRaw(port, receiptId);
   const parsed = TrialReceiptV2Schema.safeParse(raw);
   // A v1 receipt (no `receipt_version`) is invalid here, never silently upgraded.
@@ -542,7 +546,7 @@ async function readReceiptV2(port: BindingTransactionPort, receiptId: string): P
  * selected item, so a mandatory list cannot cover items this candidate dropped.
  */
 async function readMandatory(
-  port: BindingTransactionPort,
+  port: BindingTransactionReads,
   resource: ResourceRef,
   selected: Map<string, BindingItemRef>,
 ): Promise<Set<string>> {
@@ -577,7 +581,7 @@ const isThenable = (value: unknown): boolean =>
  * promise/thenable or an unparseable timestamp is unavailable time — never
  * `Date.now()` and never a client-supplied value.
  */
-function readServerNow(port: BindingTransactionPort): { at: string; ms: number } {
+function readServerNow(port: BindingTransactionReads): { at: string; ms: number } {
   if (typeof port?.serverNow !== 'function') throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   let raw: unknown;
   try {

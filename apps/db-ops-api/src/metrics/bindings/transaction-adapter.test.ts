@@ -398,8 +398,6 @@ function makeHost(options: HostOptions = {}) {
       calls.currentBinding += 1;
       return state.binding ?? null;
     },
-    // The accepted v1 lookup is part of the shared port but unused by the v2 entry.
-    findOperation: async () => null,
     findOperationExact: async (callerKey: string) => {
       calls.findOperationExact += 1;
       return options.operation ? options.operation(callerKey) : { complete: true, operation: state.operations.get(callerKey) ?? null };
