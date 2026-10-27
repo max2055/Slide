@@ -180,13 +180,25 @@ function readRootPassword(cfg: ReturnType<typeof loadConfig>): string {
 }
 
 /** Root is used only for drift-variant DDL inside this run's own fixture. */
-function mysqlRootDdl(
+export function mysqlRootDdl(
   cfg: ReturnType<typeof loadConfig>, rootPassword: string, sql: string,
 ): void {
-  execFileSync('docker', [
-    'exec', '-e', `MYSQL_PWD=${rootPassword}`, '-i', cfg.handle.container_id,
-    'mysql', '-uroot', '-N', '-e', sql,
-  ], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    execFileSync('docker', [
+      'exec', '-e', `MYSQL_PWD=${rootPassword}`, '-i', cfg.handle.container_id,
+      'mysql', '-uroot', '-N', '-e', sql,
+    ], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    // The raw child-process error embeds the whole docker argv (including
+    // MYSQL_PWD) and the captured stderr. Report only a controlled failure.
+    const status = (error as { status?: unknown }).status;
+    const exitCode = typeof status === 'number' ? status : null;
+    throw new DrillError('root-ddl-failed',
+      exitCode === null
+        ? 'the root DDL subprocess could not be started in this fixture'
+        : `the root DDL subprocess failed with exit code ${exitCode} in this fixture`,
+      { exit_code: exitCode });
+  }
 }
 
 /** Runs the real CLI in a fresh process so "plan opens no connection" is meaningful. */
