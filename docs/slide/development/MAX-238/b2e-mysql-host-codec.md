@@ -24,6 +24,8 @@
 96945471e00c9e13dd810c2aa1f5b0b2c167cf989de593a5f1c4e277cf3890e8  index.ts
 ```
 
+（本文件记录 B2E 首次交付的未接受状态；其 codec/operation 校验已被 B2E-R1 收紧，见 `b2e-r1-strict-storage.md`。）
+
 ## 2. 存储 payload codec（`persistence-codec.ts`）
 
 ### 2.1 两种形态
