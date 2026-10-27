@@ -1,13 +1,17 @@
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { validateObservation, type NormalizedObservation, type RawObservation } from '../../contracts/metrics/index.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
-import { type Ref, type Published, refKey, rule } from '../policy/model.js';
+import { type Ref, refKey, rule } from '../policy/model.js';
 import { seriesHash } from '../storage.js';
 import { rolloutAlertLockName } from './alert-publication-fence.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 import { sourceHistory } from './source-history.js';
+import { readStoredBinding } from '../bindings/package-reader.js';
 
 const decode = <T>(value: string | T): T => typeof value === 'string' ? JSON.parse(value) : value;
+
+/** What one fenced acceptance attempt did; a template row is never cached as formalized. */
+type Acceptance = 'formalized' | 'template' | 'skipped';
 
 /** Reconcile persisted, real measurement evidence. Never trusts a caller-supplied all-zero shadow gate.
  * Runs outside collection transactions, taking publication fences BEFORE the policy lock. */
@@ -46,9 +50,13 @@ export class MetricFormalization {
       // Re-read under the policy lock: collection/configuration may have changed
       // while waiting for fences, or another local caller may have reconciled it.
       const current = await this.fingerprint(c, ref, revision);
-      if (current && this.reconciled.get(key) !== current) await this.accept(c, ref, revision, initial.map(r=>String(r.series_hash)));
-      const completed = await this.fingerprint(c, ref, revision);
+      let acceptance: Acceptance = 'skipped';
+      if (current && this.reconciled.get(key) !== current) acceptance = await this.accept(c, ref, revision, initial.map(r=>String(r.series_hash)));
+      // A template row must not be cached as a successfully reconciled package
+      // row; it is simply not this path's evidence.
+      const completed = acceptance === 'template' ? null : await this.fingerprint(c, ref, revision);
       await c.commit(); transaction = false;
+      if (acceptance === 'template') this.reconciled.delete(key);
       if (completed) {
         // Keep at most one digest per resource and bound inactive/deleted entries.
         this.reconciled.delete(key);
@@ -64,11 +72,15 @@ export class MetricFormalization {
       if (reusable) c.release(); else c.destroy();
     }
   }
-  private async accept(c: PoolConnection, ref: Ref, revision: number, fenced: string[]) {
+  private async accept(c: PoolConnection, ref: Ref, revision: number, fenced: string[]): Promise<Acceptance> {
     const [bindings] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
-    if (!bindings[0]) return;
-    const policy = decode<Published>(bindings[0].payload);
-    if (policy.binding.revision !== revision || !policy.resolved.settings.enabled || policy.application.applied_revision !== revision) return;
+    if (!bindings[0]) return 'skipped';
+    // Only a legacy single-package row can be formalized here; a template row is
+    // reported, never decoded as `Published` nor recorded as reconciled.
+    const stored = readStoredBinding(decode(bindings[0].payload));
+    if (stored.source === 'template') return 'template';
+    const policy = stored.published;
+    if (policy.binding.revision !== revision || !policy.resolved.settings.enabled || policy.application.applied_revision !== revision) return 'skipped';
     const [existing] = await c.execute<RowDataPacket[]>('SELECT * FROM metric_rollout WHERE resource_type = ? AND resource_id = ? ORDER BY series_hash FOR UPDATE',[ref.type,String(ref.id)]);
     rule(stable(existing.map(r=>String(r.series_hash))) === stable(fenced), 'SOURCE_SET_CHANGED');
     const [phase] = await c.execute<RowDataPacket[]>('SELECT phase,revision,generation FROM metric_rollout_resources WHERE resource_key = ? FOR UPDATE',[refKey(ref)]);
@@ -77,9 +89,9 @@ export class MetricFormalization {
     const [accepted] = await c.execute<RowDataPacket[]>('SELECT revision FROM metric_source_acceptance WHERE resource_key = ? AND revision = ?', [refKey(ref),revision]);
     const catalog = this.registry.catalog(policy.binding.package);
     const [captures] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_source_checks WHERE resource_key=? AND revision=?',[refKey(ref),revision]);
-    if (!captures[0]) return;
+    if (!captures[0]) return 'skipped';
     const snapshot = decode<{sample_ids:string[]}>(captures[0].payload);
-    if (!Array.isArray(snapshot.sample_ids) || !snapshot.sample_ids.length) return;
+    if (!Array.isArray(snapshot.sample_ids) || !snapshot.sample_ids.length) return 'skipped';
     rule(snapshot.sample_ids.length <= 10000 && snapshot.sample_ids.every(id=>typeof id==='string'), 'SOURCE_SERIES_LIMIT');
     // The committed capture already identifies the batch. PRIMARY lookups keep
     // work proportional to that batch rather than all retained normalized rows.
@@ -87,7 +99,7 @@ export class MetricFormalization {
       AND id IN (${snapshot.sample_ids.map(()=>'?').join(',')})
       AND observed_at >= ? ORDER BY observed_at DESC, id DESC`,
     [...snapshot.sample_ids,new Date(this.clock().getTime() - policy.resolved.settings.stale_after_ms)]);
-    if (!rows.length) return;
+    if (!rows.length) return 'skipped';
     rule(rows.length <= 10000, 'SOURCE_SERIES_LIMIT');
     const samples = new Map<string, NormalizedObservation>();
     for (const row of rows) {
@@ -133,14 +145,14 @@ export class MetricFormalization {
       }
       samples.set(hash,o);
     }
-    if (!samples.size) return;
-    if (![...samples.values()].some(o=>o.production==='measured'&&o.value!==null&&o.quality.status==='good')) return;
+    if (!samples.size) return 'skipped';
+    if (![...samples.values()].some(o=>o.production==='measured'&&o.value!==null&&o.quality.status==='good')) return 'skipped';
     const history=await sourceHistory(c,ref,policy.binding.package.id.split('-')[0],[...samples.values()],catalog);
-    if (history.legacy_comparison.state === 'failed') return;
+    if (history.legacy_comparison.state === 'failed') return 'skipped';
     // An explicitly controlled historical migration needs an actual comparison before resuming.
     // A rolled-back revision is not re-enabled by a background scan.
     if (controlled && (history.legacy_comparison.state !== 'passed'
-      || phase[0].phase === 'legacy' && Number(phase[0].revision) >= revision)) return;
+      || phase[0].phase === 'legacy' && Number(phase[0].revision) >= revision)) return 'skipped';
     // A newer configuration invalidates every old write ticket, even for unchanged dimensions.
     const generation = accepted.length ? Math.max(1,...existing.map(r => Number(r.generation))) : Math.max(0,...existing.map(r => Number(r.generation))) + 1;
     if (!accepted.length) {
@@ -164,5 +176,6 @@ export class MetricFormalization {
         VALUES (?,?,?,'semantic',?,?,NULL,0,?) ON DUPLICATE KEY UPDATE phase = 'semantic', revision = VALUES(revision), generation = VALUES(generation), gate_json = NULL, actor_id = 0, request_id = VALUES(request_id)`,
       [refKey(ref),ref.type,String(ref.id),revision,generation,`measurement:${refKey(ref)}:${revision}`]);
     }
+    return 'formalized';
   }
 }

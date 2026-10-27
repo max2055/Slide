@@ -5,4 +5,5 @@ export * from './resolve.js';
 export * from './plan.js';
 export * from './transaction-adapter.js';
 export * from './persistence-codec.js';
+export * from './package-reader.js';
 export * from './mysql-host.js';
