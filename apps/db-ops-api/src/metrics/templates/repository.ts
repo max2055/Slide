@@ -119,8 +119,12 @@ export interface TemplateRepository {
 
 const clone = <T>(value: T): T => structuredClone(value);
 
-/** Item content that participates in "is this the same item version?" — lineage and version do not. */
-const itemContent = (item: Omit<ItemVersionInput, 'source_chain'>): string => stable({
+/**
+ * Item content that participates in "is this the same item version?" — lineage
+ * and version do not. Exported so a storage adapter reuses this exact rule
+ * instead of defining a second identity comparison (MAX-237 T2A).
+ */
+export const itemContent = (item: Omit<ItemVersionInput, 'source_chain'>): string => stable({
   display_name: item.display_name,
   canonical_metric: item.canonical_metric,
   unit: item.unit,
@@ -141,7 +145,7 @@ const sameDimensionKeys = (left: Record<string, string>, right: Record<string, s
   return a.length === b.length && a.every((key, index) => key === b[index]);
 };
 
-const identityConflict = (latest: TemplateItemVersion, next: Omit<ItemVersionInput, 'source_chain'>): string | null => {
+export const identityConflict = (latest: TemplateItemVersion, next: Omit<ItemVersionInput, 'source_chain'>): string | null => {
   const before = canonicalKey(latest.canonical_metric);
   const after = canonicalKey(next.canonical_metric);
   if (before !== after) return `canonical metric ${before} → ${after}`;
