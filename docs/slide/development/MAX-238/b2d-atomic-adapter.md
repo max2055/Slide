@@ -1,6 +1,6 @@
 # MAX-238 B2D：内部原子事务适配核心
 
-2026-10-27。本文件对应实现提交 `688e9657498630b5eb3e685e2fb8dc5e50bae794`（下文文档提交只在其后追加）。基线为已接受 B2C `26859b1196574831fe29acd266269874aef147d7`。**本包是未挂载的内部适配核心**：没有生产 store、路由、receipt issuer、DDL、运行时或真实采集；真实存储与读者接线见 `b2d-production-wiring.md`。
+2026-10-27。本文件对应实现提交 `688e9657498630b5eb3e685e2fb8dc5e50bae794`，端口收敛 `f448a00206bdd8929d50be0dbdb891941329482a`（实现最终状态；下文文档提交只在其后追加）。基线为已接受 B2C `26859b1196574831fe29acd266269874aef147d7`。**本包是未挂载的内部适配核心**：没有生产 store、路由、receipt issuer、DDL、运行时或真实采集；真实存储与读者接线见 `b2d-production-wiring.md`。
 
 ## 1. 允许文件与实际 diff
 
@@ -62,7 +62,7 @@ Host 只暴露：同视图读 + `templateVersions()`（必须绑定同一事务�
 - 结算只认显式 `committed` 且 revision 等于目标 revision → `committed`；`rolled_back` → `rolled_back`；`unknown`、抛错、非法形状、错误 revision → `commit_unknown`（分别 `host_reported_unknown`/`settle_unavailable`/`settle_invalid`），返回“查询原操作”而不重发。
 - `stage` 确认本身永远不等于 committed。
 
-## 4. 验证（实现提交 `688e96574`，Node v24.18.0 / pnpm 11.19.0）
+## 4. 验证（实现最终状态 `f448a0020`，Node v24.18.0 / pnpm 11.19.0）
 
 | 命令 | 结果 | 退出码 |
 | --- | --- | --- |
