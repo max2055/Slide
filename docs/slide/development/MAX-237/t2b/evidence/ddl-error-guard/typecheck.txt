@@ -1,0 +1,3 @@
+# tsc -p apps/db-ops-api/.max237-ddl-tsconfig.tmp.json (strict, noEmit)
+# files: t2b/migrate.ts, t2b/drill.ts, t2b/ddl-error-guard.test.ts
+tsc exit=0

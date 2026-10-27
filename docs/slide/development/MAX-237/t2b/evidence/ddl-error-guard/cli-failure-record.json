@@ -1,0 +1,21 @@
+{
+  "exit": 1,
+  "marker_in_stdout": false,
+  "marker_in_stderr": false,
+  "marker_in_record": false,
+  "boundary_reason": "root-ddl-failed",
+  "boundary_message": "the root DDL subprocess failed with exit code 1 in this fixture",
+  "boundary_detail": {
+    "exit_code": 1
+  },
+  "steps_completed": [
+    "plan runs in a fresh process with connections forbidden",
+    "execute refuses to connect while connections are forbidden",
+    "unknown handle / wrong schema allowlist is refused with zero writes",
+    "live fixture proven on two independent connections",
+    "fixture starts empty in all three schemas",
+    "frozen-structure comparator rejects every drift class (synthetic snapshots)",
+    "seed write entry rejects a connection that is not the recorded fixture"
+  ],
+  "scope": "root NONSECRET marker only; app credential unchanged; private file restored"
+}

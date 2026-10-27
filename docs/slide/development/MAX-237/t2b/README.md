@@ -12,7 +12,9 @@ LONGTEXT ascii canonical 身份、24 字符 canonical UTC `CHAR(24)` 时间）�
 **reject 14/14 + safe 27/27** 演练步骤、`tsc` 0、`oxlint` 0/0 通过。T2B-DRILL-TX-GUARD 有界补修（未知事务
 终态 discard、commit 结果重查分类、三 schema 冻结结构预检）见 [tx-guard-20261027.md](tx-guard-20261027.md)；
 T2B-FK-GUARD 有界补修（外键引用 schema 与 ON UPDATE/ON DELETE 规则、拒绝场景与安全 roundtrip 分属两具
-fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；**没有**接应用库、没有公共契约变更、
+fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；T2B-DDL-ERROR-GUARD 有界补修（root DDL
+子进程失败只暴露受控 exit code，不回显 `MYSQL_PWD`/argv/子进程 stderr）见
+[ddl-error-guard-20261027.md](ddl-error-guard-20261027.md)；**没有**接应用库、没有公共契约变更、
 没有应用 migration、没有真实采集闭环，整单保持 `in_progress`。
 
 ## 1. base / 提交 / 允许面
@@ -121,6 +123,8 @@ fresh fixture）见 [fk-guard-20261027.md](fk-guard-20261027.md)；**没有**接
 | `tsc --noEmit`（仅 `t2b/migrate.ts`、`t2b/drill.ts`，严格模式，FK-GUARD） | exit 0（[evidence/fk-guard/fk-guard-typecheck.txt](evidence/fk-guard/fk-guard-typecheck.txt)） |
 | `tsx t2b/drill.ts --scenario reject --out t2b/evidence/fk-guard/fk-guard-reject.json` | **14/14 PASS**，exit 0（[evidence/fk-guard/fk-guard-reject.json](evidence/fk-guard/fk-guard-reject.json)） |
 | `tsx t2b/drill.ts --scenario safe --out t2b/evidence/fk-guard/fk-guard-safe.json` | **27/27 PASS**，exit 0（[evidence/fk-guard/fk-guard-safe.json](evidence/fk-guard/fk-guard-safe.json)） |
+| `tsx t2b/ddl-error-guard.test.ts`（假 `docker`，无数据库；DDL-ERROR-GUARD） | **4/4 PASS**，exit 0（[evidence/ddl-error-guard/focused-test.txt](evidence/ddl-error-guard/focused-test.txt)） |
+| `python3 -I chief-secret-probe.py <repo> <out>`（fresh 独占 fixture，DDL-ERROR-GUARD） | exit 1、stdout/stderr/`--out` 均无哨兵（[evidence/ddl-error-guard/secret-probe.json](evidence/ddl-error-guard/secret-probe.json)） |
 
 真实 MySQL 正例：actor `2147483648`、`9007199254740991`、NULL 两种驱动形态读回；canonical 512 字符与
 semver 100 字符；同 128/16 前缀不同后缀的完整值不混同（同 item 改后缀仍是
