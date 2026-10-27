@@ -381,6 +381,44 @@ describe('publish rejections', () => {
       .toBe('TEMPLATE_DIMENSIONS_MISMATCH');
   });
 
+  it('rejects an empty dimension key when publish re-validates the stored item', async () => {
+    const { service, repository } = setup();
+    const created = await service.create(manager(), { name: 'Empty dimension key' });
+    const stored = await repository.putItemVersion(hostileItem(created.template_id, {
+      dimensions: { '': 'unexpected dimension' },
+    }));
+    await service.updateDraft(manager(), created.template_id, {
+      expected_draft_revision: 0,
+      aggregate: { ...emptyDraftAggregate(created.template_id), items: [{ item_id: 'uptime', version: stored.item.version }] },
+    });
+    expect(await code(service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 })))
+      .toBe('TEMPLATE_DIMENSIONS_MISMATCH');
+    expect(await repository.listVersions(created.template_id)).toEqual([]);
+  });
+
+  it('accepts the same dimension key set in another order at publish', async () => {
+    const { service, repository } = setup();
+    const created = await service.create(manager(), { name: 'Ordered dimensions' });
+    const linux = builtinReleases().find(release => release.package.id === 'linux-host')!;
+    const stored = await repository.putItemVersion(hostileItem(created.template_id, {
+      item_id: 'filesystem',
+      canonical_metric: { id: 'host.filesystem.used_bytes', semantic_version: '1.0.0' },
+      unit: 'By',
+      dimensions: { fs_type: 'file system type', mount: 'mount point', device: 'device name' },
+      collector_ref: {
+        package_release: `${linux.package.id}@${linux.package.version}#${linux.package.digest}`,
+        implementation_id: 'builtin:linux.filesystem.v1',
+      },
+    }));
+    await service.updateDraft(manager(), created.template_id, {
+      expected_draft_revision: 0,
+      aggregate: { ...emptyDraftAggregate(created.template_id), items: [{ item_id: 'filesystem', version: stored.item.version }] },
+    });
+    const published = await service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 });
+    expect(published.version).toBe(1);
+    expect(await repository.listVersions(created.template_id)).toHaveLength(1);
+  });
+
   it('rejects a missing implementation pin and an uninstalled release', async () => {
     const { service, repository } = setup();
     const created = await service.create(manager(), { name: 'Mapping' });

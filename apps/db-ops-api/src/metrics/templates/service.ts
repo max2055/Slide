@@ -491,11 +491,11 @@ export class MetricTemplateService {
         throw new TemplateError('TEMPLATE_UNIT_MISMATCH',
           `item ${item.item_id} declares unit ${item.unit}, ${canonicalKey(item.canonical_metric)} is ${candidate.unit}`);
       }
-      const declared = Object.keys(item.dimensions).sort().join(',');
-      const expected = candidate.dimensions.map(dimension => dimension.name).sort().join(',');
-      if (declared !== expected) {
+      const declared = Object.keys(item.dimensions).sort();
+      const expected = candidate.dimensions.map(dimension => dimension.name).sort();
+      if (declared.length !== expected.length || declared.some((key, index) => key !== expected[index])) {
         throw new TemplateError('TEMPLATE_DIMENSIONS_MISMATCH',
-          `item ${item.item_id} declares dimensions [${declared}], ${canonicalKey(item.canonical_metric)} has [${expected}]`);
+          `item ${item.item_id} declares dimensions [${declared.join(',')}], ${canonicalKey(item.canonical_metric)} has [${expected.join(',')}]`);
       }
       this.validateItemParameters(item, aggregate);
       resolved.push({ item, candidate });

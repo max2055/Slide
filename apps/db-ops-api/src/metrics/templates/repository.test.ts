@@ -154,6 +154,63 @@ describe('in-memory template repository', () => {
     expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
   });
 
+  it('compares dimension key sets without delimiter collisions', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create(template(), draft());
+    const base = {
+      template_id: 'tpl-a', display_name: 'Uptime', canonical_metric: item().canonical_metric,
+      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
+    };
+    // No dimensions and one empty key are different key sets even though both join to ''.
+    await repository.putItemVersion({ ...base, item_id: 'empty', dimensions: {} });
+    expect(await code(repository.putItemVersion({ ...base, item_id: 'empty', dimensions: { '': 'unexpected dimension' } })))
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    // One key containing a comma is not the two-key set it serializes to.
+    await repository.putItemVersion({ ...base, item_id: 'comma', dimensions: { 'db,host': 'one dimension' } });
+    expect(await code(repository.putItemVersion({ ...base, item_id: 'comma', dimensions: { db: 'database', host: 'host' } })))
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    // The same key set in another order keeps the identity (and is identical content).
+    await repository.putItemVersion({ ...base, item_id: 'ordered', dimensions: { db: 'database', host: 'host' } });
+    const reordered = await repository.putItemVersion({
+      ...base, item_id: 'ordered', dimensions: { host: 'host', db: 'database' },
+    });
+    expect(reordered.reused).toBe(true);
+    expect(reordered.item.version).toBe(1);
+  });
+
+  it('lets exactly one racing first write with colliding key sets win', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create(template(), draft());
+    const base = {
+      template_id: 'tpl-a', item_id: 'race', display_name: 'Uptime', canonical_metric: item().canonical_metric,
+      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
+    };
+    const outcomes = await Promise.allSettled([
+      repository.putItemVersion({ ...base, dimensions: {} }),
+      repository.putItemVersion({ ...base, dimensions: { '': 'unexpected dimension' } }),
+    ]);
+    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = outcomes.find(result => result.status === 'rejected') as PromiseRejectedResult;
+    expect((rejected.reason as TemplateError).code).toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
+  });
+
+  it('keeps a published snapshot unchanged when an incompatible key set is rejected', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create(template(), draft());
+    const base = {
+      template_id: 'tpl-a', item_id: 'uptime', display_name: 'Uptime', canonical_metric: item().canonical_metric,
+      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
+    };
+    await repository.putItemVersion({ ...base, dimensions: {} });
+    await repository.publish(command());
+    const snapshot = await repository.getVersion('tpl-a', 1);
+    expect(await code(repository.putItemVersion({ ...base, dimensions: { '': 'unexpected dimension' } })))
+      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
+    expect(await repository.getVersion('tpl-a', 1)).toEqual(snapshot);
+    expect((await repository.getTemplate('tpl-a'))!.current_published_version).toBe(1);
+  });
+
   it('publishes v1, treats identical content as a no-op and never rewrites a version', async () => {
     const repository = new InMemoryTemplateRepository();
     await repository.create(template(), draft());

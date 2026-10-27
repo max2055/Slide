@@ -136,14 +136,21 @@ const itemContent = (item: Omit<ItemVersionInput, 'source_chain'>): string => st
  * things publish re-checks against the canonical definition. A display rename, a
  * default-parameter change or a compatible implementation pin update keep it.
  */
+const sameDimensionKeys = (left: Record<string, string>, right: Record<string, string>): boolean => {
+  const a = Object.keys(left).sort(), b = Object.keys(right).sort();
+  return a.length === b.length && a.every((key, index) => key === b[index]);
+};
+
 const identityConflict = (latest: TemplateItemVersion, next: Omit<ItemVersionInput, 'source_chain'>): string | null => {
   const before = canonicalKey(latest.canonical_metric);
   const after = canonicalKey(next.canonical_metric);
   if (before !== after) return `canonical metric ${before} → ${after}`;
   if (latest.unit !== next.unit) return `unit ${latest.unit} → ${next.unit}`;
-  const declared = Object.keys(latest.dimensions).sort().join(',');
-  const incoming = Object.keys(next.dimensions).sort().join(',');
-  if (declared !== incoming) return `dimensions [${declared}] → [${incoming}]`;
+  if (!sameDimensionKeys(latest.dimensions, next.dimensions)) {
+    const declared = Object.keys(latest.dimensions).sort().join(',');
+    const incoming = Object.keys(next.dimensions).sort().join(',');
+    return `dimensions [${declared}] → [${incoming}]`;
+  }
   return null;
 };
 
