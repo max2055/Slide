@@ -90,10 +90,14 @@ const LIMITS = {
   payload_bytes: 1024 * 1024,
 } as const;
 
-/** The structural subset of `mysql2/promise` this host needs; no default pool is created. */
+/**
+ * The structural subset of `mysql2/promise` this host needs; no default pool is
+ * created. `values` is `unknown` because mysql2 accepts arrays and option
+ * objects; every call site here passes a positional array.
+ */
 export interface BindingSqlConnection {
   beginTransaction(): Promise<void>;
-  execute(sql: string, values?: unknown[]): Promise<[unknown, unknown]>;
+  execute(sql: string, values?: unknown): Promise<[unknown, unknown]>;
   commit(): Promise<void>;
   rollback(): Promise<void>;
   release(): void;

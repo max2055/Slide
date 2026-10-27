@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import type {
   CollectorDefinition, DerivedMetric, MetricDefinition,
 } from '../../contracts/metrics/index.js';
@@ -635,6 +636,14 @@ function committedOperation(identity: HashId, digest: HashId): OperationRecord {
 }
 
 describe('MySQL binding host', () => {
+  it('accepts a real mysql2 pool and connection as the narrow injected port', () => {
+    // Compile-time assignments only: no connection is created, nothing is imported at runtime.
+    const toPool = (pool: Pool): BindingSqlPool => pool;
+    const toConnection = (connection: PoolConnection): BindingSqlConnection => connection;
+    expect(typeof toPool).toBe('function');
+    expect(typeof toConnection).toBe('function');
+  });
+
   it('commits one atomic intent on a single lease and stores the template pending payload', async () => {
     const db = await seededDb();
     const identity = await identityFor();
