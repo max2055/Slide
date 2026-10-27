@@ -33,6 +33,7 @@
    - 先做与 resolution 无关的五项比较（caller key、resource、target、candidate digest、dependency digest、receipt）；
    - 再在同一事务重跑 `resolveTemplateBinding` → `buildTemplateCollectionPlan`，要求 `resolution_identity` 也一致；
    - 全部一致且 `committed` → replay；`unknown` → 只查原操作；任一不一致 → `TRANSACTION_OPERATION_CONFLICT`（同 key 跨 resource/target/candidate/resolution/receipt 都不是精确 replay）。
+   - replay 仍要求当前可重算出的 resolution identity 一致：若当前 B2C 已因能力/参数/设置漂移而阻塞，按对应稳定码拒绝（不回写、不伪造 replay），调用方按 `caller_key` 查原操作；receipt 过期或 current revision 前进**不**影响 replay。
 5. 新操作：CAS 通过后再重跑 B2C；非可执行一律拒绝：
    - `settings.enabled=false` → `TRANSACTION_RESOLUTION_DISABLED`；
    - unsupported/unknown 等 `blocking` 项 → `TRANSACTION_RESOLUTION_BLOCKED`（携结构化 item 定位）；

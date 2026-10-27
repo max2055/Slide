@@ -989,6 +989,8 @@ async function verifyTemplateResolution(
  * - An existing operation is an exact replay only when caller key, resource,
  *   target, candidate digest, resolution identity, dependency digest and receipt
  *   all agree; otherwise it is a collision. Unknown operations are only looked up.
+ *   A committed operation still needs a reproducible resolution identity: if the
+ *   current B2C blocks or drifts, it is a stable rejection, never a synthetic replay.
  * - A non-executable resolution (disabled, blocking unsupported/unknown item or
  *   empty plan) is never staged for enable, and receipt single use is proven by a
  *   complete exact lookup.
