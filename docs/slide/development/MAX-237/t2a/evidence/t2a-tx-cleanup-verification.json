@@ -1,0 +1,160 @@
+{
+  "task": "MAX237-T2A-TX-CLEANUP",
+  "issue": "MAX-237 (Multica 01a173cf-fb9a-7216-8a01-2070105f8793, GitHub #261)",
+  "package": "T2A-TX-CLEANUP (bounded correction; not T2B)",
+  "authorization": {
+    "instruction": "t2a-tx-cleanup-instruction-20261027.md (attachment 01a17ba7-4735-7197-84b3-71548fe56dc5)",
+    "review": "chief-t2a-review-20261027.md (attachment 01a17ba7-4542-74cb-ab04-f8a7fc6aa219)",
+    "admission": "max237-t2a-admission-20261027.md (attachment 01a17b8f-15e4-763e-a4de-e263d14f0503)",
+    "scope": "mysql-repository.ts transaction-end connection disposal, its two tests, docs/slide/development/MAX-237/**; no public contract, DDL, shared pool, route, runtime, frontend, migration or consumer change"
+  },
+  "branch": "agent/15coder1/max-237",
+  "pr": 390,
+  "base": "49ac26e998debf998de876902b6abf8f939be1fb",
+  "code_commit": "07b7f74cf",
+  "defect": {
+    "location": "apps/db-ops-api/src/metrics/templates/mysql-repository.ts transaction helper",
+    "summary": "A failed/unknown transaction end was released back to the pool. MySQL implicitly commits an open transaction at the next START TRANSACTION on that connection, so a later unrelated write could persist the failed operation's rows.",
+    "pre_fix_evidence": "t2a-tx-cleanup-probe-pre-fix.json (replays the Chief counterexamples; both fail with released_to_pool=1 and independent_after_unrelated_create={parents:1,drafts:0|1})"
+  },
+  "fix": {
+    "rule": "release only after a confirmed commit or a confirmed rollback; destroy otherwise (unconfirmed rollback, lost commit acknowledgement, failed begin, failed session setup)",
+    "interface": "TemplateSqlConnection gained the explicit destroy(): void slice (adapter-local type; no public schema/export of product contracts)",
+    "error_semantics": "the original operation error is preserved when rollback is unconfirmed; commit uncertainty stays TEMPLATE_STORAGE_UNKNOWN_COMMIT with the same redacted identity and is re-read read-only on a new connection; no automatic retry",
+    "discard_failure": "a throwing destroy() is swallowed so it can never replace the operation outcome, and the connection is never released instead"
+  },
+  "allowlist": {
+    "files": [
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.ts",
+        "status": "modified",
+        "lines": 862,
+        "sha256": "f669bd4054b833c86a75bd485c54449e4f072e299ff52f1bbae4f55d105833af"
+      },
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts",
+        "status": "modified",
+        "lines": 247,
+        "sha256": "1e6697b14651c2b4ade68ee5230b80340e7a0b67c4aa5bcb0c24d6115c5eae04"
+      },
+      {
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts",
+        "status": "modified",
+        "lines": 697,
+        "sha256": "739fc3cf86192057cc4290d59a20f7d710b0ff930093188e9564dfe689b1bfed"
+      }
+    ],
+    "outside_allowlist": [],
+    "patch": "docs/slide/development/MAX-237/t2a/evidence/t2a-tx-cleanup-allowlist.patch",
+    "patch_bytes": 19686,
+    "patch_sha256": "6dd58dae8a0e1bb1028eb254fecddfe6f2ee8914fe3f8d4233d9ddffe276caab"
+  },
+  "unchanged": [
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repository.ts",
+      "sha256": "d722c5e864eeba194a8ca653beb207e23ee8ea28f33a9cdca9081fd235e24153"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/model.ts",
+      "sha256": "d3207eb11ddb727399328690b545128c9f8acadc61de1c2f77563bcb8c85d7d1"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/errors.ts",
+      "sha256": "4f047fc3d92bb079c5bf4fcb952803f033c42adcfb7d5a800b2b9c162321570c"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/index.ts",
+      "sha256": "b63c556b9e9e393541cb8c25cccd6aa37f5afd18c2d865c98c454947b2a7097c"
+    }
+  ],
+  "unchanged_note": "docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql is the byte-identical D1 candidate DDL 140 (five tables, no DDL change).",
+  "checks": [
+    {
+      "command": "npx vitest run src/metrics/templates (cwd apps/db-ops-api, MAX237_T2A_MYSQL_* set)",
+      "result": "5 files, 78/78 tests passed, exit 0",
+      "log": "docs/slide/development/MAX-237/t2a/evidence/t2a-tx-cleanup-test-log.txt"
+    },
+    {
+      "command": "npx vitest run src/metrics (cwd apps/db-ops-api, no MySQL env)",
+      "result": "48 files passed / 25 skipped, 501 passed / 140 skipped, exit 0"
+    },
+    {
+      "command": "npx tsc --noEmit (cwd apps/db-ops-api)",
+      "result": "exit 0, no diagnostics"
+    },
+    {
+      "command": "npx oxlint apps/db-ops-api/src/metrics/templates (cwd repo root)",
+      "result": "0 warnings / 0 errors on 12 files"
+    }
+  ],
+  "regressions": {
+    "unit": [
+      "unconfirmed rollback → original error kept, destroy=1, release=0",
+      "failed begin → destroy=1, release=0",
+      "unknown commit → destroy=1, release=0",
+      "throwing destroy does not replace the unknown-commit outcome"
+    ],
+    "real_mysql": [
+      {
+        "test": "discards the connection after an unconfirmed rollback and never reuses its transaction",
+        "counterexample": "parent INSERT committed by the server only on reuse; observer stays {0,0}, same-connection-limit pool hands out a new connection, unrelated create cannot persist the old parent",
+        "pre_fix": "fails (destroy=0, release=1); see t2a-tx-cleanup-probe-pre-fix.json rollback-failure",
+        "post_fix": "passes"
+      },
+      {
+        "test": "discards a live connection whose commit was never sent and cannot replay it",
+        "counterexample": "commit not forwarded, socket alive; unknown-commit kept, connection destroyed, fresh connection reads no rows, unrelated create cannot commit them",
+        "pre_fix": "fails (destroy=0, release=1); see t2a-tx-cleanup-probe-pre-fix.json commit-not-sent-live-connection",
+        "post_fix": "passes"
+      },
+      {
+        "test": "keeps an unknown outcome when the commit acknowledgement is lost",
+        "counterexample": "real commit then acknowledgement lost; stays unknown, connection destroyed, a NEW connection reads the exact committed version with no extra version",
+        "pre_fix": "fails the discard assertion",
+        "post_fix": "passes"
+      },
+      {
+        "test": "keeps the pool usable after repeated failed transactions",
+        "counterexample": "three consecutive unconfirmed rollbacks; single-connection pool still serves a healthy connection, no remaining rows or locks",
+        "pre_fix": "fails the discard assertion",
+        "post_fix": "passes"
+      }
+    ],
+    "pre_fix_replay": {
+      "probe": "docs/slide/development/MAX-237/t2a/evidence/tx-cleanup-probe.ts (Chief chief-transaction-probes.ts + destroy forwarding)",
+      "pre_fix_result": "t2a-tx-cleanup-probe-pre-fix.json: exit 1, both scenarios fail exactly as the Chief review recorded",
+      "post_fix_result": "t2a-tx-cleanup-probe-post-fix.json: exit 0, both scenarios pass (discarded=1, released=0, no pending rows on reuse, unrelated create persists nothing)"
+    }
+  },
+  "fixture": {
+    "scope": "the already-authorized disposable non-production fixture only",
+    "container": "max237-t2a-15coder1-20261027",
+    "container_id": "69d31a8085b2d1cb9277fb962cc874a3eac6ad4d79770a1def22579e087cded3",
+    "image": "mysql:8.4 (sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d)",
+    "version": "8.4.10",
+    "database": "max237_t2a (utf8mb4/utf8mb4_bin; five tables utf8mb4_bin)",
+    "labels": { "max237.owner": "15coder1-t2a", "max237.phase": "T2A-20261027" },
+    "loopback_port": 60935,
+    "volume": "max237-t2a-15coder1-20261027-data",
+    "user_rights": "DML only (SELECT/INSERT/UPDATE/DELETE); random credentials in a 0600 private file, never written to the repository or evidence",
+    "stale_object_check": "no container, volume or state directory with these selectors existed before creation; the Chief's d5edf404…9a23793 object was already cleaned"
+  },
+  "cleanup": {
+    "method": "docs/slide/development/MAX-237/t2a/env-clean.sh (fresh ID/label/mount/port verification, then stop + rm -v + volume rm)",
+    "command_exit": 0,
+    "container_absent": true,
+    "volume_absent": true,
+    "credentials_file_deleted": true,
+    "state_dir_absent": true,
+    "background_processes": []
+  },
+  "limits": [
+    "Unmounted internal package: no route, process registration, shared pool, application migration, scheduler/collector/notification or product-model call.",
+    "Not a real collection business loop; the synthetic template rows on the disposable fixture are not real SSH/SQL/SNMP evidence.",
+    "Existing T2A storage limits (INT actor, VARCHAR(128) canonical id, VARCHAR(16) semantic version, DATETIME 1000..9999) are unchanged; T2B not started.",
+    "No public contract change, so contracts:check was not rerun; no full gate expansion.",
+    "PR #390 remains open and unmerged; no CI watch/polling in this package.",
+    "Issue MAX-237 stays in_progress until the Chief's exact final review of this correction."
+  ],
+  "generated_at": "2026-10-27"
+}
