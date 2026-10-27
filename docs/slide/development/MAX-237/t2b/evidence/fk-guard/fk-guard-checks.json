@@ -1,0 +1,58 @@
+{
+  "task": "MAX237-T2B-FK-GUARD",
+  "base": "6dcb1665185aca6f65aa96238ed6a5e6bb928071",
+  "branch": "agent/15coder1/max-237",
+  "allowed_surface": [
+    "docs/slide/development/MAX-237/t2b/migrate.ts",
+    "docs/slide/development/MAX-237/t2b/drill.ts",
+    "docs/slide/development/MAX-237/t2b/README.md",
+    "docs/slide/development/MAX-237/t2b/fk-guard-20261027.md",
+    "docs/slide/development/MAX-237/t2b/evidence/fk-guard/**"
+  ],
+  "ddl": {
+    "original_140_sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
+    "candidate_sha256": "c599f6b6505cf900c1b1b924dc3789d0a945a77c97c8722bae017029f7814323"
+  },
+  "product_diff_since_base": "",
+  "working_tree_product_diff": "",
+  "checks": [
+    {
+      "command": "tsx docs/slide/development/MAX-237/t2b/drill.ts --scenario reject --out .../fk-guard-reject.json",
+      "fresh_fixture": "265b545d9a15ba3604509b5cef0af4785ef7b5c2f9976a2329702a6c8babe260",
+      "result": "14/14 PASS",
+      "exit": 0,
+      "evidence": "evidence/fk-guard/fk-guard-reject.json"
+    },
+    {
+      "command": "tsx docs/slide/development/MAX-237/t2b/drill.ts --scenario safe --out .../fk-guard-safe.json",
+      "fresh_fixture": "e0d5558005cdebab1733ff544f84724b3177bdb0b55b2ffa1c4c9fd2c0c64cfc",
+      "result": "27/27 PASS",
+      "exit": 0,
+      "evidence": "evidence/fk-guard/fk-guard-safe.json"
+    },
+    {
+      "command": "oxlint docs/slide/development/MAX-237/t2b (repo root)",
+      "result": "0 warnings / 0 errors, 2 files",
+      "exit": 0,
+      "evidence": "evidence/fk-guard/fk-guard-oxlint.txt"
+    },
+    {
+      "command": "tsc -p <strict noEmit config> for t2b/migrate.ts + t2b/drill.ts",
+      "result": "exit 0, no diagnostics",
+      "exit": 0,
+      "evidence": "evidence/fk-guard/fk-guard-typecheck.txt"
+    },
+    {
+      "command": "git diff 6dcb16651..HEAD -- apps packages frontend",
+      "result": "empty; product files unchanged",
+      "exit": 0,
+      "evidence": "evidence/fk-guard/fk-guard-scope.txt"
+    }
+  ],
+  "file_sha256": {
+    "docs/slide/development/MAX-237/t2b/migrate.ts": "3a95ed6355b92c25031eb0c8080758e272a21c8cb991ed8fb944c44266095515",
+    "docs/slide/development/MAX-237/t2b/drill.ts": "7a0a30c8cc8e0bf8e7a6b83dbb078cf86c691d89332494952e35b46eca48115c",
+    "docs/slide/development/MAX-237/t2b/evidence/fk-guard/fk-guard-reject.json": "9facb0dde9ca4cc8122f89966cbf257b2e41ffc57c0a7d40b8e1a4fb9b30c67a",
+    "docs/slide/development/MAX-237/t2b/evidence/fk-guard/fk-guard-safe.json": "0efe66c4936bcd95b5220af88976378d2fee709dfd52a94f76d63e1b15c43256"
+  }
+}

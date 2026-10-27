@@ -1,0 +1,8 @@
+# product surface diff 6dcb16651..HEAD (must be empty)
+# working tree product diff (must be empty)
+# changed tracked files
+ M CLAUDE.md
+ M docs/slide/development/MAX-237/t2b/drill.ts
+ M docs/slide/development/MAX-237/t2b/migrate.ts
+?? .max237-fk-tsconfig.tmp.json
+?? docs/slide/development/MAX-237/t2b/evidence/fk-guard/

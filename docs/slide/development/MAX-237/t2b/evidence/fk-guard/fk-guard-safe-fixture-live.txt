@@ -1,0 +1,8 @@
+# fixture facts (no secrets)
+container_id: e0d5558005cdebab1733ff544f84724b3177bdb0b55b2ffa1c4c9fd2c0c64cfc
+image_id: sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d
+labels: map[max237.owner:15coder1-t2b max237.phase:T2B-20261027]
+mounts: volume|max237-t2b-15coder1-20261027-data|/var/lib/mysql;
+port: 127.0.0.1:52921
+running: true
+server: 8.4.10 e0d5558005cd max237_t2b,max237_t2b_d1,max237_t2b_restore

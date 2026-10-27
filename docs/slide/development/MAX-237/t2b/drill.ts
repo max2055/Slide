@@ -27,7 +27,7 @@ import {
   CANDIDATE_SCHEMA, COPY_ORDER, DrillError, RESTORE_SCHEMA, SOURCE_SCHEMA, checkDownRepresentable,
   diffFrozenStructure, down, expectedFrom, loadConfig, openPool, readCredentials, readManifest,
   readSchemaStructure, rowCounts, seedSource, up, verifyLiveFixture,
-  type FrozenStructure,
+  type ForeignKeyShape, type FrozenStructure,
 } from './migrate.js';
 import {
   MySqlTemplateRepository,
@@ -80,6 +80,8 @@ interface FaultOptions {
   destroy?: 'throw';
   /** Interrupts the first write whose SQL is matched, inside the transaction. */
   interrupt?: (sql: string) => boolean;
+  /** Collects business DML statements issued on connection handles. */
+  dml?: string[];
 }
 
 const newCounter = (): FaultCounter => ({ releases: 0, destroys: 0 });
@@ -130,6 +132,9 @@ function faultPool(
                   };
                 case 'query':
                   return async (sql: string, values?: unknown[]) => {
+                    if (options.dml && /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql)) {
+                      options.dml.push(sql.replace(/\s+/g, ' ').slice(0, 160));
+                    }
                     if (options.interrupt?.(sql)) {
                       throw new DrillError('injected-failure', 'injected failure inside the copy transaction');
                     }
@@ -215,6 +220,13 @@ const emptyCounts = Object.fromEntries(COPY_ORDER.map(table => [table, 0]));
 async function main(): Promise<void> {
   const outIndex = process.argv.indexOf('--out');
   const outPath = outIndex >= 0 ? process.argv[outIndex + 1]! : null;
+  const scenarioIndex = process.argv.indexOf('--scenario');
+  const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : null;
+  if (scenario !== 'reject' && scenario !== 'safe') {
+    throw new Error('usage: drill.ts --scenario reject|safe [--out <evidence.json>] '
+      + '(reject and safe each require their own fresh fixture)');
+  }
+  const reject = scenario === 'reject';
   const cfg = loadConfig();
   const credentials = readCredentials(cfg);
   const env = { ...process.env, MAX237_T2B_STATE_DIR: cfg.stateDir };
@@ -225,6 +237,7 @@ async function main(): Promise<void> {
   let faultWriter: import('mysql2/promise').Pool | null = null;
   const evidence: Record<string, unknown> = {
     task: 'MAX237-T2B',
+    scenario,
     generated_at: startedAt,
     fixture: {
       container_name: cfg.handle.container_name,
@@ -310,8 +323,10 @@ async function main(): Promise<void> {
     // ------------------------ frozen structure: pure diff branches (not real DDL)
     const candidateShape = await readSchemaStructure(pool, CANDIDATE_SCHEMA);
     const sourceShape = await readSchemaStructure(pool, SOURCE_SCHEMA);
+    const restoreShape = await readSchemaStructure(pool, RESTORE_SCHEMA);
     if (diffFrozenStructure(sourceShape, sourceShape).length !== 0
-      || diffFrozenStructure(candidateShape, candidateShape).length !== 0) {
+      || diffFrozenStructure(candidateShape, candidateShape).length !== 0
+      || diffFrozenStructure(restoreShape, restoreShape).length !== 0) {
       throw new Derr('identical structure snapshots were not treated as equal', {});
     }
     const mutations: [string, (shape: FrozenStructure) => void][] = [
@@ -333,9 +348,6 @@ async function main(): Promise<void> {
       ['prefix index', shape => {
         shape.metric_template_item_versions.indexes.idx_canonical!.columns[0]!.subPart = 64;
       }],
-      ['foreign key', shape => {
-        shape.metric_template_item_versions.foreignKeys.fk_tiv_item!.referencedTable = 'metric_templates_v2';
-      }],
     ];
     const caughtDrifts: string[] = [];
     for (const [label, mutate] of mutations) {
@@ -345,8 +357,41 @@ async function main(): Promise<void> {
       if (diffs.length === 0) throw new Derr(`frozen-structure diff missed ${label}`, copy);
       caughtDrifts.push(`${label}: ${diffs[0]}`);
     }
+    // Foreign-key matrix (synthetic): every frozen FK in each of the three
+    // schemas, including the cross-schema same-named table and both rule sides.
+    const foreignKeyMutations: [string, (fk: ForeignKeyShape) => void][] = [
+      ['cross-schema reference (same table/column names)', fk => {
+        fk.referencedSchema = fk.referencedSchema === SOURCE_SCHEMA ? CANDIDATE_SCHEMA : SOURCE_SCHEMA;
+      }],
+      ['referenced table', fk => { fk.referencedTable = `${fk.referencedTable}_drift`; }],
+      ['referenced columns', fk => { fk.referencedColumns = fk.referencedColumns.map(name => `${name}_drift`); }],
+      ['ON UPDATE CASCADE', fk => { fk.updateRule = 'CASCADE'; }],
+      ['ON UPDATE SET NULL', fk => { fk.updateRule = 'SET NULL'; }],
+      ['ON DELETE CASCADE', fk => { fk.deleteRule = 'CASCADE'; }],
+      ['ON DELETE SET NULL', fk => { fk.deleteRule = 'SET NULL'; }],
+    ];
+    const foreignKeyDrifts: string[] = [];
+    for (const [label, schema, shape] of [
+      ['source', SOURCE_SCHEMA, sourceShape], ['candidate', CANDIDATE_SCHEMA, candidateShape],
+      ['restore', RESTORE_SCHEMA, restoreShape],
+    ] as const) {
+      for (const table of COPY_ORDER) {
+        for (const name of Object.keys(shape[table].foreignKeys)) {
+          for (const [mutationLabel, mutate] of foreignKeyMutations) {
+            const copy = structuredClone(shape);
+            mutate(copy[table].foreignKeys[name]!);
+            const diffs = diffFrozenStructure(copy, shape, schema);
+            if (diffs.length === 0) {
+              throw new Derr(`frozen-structure diff missed FK ${label}.${table}.${name} ${mutationLabel}`, copy);
+            }
+            foreignKeyDrifts.push(`${label}.${table}.${name} ${mutationLabel}: ${diffs[0]}`);
+          }
+        }
+      }
+    }
     record('frozen-structure comparator rejects every drift class (synthetic snapshots)', {
-      drifts: caughtDrifts, note: 'synthetic snapshots; real DDL drift rows follow',
+      drifts: caughtDrifts, foreign_key_drifts: foreignKeyDrifts,
+      note: 'synthetic snapshots; real DDL drift rows follow',
     });
 
     // ------------------------------ seed identity rejection (real connection)
@@ -392,16 +437,119 @@ async function main(): Promise<void> {
       };
     };
 
-    // Real DDL drift on the source: seed must reject before its first INSERT.
-    const sourceDrift = await structureTrial({
-      label: 'source narrowed column type',
-      schema: SOURCE_SCHEMA,
-      drift: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(32) NOT NULL',
-      restore: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(128) NOT NULL',
-      attempt: () => seedSource(cfg, pool),
-      assertUnchanged: () => assertEmptyManifestsUnchanged('source structure drift'),
-    });
-    record('real source structure drift blocks seed before its first write', sourceDrift);
+    if (reject) {
+      // ------------------------- real DDL: foreign-key reference and rule drift
+      // Reproduces both Chief FAIL counterexamples inside this fixture and proves
+      // seed/up/down each refuse before their first business DML.
+      const manifestOfAll = async (target: import('mysql2/promise').Pool) => ({
+        source: await readManifest(target, SOURCE_SCHEMA, 'source'),
+        candidate: await readManifest(target, CANDIDATE_SCHEMA, 'candidate'),
+        restore: await readManifest(target, RESTORE_SCHEMA, 'restore'),
+      });
+      const readDraftForeignKey = async (target: import('mysql2/promise').Pool) => {
+        const [rows] = await target.query(
+          `SELECT k.REFERENCED_TABLE_SCHEMA AS referenced_schema, k.REFERENCED_TABLE_NAME AS referenced_table,
+                  r.UPDATE_RULE AS update_rule, r.DELETE_RULE AS delete_rule
+             FROM information_schema.KEY_COLUMN_USAGE k
+             JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+               ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+              AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME
+            WHERE k.TABLE_SCHEMA = ? AND k.CONSTRAINT_NAME = 'fk_draft_template'
+            ORDER BY k.ORDINAL_POSITION`, [CANDIDATE_SCHEMA],
+        );
+        return rows as {
+          referenced_schema: string; referenced_table: string; update_rule: string; delete_rule: string;
+        }[];
+      };
+      const fkDrop = 'ALTER TABLE `max237_t2b`.`metric_template_drafts` DROP FOREIGN KEY `fk_draft_template`';
+      const fkAddOriginal = 'ALTER TABLE `max237_t2b`.`metric_template_drafts` '
+        + 'ADD CONSTRAINT `fk_draft_template` FOREIGN KEY (`template_id`) '
+        + 'REFERENCES `max237_t2b`.`metric_templates_v2` (`template_id`)';
+      const fkVariant = (label: string, reference: string, expected: {
+        referenced_schema: string; update_rule: string; delete_rule: string;
+      }) => ({
+        label,
+        statement: 'ALTER TABLE `max237_t2b`.`metric_template_drafts` '
+          + `ADD CONSTRAINT \`fk_draft_template\` FOREIGN KEY (\`template_id\`) REFERENCES ${reference}`,
+        expected,
+      });
+      for (const variant of [
+        fkVariant('candidate fk_draft_template references the source schema',
+          '`max237_t2b_d1`.`metric_templates_v2` (`template_id`)',
+          { referenced_schema: SOURCE_SCHEMA, update_rule: 'NO ACTION', delete_rule: 'NO ACTION' }),
+        fkVariant('candidate fk_draft_template ON DELETE CASCADE',
+          '`max237_t2b`.`metric_templates_v2` (`template_id`) ON DELETE CASCADE',
+          { referenced_schema: CANDIDATE_SCHEMA, update_rule: 'NO ACTION', delete_rule: 'CASCADE' }),
+      ]) {
+        const structureBefore = await readSchemaStructure(pool2!, CANDIDATE_SCHEMA);
+        const manifestsBefore = await manifestOfAll(pool2!);
+        mysqlRootDdl(cfg, rootPassword, fkDrop);
+        let trial: unknown = null;
+        try {
+          mysqlRootDdl(cfg, rootPassword, variant.statement);
+          const actual = await readDraftForeignKey(pool2!);
+          if (actual.length !== 1
+            || actual[0]!.referenced_schema !== variant.expected.referenced_schema
+            || actual[0]!.update_rule !== variant.expected.update_rule
+            || actual[0]!.delete_rule !== variant.expected.delete_rule) {
+            throw new Derr(`${variant.label}: the fixture does not report the constructed FK`, actual);
+          }
+          const entries: unknown[] = [];
+          for (const entry of ['seed', 'up', 'down'] as const) {
+            const dml: string[] = [];
+            const counted = faultPool(pool, { dml });
+            const run = entry === 'seed' ? () => seedSource(cfg, counted)
+              : entry === 'up' ? () => up(cfg, counted)
+                : () => down(cfg, counted);
+            const error = await expectDrillError('structure-drift', run);
+            if (dml.length !== 0) {
+              throw new Derr(`${variant.label}: ${entry} issued business DML before refusing`, dml);
+            }
+            entries.push({
+              entry, reason: error.reason, business_dml: dml.length,
+              diffs: (error.detail as { diffs?: string[] } | null)?.diffs ?? [],
+            });
+          }
+          const manifestsAfter = await manifestOfAll(pool2!);
+          if (JSON.stringify(manifestsAfter) !== JSON.stringify(manifestsBefore)) {
+            throw new Derr(`${variant.label}: a refused entry changed the three schemas`, {
+              before: manifestsBefore, after: manifestsAfter,
+            });
+          }
+          trial = {
+            label: variant.label, drift_statement: variant.statement,
+            actual_foreign_key: actual, entries, manifests: manifestsAfter,
+            source_unchanged: true, candidate_unchanged: true, restore_unchanged: true,
+          };
+        } finally {
+          try {
+            mysqlRootDdl(cfg, rootPassword, fkDrop);
+          } catch {
+            // already dropped by a failed variant statement
+          }
+          mysqlRootDdl(cfg, rootPassword, fkAddOriginal);
+        }
+        const structureAfter = await readSchemaStructure(pool2!, CANDIDATE_SCHEMA);
+        if (JSON.stringify(structureAfter) !== JSON.stringify(structureBefore)) {
+          throw new Derr(`${variant.label}: the frozen structure was not restored exactly`, {
+            before: structureBefore, after: structureAfter,
+          });
+        }
+        await verifyLiveFixture(pool2!, cfg);
+        record('real foreign-key drift is refused before the first business DML', trial);
+      }
+
+      // Real DDL drift on the source: seed must reject before its first INSERT.
+      const sourceDrift = await structureTrial({
+        label: 'source narrowed column type',
+        schema: SOURCE_SCHEMA,
+        drift: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(32) NOT NULL',
+        restore: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(128) NOT NULL',
+        attempt: () => seedSource(cfg, pool),
+        assertUnchanged: () => assertEmptyManifestsUnchanged('source structure drift'),
+      });
+      record('real source structure drift blocks seed before its first write', sourceDrift);
+    }
 
     // --------------------------------------------------------------- seeding
     const seeded = await seedSource(cfg, pool);
@@ -434,6 +582,83 @@ async function main(): Promise<void> {
       },
     });
     record('real candidate structure drift blocks up before its first write', candidateDrift);
+
+    if (reject) {
+      // -------------------------------------------------- rejection scenario
+      // Legal out-of-range rows stay in the candidate. Down must refuse before
+      // its first DML, all three schemas keep their complete manifest, and the
+      // fixture is discarded whole afterwards — never "DELETE the new rows and
+      // then down the same candidate".
+      const upResult = await up(cfg, pool);
+      if (upResult.status !== 'copied') throw new Derr('first up was not a copy', upResult);
+      evidence.candidate_manifest = {
+        schema: CANDIDATE_SCHEMA, sha256: upResult.observed.sha256,
+        rows: Object.fromEntries(COPY_ORDER.map(table => [table, upResult.observed.tables[table].length])),
+      };
+      record('up copies the whole aggregate into an empty candidate in one transaction', {
+        sha256: upResult.observed.sha256, rows: upResult.rows,
+      });
+
+      adapterPool = mysql.createPool(poolOptions(credentials));
+      const adapter = new MySqlTemplateRepository(adapterPool);
+      await adapter.create({
+        template_id: 't2b-edge-a', name: 'Edge A', status: 'draft', current_published_version: null,
+        revision: 0, created_by: 2147483648, created_at: '0000-01-01T00:00:00.000Z', updated_at: '0000-01-01T00:00:00.000Z',
+      }, {
+        template_id: 't2b-edge-a', revision: 0, aggregate: {
+          template_id: 't2b-edge-a', base: null, items: [], triggers: [],
+          parameters: { schema: {}, defaults: {} },
+          capabilities: {
+            discovery: { contract_version: '1.0.0', ref: null, executable: false },
+            graphs: { contract_version: '1.0.0', ref: null, executable: false },
+          },
+        }, published_version: null, updated_by: 9007199254740991, updated_at: '0000-01-01T00:00:00.000Z',
+      });
+      const longId = `a.${'b'.repeat(510)}`;
+      await adapter.putItemVersion({
+        template_id: 't2b-edge-a', item_id: 'edge', display_name: 'Edge',
+        canonical_metric: { id: longId, semantic_version: `${'1'.repeat(96)}.0.0` }, unit: 's', dimensions: {},
+        collector_ref: { package_release: `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`, implementation_id: 'builtin:mysql.status.v1' },
+        params_default: {}, source_chain: {
+          actor_id: 1, request_id: 'req-edge', base: null, created_at: '0000-01-01T00:00:00.000Z',
+          published_at: '0000-01-01T00:00:00.000Z', retired_at: null, migration_ref: null,
+        },
+      });
+      const withEdge = await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate');
+      const problems = checkDownRepresentable(withEdge);
+      for (const expected of ['exceeds INT', 'not VARCHAR(128)', 'not VARCHAR(16)', 'precedes DATETIME year 1000']) {
+        if (!problems.some(problem => problem.includes(expected))) {
+          throw new Derr(`out-of-range data did not report ${expected}`, problems);
+        }
+      }
+      const sourceBeforeRefuse = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      const restoreBeforeRefuse = await readManifest(pool2!, RESTORE_SCHEMA, 'restore');
+      const downRefused = await expectDrillError('down-irreversible', () => down(cfg, pool));
+      const afterRefuse = await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate');
+      const sourceAfterRefuse = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      const restoreAfterRefuse = await readManifest(pool2!, RESTORE_SCHEMA, 'restore');
+      if (afterRefuse.sha256 !== withEdge.sha256) throw new Derr('refused down changed the candidate', { withEdge, afterRefuse });
+      if (sourceAfterRefuse.sha256 !== sourceBeforeRefuse.sha256) {
+        throw new Derr('refused down changed the source', { sourceBeforeRefuse, sourceAfterRefuse });
+      }
+      if (restoreAfterRefuse.sha256 !== restoreBeforeRefuse.sha256) {
+        throw new Derr('refused down changed the restore schema', { restoreBeforeRefuse, restoreAfterRefuse });
+      }
+      const retainedRows = Object.fromEntries(COPY_ORDER.map(table =>
+        [table, withEdge.tables[table].filter(row => String(row.template_id).startsWith('t2b-edge-'))]));
+      evidence.rejection = {
+        down_reason: downRefused.reason,
+        problems,
+        manifests: { candidate: withEdge, source: sourceAfterRefuse, restore: restoreAfterRefuse },
+        retained_rows: retainedRows,
+        cleanup: 'fixture discarded whole by env-clean.sh after this scenario; no row-level delete',
+      };
+      record('legal out-of-range rows are refused by down with all three schemas intact and the rows retained', {
+        reason: downRefused.reason, problems, candidate: afterRefuse.sha256,
+        source: sourceAfterRefuse.sha256, restore: restoreAfterRefuse.sha256,
+        retained: Object.fromEntries(COPY_ORDER.map(table => [table, retainedRows[table]!.length])),
+      });
+    } else {
 
     // --------------------------- transaction disposal on the exclusive fixture
     // One writer connection only: a released connection with an open transaction
@@ -670,56 +895,9 @@ async function main(): Promise<void> {
     if (restored.sha256 !== candidateManifest) throw new Derr('candidate manifest did not return to the copied aggregate', restored);
     record('candidate manifest restored after the drift trial', { sha256: restored.sha256 });
 
-    // ------------------------------------- non-representable candidate → down refused
-    const adapter2 = new MySqlTemplateRepository(adapterPool);
-    await adapter2.create({
-      template_id: 't2b-edge-a', name: 'Edge A', status: 'draft', current_published_version: null,
-      revision: 0, created_by: 2147483648, created_at: '0000-01-01T00:00:00.000Z', updated_at: '0000-01-01T00:00:00.000Z',
-    }, {
-      template_id: 't2b-edge-a', revision: 0, aggregate: {
-        template_id: 't2b-edge-a', base: null, items: [], triggers: [],
-        parameters: { schema: {}, defaults: {} },
-        capabilities: {
-          discovery: { contract_version: '1.0.0', ref: null, executable: false },
-          graphs: { contract_version: '1.0.0', ref: null, executable: false },
-        },
-      }, published_version: null, updated_by: 9007199254740991, updated_at: '0000-01-01T00:00:00.000Z',
-    });
-    const longId = `a.${'b'.repeat(510)}`;
-    await adapter2.putItemVersion({
-      template_id: 't2b-edge-a', item_id: 'edge', display_name: 'Edge',
-      canonical_metric: { id: longId, semantic_version: `${'1'.repeat(96)}.0.0` }, unit: 's', dimensions: {},
-      collector_ref: { package_release: `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`, implementation_id: 'builtin:mysql.status.v1' },
-      params_default: {}, source_chain: {
-        actor_id: 1, request_id: 'req-edge', base: null, created_at: '0000-01-01T00:00:00.000Z',
-        published_at: '0000-01-01T00:00:00.000Z', retired_at: null, migration_ref: null,
-      },
-    });
-    const withEdge = await readManifest(pool, CANDIDATE_SCHEMA, 'candidate');
-    const problems = checkDownRepresentable(withEdge);
-    if (problems.length === 0) throw new Derr('non-representable candidate rows were not detected', withEdge);
-    const downRefused = await expectDrillError('down-irreversible', () => down(cfg, pool));
-    const afterRefuse = await readManifest(pool, CANDIDATE_SCHEMA, 'candidate');
-    const sourceAfterRefuse = await readManifest(pool, SOURCE_SCHEMA, 'source');
-    const restoreAfterRefuse = await tableCounts(pool, RESTORE_SCHEMA);
-    if (afterRefuse.sha256 !== withEdge.sha256) throw new Derr('refused down changed the candidate', { withEdge, afterRefuse });
-    if (sourceAfterRefuse.sha256 !== sourceManifestAfterSeed) throw new Derr('refused down changed the source', sourceAfterRefuse);
-    if (JSON.stringify(restoreAfterRefuse) !== JSON.stringify(emptyCounts)) {
-      throw new Derr('refused down wrote into the restore schema', restoreAfterRefuse);
-    }
-    record('candidate rows not representable in DDL 140 make down fail closed', {
-      reason: downRefused.reason, problems, restore: restoreAfterRefuse, candidate: afterRefuse.sha256,
-    });
-
-    // Drill teardown of the injected edge fixture only (explicitly NOT a down/
-    // rollback shortcut; the down path itself never deletes anything).
-    for (const table of ['metric_template_item_versions', 'metric_template_items', 'metric_template_versions',
-      'metric_template_drafts', 'metric_templates_v2']) {
-      await pool.query(`DELETE FROM \`${CANDIDATE_SCHEMA}\`.\`${table}\` WHERE template_id LIKE 't2b-edge-%'`);
-    }
-    const cleaned = await readManifest(pool, CANDIDATE_SCHEMA, 'candidate');
-    if (cleaned.sha256 !== candidateManifest) throw new Derr('edge fixture teardown did not restore the candidate', cleaned);
-    record('injected edge fixture removed; candidate equals the up copy again', { sha256: cleaned.sha256 });
+    // The out-of-range rejection lives in the separate `reject` scenario: this
+    // fixture only ever holds safe old data, so the roundtrip below is a real
+    // down of a representable candidate and never follows a row-level cleanup.
 
     // Real DDL drift on the restore schema: down must reject before its first INSERT.
     const restoreDrift = await structureTrial({
@@ -848,6 +1026,7 @@ async function main(): Promise<void> {
       throw new Derr('final manifests are not the expected three-way result', evidence.final_manifests);
     }
     record('final state verified on the second connection: source intact, candidate copy, restore equal', evidence.final_manifests);
+    }
   } catch (error) {
     const failure = error instanceof DrillError
       ? { reason: error.reason, message: error.message, detail: error.detail }

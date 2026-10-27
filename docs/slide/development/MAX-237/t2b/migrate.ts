@@ -375,10 +375,20 @@ export interface IndexShape {
   columns: { column: string; subPart: number | null }[];
 }
 
+/**
+ * `$self` means "the schema this foreign key lives in". The frozen shapes are
+ * shared by the source/restore (DDL 140) and candidate (T2B) schemas, so each
+ * expected reference is resolved against the schema being compared.
+ */
+export const SELF_SCHEMA = '$self';
+
 export interface ForeignKeyShape {
   columns: string[];
+  referencedSchema: string;
   referencedTable: string;
   referencedColumns: string[];
+  updateRule: string;
+  deleteRule: string;
 }
 
 export interface TableShape {
@@ -405,8 +415,12 @@ const index = (unique: boolean, ...columns: (string | [string, number])[]): Inde
     : { column: entry, subPart: null })),
 });
 
-const foreignKey = (columns: string[], referencedTable: string, referencedColumns: string[]): ForeignKeyShape =>
-  ({ columns, referencedTable, referencedColumns });
+const foreignKey = (
+  columns: string[], referencedTable: string, referencedColumns: string[],
+): ForeignKeyShape => ({
+  columns, referencedSchema: SELF_SCHEMA, referencedTable, referencedColumns,
+  updateRule: 'NO ACTION', deleteRule: 'NO ACTION',
+});
 
 /**
  * The complete frozen structure of DDL 140 as applied to the source and restore
@@ -549,15 +563,29 @@ const FROZEN_T2B: FrozenStructure = {
   },
 };
 
-/** Explicit per-table diff list; empty means the structure is the frozen one. */
-export function diffFrozenStructure(actual: FrozenStructure, expected: FrozenStructure): string[] {
+/**
+ * Explicit per-table diff list; empty means the structure is the frozen one.
+ * `schema` resolves the `SELF_SCHEMA` placeholder on expected foreign keys, so a
+ * reference to another schema (or a same-named table in it) is never mistaken
+ * for the frozen same-schema reference.
+ */
+export function diffFrozenStructure(
+  actual: FrozenStructure, expected: FrozenStructure, schema?: string,
+): string[] {
   const diffs: string[] = [];
   const shapeOfIndex = (value: IndexShape): string =>
     `${value.unique ? 'UNIQUE' : 'INDEX'}(${value.columns
       .map(entry => (entry.subPart === null ? entry.column : `${entry.column}(${entry.subPart})`))
       .join(',')})`;
-  const shapeOfForeignKey = (value: ForeignKeyShape): string =>
-    `(${value.columns.join(',')})->${value.referencedTable}(${value.referencedColumns.join(',')})`;
+  const resolvedForeignKey = (value: ForeignKeyShape): ForeignKeyShape =>
+    (value.referencedSchema === SELF_SCHEMA && schema
+      ? { ...value, referencedSchema: schema }
+      : value);
+  const shapeOfForeignKey = (value: ForeignKeyShape): string => {
+    const key = resolvedForeignKey(value);
+    return `(${key.columns.join(',')})->${key.referencedSchema}.${key.referencedTable}`
+      + `(${key.referencedColumns.join(',')}) ON UPDATE ${key.updateRule} ON DELETE ${key.deleteRule}`;
+  };
   for (const table of COPY_ORDER) {
     const actualTable = actual[table];
     const expectedTable = expected[table];
@@ -604,7 +632,7 @@ export function diffFrozenStructure(actual: FrozenStructure, expected: FrozenStr
       if (!expectedTable.indexes[name]) diffs.push(`${table}.index ${name}: unexpected index`);
     }
     for (const name of Object.keys(expectedTable.foreignKeys)) {
-      const wanted = expectedTable.foreignKeys[name]!;
+      const wanted = resolvedForeignKey(expectedTable.foreignKeys[name]!);
       const found = actualTable.foreignKeys[name];
       if (!found) diffs.push(`${table}.foreign key ${name}: missing`);
       else if (JSON.stringify(found) !== JSON.stringify(wanted)) {
@@ -664,20 +692,29 @@ export async function readSchemaStructure(pool: Pool, schema: string): Promise<F
     table.indexes[row.indexName] = entry;
   }
   const [foreignKeys] = await pool.query(
-    `SELECT TABLE_NAME AS tableName, CONSTRAINT_NAME AS constraintName, COLUMN_NAME AS columnName,
-            REFERENCED_TABLE_NAME AS referencedTable, REFERENCED_COLUMN_NAME AS referencedColumn
-       FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ?
-        AND REFERENCED_TABLE_NAME IS NOT NULL
-       ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`, [schema],
+    `SELECT k.TABLE_NAME AS tableName, k.CONSTRAINT_NAME AS constraintName, k.COLUMN_NAME AS columnName,
+            k.REFERENCED_TABLE_SCHEMA AS referencedSchema, k.REFERENCED_TABLE_NAME AS referencedTable,
+            k.REFERENCED_COLUMN_NAME AS referencedColumn,
+            r.UPDATE_RULE AS updateRule, r.DELETE_RULE AS deleteRule
+       FROM information_schema.KEY_COLUMN_USAGE k
+       JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+         ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+        AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+        AND r.TABLE_NAME = k.TABLE_NAME
+      WHERE k.TABLE_SCHEMA = ?
+        AND k.REFERENCED_TABLE_NAME IS NOT NULL
+      ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION`, [schema],
   );
   for (const row of foreignKeys as {
     tableName: string; constraintName: string; columnName: string;
-    referencedTable: string; referencedColumn: string;
+    referencedSchema: string; referencedTable: string; referencedColumn: string;
+    updateRule: string; deleteRule: string;
   }[]) {
     const table = shape[row.tableName as Table];
     if (!table) continue;
     const entry = table.foreignKeys[row.constraintName] ?? {
-      columns: [], referencedTable: row.referencedTable, referencedColumns: [],
+      columns: [], referencedSchema: row.referencedSchema, referencedTable: row.referencedTable,
+      referencedColumns: [], updateRule: row.updateRule, deleteRule: row.deleteRule,
     };
     entry.columns.push(row.columnName);
     entry.referencedColumns.push(row.referencedColumn);
@@ -723,7 +760,7 @@ export async function verifyLiveFixture(pool: Pool, cfg: DrillConfig): Promise<v
     [CANDIDATE_SCHEMA, 'candidate', FROZEN_T2B],
     [RESTORE_SCHEMA, 'restore', FROZEN_140],
   ] as const) {
-    const diffs = diffFrozenStructure(await readSchemaStructure(pool, schema), frozen);
+    const diffs = diffFrozenStructure(await readSchemaStructure(pool, schema), frozen, schema);
     if (diffs.length > 0) {
       throw new DrillError('structure-drift',
         `${label} schema ${schema} does not match its frozen structure`, {

@@ -1,0 +1,6 @@
+# fresh absence after reject fixture cleanup (265b545d9a15ba3604509b5cef0af4785ef7b5c2f9976a2329702a6c8babe260)
+containers by owner label: 
+volumes by owner label: 
+recorded container: absent
+recorded volume: absent
+state dir: absent
