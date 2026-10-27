@@ -1,0 +1,77 @@
+{
+  "source_root": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-8dbc6390a0a1/worktree",
+  "results": [
+    {
+      "id": "R1-schema-object-reuse",
+      "pass": true,
+      "evidence": "same imported schema objects"
+    },
+    {
+      "id": "R2-unit-semantic-version-and-ordinary-dimensions",
+      "pass": true,
+      "evidence": "all three rejected"
+    },
+    {
+      "id": "R2-empty-dimension-key-must-not-continue-published-identity",
+      "pass": true,
+      "evidence": "TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE"
+    },
+    {
+      "id": "R2-comma-key-set-collision-must-reject",
+      "pass": true,
+      "evidence": "tpl-51aa184d6e714743"
+    },
+    {
+      "id": "R2-empty-key-race-must-have-only-one-winner",
+      "pass": true,
+      "evidence": "one winner"
+    },
+    {
+      "id": "R3-number-positive-and-negative",
+      "pass": true,
+      "evidence": {
+        "valid": 2.5,
+        "rejected": [
+          true,
+          "2.5"
+        ]
+      }
+    },
+    {
+      "id": "R3-integer-positive-and-negative",
+      "pass": true,
+      "evidence": {
+        "valid": 2,
+        "rejected": [
+          2.5,
+          false,
+          "2"
+        ]
+      }
+    },
+    {
+      "id": "R3-boolean-positive-and-negative",
+      "pass": true,
+      "evidence": {
+        "valid": true,
+        "rejected": [
+          0,
+          1,
+          "true"
+        ]
+      }
+    },
+    {
+      "id": "R3-string-positive-and-negative",
+      "pass": true,
+      "evidence": {
+        "valid": "yes",
+        "rejected": [
+          0,
+          1,
+          true
+        ]
+      }
+    }
+  ]
+}

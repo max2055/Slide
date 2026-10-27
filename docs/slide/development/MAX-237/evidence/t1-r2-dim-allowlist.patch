@@ -1,0 +1,166 @@
+diff --git a/apps/db-ops-api/src/metrics/templates/repository.test.ts b/apps/db-ops-api/src/metrics/templates/repository.test.ts
+index 0ee3f71b8..fddb5d3ed 100644
+--- a/apps/db-ops-api/src/metrics/templates/repository.test.ts
++++ b/apps/db-ops-api/src/metrics/templates/repository.test.ts
+@@ -154,6 +154,63 @@ describe('in-memory template repository', () => {
+     expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
+   });
+ 
++  it('compares dimension key sets without delimiter collisions', async () => {
++    const repository = new InMemoryTemplateRepository();
++    await repository.create(template(), draft());
++    const base = {
++      template_id: 'tpl-a', display_name: 'Uptime', canonical_metric: item().canonical_metric,
++      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
++    };
++    // No dimensions and one empty key are different key sets even though both join to ''.
++    await repository.putItemVersion({ ...base, item_id: 'empty', dimensions: {} });
++    expect(await code(repository.putItemVersion({ ...base, item_id: 'empty', dimensions: { '': 'unexpected dimension' } })))
++      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
++    // One key containing a comma is not the two-key set it serializes to.
++    await repository.putItemVersion({ ...base, item_id: 'comma', dimensions: { 'db,host': 'one dimension' } });
++    expect(await code(repository.putItemVersion({ ...base, item_id: 'comma', dimensions: { db: 'database', host: 'host' } })))
++      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
++    // The same key set in another order keeps the identity (and is identical content).
++    await repository.putItemVersion({ ...base, item_id: 'ordered', dimensions: { db: 'database', host: 'host' } });
++    const reordered = await repository.putItemVersion({
++      ...base, item_id: 'ordered', dimensions: { host: 'host', db: 'database' },
++    });
++    expect(reordered.reused).toBe(true);
++    expect(reordered.item.version).toBe(1);
++  });
++
++  it('lets exactly one racing first write with colliding key sets win', async () => {
++    const repository = new InMemoryTemplateRepository();
++    await repository.create(template(), draft());
++    const base = {
++      template_id: 'tpl-a', item_id: 'race', display_name: 'Uptime', canonical_metric: item().canonical_metric,
++      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
++    };
++    const outcomes = await Promise.allSettled([
++      repository.putItemVersion({ ...base, dimensions: {} }),
++      repository.putItemVersion({ ...base, dimensions: { '': 'unexpected dimension' } }),
++    ]);
++    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
++    const rejected = outcomes.find(result => result.status === 'rejected') as PromiseRejectedResult;
++    expect((rejected.reason as TemplateError).code).toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
++    expect((await repository.latestItemVersions('tpl-a')).map(entry => entry.version)).toEqual([1]);
++  });
++
++  it('keeps a published snapshot unchanged when an incompatible key set is rejected', async () => {
++    const repository = new InMemoryTemplateRepository();
++    await repository.create(template(), draft());
++    const base = {
++      template_id: 'tpl-a', item_id: 'uptime', display_name: 'Uptime', canonical_metric: item().canonical_metric,
++      unit: 's' as const, collector_ref: item().collector_ref, params_default: {}, source_chain: chain(),
++    };
++    await repository.putItemVersion({ ...base, dimensions: {} });
++    await repository.publish(command());
++    const snapshot = await repository.getVersion('tpl-a', 1);
++    expect(await code(repository.putItemVersion({ ...base, dimensions: { '': 'unexpected dimension' } })))
++      .toBe('TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE');
++    expect(await repository.getVersion('tpl-a', 1)).toEqual(snapshot);
++    expect((await repository.getTemplate('tpl-a'))!.current_published_version).toBe(1);
++  });
++
+   it('publishes v1, treats identical content as a no-op and never rewrites a version', async () => {
+     const repository = new InMemoryTemplateRepository();
+     await repository.create(template(), draft());
+diff --git a/apps/db-ops-api/src/metrics/templates/repository.ts b/apps/db-ops-api/src/metrics/templates/repository.ts
+index c33a987c0..6840f4354 100644
+--- a/apps/db-ops-api/src/metrics/templates/repository.ts
++++ b/apps/db-ops-api/src/metrics/templates/repository.ts
+@@ -136,14 +136,21 @@ const itemContent = (item: Omit<ItemVersionInput, 'source_chain'>): string => st
+  * things publish re-checks against the canonical definition. A display rename, a
+  * default-parameter change or a compatible implementation pin update keep it.
+  */
++const sameDimensionKeys = (left: Record<string, string>, right: Record<string, string>): boolean => {
++  const a = Object.keys(left).sort(), b = Object.keys(right).sort();
++  return a.length === b.length && a.every((key, index) => key === b[index]);
++};
++
+ const identityConflict = (latest: TemplateItemVersion, next: Omit<ItemVersionInput, 'source_chain'>): string | null => {
+   const before = canonicalKey(latest.canonical_metric);
+   const after = canonicalKey(next.canonical_metric);
+   if (before !== after) return `canonical metric ${before} → ${after}`;
+   if (latest.unit !== next.unit) return `unit ${latest.unit} → ${next.unit}`;
+-  const declared = Object.keys(latest.dimensions).sort().join(',');
+-  const incoming = Object.keys(next.dimensions).sort().join(',');
+-  if (declared !== incoming) return `dimensions [${declared}] → [${incoming}]`;
++  if (!sameDimensionKeys(latest.dimensions, next.dimensions)) {
++    const declared = Object.keys(latest.dimensions).sort().join(',');
++    const incoming = Object.keys(next.dimensions).sort().join(',');
++    return `dimensions [${declared}] → [${incoming}]`;
++  }
+   return null;
+ };
+ 
+diff --git a/apps/db-ops-api/src/metrics/templates/service.test.ts b/apps/db-ops-api/src/metrics/templates/service.test.ts
+index 229040556..eaeba9b7e 100644
+--- a/apps/db-ops-api/src/metrics/templates/service.test.ts
++++ b/apps/db-ops-api/src/metrics/templates/service.test.ts
+@@ -381,6 +381,44 @@ describe('publish rejections', () => {
+       .toBe('TEMPLATE_DIMENSIONS_MISMATCH');
+   });
+ 
++  it('rejects an empty dimension key when publish re-validates the stored item', async () => {
++    const { service, repository } = setup();
++    const created = await service.create(manager(), { name: 'Empty dimension key' });
++    const stored = await repository.putItemVersion(hostileItem(created.template_id, {
++      dimensions: { '': 'unexpected dimension' },
++    }));
++    await service.updateDraft(manager(), created.template_id, {
++      expected_draft_revision: 0,
++      aggregate: { ...emptyDraftAggregate(created.template_id), items: [{ item_id: 'uptime', version: stored.item.version }] },
++    });
++    expect(await code(service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 })))
++      .toBe('TEMPLATE_DIMENSIONS_MISMATCH');
++    expect(await repository.listVersions(created.template_id)).toEqual([]);
++  });
++
++  it('accepts the same dimension key set in another order at publish', async () => {
++    const { service, repository } = setup();
++    const created = await service.create(manager(), { name: 'Ordered dimensions' });
++    const linux = builtinReleases().find(release => release.package.id === 'linux-host')!;
++    const stored = await repository.putItemVersion(hostileItem(created.template_id, {
++      item_id: 'filesystem',
++      canonical_metric: { id: 'host.filesystem.used_bytes', semantic_version: '1.0.0' },
++      unit: 'By',
++      dimensions: { fs_type: 'file system type', mount: 'mount point', device: 'device name' },
++      collector_ref: {
++        package_release: `${linux.package.id}@${linux.package.version}#${linux.package.digest}`,
++        implementation_id: 'builtin:linux.filesystem.v1',
++      },
++    }));
++    await service.updateDraft(manager(), created.template_id, {
++      expected_draft_revision: 0,
++      aggregate: { ...emptyDraftAggregate(created.template_id), items: [{ item_id: 'filesystem', version: stored.item.version }] },
++    });
++    const published = await service.publish(manager(), created.template_id, { expected_draft_revision: 1, expected_revision: 0 });
++    expect(published.version).toBe(1);
++    expect(await repository.listVersions(created.template_id)).toHaveLength(1);
++  });
++
+   it('rejects a missing implementation pin and an uninstalled release', async () => {
+     const { service, repository } = setup();
+     const created = await service.create(manager(), { name: 'Mapping' });
+diff --git a/apps/db-ops-api/src/metrics/templates/service.ts b/apps/db-ops-api/src/metrics/templates/service.ts
+index ce4234daa..38d134a9d 100644
+--- a/apps/db-ops-api/src/metrics/templates/service.ts
++++ b/apps/db-ops-api/src/metrics/templates/service.ts
+@@ -491,11 +491,11 @@ export class MetricTemplateService {
+         throw new TemplateError('TEMPLATE_UNIT_MISMATCH',
+           `item ${item.item_id} declares unit ${item.unit}, ${canonicalKey(item.canonical_metric)} is ${candidate.unit}`);
+       }
+-      const declared = Object.keys(item.dimensions).sort().join(',');
+-      const expected = candidate.dimensions.map(dimension => dimension.name).sort().join(',');
+-      if (declared !== expected) {
++      const declared = Object.keys(item.dimensions).sort();
++      const expected = candidate.dimensions.map(dimension => dimension.name).sort();
++      if (declared.length !== expected.length || declared.some((key, index) => key !== expected[index])) {
+         throw new TemplateError('TEMPLATE_DIMENSIONS_MISMATCH',
+-          `item ${item.item_id} declares dimensions [${declared}], ${canonicalKey(item.canonical_metric)} has [${expected}]`);
++          `item ${item.item_id} declares dimensions [${declared.join(',')}], ${canonicalKey(item.canonical_metric)} has [${expected.join(',')}]`);
+       }
+       this.validateItemParameters(item, aggregate);
+       resolved.push({ item, candidate });

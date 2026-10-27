@@ -14,6 +14,8 @@
 
 > 2026-10-27 补修：Chief 终态复审（`e91b79c84:docs/slide/development/MAX-237/reviews/chief-t1-review-20261027.md`）
 > 要求的有界补修 R1–R3 已完成，见 §9。整单仍 `in_progress`。
+>
+> 2026-10-27 R2-DIM：Chief 复审 `ce8880552` 指出的维度键集合字符串碰撞已按新接续决定补修，见 §10。整单仍 `in_progress`。
 
 ## 1. 实际 base / HEAD / 变更面
 
@@ -23,6 +25,7 @@
 | 交付 base | `06cca0ca8d522f433cd035f14b597d983514bde3` |
 | 本包代码提交 | `ac9270324`（9 个新增文件，未修改任何既有文件） |
 | R1–R3 补修提交 | `ed501a077`（新增 1 个逐字节提取文件 + 修改本包 6 个文件，仍不触碰任何其他产品文件），见 §9 |
+| R2-DIM 补修提交 | `98c6be04b`（仅 2 个实现 + 2 个现有测试），见 §10 |
 | 输入基线（只读，不合并） | `afa5b3d25d1bf4f72d017a8cf6a952d7591356b0`：`MAX-236/08`、`MAX-236/14`、候选 `apps/db-ops-api/src/contracts/metrics/templates.ts` |
 | 未改 | `contracts/metrics/{definitions,index,observations,configuration,validation,schema,public-api,fixtures,export,bulk,configuration-status}.ts`、`public-api.ts`、`server.ts`、`routes.ts`、`policy/**`、`packages/**`（只导入）、SQL/迁移、前端、`docs/slide/development/MAX-236/**` |
 
@@ -38,8 +41,9 @@
 | `apps/db-ops-api/src/metrics/templates/repository.test.ts` | 177 | `87715b2304bbe90cac8fbf358ff12e80200777a8926a613a67e0c8833ec051d9` |
 | `apps/db-ops-api/src/metrics/templates/service.test.ts` | 478 | `a62c7fb48e222b83f4d2d42207e60c2d0b58fe9b4e4d6883788a6059cea6ca2c` |
 
-机器可读证据见 [evidence/t1-internal-template-domain.json](evidence/t1-internal-template-domain.json)（原始交付）
-与 [evidence/t1-r1-r3-correction.json](evidence/t1-r1-r3-correction.json)（R1–R3 补修）。
+机器可读证据见 [evidence/t1-internal-template-domain.json](evidence/t1-internal-template-domain.json)（原始交付）、
+[evidence/t1-r1-r3-correction.json](evidence/t1-r1-r3-correction.json)（R1–R3 补修）与
+[evidence/t1-r2-dim-correction.json](evidence/t1-r2-dim-correction.json)（R2-DIM 补修）。
 
 ## 2. D1 子集字段对照
 
@@ -254,3 +258,67 @@ focused 覆盖：注册能力选择与自动带入、derived/退役/未注册/�
 
 R1–R3 只闭合复审提出的三项缺陷。§7 的缺口清单（持久化 adapter/迁移/真实事务、base 继承、derived 选择、触发器执行、
 绑定/多 pin、历史查询、路由/UI、真实三类模板与速率/未知边界、共享读取与凭据隔离）全部不变，整单保持 `in_progress`。
+
+## 10. R2-DIM 有界补修（提交 `98c6be04b`）
+
+依据：接续决定 `87e70ae3c:docs/slide/development/MAX-235/continuation-v4-20261027.md`（成员评论 `01a17b67-…`）与
+Chief 复审 `ce8880552:docs/slide/development/MAX-237/reviews/chief-t1-correction-review-20261027.md` 的 R2-DIM 残留。
+只改维度**键集合**比较，不重做已接受的 R1/R3，不改 schema、错误码、canonical/unit 守卫、DB/DDL、公共导出、路由/运行时/前端，沿用 PR #390 不合并。
+
+- 准确基点：`662714321d0b39e303131de9d2eee155dc7150ec`。
+- 产品补修提交：`98c6be04b`（4 个文件：2 个实现 + 2 个现有测试；允许清单外零修改）。
+- 根因：两处都把排序后的键 `join(',')` 再比较字符串，导致 `{}` 与 `{'': …}` 都序列化为 `''`、
+  `{'db,host'}` 与 `{db, host}` 都序列化为 `db,host`。
+
+### 10.1 改动
+
+| 位置 | 改动 |
+|---|---|
+| `repository.ts` | 新增 `sameDimensionKeys`：两侧 `Object.keys(...).sort()` 后逐项比较长度与每个键；`identityConflict` 改用它（仍挂在条件追加内） |
+| `service.ts` | `resolveItems` 把声明的维度键与 canonical 维度名各自排序后逐项比较，不再拼接字符串 |
+
+保留：`TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE` / `TEMPLATE_DIMENSIONS_MISMATCH` 及 422 语义、`DimensionsSchema`
+（仍允许空键/逗号键，不靠禁 schema 规避）、canonical 指标与 unit 守卫、键顺序无关。
+
+### 10.2 反例与证据
+
+| 输入/路径 | 结果 |
+|---|---|
+| 已发布 item v1 `{}`，同 item 追加 `{'': 'unexpected dimension'}` | 仓库条件追加拒绝 `TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE`；直接存入空键 item 时发布重校验拒绝 `TEMPLATE_DIMENSIONS_MISMATCH`；v1 快照不变 |
+| 同 item 先 `{'db,host': …}`，后 `{db, host}` | 拒绝（不再是同一键集合） |
+| 同一键集合、不同插入顺序 | 兼容（内容相同则复用 v1，不追加） |
+| 同一新 item 并发写 `{}` 与 `{'': …}` | 恰好一胜一拒，仅存 v1 |
+
+Chief 三条失败探针（`reviews/chief-correction-boundary-probes-20261027.ts`，`ce8880552`）对本 HEAD 重跑：
+**9/9 pass，exit 0**，输出见 `evidence/t1-r2-dim-boundary-probes.json`。
+
+### 10.3 验证（绑定 `98c6be04b`）
+
+| 命令（cwd `apps/db-ops-api`，除注明外） | 结果 |
+|---|---|
+| `npx vitest run src/metrics/templates` | **46 passed / 46**（catalog 6、repository 13、service 27；补修前 41） |
+| `npx vitest run src/metrics` | **47 文件通过 / 24 跳过；488 passed / 121 skipped**（补修前 483/121） |
+| `npx tsc --noEmit` | 退出码 0，无诊断 |
+| `npx oxlint apps/db-ops-api/src/metrics/templates`（cwd 仓库根） | 0 warning / 0 error |
+
+`contracts:check` 未重跑：本包未触碰任何 contract/public-export 文件，R1 的逐字节复用证据不变。
+跳过的套件是需要真实后端的用例，不当作通过；内存仓库仍只是测试替身，不冒充持久化/多进程安全。
+
+### 10.4 文件与允许清单
+
+允许清单 patch：`evidence/t1-r2-dim-allowlist.patch`（10 214 bytes，sha256 `43a0282859680528b0ba87c1e91cb098b383773fcda8e985a86074db666f3855`）。
+
+| 文件 | 行数 | sha256 |
+|---|---|---|
+| `apps/db-ops-api/src/metrics/templates/repository.ts` | 359 | `8399f2222973b7c91d76bd232d3c24ee8e49a59844820671b67d5a249d864bdb` |
+| `apps/db-ops-api/src/metrics/templates/service.ts` | 591 | `d7060b6ca4dc7c436fb4e120eb3c2baed687bae2f2186e7771af65445e77809d` |
+| `apps/db-ops-api/src/metrics/templates/repository.test.ts` | 286 | `a303d1a7e331839baccf7f6a3cf712f53553fc364c1917f55c6a7c9684ac2d57` |
+| `apps/db-ops-api/src/metrics/templates/service.test.ts` | 649 | `fc3d89daf4854f8a3ad96d303f0d4af467827555bbb9995719ab34a2f644984d` |
+
+`model.ts`、`errors.ts`、`catalog.ts`、`index.ts`、`catalog.test.ts` 与提取的 `contracts/metrics/templates.ts` 均未改（hash 与 §9.4 一致）。
+
+### 10.5 仍然缺的（不得当成完成）
+
+R2-DIM 只闭合维度键集合比较缺陷。§7 的缺口与 §8 的六项验收状态全部不变：持久化 adapter/迁移/真实事务、base 继承、
+derived 选择、触发器执行、绑定/多 pin、历史查询、路由/UI、真实三类模板与速率/未知边界、共享读取与凭据隔离仍待后续包。
+整单保持 `in_progress`，本文件不构成 T1 或原 Issue 的最终接受。
