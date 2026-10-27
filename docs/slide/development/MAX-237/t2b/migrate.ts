@@ -361,37 +361,335 @@ const isEmpty = (counts: Record<Table, number>): boolean => Object.values(counts
 
 // ------------------------------------------------------------- live fixture
 
-const CANDIDATE_COLUMN_TYPES: Record<Table, Record<string, string>> = {
+// --------------------------------------------------------- frozen structure
+
+export interface ColumnShape {
+  type: string;
+  nullable: 'YES' | 'NO';
+  charset: string | null;
+  collation: string | null;
+}
+
+export interface IndexShape {
+  unique: boolean;
+  columns: { column: string; subPart: number | null }[];
+}
+
+export interface ForeignKeyShape {
+  columns: string[];
+  referencedTable: string;
+  referencedColumns: string[];
+}
+
+export interface TableShape {
+  engine: string;
+  collation: string;
+  columns: Record<string, ColumnShape>;
+  indexes: Record<string, IndexShape>;
+  foreignKeys: Record<string, ForeignKeyShape>;
+}
+
+export type FrozenStructure = Record<Table, TableShape>;
+
+const text = (type: string, nullable = false): ColumnShape =>
+  ({ type, nullable: nullable ? 'YES' : 'NO', charset: 'utf8mb4', collation: 'utf8mb4_bin' });
+const plain = (type: string, nullable = false): ColumnShape =>
+  ({ type, nullable: nullable ? 'YES' : 'NO', charset: null, collation: null });
+const ascii = (type: string, nullable = false): ColumnShape =>
+  ({ type, nullable: nullable ? 'YES' : 'NO', charset: 'ascii', collation: 'ascii_bin' });
+
+const index = (unique: boolean, ...columns: (string | [string, number])[]): IndexShape => ({
+  unique,
+  columns: columns.map(entry => (Array.isArray(entry)
+    ? { column: entry[0], subPart: entry[1] }
+    : { column: entry, subPart: null })),
+});
+
+const foreignKey = (columns: string[], referencedTable: string, referencedColumns: string[]): ForeignKeyShape =>
+  ({ columns, referencedTable, referencedColumns });
+
+/**
+ * The complete frozen structure of DDL 140 as applied to the source and restore
+ * schemas. This is an explicit comparison list, not a generic migration
+ * registry: columns (type/nullability/charset), engine, PK/unique indexes,
+ * query indexes and foreign keys.
+ */
+const FROZEN_140: FrozenStructure = {
   metric_templates_v2: {
-    template_id: 'varchar(64)', name: 'varchar(128)',
-    status: "enum('draft','active','deprecated','archived')",
-    current_published_version: 'int', revision: 'int', created_by: 'bigint unsigned',
-    created_at: 'char(24)', updated_at: 'char(24)',
+    engine: 'InnoDB', collation: 'utf8mb4_bin',
+    columns: {
+      template_id: text('varchar(64)'),
+      name: text('varchar(128)'),
+      status: text("enum('draft','active','deprecated','archived')"),
+      current_published_version: plain('int', true),
+      revision: plain('int'),
+      created_by: plain('int', true),
+      created_at: plain('datetime(3)'),
+      updated_at: plain('datetime(3)'),
+    },
+    indexes: { PRIMARY: index(true, 'template_id'), idx_status: index(false, 'status') },
+    foreignKeys: {},
   },
   metric_template_drafts: {
-    template_id: 'varchar(64)', revision: 'int', aggregate: 'json', published_version: 'int',
-    updated_by: 'bigint unsigned', updated_at: 'char(24)',
+    engine: 'InnoDB', collation: 'utf8mb4_bin',
+    columns: {
+      template_id: text('varchar(64)'),
+      revision: plain('int'),
+      aggregate: plain('json'),
+      published_version: plain('int', true),
+      updated_by: plain('int', true),
+      updated_at: plain('datetime(3)'),
+    },
+    indexes: { PRIMARY: index(true, 'template_id') },
+    foreignKeys: { fk_draft_template: foreignKey(['template_id'], 'metric_templates_v2', ['template_id']) },
   },
   metric_template_items: {
-    template_id: 'varchar(64)', item_id: 'varchar(64)',
-    status: "enum('active','archived')", created_at: 'char(24)',
+    engine: 'InnoDB', collation: 'utf8mb4_bin',
+    columns: {
+      template_id: text('varchar(64)'),
+      item_id: text('varchar(64)'),
+      status: text("enum('active','archived')"),
+      created_at: plain('datetime(3)'),
+    },
+    indexes: { PRIMARY: index(true, 'template_id', 'item_id') },
+    foreignKeys: { fk_ti_template: foreignKey(['template_id'], 'metric_templates_v2', ['template_id']) },
   },
   metric_template_item_versions: {
-    template_id: 'varchar(64)', item_id: 'varchar(64)', version: 'int', display_name: 'varchar(128)',
-    canonical_metric_id: 'longtext', canonical_semantic_version: 'longtext', unit: 'varchar(32)',
-    dimensions: 'json', collector_ref: 'json', params_default: 'json', source_chain: 'json',
+    engine: 'InnoDB', collation: 'utf8mb4_bin',
+    columns: {
+      template_id: text('varchar(64)'),
+      item_id: text('varchar(64)'),
+      version: plain('int'),
+      display_name: text('varchar(128)'),
+      canonical_metric_id: text('varchar(128)'),
+      canonical_semantic_version: text('varchar(16)'),
+      unit: text('varchar(32)'),
+      dimensions: plain('json'),
+      collector_ref: plain('json'),
+      params_default: plain('json'),
+      source_chain: plain('json'),
+    },
+    indexes: {
+      PRIMARY: index(true, 'template_id', 'item_id', 'version'),
+      idx_canonical: index(false, 'canonical_metric_id', 'canonical_semantic_version'),
+    },
+    foreignKeys: {
+      fk_tiv_item: foreignKey(['template_id', 'item_id'], 'metric_template_items', ['template_id', 'item_id']),
+    },
   },
   metric_template_versions: {
-    template_id: 'varchar(64)', version: 'int', status: "enum('published','retired')",
-    content_hash: 'char(71)', aggregate: 'json', items: 'json', package_composition: 'json',
-    source_chain: 'json', published_at: 'char(24)', retired_at: 'char(24)',
+    engine: 'InnoDB', collation: 'utf8mb4_bin',
+    columns: {
+      template_id: text('varchar(64)'),
+      version: plain('int'),
+      status: text("enum('published','retired')"),
+      content_hash: text('char(71)'),
+      aggregate: plain('json'),
+      items: plain('json'),
+      package_composition: plain('json'),
+      source_chain: plain('json'),
+      published_at: plain('datetime(3)'),
+      retired_at: plain('datetime(3)', true),
+    },
+    indexes: {
+      PRIMARY: index(true, 'template_id', 'version'),
+      uk_content: index(true, 'template_id', 'content_hash'),
+    },
+    foreignKeys: { fk_tv_template: foreignKey(['template_id'], 'metric_templates_v2', ['template_id']) },
   },
 };
 
+/** DDL 140 with only the admitted T2B column/index representation differences. */
+const FROZEN_T2B: FrozenStructure = {
+  metric_templates_v2: {
+    ...FROZEN_140.metric_templates_v2,
+    columns: {
+      ...FROZEN_140.metric_templates_v2.columns,
+      created_by: plain('bigint unsigned', true),
+      created_at: ascii('char(24)'),
+      updated_at: ascii('char(24)'),
+    },
+  },
+  metric_template_drafts: {
+    ...FROZEN_140.metric_template_drafts,
+    columns: {
+      ...FROZEN_140.metric_template_drafts.columns,
+      updated_by: plain('bigint unsigned', true),
+      updated_at: ascii('char(24)'),
+    },
+  },
+  metric_template_items: {
+    ...FROZEN_140.metric_template_items,
+    columns: {
+      ...FROZEN_140.metric_template_items.columns,
+      created_at: ascii('char(24)'),
+    },
+  },
+  metric_template_item_versions: {
+    ...FROZEN_140.metric_template_item_versions,
+    columns: {
+      ...FROZEN_140.metric_template_item_versions.columns,
+      canonical_metric_id: ascii('longtext'),
+      canonical_semantic_version: ascii('longtext'),
+    },
+    indexes: {
+      PRIMARY: index(true, 'template_id', 'item_id', 'version'),
+      // Query acceleration only: non-unique prefix index, never an identity key.
+      idx_canonical: index(false,
+        ['canonical_metric_id', 128], ['canonical_semantic_version', 16]),
+    },
+  },
+  metric_template_versions: {
+    ...FROZEN_140.metric_template_versions,
+    columns: {
+      ...FROZEN_140.metric_template_versions.columns,
+      published_at: ascii('char(24)'),
+      retired_at: ascii('char(24)', true),
+    },
+  },
+};
+
+/** Explicit per-table diff list; empty means the structure is the frozen one. */
+export function diffFrozenStructure(actual: FrozenStructure, expected: FrozenStructure): string[] {
+  const diffs: string[] = [];
+  const shapeOfIndex = (value: IndexShape): string =>
+    `${value.unique ? 'UNIQUE' : 'INDEX'}(${value.columns
+      .map(entry => (entry.subPart === null ? entry.column : `${entry.column}(${entry.subPart})`))
+      .join(',')})`;
+  const shapeOfForeignKey = (value: ForeignKeyShape): string =>
+    `(${value.columns.join(',')})->${value.referencedTable}(${value.referencedColumns.join(',')})`;
+  for (const table of COPY_ORDER) {
+    const actualTable = actual[table];
+    const expectedTable = expected[table];
+    if (!actualTable) {
+      diffs.push(`${table}: table is missing`);
+      continue;
+    }
+    if (actualTable.engine !== expectedTable.engine) {
+      diffs.push(`${table}.engine: ${actualTable.engine} != ${expectedTable.engine}`);
+    }
+    if (actualTable.collation !== expectedTable.collation) {
+      diffs.push(`${table}.collation: ${actualTable.collation} != ${expectedTable.collation}`);
+    }
+    for (const column of Object.keys(expectedTable.columns)) {
+      const wanted = expectedTable.columns[column]!;
+      const found = actualTable.columns[column];
+      if (!found) {
+        diffs.push(`${table}.${column}: column is missing`);
+        continue;
+      }
+      if (found.type !== wanted.type) diffs.push(`${table}.${column}.type: ${found.type} != ${wanted.type}`);
+      if (found.nullable !== wanted.nullable) {
+        diffs.push(`${table}.${column}.nullable: ${found.nullable} != ${wanted.nullable}`);
+      }
+      if (found.charset !== wanted.charset) {
+        diffs.push(`${table}.${column}.charset: ${found.charset} != ${wanted.charset}`);
+      }
+      if (found.collation !== wanted.collation) {
+        diffs.push(`${table}.${column}.collation: ${found.collation} != ${wanted.collation}`);
+      }
+    }
+    for (const column of Object.keys(actualTable.columns)) {
+      if (!expectedTable.columns[column]) diffs.push(`${table}.${column}: unexpected column`);
+    }
+    for (const name of Object.keys(expectedTable.indexes)) {
+      const wanted = expectedTable.indexes[name]!;
+      const found = actualTable.indexes[name];
+      if (!found) diffs.push(`${table}.index ${name}: index is missing`);
+      else if (JSON.stringify(found) !== JSON.stringify(wanted)) {
+        diffs.push(`${table}.index ${name}: ${shapeOfIndex(found)} != ${shapeOfIndex(wanted)}`);
+      }
+    }
+    for (const name of Object.keys(actualTable.indexes)) {
+      if (!expectedTable.indexes[name]) diffs.push(`${table}.index ${name}: unexpected index`);
+    }
+    for (const name of Object.keys(expectedTable.foreignKeys)) {
+      const wanted = expectedTable.foreignKeys[name]!;
+      const found = actualTable.foreignKeys[name];
+      if (!found) diffs.push(`${table}.foreign key ${name}: missing`);
+      else if (JSON.stringify(found) !== JSON.stringify(wanted)) {
+        diffs.push(`${table}.foreign key ${name}: ${shapeOfForeignKey(found)} != ${shapeOfForeignKey(wanted)}`);
+      }
+    }
+    for (const name of Object.keys(actualTable.foreignKeys)) {
+      if (!expectedTable.foreignKeys[name]) diffs.push(`${table}.foreign key ${name}: unexpected`);
+    }
+  }
+  return diffs;
+}
+
+/** Read-only structure snapshot from information_schema. */
+export async function readSchemaStructure(pool: Pool, schema: string): Promise<FrozenStructure> {
+  const shape = Object.fromEntries(COPY_ORDER.map(table => [table, {
+    engine: '', collation: '', columns: {}, indexes: {}, foreignKeys: {},
+  }])) as unknown as FrozenStructure;
+  const [tables] = await pool.query(
+    'SELECT TABLE_NAME AS name, ENGINE AS engine, TABLE_COLLATION AS collationName FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?', [schema],
+  );
+  for (const row of tables as { name: string; engine: string | null; collationName: string | null }[]) {
+    if (shape[row.name as Table]) {
+      shape[row.name as Table].engine = row.engine ?? '';
+      shape[row.name as Table].collation = row.collationName ?? '';
+    }
+  }
+  const [columns] = await pool.query(
+    `SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName, COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS nullable, CHARACTER_SET_NAME AS characterSet, COLLATION_NAME AS collationName
+       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION`, [schema],
+  );
+  for (const row of columns as {
+    tableName: string; columnName: string; columnType: string; nullable: 'YES' | 'NO';
+    characterSet: string | null; collationName: string | null;
+  }[]) {
+    const table = shape[row.tableName as Table];
+    if (!table) continue;
+    table.columns[row.columnName] = {
+      type: row.columnType, nullable: row.nullable,
+      charset: row.characterSet, collation: row.collationName,
+    };
+  }
+  const [indexes] = await pool.query(
+    `SELECT TABLE_NAME AS tableName, INDEX_NAME AS indexName, NON_UNIQUE AS nonUnique,
+            COLUMN_NAME AS columnName, SUB_PART AS subPart
+       FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ?
+       ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`, [schema],
+  );
+  for (const row of indexes as {
+    tableName: string; indexName: string; nonUnique: number; columnName: string; subPart: number | null;
+  }[]) {
+    const table = shape[row.tableName as Table];
+    if (!table) continue;
+    const entry = table.indexes[row.indexName] ?? { unique: row.nonUnique === 0, columns: [] };
+    entry.columns.push({ column: row.columnName, subPart: row.subPart === null ? null : Number(row.subPart) });
+    table.indexes[row.indexName] = entry;
+  }
+  const [foreignKeys] = await pool.query(
+    `SELECT TABLE_NAME AS tableName, CONSTRAINT_NAME AS constraintName, COLUMN_NAME AS columnName,
+            REFERENCED_TABLE_NAME AS referencedTable, REFERENCED_COLUMN_NAME AS referencedColumn
+       FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ?
+        AND REFERENCED_TABLE_NAME IS NOT NULL
+       ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`, [schema],
+  );
+  for (const row of foreignKeys as {
+    tableName: string; constraintName: string; columnName: string;
+    referencedTable: string; referencedColumn: string;
+  }[]) {
+    const table = shape[row.tableName as Table];
+    if (!table) continue;
+    const entry = table.foreignKeys[row.constraintName] ?? {
+      columns: [], referencedTable: row.referencedTable, referencedColumns: [],
+    };
+    entry.columns.push(row.columnName);
+    entry.referencedColumns.push(row.referencedColumn);
+    table.foreignKeys[row.constraintName] = entry;
+  }
+  return shape;
+}
+
 /**
  * Proves this pool is the recorded container, the allowlisted DML user and
- * exactly the three allowlisted schemas, and that the candidate tables match the
- * frozen column representations.
+ * exactly the three allowlisted schemas, and that all three schemas carry the
+ * frozen 140 / T2B structure before any write can begin.
  */
 export async function verifyLiveFixture(pool: Pool, cfg: DrillConfig): Promise<void> {
   const [identity] = await pool.query('SELECT @@hostname AS hostname, CURRENT_USER() AS user, @@version AS version');
@@ -420,34 +718,17 @@ export async function verifyLiveFixture(pool: Pool, cfg: DrillConfig): Promise<v
       throw new DrillError('wrong-fixture', `${label} schema ${schema} does not have exactly the five tables`);
     }
   }
-  const [columns] = await pool.query(
-    `SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName, COLUMN_TYPE AS columnType,
-            CHARACTER_SET_NAME AS characterSet, COLLATION_NAME AS collationName
-       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ?`, [CANDIDATE_SCHEMA],
-  );
-  const seen = new Map<string, Record<string, unknown>>();
-  for (const column of columns as Record<string, unknown>[]) {
-    seen.set(`${column.tableName}.${column.columnName}`, column);
-  }
-  for (const table of COPY_ORDER) {
-    for (const [column, type] of Object.entries(CANDIDATE_COLUMN_TYPES[table])) {
-      const actual = seen.get(`${table}.${column}`);
-      if (!actual) throw new DrillError('wrong-fixture', `candidate column ${table}.${column} is missing`);
-      if (actual.columnType !== type) {
-        throw new DrillError('wrong-fixture', `candidate column ${table}.${column} is ${actual.columnType}, expected ${type}`);
-      }
-    }
-  }
-  for (const [table, column] of [
-    ['metric_templates_v2', 'created_at'], ['metric_templates_v2', 'updated_at'],
-    ['metric_template_drafts', 'updated_at'], ['metric_template_items', 'created_at'],
-    ['metric_template_versions', 'published_at'], ['metric_template_versions', 'retired_at'],
-    ['metric_template_item_versions', 'canonical_metric_id'],
-    ['metric_template_item_versions', 'canonical_semantic_version'],
+  for (const [schema, label, frozen] of [
+    [SOURCE_SCHEMA, 'source', FROZEN_140],
+    [CANDIDATE_SCHEMA, 'candidate', FROZEN_T2B],
+    [RESTORE_SCHEMA, 'restore', FROZEN_140],
   ] as const) {
-    const actual = seen.get(`${table}.${column}`)!;
-    if (actual.characterSet !== 'ascii' || actual.collationName !== 'ascii_bin') {
-      throw new DrillError('wrong-fixture', `candidate column ${table}.${column} is not ascii/ascii_bin`);
+    const diffs = diffFrozenStructure(await readSchemaStructure(pool, schema), frozen);
+    if (diffs.length > 0) {
+      throw new DrillError('structure-drift',
+        `${label} schema ${schema} does not match its frozen structure`, {
+          schema, label, diff_count: diffs.length, diffs: diffs.slice(0, 32),
+        });
     }
   }
 }
@@ -534,6 +815,120 @@ export interface TransferResult {
   connectionIdentity?: { hostname: string; user: string; version: string };
 }
 
+interface CopyTarget {
+  targetSchema: string;
+  targetKind: Manifest['kind'];
+  expected: Manifest;
+  source: Manifest;
+}
+
+/**
+ * Classifies a commit whose client call threw. The connection has already been
+ * destroyed, so this re-reads the source and target manifests through fresh
+ * connections: a fully visible expected target means the server committed and
+ * only the acknowledgement was lost; an empty target means it did not commit.
+ * Nothing is retried and no rollback is claimed.
+ */
+async function classifyUnknownCommit(
+  pool: Pool, target: CopyTarget, commitError: unknown,
+): Promise<DrillError> {
+  const commitMessage = String((commitError as Error)?.message ?? commitError);
+  try {
+    const observed = await readManifest(pool, target.targetSchema, target.targetKind);
+    const counts = await rowCounts(pool, target.targetSchema);
+    const sourceAfter = await readManifest(pool, target.source.schema, 'source');
+    const targetEmpty = Object.values(counts).every(count => count === 0);
+    const expectedEmpty = Object.values(target.expected.tables)
+      .every(rows => rows.length === 0);
+    const outcome = targetEmpty && !expectedEmpty
+      ? 'not-committed'
+      : (observed.sha256 === target.expected.sha256 ? 'committed-unconfirmed' : 'unknown');
+    const reason = outcome === 'not-committed'
+      ? 'commit-not-applied'
+      : (outcome === 'committed-unconfirmed' ? 'commit-unconfirmed' : 'commit-unknown');
+    return new DrillError(reason,
+      `commit outcome unknown (${outcome}); connection discarded, no retry`, {
+        outcome,
+        commit_error: commitMessage,
+        target_schema: target.targetSchema,
+        target_manifest: observed.sha256,
+        expected_manifest: target.expected.sha256,
+        target_counts: counts,
+        source_manifest: sourceAfter.sha256,
+        source_unchanged: sourceAfter.sha256 === target.source.sha256,
+      });
+  } catch (rereadError) {
+    return new DrillError('commit-unknown',
+      'commit outcome unknown and the manifest re-read failed; connection discarded, no retry', {
+        outcome: 'unknown',
+        commit_error: commitMessage,
+        reread_error: String((rereadError as Error)?.message ?? rereadError),
+      });
+  }
+}
+
+/**
+ * Runs one copy in a single transaction. The connection returns to the pool only
+ * after the server confirmed a commit or a rollback; a failed begin, an
+ * unconfirmed rollback and any unknown commit outcome destroy it instead.
+ * Releasing would be unsafe: MySQL implicitly commits an open transaction when
+ * the next transaction starts on the same socket.
+ */
+async function runCopyTransaction(
+  pool: Pool, target: CopyTarget, work: (connection: PoolConnection) => Promise<void>,
+): Promise<void> {
+  const connection = await pool.getConnection();
+  let disposed = false;
+  const release = (): void => {
+    if (disposed) return;
+    disposed = true;
+    try {
+      connection.release();
+    } catch {
+      // A failed release must not replace the operation's own outcome.
+    }
+  };
+  const discard = (): void => {
+    if (disposed) return;
+    disposed = true;
+    try {
+      connection.destroy();
+    } catch {
+      // A failed discard must not replace the original failure and never falls
+      // back to release.
+    }
+  };
+  try {
+    try {
+      await connection.beginTransaction();
+    } catch (error) {
+      discard();
+      throw error;
+    }
+    try {
+      await work(connection);
+    } catch (error) {
+      try {
+        await connection.rollback();
+        release();
+      } catch {
+        discard();
+      }
+      throw error;
+    }
+    try {
+      await connection.commit();
+      release();
+    } catch (commitError) {
+      discard();
+      throw await classifyUnknownCommit(pool, target, commitError);
+    }
+  } catch (error) {
+    discard();
+    throw error;
+  }
+}
+
 export async function up(cfg: DrillConfig, pool: Pool, inject: string | null = null): Promise<TransferResult> {
   await verifyLiveFixture(pool, cfg);
   const source = await readManifest(pool, SOURCE_SCHEMA, 'source');
@@ -550,31 +945,19 @@ export async function up(cfg: DrillConfig, pool: Pool, inject: string | null = n
       });
   }
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    try {
-      for (const table of COPY_ORDER) {
-        await insertRows(connection, CANDIDATE_SCHEMA, table, source.tables[table], 'up');
-        if (inject === 'after-parents' && table === 'metric_templates_v2') {
-          throw new DrillError('injected-failure', 'injected failure after copying parent rows');
-        }
-        if (inject === 'after-versions' && table === 'metric_template_versions') {
-          throw new DrillError('injected-failure', 'injected failure after copying version snapshot rows');
-        }
+  await runCopyTransaction(pool, {
+    targetSchema: CANDIDATE_SCHEMA, targetKind: 'candidate', expected, source,
+  }, async connection => {
+    for (const table of COPY_ORDER) {
+      await insertRows(connection, CANDIDATE_SCHEMA, table, source.tables[table], 'up');
+      if (inject === 'after-parents' && table === 'metric_templates_v2') {
+        throw new DrillError('injected-failure', 'injected failure after copying parent rows');
       }
-      await connection.commit();
-    } catch (error) {
-      try {
-        await connection.rollback();
-      } catch {
-        // The drill reports the original failure; it never retries automatically.
+      if (inject === 'after-versions' && table === 'metric_template_versions') {
+        throw new DrillError('injected-failure', 'injected failure after copying version snapshot rows');
       }
-      throw error;
     }
-  } finally {
-    connection.release();
-  }
+  });
 
   const observed = await readManifest(pool, CANDIDATE_SCHEMA, 'candidate');
   if (observed.sha256 !== expected.sha256) {
@@ -612,25 +995,13 @@ export async function down(cfg: DrillConfig, pool: Pool): Promise<TransferResult
       });
   }
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    try {
-      for (const table of COPY_ORDER) {
-        await insertRows(connection, RESTORE_SCHEMA, table, candidate.tables[table], 'down');
-      }
-      await connection.commit();
-    } catch (error) {
-      try {
-        await connection.rollback();
-      } catch {
-        // Keep the original failure.
-      }
-      throw error;
+  await runCopyTransaction(pool, {
+    targetSchema: RESTORE_SCHEMA, targetKind: 'restore', expected, source,
+  }, async connection => {
+    for (const table of COPY_ORDER) {
+      await insertRows(connection, RESTORE_SCHEMA, table, candidate.tables[table], 'down');
     }
-  } finally {
-    connection.release();
-  }
+  });
 
   const observed = await readManifest(pool, RESTORE_SCHEMA, 'restore');
   if (observed.sha256 !== expected.sha256) {
@@ -659,7 +1030,10 @@ const RELEASE = `mysql-basic@1.0.0#sha256:${'a'.repeat(64)}`;
  * actors/timestamps, a published version and pointer, multiple item versions and
  * JSON with empty/comma/Unicode keys. No real ACL or credential data is copied.
  */
-export async function seedSource(pool: Pool): Promise<Manifest> {
+export async function seedSource(cfg: DrillConfig, pool: Pool): Promise<Manifest> {
+  // A write entry point: prove the exact fixture and all three frozen
+  // structures before the first INSERT.
+  await verifyLiveFixture(pool, cfg);
   const counts = await rowCounts(pool, SOURCE_SCHEMA);
   if (!isEmpty(counts)) {
     throw new DrillError('source-not-empty', 'source schema is not empty; recreate the fixture before seeding', counts);
@@ -790,7 +1164,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<un
   }
   const pool = openPool(cfg);
   try {
-    if (options.mode === 'seed') return { mode: 'seed', manifest: await seedSource(pool) };
+    if (options.mode === 'seed') return { mode: 'seed', manifest: await seedSource(cfg, pool) };
     if (options.mode === 'verify') {
       await verifyLiveFixture(pool, cfg);
       return {

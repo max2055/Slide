@@ -25,7 +25,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CANDIDATE_SCHEMA, COPY_ORDER, DrillError, RESTORE_SCHEMA, SOURCE_SCHEMA, checkDownRepresentable,
-  down, loadConfig, openPool, readCredentials, readManifest, rowCounts, seedSource, up, verifyLiveFixture,
+  diffFrozenStructure, down, expectedFrom, loadConfig, openPool, readCredentials, readManifest,
+  readSchemaStructure, rowCounts, seedSource, up, verifyLiveFixture,
+  type FrozenStructure,
 } from './migrate.js';
 import {
   MySqlTemplateRepository,
@@ -56,6 +58,130 @@ async function expectDrillError(reason: string, run: () => Promise<unknown>): Pr
     throw new Error(`expected DrillError ${reason}, got ${(error as Error)?.name}: ${(error as Error)?.message}`);
   }
   throw new Error(`expected DrillError ${reason}, but the call succeeded`);
+}
+
+async function captureError(run: () => Promise<unknown>): Promise<Error> {
+  try {
+    await run();
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error('expected the call to fail, but it succeeded');
+}
+
+interface FaultCounter { releases: number; destroys: number }
+
+interface FaultOptions {
+  counter?: FaultCounter;
+  begin?: 'throw';
+  rollback?: 'throw';
+  /** `before`: the COMMIT is never sent; `after`: the server committed, ack lost. */
+  commit?: 'before' | 'after';
+  destroy?: 'throw';
+  /** Interrupts the first write whose SQL is matched, inside the transaction. */
+  interrupt?: (sql: string) => boolean;
+}
+
+const newCounter = (): FaultCounter => ({ releases: 0, destroys: 0 });
+
+/**
+ * Labelled connection-fault wrapper. It observes release/destroy and injects
+ * transaction faults only; it is never used as evidence of a real transaction
+ * outcome on its own. Real outcomes are read back through an independent pool.
+ */
+function faultPool(
+  real: import('mysql2/promise').Pool, options: FaultOptions,
+): import('mysql2/promise').Pool {
+  const counter = options.counter ?? newCounter();
+  return new Proxy(real, {
+    get(target, prop) {
+      if (prop === 'getConnection') {
+        return async () => {
+          const connection = await target.getConnection();
+          return new Proxy(connection, {
+            get(conn, key) {
+              switch (key) {
+                case 'beginTransaction':
+                  return options.begin === 'throw'
+                    ? async () => { throw new Error('fault: begin not forwarded'); }
+                    : () => conn.beginTransaction();
+                case 'rollback':
+                  return options.rollback === 'throw'
+                    ? async () => { throw new Error('fault: rollback not forwarded; live socket'); }
+                    : () => conn.rollback();
+                case 'commit':
+                  if (options.commit === 'before') {
+                    return async () => { throw new Error('fault: commit not forwarded; live socket'); };
+                  }
+                  if (options.commit === 'after') {
+                    return async () => {
+                      await conn.commit();
+                      throw new Error('fault: commit acknowledgement lost');
+                    };
+                  }
+                  return () => conn.commit();
+                case 'release':
+                  return () => { counter.releases += 1; conn.release(); };
+                case 'destroy':
+                  return () => {
+                    counter.destroys += 1;
+                    conn.destroy();
+                    if (options.destroy === 'throw') throw new Error('fault: destroy reported failure');
+                  };
+                case 'query':
+                  return async (sql: string, values?: unknown[]) => {
+                    if (options.interrupt?.(sql)) {
+                      throw new DrillError('injected-failure', 'injected failure inside the copy transaction');
+                    }
+                    return conn.query(sql, values);
+                  };
+                default: {
+                  const value = Reflect.get(conn, key);
+                  return typeof value === 'function' ? value.bind(conn) : value;
+                }
+              }
+            },
+          });
+        };
+      }
+      const value = Reflect.get(target, prop);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/** Starts and commits an unrelated transaction on the writer pool. */
+async function unrelatedTransaction(writer: import('mysql2/promise').Pool): Promise<void> {
+  const connection = await writer.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.commit();
+  } finally {
+    connection.release();
+  }
+}
+
+/** FK-safe drill-owned reset of one schema (test setup, never rollback evidence). */
+async function cleanSchema(pool: import('mysql2/promise').Pool, schema: string): Promise<void> {
+  for (const table of [...COPY_ORDER].reverse()) {
+    await pool.query(`DELETE FROM \`${schema}\`.\`${table}\``);
+  }
+}
+
+function readRootPassword(cfg: ReturnType<typeof loadConfig>): string {
+  const match = /^MYSQL_ROOT_PASSWORD=(.*)$/m.exec(readFileSync(cfg.credentialsPath, 'utf8'));
+  if (!match) throw new Error('root password is missing from the private credentials file');
+  return match[1]!.trim();
+}
+
+/** Root is used only for drift-variant DDL inside this run's own fixture. */
+function mysqlRootDdl(
+  cfg: ReturnType<typeof loadConfig>, rootPassword: string, sql: string,
+): void {
+  execFileSync('docker', [
+    'exec', '-e', `MYSQL_PWD=${rootPassword}`, '-i', cfg.handle.container_id,
+    'mysql', '-uroot', '-N', '-e', sql,
+  ], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /** Runs the real CLI in a fresh process so "plan opens no connection" is meaningful. */
@@ -96,6 +222,7 @@ async function main(): Promise<void> {
   const pool = openPool(cfg);
   let pool2: import('mysql2/promise').Pool | null = null;
   let adapterPool: import('mysql2/promise').Pool | null = null;
+  let faultWriter: import('mysql2/promise').Pool | null = null;
   const evidence: Record<string, unknown> = {
     task: 'MAX237-T2B',
     generated_at: startedAt,
@@ -160,8 +287,124 @@ async function main(): Promise<void> {
     }
     record('fixture starts empty in all three schemas', initial);
 
+    const emptyManifests = {
+      source: await readManifest(pool, SOURCE_SCHEMA, 'source'),
+      candidate: await readManifest(pool, CANDIDATE_SCHEMA, 'candidate'),
+      restore: await readManifest(pool, RESTORE_SCHEMA, 'restore'),
+    };
+    const assertEmptyManifestsUnchanged = async (label: string): Promise<void> => {
+      const now = {
+        source: await readManifest(pool2!, SOURCE_SCHEMA, 'source'),
+        candidate: await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate'),
+        restore: await readManifest(pool2!, RESTORE_SCHEMA, 'restore'),
+      };
+      for (const key of ['source', 'candidate', 'restore'] as const) {
+        if (now[key].sha256 !== emptyManifests[key].sha256) {
+          throw new Derr(`${label}: ${key} schema changed before the first business DML`, {
+            before: emptyManifests[key].sha256, after: now[key].sha256,
+          });
+        }
+      }
+    };
+
+    // ------------------------ frozen structure: pure diff branches (not real DDL)
+    const candidateShape = await readSchemaStructure(pool, CANDIDATE_SCHEMA);
+    const sourceShape = await readSchemaStructure(pool, SOURCE_SCHEMA);
+    if (diffFrozenStructure(sourceShape, sourceShape).length !== 0
+      || diffFrozenStructure(candidateShape, candidateShape).length !== 0) {
+      throw new Derr('identical structure snapshots were not treated as equal', {});
+    }
+    const mutations: [string, (shape: FrozenStructure) => void][] = [
+      ['missing column', shape => { delete shape.metric_template_items.columns.created_at; }],
+      ['extra column', shape => {
+        shape.metric_template_items.columns.drift_extra = {
+          type: 'int', nullable: 'YES', charset: null, collation: null,
+        };
+      }],
+      ['narrowed type', shape => { shape.metric_templates_v2.columns.name!.type = 'varchar(32)'; }],
+      ['nullability', shape => { shape.metric_templates_v2.columns.name!.nullable = 'YES'; }],
+      ['charset/collation', shape => {
+        shape.metric_template_items.columns.created_at!.charset = 'utf8mb4';
+        shape.metric_template_items.columns.created_at!.collation = 'utf8mb4_bin';
+      }],
+      ['engine', shape => { shape.metric_template_items.engine = 'MyISAM'; }],
+      ['primary key', shape => { shape.metric_template_items.indexes.PRIMARY!.columns.pop(); }],
+      ['unique key', shape => { shape.metric_template_versions.indexes.uk_content!.unique = false; }],
+      ['prefix index', shape => {
+        shape.metric_template_item_versions.indexes.idx_canonical!.columns[0]!.subPart = 64;
+      }],
+      ['foreign key', shape => {
+        shape.metric_template_item_versions.foreignKeys.fk_tiv_item!.referencedTable = 'metric_templates_v2';
+      }],
+    ];
+    const caughtDrifts: string[] = [];
+    for (const [label, mutate] of mutations) {
+      const copy = structuredClone(candidateShape);
+      mutate(copy);
+      const diffs = diffFrozenStructure(copy, candidateShape);
+      if (diffs.length === 0) throw new Derr(`frozen-structure diff missed ${label}`, copy);
+      caughtDrifts.push(`${label}: ${diffs[0]}`);
+    }
+    record('frozen-structure comparator rejects every drift class (synthetic snapshots)', {
+      drifts: caughtDrifts, note: 'synthetic snapshots; real DDL drift rows follow',
+    });
+
+    // ------------------------------ seed identity rejection (real connection)
+    const wrongIdentityCfg = { ...cfg, handle: { ...cfg.handle, container_id: '0'.repeat(64) } };
+    const identityError = await expectDrillError('wrong-fixture',
+      () => seedSource(wrongIdentityCfg, pool));
+    await assertEmptyManifestsUnchanged('seed identity rejection');
+    record('seed write entry rejects a connection that is not the recorded fixture', {
+      reason: identityError.reason, message: identityError.message,
+    });
+
+    const rootPassword = readRootPassword(cfg);
+    const structureTrial = async (trial: {
+      label: string;
+      schema: string;
+      drift: string;
+      restore: string;
+      attempt: () => Promise<unknown>;
+      assertUnchanged: () => Promise<void>;
+    }): Promise<unknown> => {
+      const before = await readSchemaStructure(pool, trial.schema);
+      mysqlRootDdl(cfg, rootPassword, trial.drift);
+      let error: DrillError | null = null;
+      let assertionFailure: unknown = null;
+      try {
+        error = await expectDrillError('structure-drift', trial.attempt);
+        await trial.assertUnchanged();
+      } catch (failure) {
+        assertionFailure = failure;
+      }
+      mysqlRootDdl(cfg, rootPassword, trial.restore);
+      const after = await readSchemaStructure(pool, trial.schema);
+      if (JSON.stringify(after) !== JSON.stringify(before)) {
+        throw new Derr(`${trial.label}: the frozen structure was not restored exactly`, { before, after });
+      }
+      await verifyLiveFixture(pool, cfg);
+      if (assertionFailure) throw assertionFailure;
+      return {
+        label: trial.label, schema: trial.schema,
+        drift_statement: trial.drift, restore_statement: trial.restore,
+        diffs: (error!.detail as { diffs?: string[] } | null)?.diffs ?? [],
+        structure_sha256: createHash('sha256').update(JSON.stringify(before)).digest('hex'),
+      };
+    };
+
+    // Real DDL drift on the source: seed must reject before its first INSERT.
+    const sourceDrift = await structureTrial({
+      label: 'source narrowed column type',
+      schema: SOURCE_SCHEMA,
+      drift: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(32) NOT NULL',
+      restore: 'ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(128) NOT NULL',
+      attempt: () => seedSource(cfg, pool),
+      assertUnchanged: () => assertEmptyManifestsUnchanged('source structure drift'),
+    });
+    record('real source structure drift blocks seed before its first write', sourceDrift);
+
     // --------------------------------------------------------------- seeding
-    const seeded = await seedSource(pool);
+    const seeded = await seedSource(cfg, pool);
     const sourceManifestAfterSeed = seeded.sha256;
     evidence.source_manifest = seeded;
     record('representative 140 source aggregate seeded', {
@@ -169,31 +412,184 @@ async function main(): Promise<void> {
       rows: Object.fromEntries(COPY_ORDER.map(table => [table, seeded.tables[table].length])),
     });
 
-    // ---------------------------------------------- failure-injected up trials
-    for (const inject of ['after-parents', 'after-versions']) {
-      const error = await expectDrillError('injected-failure', () => up(cfg, pool, inject));
-      const fromA = await tableCounts(pool, CANDIDATE_SCHEMA);
+    // Real DDL drift on the candidate: up must reject before its first INSERT.
+    const candidateDrift = await structureTrial({
+      label: 'candidate missing query index',
+      schema: CANDIDATE_SCHEMA,
+      drift: 'ALTER TABLE `max237_t2b`.`metric_template_item_versions` DROP INDEX `idx_canonical`',
+      restore: 'ALTER TABLE `max237_t2b`.`metric_template_item_versions` '
+        + 'ADD KEY `idx_canonical` (`canonical_metric_id`(128), `canonical_semantic_version`(16))',
+      attempt: () => up(cfg, pool),
+      assertUnchanged: async () => {
+        const counts = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+        if (JSON.stringify(counts) !== JSON.stringify(emptyCounts)) {
+          throw new Derr('candidate structure drift: the candidate received a write', counts);
+        }
+        const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+        if (sourceNow.sha256 !== sourceManifestAfterSeed) {
+          throw new Derr('candidate structure drift: the source changed', {
+            expected: sourceManifestAfterSeed, actual: sourceNow.sha256,
+          });
+        }
+      },
+    });
+    record('real candidate structure drift blocks up before its first write', candidateDrift);
+
+    // --------------------------- transaction disposal on the exclusive fixture
+    // One writer connection only: a released connection with an open transaction
+    // is exactly the reuse that MySQL implicitly commits. An independent pool
+    // reads the externally visible state.
+    faultWriter = mysql.createPool({ ...poolOptions(credentials), connectionLimit: 1 });
+    const expectedCandidateManifest = (): ReturnType<typeof expectedFrom> =>
+      expectedFrom('candidate', CANDIDATE_SCHEMA, seeded);
+    const assertCandidateEmpty = async (label: string): Promise<void> => {
+      const fromA = await tableCounts(faultWriter!, CANDIDATE_SCHEMA);
       const fromB = await tableCounts(pool2!, CANDIDATE_SCHEMA);
-      const sourceA = await readManifest(pool, SOURCE_SCHEMA, 'source');
-      const sourceB = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
       if (JSON.stringify(fromA) !== JSON.stringify(emptyCounts)
         || JSON.stringify(fromB) !== JSON.stringify(emptyCounts)) {
-        throw new Derr(`target not empty after injected failure ${inject}`, { fromA, fromB });
+        throw new Derr(`${label}: the candidate is not empty`, { fromA, fromB });
       }
-      if (sourceA.sha256 !== sourceManifestAfterSeed || sourceB.sha256 !== sourceManifestAfterSeed) {
-        throw new Derr(`source changed after injected failure ${inject}`, {
-          sourceA: sourceA.sha256, sourceB: sourceB.sha256, expected: sourceManifestAfterSeed,
-        });
+      const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      if (sourceNow.sha256 !== sourceManifestAfterSeed) {
+        throw new Derr(`${label}: the source changed`, { expected: sourceManifestAfterSeed, actual: sourceNow.sha256 });
       }
-      record(`up failure injected ${inject} leaves target empty and source unchanged`, {
-        message: error.message, target: fromA, first_connection: fromA, second_connection: fromB,
-        source_first: sourceA.sha256, source_second: sourceB.sha256,
+    };
+
+    // Normal rollback: the server confirmed it, so the connection is released.
+    for (const inject of ['after-parents', 'after-versions']) {
+      const counter = newCounter();
+      const observedPool = faultPool(faultWriter, { counter });
+      const error = await expectDrillError('injected-failure', () => up(cfg, observedPool, inject));
+      if (counter.releases !== 1 || counter.destroys !== 0) {
+        throw new Derr(`confirmed rollback ${inject} did not release exactly once`, counter);
+      }
+      await assertCandidateEmpty(`confirmed rollback ${inject}`);
+      record(`up failure ${inject} with a confirmed rollback releases the connection`, {
+        message: error.message, counter, target: emptyCounts,
       });
     }
 
-    // -------------------------------------------------------------- real up
-    const upResult = await up(cfg, pool);
+    // A failed BEGIN never leaves the socket reusable.
+    {
+      const counter = newCounter();
+      const beginFault = faultPool(faultWriter, { counter, begin: 'throw' });
+      const error = await captureError(() => up(cfg, beginFault));
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('a failed begin was not destroyed exactly once', counter);
+      }
+      await assertCandidateEmpty('begin failure');
+      record('a failed begin destroys the connection and releases nothing', {
+        message: error.message, counter,
+      });
+    }
+
+    // Rollback not forwarded: the socket still holds the open transaction.
+    {
+      const counter = newCounter();
+      const rollbackFault = faultPool(faultWriter, { counter, rollback: 'throw' });
+      const error = await expectDrillError('injected-failure', () => up(cfg, rollbackFault, 'after-parents'));
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('an unconfirmed rollback was not destroyed exactly once', counter);
+      }
+      const before = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+      await unrelatedTransaction(faultWriter);
+      const after = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+      if (JSON.stringify(before) !== JSON.stringify(emptyCounts)
+        || JSON.stringify(after) !== JSON.stringify(emptyCounts)) {
+        throw new Derr('an unconfirmed rollback leaked rows after an unrelated transaction', { before, after });
+      }
+      const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      if (sourceNow.sha256 !== sourceManifestAfterSeed) throw new Derr('the source changed', sourceNow.sha256);
+      record('unconfirmed rollback destroys the live transaction instead of releasing it', {
+        message: error.message, counter,
+        externally_visible_before: before,
+        externally_visible_after_unrelated_transaction: after,
+        source_unchanged: true,
+      });
+    }
+
+    // A failing destroy must keep the original failure and never release.
+    {
+      const counter = newCounter();
+      const destroyFault = faultPool(faultWriter, {
+        counter, rollback: 'throw', destroy: 'throw',
+      });
+      const error = await expectDrillError('injected-failure', () => up(cfg, destroyFault, 'after-parents'));
+      if (!/injected failure after copying parent rows/.test(error.message)) {
+        throw new Derr('a failing destroy replaced the original failure', error.message);
+      }
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('a failing destroy fell back to release', counter);
+      }
+      await assertCandidateEmpty('failing destroy');
+      record('a failing destroy keeps the original failure and never falls back to release', {
+        message: error.message, counter,
+      });
+    }
+
+    // COMMIT never reached the server: the target is empty and stays empty.
+    {
+      const counter = newCounter();
+      const commitFault = faultPool(faultWriter, { counter, commit: 'before' });
+      const error = await expectDrillError('commit-not-applied', () => up(cfg, commitFault));
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('a non-applied commit was not destroyed exactly once', counter);
+      }
+      const before = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+      await unrelatedTransaction(faultWriter);
+      const after = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+      if (JSON.stringify(before) !== JSON.stringify(emptyCounts)
+        || JSON.stringify(after) !== JSON.stringify(emptyCounts)) {
+        throw new Derr('a non-applied commit leaked rows', { before, after });
+      }
+      await assertCandidateEmpty('commit not applied');
+      record('a COMMIT that never reached the server is classified as not applied', {
+        detail: error.detail, counter, target_before: before, target_after: after,
+      });
+    }
+
+    // Server committed, acknowledgement lost: classify by a fresh manifest read.
+    {
+      const counter = newCounter();
+      const commitFault = faultPool(faultWriter, { counter, commit: 'after' });
+      const error = await expectDrillError('commit-unconfirmed', () => up(cfg, commitFault));
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('a lost commit acknowledgement was not destroyed exactly once', counter);
+      }
+      const observed = await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate');
+      if (observed.sha256 !== expectedCandidateManifest().sha256) {
+        throw new Derr('the committed copy is not the expected candidate manifest', {
+          observed: observed.sha256, expected: expectedCandidateManifest().sha256,
+        });
+      }
+      const counts = await tableCounts(pool2!, CANDIDATE_SCHEMA);
+      if (JSON.stringify(counts) === JSON.stringify(emptyCounts)) {
+        throw new Derr('a lost acknowledgement was reported with an empty target', counts);
+      }
+      const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      if (sourceNow.sha256 !== sourceManifestAfterSeed) throw new Derr('the source changed', sourceNow.sha256);
+      const noRetry = await up(cfg, faultWriter);
+      if (noRetry.status !== 'no-op') {
+        throw new Derr('a re-run after the lost acknowledgement was not an explicit no-op', noRetry);
+      }
+      record('a real commit whose acknowledgement was lost is unconfirmed, and a re-run is a no-op', {
+        detail: error.detail, counter, candidate_manifest: observed.sha256,
+        rows: counts, rerun: noRetry.status, source_unchanged: true,
+      });
+    }
+
+    // Drill-owned reset between fault trials (test setup, never rollback evidence).
+    await cleanSchema(faultWriter, CANDIDATE_SCHEMA);
+    await assertCandidateEmpty('drill reset after the commit trials');
+
+    // --------------------------------------------- real up (pool health proof)
+    const upCounter = newCounter();
+    const upPool = faultPool(faultWriter, { counter: upCounter });
+    const upResult = await up(cfg, upPool);
     if (upResult.status !== 'copied') throw new Derr('first up was not a copy', upResult);
+    if (upCounter.releases !== 1 || upCounter.destroys !== 0) {
+      throw new Derr('the confirmed commit did not release exactly once', upCounter);
+    }
     const candidateManifest = upResult.observed.sha256;
     const expectedCandidate = upResult.expected.sha256;
     if (candidateManifest !== expectedCandidate) throw new Derr('up manifest mismatch', upResult);
@@ -325,9 +721,95 @@ async function main(): Promise<void> {
     if (cleaned.sha256 !== candidateManifest) throw new Derr('edge fixture teardown did not restore the candidate', cleaned);
     record('injected edge fixture removed; candidate equals the up copy again', { sha256: cleaned.sha256 });
 
+    // Real DDL drift on the restore schema: down must reject before its first INSERT.
+    const restoreDrift = await structureTrial({
+      label: 'restore missing unique content index',
+      schema: RESTORE_SCHEMA,
+      drift: 'ALTER TABLE `max237_t2b_restore`.`metric_template_versions` DROP INDEX `uk_content`',
+      restore: 'ALTER TABLE `max237_t2b_restore`.`metric_template_versions` '
+        + 'ADD UNIQUE KEY `uk_content` (`template_id`, `content_hash`)',
+      attempt: () => down(cfg, pool),
+      assertUnchanged: async () => {
+        const candidateNow = await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate');
+        const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+        const restoreNow = await tableCounts(pool2!, RESTORE_SCHEMA);
+        if (candidateNow.sha256 !== candidateManifest) {
+          throw new Derr('restore structure drift: the candidate changed', {
+            expected: candidateManifest, actual: candidateNow.sha256,
+          });
+        }
+        if (sourceNow.sha256 !== sourceManifestAfterSeed) {
+          throw new Derr('restore structure drift: the source changed', sourceNow.sha256);
+        }
+        if (JSON.stringify(restoreNow) !== JSON.stringify(emptyCounts)) {
+          throw new Derr('restore structure drift: the restore schema received a write', restoreNow);
+        }
+      },
+    });
+    record('real restore structure drift blocks down before its first write', restoreDrift);
+
+    // ------------------------------ down transaction disposal on the same writer
+    const downInterrupt = (sql: string): boolean =>
+      sql.startsWith('INSERT INTO `max237_t2b_restore`.`metric_template_drafts`');
+    const assertRestoreEmpty = async (label: string): Promise<void> => {
+      const fromA = await tableCounts(faultWriter!, RESTORE_SCHEMA);
+      const fromB = await tableCounts(pool2!, RESTORE_SCHEMA);
+      if (JSON.stringify(fromA) !== JSON.stringify(emptyCounts)
+        || JSON.stringify(fromB) !== JSON.stringify(emptyCounts)) {
+        throw new Derr(`${label}: the restore schema is not empty`, { fromA, fromB });
+      }
+    };
+    {
+      const counter = newCounter();
+      const confirmed = faultPool(faultWriter, { counter, interrupt: downInterrupt });
+      const error = await expectDrillError('injected-failure', () => down(cfg, confirmed));
+      if (counter.releases !== 1 || counter.destroys !== 0) {
+        throw new Derr('a confirmed down rollback did not release exactly once', counter);
+      }
+      await assertRestoreEmpty('confirmed down rollback');
+      record('down failure with a confirmed rollback releases the connection', {
+        message: error.message, counter,
+      });
+    }
+    {
+      const counter = newCounter();
+      const unconfirmed = faultPool(faultWriter, {
+        counter, rollback: 'throw', interrupt: downInterrupt,
+      });
+      const error = await expectDrillError('injected-failure', () => down(cfg, unconfirmed));
+      if (counter.destroys !== 1 || counter.releases !== 0) {
+        throw new Derr('an unconfirmed down rollback was not destroyed exactly once', counter);
+      }
+      const before = await tableCounts(pool2!, RESTORE_SCHEMA);
+      await unrelatedTransaction(faultWriter);
+      const after = await tableCounts(pool2!, RESTORE_SCHEMA);
+      if (JSON.stringify(before) !== JSON.stringify(emptyCounts)
+        || JSON.stringify(after) !== JSON.stringify(emptyCounts)) {
+        throw new Derr('an unconfirmed down rollback leaked rows', { before, after });
+      }
+      const candidateNow = await readManifest(pool2!, CANDIDATE_SCHEMA, 'candidate');
+      const sourceNow = await readManifest(pool2!, SOURCE_SCHEMA, 'source');
+      if (candidateNow.sha256 !== candidateManifest || sourceNow.sha256 !== sourceManifestAfterSeed) {
+        throw new Derr('an unconfirmed down rollback changed the source schemas', {
+          candidate: candidateNow.sha256, source: sourceNow.sha256,
+        });
+      }
+      record('down unconfirmed rollback destroys the connection and leaves all three schemas unchanged', {
+        message: error.message, counter,
+        externally_visible_before: before,
+        externally_visible_after_unrelated_transaction: after,
+        source_unchanged: true, candidate_unchanged: true,
+      });
+    }
+
     // -------------------------------------------------------------- safe down
-    const downResult = await down(cfg, pool);
+    const downCounter = newCounter();
+    const downPool = faultPool(faultWriter, { counter: downCounter });
+    const downResult = await down(cfg, downPool);
     if (downResult.status !== 'copied') throw new Derr('first down was not a copy', downResult);
+    if (downCounter.releases !== 1 || downCounter.destroys !== 0) {
+      throw new Derr('the confirmed down commit did not release exactly once', downCounter);
+    }
     if (downResult.observed.sha256 !== sourceManifestAfterSeed) {
       throw new Derr('down restore manifest differs from the source aggregate', {
         observed: downResult.observed.sha256, expected: sourceManifestAfterSeed,
@@ -336,7 +818,7 @@ async function main(): Promise<void> {
     const candidateAfterDown = await pool2!.query(
       `SELECT COUNT(*) AS n FROM \`${CANDIDATE_SCHEMA}\`.metric_templates_v2`,
     );
-    if (Number((candidateAfterDown as { n: number }[][])[0]![0]!.n) !== 2) {
+    if (Number((candidateAfterDown as unknown as { n: number }[][])[0]![0]!.n) !== 2) {
       throw new Derr('down deleted candidate rows', candidateAfterDown);
     }
     evidence.restore_manifest = {
@@ -382,6 +864,7 @@ async function main(): Promise<void> {
     return;
   } finally {
     await adapterPool?.end().catch(() => {});
+    await faultWriter?.end().catch(() => {});
     await pool2?.end().catch(() => {});
     await pool.end().catch(() => {});
   }

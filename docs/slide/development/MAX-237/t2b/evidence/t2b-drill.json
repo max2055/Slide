@@ -1,12 +1,12 @@
 {
   "task": "MAX237-T2B",
-  "generated_at": "2026-10-27T05:11:09.317Z",
+  "generated_at": "2026-10-27T05:31:46.991Z",
   "fixture": {
     "container_name": "max237-t2b-15coder1-20261027",
-    "container_id": "e5e762eaf458a832aac3882c9f450bcf1101b880f900f6daa502193545838fa9",
+    "container_id": "f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36",
     "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
     "volume": "max237-t2b-15coder1-20261027-data",
-    "port": 64065,
+    "port": 50211,
     "schemas": [
       "max237_t2b_d1",
       "max237_t2b",
@@ -22,7 +22,7 @@
   },
   "server": {
     "version": "8.4.10",
-    "hostname": "e5e762eaf458"
+    "hostname": "f7604b63ac7d"
   },
   "source_manifest": {
     "schema": "max237_t2b_d1",
@@ -465,7 +465,7 @@
         "mode": "plan",
         "connects": false,
         "writes": false,
-        "handle": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-3affe86f5614/worktree/.max237-t2b/handle.json",
+        "handle": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-4d52319c9c03/worktree/.max237-t2b/handle.json",
         "container": "max237-t2b-15coder1-20261027",
         "schemas": [
           "max237_t2b_d1",
@@ -538,6 +538,47 @@
       }
     },
     {
+      "step": "frozen-structure comparator rejects every drift class (synthetic snapshots)",
+      "status": "PASS",
+      "detail": {
+        "drifts": [
+          "missing column: metric_template_items.created_at: column is missing",
+          "extra column: metric_template_items.drift_extra: unexpected column",
+          "narrowed type: metric_templates_v2.name.type: varchar(32) != varchar(128)",
+          "nullability: metric_templates_v2.name.nullable: YES != NO",
+          "charset/collation: metric_template_items.created_at.charset: utf8mb4 != ascii",
+          "engine: metric_template_items.engine: MyISAM != InnoDB",
+          "primary key: metric_template_items.index PRIMARY: UNIQUE(template_id) != UNIQUE(template_id,item_id)",
+          "unique key: metric_template_versions.index uk_content: INDEX(template_id,content_hash) != UNIQUE(template_id,content_hash)",
+          "prefix index: metric_template_item_versions.index idx_canonical: INDEX(canonical_metric_id(64),canonical_semantic_version(16)) != INDEX(canonical_metric_id(128),canonical_semantic_version(16))",
+          "foreign key: metric_template_item_versions.foreign key fk_tiv_item: (template_id,item_id)->metric_templates_v2(template_id,item_id) != (template_id,item_id)->metric_template_items(template_id,item_id)"
+        ],
+        "note": "synthetic snapshots; real DDL drift rows follow"
+      }
+    },
+    {
+      "step": "seed write entry rejects a connection that is not the recorded fixture",
+      "status": "PASS",
+      "detail": {
+        "reason": "wrong-fixture",
+        "message": "connected host f7604b63ac7d is not the recorded container 0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "step": "real source structure drift blocks seed before its first write",
+      "status": "PASS",
+      "detail": {
+        "label": "source narrowed column type",
+        "schema": "max237_t2b_d1",
+        "drift_statement": "ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(32) NOT NULL",
+        "restore_statement": "ALTER TABLE `max237_t2b_d1`.`metric_templates_v2` MODIFY `name` VARCHAR(128) NOT NULL",
+        "diffs": [
+          "metric_templates_v2.name.type: varchar(32) != varchar(128)"
+        ],
+        "structure_sha256": "c1aba0fb22fe81b155b2ba71355e55fb1afddef703caa878f369d35642c3b6d9"
+      }
+    },
+    {
       "step": "representative 140 source aggregate seeded",
       "status": "PASS",
       "detail": {
@@ -552,63 +593,177 @@
       }
     },
     {
-      "step": "up failure injected after-parents leaves target empty and source unchanged",
+      "step": "real candidate structure drift blocks up before its first write",
       "status": "PASS",
       "detail": {
-        "message": "injected failure after copying parent rows",
-        "target": {
-          "metric_templates_v2": 0,
-          "metric_template_drafts": 0,
-          "metric_template_items": 0,
-          "metric_template_item_versions": 0,
-          "metric_template_versions": 0
-        },
-        "first_connection": {
-          "metric_templates_v2": 0,
-          "metric_template_drafts": 0,
-          "metric_template_items": 0,
-          "metric_template_item_versions": 0,
-          "metric_template_versions": 0
-        },
-        "second_connection": {
-          "metric_templates_v2": 0,
-          "metric_template_drafts": 0,
-          "metric_template_items": 0,
-          "metric_template_item_versions": 0,
-          "metric_template_versions": 0
-        },
-        "source_first": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
-        "source_second": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+        "label": "candidate missing query index",
+        "schema": "max237_t2b",
+        "drift_statement": "ALTER TABLE `max237_t2b`.`metric_template_item_versions` DROP INDEX `idx_canonical`",
+        "restore_statement": "ALTER TABLE `max237_t2b`.`metric_template_item_versions` ADD KEY `idx_canonical` (`canonical_metric_id`(128), `canonical_semantic_version`(16))",
+        "diffs": [
+          "metric_template_item_versions.index idx_canonical: index is missing"
+        ],
+        "structure_sha256": "ad039a347788e634ece5ed0ce496a848e0cdaf094f219382303f439ff76c5a3a"
       }
     },
     {
-      "step": "up failure injected after-versions leaves target empty and source unchanged",
+      "step": "up failure after-parents with a confirmed rollback releases the connection",
       "status": "PASS",
       "detail": {
-        "message": "injected failure after copying version snapshot rows",
+        "message": "injected failure after copying parent rows",
+        "counter": {
+          "releases": 1,
+          "destroys": 0
+        },
         "target": {
           "metric_templates_v2": 0,
           "metric_template_drafts": 0,
           "metric_template_items": 0,
           "metric_template_item_versions": 0,
           "metric_template_versions": 0
+        }
+      }
+    },
+    {
+      "step": "up failure after-versions with a confirmed rollback releases the connection",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure after copying version snapshot rows",
+        "counter": {
+          "releases": 1,
+          "destroys": 0
         },
-        "first_connection": {
+        "target": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        }
+      }
+    },
+    {
+      "step": "a failed begin destroys the connection and releases nothing",
+      "status": "PASS",
+      "detail": {
+        "message": "fault: begin not forwarded",
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        }
+      }
+    },
+    {
+      "step": "unconfirmed rollback destroys the live transaction instead of releasing it",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure after copying parent rows",
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        },
+        "externally_visible_before": {
           "metric_templates_v2": 0,
           "metric_template_drafts": 0,
           "metric_template_items": 0,
           "metric_template_item_versions": 0,
           "metric_template_versions": 0
         },
-        "second_connection": {
+        "externally_visible_after_unrelated_transaction": {
           "metric_templates_v2": 0,
           "metric_template_drafts": 0,
           "metric_template_items": 0,
           "metric_template_item_versions": 0,
           "metric_template_versions": 0
         },
-        "source_first": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
-        "source_second": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d"
+        "source_unchanged": true
+      }
+    },
+    {
+      "step": "a failing destroy keeps the original failure and never falls back to release",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure after copying parent rows",
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        }
+      }
+    },
+    {
+      "step": "a COMMIT that never reached the server is classified as not applied",
+      "status": "PASS",
+      "detail": {
+        "detail": {
+          "outcome": "not-committed",
+          "commit_error": "fault: commit not forwarded; live socket",
+          "target_schema": "max237_t2b",
+          "target_manifest": "b2221d57057b18e7cd5cfad7afadc46333ef2314fd4f454dafb50c8a30b0b3af",
+          "expected_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "target_counts": {
+            "metric_templates_v2": 0,
+            "metric_template_drafts": 0,
+            "metric_template_items": 0,
+            "metric_template_item_versions": 0,
+            "metric_template_versions": 0
+          },
+          "source_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "source_unchanged": true
+        },
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        },
+        "target_before": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "target_after": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        }
+      }
+    },
+    {
+      "step": "a real commit whose acknowledgement was lost is unconfirmed, and a re-run is a no-op",
+      "status": "PASS",
+      "detail": {
+        "detail": {
+          "outcome": "committed-unconfirmed",
+          "commit_error": "fault: commit acknowledgement lost",
+          "target_schema": "max237_t2b",
+          "target_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "expected_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "target_counts": {
+            "metric_templates_v2": 2,
+            "metric_template_drafts": 2,
+            "metric_template_items": 2,
+            "metric_template_item_versions": 3,
+            "metric_template_versions": 2
+          },
+          "source_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+          "source_unchanged": true
+        },
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        },
+        "candidate_manifest": "4a30e49e62c077eb71e5151d83461a61ab884f8f77536605af9a926a2408615d",
+        "rows": {
+          "metric_templates_v2": 2,
+          "metric_template_drafts": 2,
+          "metric_template_items": 2,
+          "metric_template_item_versions": 3,
+          "metric_template_versions": 2
+        },
+        "rerun": "no-op",
+        "source_unchanged": true
       }
     },
     {
@@ -1016,6 +1171,58 @@
       }
     },
     {
+      "step": "real restore structure drift blocks down before its first write",
+      "status": "PASS",
+      "detail": {
+        "label": "restore missing unique content index",
+        "schema": "max237_t2b_restore",
+        "drift_statement": "ALTER TABLE `max237_t2b_restore`.`metric_template_versions` DROP INDEX `uk_content`",
+        "restore_statement": "ALTER TABLE `max237_t2b_restore`.`metric_template_versions` ADD UNIQUE KEY `uk_content` (`template_id`, `content_hash`)",
+        "diffs": [
+          "metric_template_versions.index uk_content: index is missing"
+        ],
+        "structure_sha256": "c1aba0fb22fe81b155b2ba71355e55fb1afddef703caa878f369d35642c3b6d9"
+      }
+    },
+    {
+      "step": "down failure with a confirmed rollback releases the connection",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure inside the copy transaction",
+        "counter": {
+          "releases": 1,
+          "destroys": 0
+        }
+      }
+    },
+    {
+      "step": "down unconfirmed rollback destroys the connection and leaves all three schemas unchanged",
+      "status": "PASS",
+      "detail": {
+        "message": "injected failure inside the copy transaction",
+        "counter": {
+          "releases": 0,
+          "destroys": 1
+        },
+        "externally_visible_before": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "externally_visible_after_unrelated_transaction": {
+          "metric_templates_v2": 0,
+          "metric_template_drafts": 0,
+          "metric_template_items": 0,
+          "metric_template_item_versions": 0,
+          "metric_template_versions": 0
+        },
+        "source_unchanged": true,
+        "candidate_unchanged": true
+      }
+    },
+    {
       "step": "safe down copies into the empty restore schema and round-trips the source manifest",
       "status": "PASS",
       "detail": {
@@ -1048,5 +1255,5 @@
     }
   ],
   "result": "PASS",
-  "generated_at_finished": "2026-10-27T05:11:10.553Z"
+  "generated_at_finished": "2026-10-27T05:31:48.807Z"
 }
