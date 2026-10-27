@@ -1,6 +1,6 @@
 # MAX-238 B2E：未挂载 MySQL host 与严格 payload codec
 
-2026-10-27。实现 + focused tests 提交 `0493096fdfd245b5e30ecffcb1e2a4c97ce53e3a`，边界收敛（`resource_key` 上限对齐既有 255 字节列）提交 `2a9606c00`，基线为已接受的 B2D-R1 交付 HEAD `14af2725831aa8c41a97b85f3fb307d7d10620b3`（只在其上追加；本文件为后续文档提交）。**本包是未挂载的内部存储端口**：没有默认连接池、没有进程注册、没有路由/调度/正式采集、没有 receipt issuer、没有真实数据库、没有 DDL 执行。真实接线见 `wiring-gates.md` 与 `b2e-candidate-schema.sql`。
+2026-10-27。实现 + focused tests 提交 `0493096fdfd245b5e30ecffcb1e2a4c97ce53e3a`，边界收敛（`resource_key` 上限对齐既有 255 字节列）提交 `2a9606c00`，写点前后故障补测提交 `0611256a5`，基线为已接受的 B2D-R1 交付 HEAD `14af2725831aa8c41a97b85f3fb307d7d10620b3`（只在其上追加；本文件为后续文档提交）。**本包是未挂载的内部存储端口**：没有默认连接池、没有进程注册、没有路由/调度/正式采集、没有 receipt issuer、没有真实数据库、没有 DDL 执行。真实接线见 `wiring-gates.md` 与 `b2e-candidate-schema.sql`。
 
 ## 1. 允许文件与实际 diff
 
@@ -8,8 +8,8 @@
 | --- | ---: | --- |
 | `apps/db-ops-api/src/metrics/bindings/persistence-codec.ts` | 472 | 新增：`templates-v1` 顶层 envelope、严格候选/pending/effective 编解码、判别/fence、稳定码。 |
 | `apps/db-ops-api/src/metrics/bindings/persistence-codec.test.ts` | 325 | 新增 focused 测试（21 项）。 |
-| `apps/db-ops-api/src/metrics/bindings/mysql-host.ts` | 777 | 新增：单 lease MySQL host、同连接读、原子 staging、settle、清理、只读 caller-key 查询。 |
-| `apps/db-ops-api/src/metrics/bindings/mysql-host.test.ts` | 975 | 新增 focused 测试（21 项）+ 故障注入 SQL fixture。 |
+| `apps/db-ops-api/src/metrics/bindings/mysql-host.ts` | 778 | 新增：单 lease MySQL host、同连接读、原子 staging、settle、清理、只读 caller-key 查询。 |
+| `apps/db-ops-api/src/metrics/bindings/mysql-host.test.ts` | 993 | 新增 focused 测试（22 项）+ 故障注入 SQL fixture。 |
 | `apps/db-ops-api/src/metrics/bindings/index.ts` | 6 | 增加两行内部 export。 |
 
 未改 `transaction-guard.ts`、`transaction-adapter.ts`、`resolve.ts`、`plan.ts`、`preflight.ts`、`compile.ts`、`policy/*`、`packages/*`、`templates/*`、`scheduler/*`、`config/*`、`bulk/*`、`consumers/*`、`rollout/*`、`contracts/*`、路由、server/runner、前端或正式 migrations。没有新增依赖（fixture 只使用现有 vitest，未 import mysql2）。MAX237 T2B `4ed20d4d9` 仅作只读参考，未 cherry-pick，也未把它当作模板 MySQL 读取验收。
@@ -20,7 +20,7 @@
 1ef08b9a3f75536474c97e481fb3790f7853a6d9443be222648ce53d95394783  persistence-codec.ts
 37e4e4117621594e6189a970328d4792c61a3abc1bf250ac9f435f4b193b3a51  persistence-codec.test.ts
 e3cf6fbb0f05528e946e9f1a38b168a50ecea47d5e0f19aa29d8d85c263235e9  mysql-host.ts
-a58c00523873562ed8722845dc9e143b75bdd1d2e580d3831b8214d408e5de3c  mysql-host.test.ts
+090a8567afcc0508c43db40387ef7a6d332534e514e3474a60836e75fae5f37a  mysql-host.test.ts
 96945471e00c9e13dd810c2aa1f5b0b2c167cf989de593a5f1c4e277cf3890e8  index.ts
 ```
 
@@ -124,9 +124,9 @@ a58c00523873562ed8722845dc9e143b75bdd1d2e580d3831b8214d408e5de3c  mysql-host.tes
 
 | 命令 | 结果 | 退出码 |
 | --- | --- | --- |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings/persistence-codec.test.ts src/metrics/bindings/mysql-host.test.ts` | 2 files / 42 passed | 0 |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings` | 8 files / 258 passed | 0 |
-| `pnpm --filter slide-api exec vitest run src/metrics/bindings src/metrics/policy src/metrics/scheduler src/metrics/packages src/contracts/metrics` | 18 passed + 4 skipped files；454 passed + 36 skipped | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings/persistence-codec.test.ts src/metrics/bindings/mysql-host.test.ts` | 2 files / 43 passed | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings` | 8 files / 259 passed | 0 |
+| `pnpm --filter slide-api exec vitest run src/metrics/bindings src/metrics/policy src/metrics/scheduler src/metrics/packages src/contracts/metrics` | 18 passed + 4 skipped files；455 passed + 36 skipped | 0 |
 | `pnpm --filter slide-api typecheck` | 无错误 | 0 |
 | `pnpm contracts:check` | 无差异（未改契约） | 0 |
 | `pnpm exec oxlint apps/db-ops-api/src/metrics/bindings` | 0 warnings / 0 errors | 0 |
@@ -135,7 +135,7 @@ focused 覆盖要点：
 
 - **codec**：旧行无 pins 逐字节 roundtrip、显式空 pins、两种 envelope、严格 raw candidate、歧义/缺身份/未知 envelope、pending base→target、plan 身份与资源、旧 applied/effective 保留与缺失事实、application/effective 交叉、输入输出变异隔离、错误不含敏感值。
 - **SQL fixture**（离线，非 MySQL）：记录每条语句的真实参数、连接 id 与时序；建模两张新表的两个唯一约束、commit/rollback、`affectedRows`。
-- **host**：完整成功序列 `begin,lock,bindingRead,operationRead,bindingRead,receiptRead,consumptionRead,bindingLock,operationInsert,bindingUpdate,auditInsert,commit,release` 且全部在同一连接；4 类状态一致（3 个物理写）；参数为 UTF-8 Buffer 且 CAS revision = base；capabilities 列未改；legacy/replay/unknown 零 staging；CAS 冲突、caller/receipt 冲突、大小写/尾空格变体、operation 损坏、receipt 读失败、v1 receipt；commit ack 丢失 → `commit_unknown` + destroy + 只查原 operation + 无第二次 `begin`；begin 失败/锁缺失/最终 CAS 读失败/audit 失败/回滚未确认/输入工厂缺失的连接清理；旧行 effective 缺失拒绝且行不变；只读查询零写、零事务。
+- **host**：完整成功序列 `begin,lock,bindingRead,operationRead,bindingRead,receiptRead,consumptionRead,bindingLock,operationInsert,bindingUpdate,auditInsert,commit,release` 且全部在同一连接、语句文本与声明 SQL 逐字相等；4 类状态一致（3 个物理写）；参数为 UTF-8 Buffer 且 CAS revision = base；capabilities 列未改；legacy/replay/unknown 零 staging；CAS 冲突、caller/receipt 冲突、大小写/尾空格变体、operation 损坏、receipt 读失败、v1 receipt；**每个写点在写入前后各注入一次失败**均整体回滚零应用写入；commit ack 丢失 → `commit_unknown` + destroy + 只查原 operation + 无第二次 `begin`；begin 失败/锁缺失/最终 CAS 读失败/回滚未确认/输入工厂缺失的连接清理；旧行 effective 缺失拒绝且行不变；只读查询零写、零事务。
 - **反例**：`treats the stage acknowledgement as no commit at all`（commit 抛错时若把 stage ack 当 committed 会失败）与 `reports commit_unknown ... when a failed write cannot be rolled back`（若省略清理/回滚确认会失败）。
 
 ## 5. 共享读者 wiring-gates 逐项状态
