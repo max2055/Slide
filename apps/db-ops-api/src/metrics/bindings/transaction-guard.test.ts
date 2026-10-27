@@ -13,8 +13,8 @@ import { BindingPreflightError, type TemplateVersionReadPort } from './preflight
 import {
   BindingTransactionError, bindingCandidateDigest, bindingOperationKey,
   prepareTemplateBindingMutation,
-  type BindingTransactionPort, type BindingItemRef, type TrustedAuthorization,
-  type TrustedBindingOperation,
+  type BindingTransactionErrorCode, type BindingTransactionPort, type BindingItemRef,
+  type TrustedAuthorization, type TrustedBindingOperation,
 } from './transaction-guard.js';
 
 const T0 = '2026-10-01T00:00:00Z';
@@ -237,7 +237,12 @@ function receiptFor(digest: HashId, overrides: Record<string, unknown> = {}) {
 }
 
 type CallName = 'authorize' | 'currentBinding' | 'findOperation' | 'getTrialReceipt' | 'mandatoryItems' | 'serverNow';
-type PortSetup = Partial<Record<CallName, () => Promise<unknown>>> & { omit?: CallName[] };
+type AsyncCallName = Exclude<CallName, 'serverNow'>;
+type PortSetup = Partial<Record<AsyncCallName, () => Promise<unknown>>> & {
+  /** Trusted clock is synchronous by contract; the guard rejects a promise/thenable. */
+  serverNow?: () => unknown;
+  omit?: CallName[];
+};
 
 const defaultCalls = (): Record<CallName, number> => ({
   authorize: 0, currentBinding: 0, findOperation: 0, getTrialReceipt: 0, mandatoryItems: 0, serverNow: 0,
@@ -246,18 +251,21 @@ const defaultCalls = (): Record<CallName, number> => ({
 /** Trusted-view fixture; only methods supplied here ever run, and every run is counted. */
 function makePort(setup: PortSetup = {}) {
   const calls = defaultCalls();
-  const defaults: Partial<Record<CallName, () => Promise<unknown>>> = {
+  const defaults: Partial<Record<AsyncCallName, () => Promise<unknown>>> = {
     authorize: async () => allowed(),
     currentBinding: async () => structuredClone(currentBinding),
     findOperation: async () => null,
-    serverNow: async () => NOW,
   };
   const port: Record<string, unknown> = {};
-  for (const name of ['authorize', 'currentBinding', 'findOperation', 'getTrialReceipt', 'mandatoryItems', 'serverNow'] as CallName[]) {
+  for (const name of ['authorize', 'currentBinding', 'findOperation', 'getTrialReceipt', 'mandatoryItems'] as AsyncCallName[]) {
     if (setup.omit?.includes(name)) continue;
     const invoke = setup[name] ?? defaults[name];
     if (invoke === undefined) continue;
     port[name] = async () => { calls[name] += 1; return invoke(); };
+  }
+  if (!setup.omit?.includes('serverNow')) {
+    const clock = setup.serverNow ?? (() => NOW);
+    port.serverNow = () => { calls.serverNow += 1; return clock(); };
   }
   return { port: port as unknown as BindingTransactionPort, calls };
 }
@@ -366,7 +374,7 @@ describe('prepared template binding mutation', () => {
     expect(outcome).toEqual({ kind: 'legacy_delegate', binding: legacyCandidate(), package: legacyPackage });
     expect(templates.getVersion).not.toHaveBeenCalled();
     expect(calls).toEqual({
-      authorize: 1, currentBinding: 0, findOperation: 0, getTrialReceipt: 0, mandatoryItems: 0, serverNow: 0,
+      authorize: 2, currentBinding: 0, findOperation: 0, getTrialReceipt: 0, mandatoryItems: 0, serverNow: 0,
     });
   });
 
@@ -498,10 +506,23 @@ describe('trusted trial receipt', () => {
     expect((await rejection(prepare(port))).code).toBe(code);
   });
 
-  it('rejects an unusable trusted clock', async () => {
-    const { port } = await happyPort(candidate(), {}, { serverNow: async () => 'not-a-timestamp' });
+  const unusableClocks: Array<[string, PortSetup]> = [
+    ['a missing clock', { omit: ['serverNow'] }],
+    ['a throwing clock', { serverNow: () => { throw new Error('clock password=secret'); } }],
+    ['a promise clock', { serverNow: () => Promise.resolve(NOW) }],
+    // A deliberate thenable fixture: the guard must reject it, not await it.
+    // oxlint-disable-next-line eslint-plugin-unicorn/no-thenable
+    ['a thenable clock', { serverNow: () => ({ then: () => undefined }) }],
+    ['an unparseable clock', { serverNow: () => 'not-a-timestamp' }],
+    ['a non-string clock', { serverNow: () => 0 }],
+  ];
+  it.each(unusableClocks)('rejects %s as unavailable time', async (_label, setup) => {
+    const { port } = await happyPort(candidate(), {}, setup);
 
-    expect((await rejection(prepare(port))).code).toBe('TRANSACTION_TIME_UNAVAILABLE');
+    const error = await rejection(prepare(port));
+
+    expect(error.code).toBe('TRANSACTION_TIME_UNAVAILABLE');
+    expect(JSON.stringify(error)).not.toContain('secret');
   });
 
   it.each([
@@ -643,6 +664,121 @@ describe('authorization and asynchronous boundary', () => {
 
     expect(error.code).toBe('TRANSACTION_AUTH_UNAVAILABLE');
     expect(JSON.stringify(error)).not.toContain('secret');
+  });
+});
+
+describe('final trusted boundary on every outcome', () => {
+  const legacyRequestWith = (overrides: Record<string, unknown> = {}) =>
+    request({ candidate: { ...legacyCandidate(), ...overrides } });
+
+  it.each([
+    ['instance', { type: 'instance' as const, id: 8 }],
+    ['server', { type: 'server' as const, id: 7 }],
+  ])('rejects a legacy candidate for another %s resource', async (_label, resource) => {
+    const templates = portOf([templateV1, templateV2]);
+    const { port, calls } = makePort();
+
+    const error = await rejection(
+      prepare(port, legacyRequestWith({ resource }), fixtureRegistry(), templates.port),
+    );
+
+    expect(error.code).toBe('TRANSACTION_BINDING_IDENTITY');
+    expect(templates.getVersion).not.toHaveBeenCalled();
+    expect(calls).toEqual({
+      authorize: 1, currentBinding: 0, findOperation: 0, getTrialReceipt: 0, mandatoryItems: 0, serverNow: 0,
+    });
+  });
+
+  const legacyFinalStates: Array<[string, TrustedAuthorization, BindingTransactionErrorCode]> = [
+    ['a revoked grant', { allowed: false, cancelled: false, dependency_digest: DEP }, 'TRANSACTION_FORBIDDEN'],
+    ['a cancelled attempt', { allowed: true, cancelled: true, dependency_digest: DEP }, 'TRANSACTION_CANCELLED'],
+    ['a changed dependency', allowed(OTHER_DEP), 'TRANSACTION_DEPENDENCY_CHANGED'],
+  ];
+  it.each(legacyFinalStates)('checks legacy at the final asynchronous boundary for %s', async (_label, final, code) => {
+    let checks = 0;
+    const { port, calls } = makePort({
+      authorize: async () => (++checks === 1 ? allowed() : final),
+    });
+
+    const error = await rejection(prepare(port, legacyRequestWith()));
+
+    expect(error.code).toBe(code);
+    expect(checks).toBe(2);
+    expect(calls).toEqual({
+      authorize: 2, currentBinding: 0, findOperation: 0, getTrialReceipt: 0, mandatoryItems: 0, serverNow: 0,
+    });
+  });
+
+  const badFinalAuthorizations: Array<[string, () => Promise<unknown>]> = [
+    ['throws', async () => { throw new Error('grant password=secret'); }],
+    ['returns an invalid shape', async () => ({ allowed: 'yes', cancelled: false, dependency_digest: DEP })],
+  ];
+  it.each(badFinalAuthorizations)('rejects a legacy final authorization that %s', async (_label, finalAuthorize) => {
+    let checks = 0;
+    const { port } = makePort({
+      authorize: async () => (++checks === 1 ? allowed() : finalAuthorize()),
+    });
+
+    const error = await rejection(prepare(port, legacyRequestWith()));
+
+    expect(error.code).toBe('TRANSACTION_AUTH_UNAVAILABLE');
+    expect(JSON.stringify(error)).not.toContain('secret');
+  });
+
+  it.each(['committed', 'unknown'] as const)(
+    'checks the dependency at the final boundary during %s operation lookup',
+    async status => {
+      const digest = await digestFor(candidate());
+      let checks = 0;
+      const { port, calls } = makePort({
+        authorize: async () => allowed(++checks === 1 ? DEP : OTHER_DEP),
+        findOperation: async () => ({
+          caller_key: 'caller-1', resource: RESOURCE, target_revision: 5,
+          candidate_digest: digest, status, receipt_id: status === 'committed' ? 'receipt-0' : null,
+        }),
+      });
+
+      const error = await rejection(prepare(port));
+
+      expect(error.code).toBe('TRANSACTION_DEPENDENCY_CHANGED');
+      expect(calls.getTrialReceipt).toBe(0);
+    },
+  );
+
+  it('checks receipt expiry with trusted time read after the last authorization', async () => {
+    const expires = '2026-10-03T00:00:01Z';
+    let now = NOW;
+    let checks = 0;
+    const { port, calls } = await happyPort(candidate(), { expires_at: expires }, {
+      serverNow: () => now,
+      authorize: async () => {
+        if (++checks === 2) now = expires;
+        return allowed();
+      },
+    });
+
+    const error = await rejection(prepare(port));
+
+    expect(error.code).toBe('TRANSACTION_RECEIPT_EXPIRED');
+    expect(checks).toBe(2);
+    expect(calls.serverNow).toBe(1);
+  });
+
+  it('reads trusted time after the final authorization and makes no later trusted call', async () => {
+    const digest = await digestFor(candidate());
+    const order: string[] = [];
+    const { port } = makePort({
+      authorize: async () => { order.push('authorize'); return allowed(); },
+      currentBinding: async () => { order.push('currentBinding'); return structuredClone(currentBinding); },
+      findOperation: async () => { order.push('findOperation'); return null; },
+      getTrialReceipt: async () => { order.push('getTrialReceipt'); return receiptFor(digest); },
+      serverNow: () => { order.push('serverNow'); return NOW; },
+    });
+
+    const outcome = await prepare(port);
+
+    expect(outcome.kind).toBe('prepared');
+    expect(order).toEqual(['authorize', 'currentBinding', 'findOperation', 'getTrialReceipt', 'authorize', 'serverNow']);
   });
 });
 

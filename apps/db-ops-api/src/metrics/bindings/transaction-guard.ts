@@ -117,7 +117,14 @@ export interface BindingTransactionPort {
   findOperation(callerKey: string): Promise<unknown>;
   getTrialReceipt(receiptId: string): Promise<unknown>;
   mandatoryItems?(resource: ResourceRef): Promise<unknown>;
-  serverNow(): Promise<unknown>;
+  /**
+   * Trusted current server time, read **synchronously** after the last
+   * asynchronous authorization read. Returning a promise/thenable would
+   * reintroduce the async window the expiry check must not have; the future
+   * trusted adapter has to satisfy this contract (it still does not make DB
+   * commit-time atomicity true).
+   */
+  serverNow(): unknown;
 }
 
 /** The explicit single-package branch; the existing flow owns it, this guard does not rewrite it. */
@@ -404,14 +411,26 @@ async function readMandatory(
   return mandatory;
 }
 
-async function readServerNow(port: BindingTransactionPort): Promise<number> {
+const isThenable = (value: unknown): boolean =>
+  (typeof value === 'object' || typeof value === 'function') && value !== null
+  && typeof (value as { then?: unknown }).then === 'function';
+
+/**
+ * Trusted current time. The read is synchronous on purpose: the receipt expiry
+ * check runs after the last asynchronous authorization with no further await, so
+ * no clock movement can slip into the decision. A missing/throwing port, a
+ * promise/thenable or an unparseable timestamp is unavailable time — never
+ * `Date.now()` and never a client-supplied value.
+ */
+function readServerNow(port: BindingTransactionPort): number {
   if (typeof port?.serverNow !== 'function') throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   let raw: unknown;
   try {
-    raw = await port.serverNow();
+    raw = port.serverNow();
   } catch {
     throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   }
+  if (isThenable(raw)) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   const parsed = TimestampSchema.safeParse(raw);
   if (!parsed.success) throw new BindingTransactionError('TRANSACTION_TIME_UNAVAILABLE');
   const now = Date.parse(parsed.data);
@@ -422,6 +441,19 @@ async function readServerNow(port: BindingTransactionPort): Promise<number> {
 function assertAuthorized(auth: TrustedAuthorization): void {
   if (!auth.allowed) throw new BindingTransactionError('TRANSACTION_FORBIDDEN');
   if (auth.cancelled) throw new BindingTransactionError('TRANSACTION_CANCELLED');
+}
+
+/**
+ * The final trusted boundary every successful outcome shares (legacy, replay,
+ * lookup and prepared): still allowed, not cancelled and no configuration
+ * dependency changed during this call. Keeping it in one helper prevents a
+ * branch from checking only part of the rule.
+ */
+function assertFinalAuthorization(before: TrustedAuthorization, after: TrustedAuthorization): void {
+  assertAuthorized(after);
+  if (after.dependency_digest !== before.dependency_digest) {
+    throw new BindingTransactionError('TRANSACTION_DEPENDENCY_CHANGED');
+  }
 }
 
 function selectedItems(candidate: BindingTemplateCandidate): Map<string, BindingItemRef> {
@@ -521,13 +553,17 @@ function verifyReceiptItems(
  *
  * - B1/B2A always run first through {@link compileBindingCandidate}; their
  *   stable rejections propagate and no partial decision exists.
- * - A legacy candidate returns `legacy_delegate` untouched: no digest, receipt,
- *   operation lookup or write — the existing single-package flow keeps owning it.
+ * - A legacy candidate is still checked for resource identity and for the final
+ *   authorization/dependency boundary after all asynchronous work, then returned
+ *   as `legacy_delegate` untouched: no digest, current, operation, receipt or
+ *   write — the existing single-package flow keeps owning it.
  * - The trusted view is the only source of the current revision and of every
  *   receipt fact; the request may name a receipt id but never its contents.
  * - Authorization is read before candidate/receipt reads and again after all
- *   asynchronous work; a revoked grant, cancellation or changed dependency
- *   identity rejects before any decision is formed.
+ *   asynchronous work for every outcome; a revoked grant, cancellation or
+ *   changed dependency identity rejects before any decision is formed.
+ * - The trusted clock is read synchronously after that last authorization, so
+ *   the receipt is checked against current trusted time with no further await.
  * - An already committed exact operation replays its receipt without a new
  *   revision, even when the trusted current revision already equals the target;
  *   an unknown outcome only asks the caller to query the original operation.
@@ -548,11 +584,17 @@ export async function prepareTemplateBindingMutation(
   assertAuthorized(before);
 
   const compiled = await compileBindingCandidate(candidate, templates, registry);
-  if (compiled.kind === 'legacy') {
-    return { kind: 'legacy_delegate', binding: compiled.binding, package: compiled.package };
-  }
+  // Resource identity covers both compiled results; a legacy delegate is a
+  // binding for this exact resource and never bypasses the boundary.
   if (!sameResource(compiled.binding.resource, resource)) {
     throw new BindingTransactionError('TRANSACTION_BINDING_IDENTITY');
+  }
+  if (compiled.kind === 'legacy') {
+    // Same final boundary as every other outcome, after the last asynchronous
+    // work; still no digest, current, operation, receipt or decision.
+    const after = await readAuthorization(transaction, resource);
+    assertFinalAuthorization(before, after);
+    return { kind: 'legacy_delegate', binding: compiled.binding, package: compiled.package };
   }
 
   const rawCurrent = await readCurrentBinding(transaction, resource);
@@ -577,7 +619,7 @@ export async function prepareTemplateBindingMutation(
     if (!exact) throw new BindingTransactionError('TRANSACTION_OPERATION_CONFLICT');
 
     const after = await readAuthorization(transaction, resource);
-    assertAuthorized(after);
+    assertFinalAuthorization(before, after);
 
     if (operation.status === 'unknown') {
       return {
@@ -599,13 +641,12 @@ export async function prepareTemplateBindingMutation(
   const receipt = await readReceipt(transaction, receiptId);
   const selected = selectedItems(compiled);
   const mandatory = await readMandatory(transaction, resource, selected);
-  const now = await readServerNow(transaction);
 
+  // Last asynchronous read. Everything below is synchronous: trusted now,
+  // receipt identity/time/items and the prepared decision.
   const after = await readAuthorization(transaction, resource);
-  assertAuthorized(after);
-  if (after.dependency_digest !== before.dependency_digest) {
-    throw new BindingTransactionError('TRANSACTION_DEPENDENCY_CHANGED');
-  }
+  assertFinalAuthorization(before, after);
+  const now = readServerNow(transaction);
 
   verifyReceiptIdentity(receipt, {
     receiptId, resource, base: baseRevision, target: targetRevision,
