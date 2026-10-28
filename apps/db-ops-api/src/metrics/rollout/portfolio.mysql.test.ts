@@ -2,17 +2,25 @@ import mysql, { type Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
+import type { Resource } from '../../contracts/metrics/index.js';
 import { createConfigurationRegistry } from '../config/registry.js';
+import type { Ref } from '../policy/model.js';
+import { resolvePolicy } from '../policy/resolver.js';
+import { MysqlPolicyStore } from '../policy/store.js';
 import { MetricPortfolioService, MysqlPortfolioInventory, type PortfolioDependencies, type PortfolioPackage } from './portfolio.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const actor = { userId: 9, username: 'admin', roles: ['admin'], permissions: ['*'], sessionVersion: 1, instanceScopes: {}, requestId: 'portfolio-mysql' };
+const registry = createConfigurationRegistry();
+const publishedAt = '2026-10-29T00:00:00.000Z';
+const appliedAt = '2026-10-29T00:00:01.000Z';
 
 describe.skipIf(!port)('Metrics portfolio persisted state', () => {
   let root: Pool;
   let pool: Pool;
   let packages: PortfolioPackage[];
   let service: MetricPortfolioService;
+  let policies: MysqlPolicyStore;
   const database = `max85_portfolio_${process.pid}`;
 
   beforeAll(async () => {
@@ -20,9 +28,10 @@ describe.skipIf(!port)('Metrics portfolio persisted state', () => {
     await root.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 8 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
-    packages = createConfigurationRegistry().list().map(({ package: item }) => ({
+    packages = registry.list().map(({ package: item }) => ({
       id: item.id, version: item.version, digest: item.digest, resource_type: item.resource_type,
     }));
+    policies = new MysqlPolicyStore(() => pool);
     const dependencies: PortfolioDependencies = {
       inventory: new MysqlPortfolioInventory(pool, packages), packages,
       publish: vi.fn(async () => undefined), startShadow: vi.fn(async () => undefined),
@@ -61,17 +70,37 @@ describe.skipIf(!port)('Metrics portfolio persisted state', () => {
   });
 
   const pin = (id: string) => packages.find(item => item.id === id)!;
-  const published = (key: string, selected: PortfolioPackage) => {
+  /** The inventory attributes the portfolio itself derives from each asset row. */
+  const resourceOf = (key: string): Resource => {
     const [type, id] = key.split(':');
-    return { binding: { resource: { type, id: Number(id) }, package: {
-      id: selected.id, version: selected.version, digest: selected.digest,
-    }, revision: 2 }, application: { applied_revision: 2, status: 'applied' } };
+    if (type === 'instance') return { type: 'instance', id, attributes: {
+      'db.engine': { value: 'mysql', observed_at: publishedAt, source: 'fixture' },
+      'db.version': { value: '8.4.10', observed_at: publishedAt, source: 'fixture' } } };
+    if (type === 'server') return { type: 'server', id, attributes: {
+      'os.family': { value: 'linux', observed_at: publishedAt, source: 'fixture' } } };
+    return { type: 'network_device', id, attributes: {
+      'snmp.version': { value: '2', observed_at: publishedAt, source: 'fixture' } } };
   };
+
+  /**
+   * The resolver's own `Published` value, then the store's real apply transition.
+   * A hand-written sparse payload is not a row the producer ever writes, and the
+   * strict reader rightly refuses it.
+   */
+  async function publishApplied(key: string, selected: PortfolioPackage) {
+    const [type, id] = key.split(':');
+    const ref: Ref = { type: type as Ref['type'], id: Number(id) };
+    const binding = { resource: ref, package: { id: selected.id, version: selected.version, digest: selected.digest },
+      group_id: null, overrides: {}, revision: 2 };
+    const resolved = resolvePolicy(registry, binding, null, resourceOf(key), [], publishedAt);
+    await policies.transaction(tx => tx.saveBinding({ binding, resolved, published_at: publishedAt,
+      application: { applied_revision: null, reported_at: null, status: 'pending', error_code: null } }, true));
+    await policies.reportApplied(ref, 2, appliedAt, 'applied');
+  }
 
   async function markV2(key: string, selected: PortfolioPackage, hashes: string[]) {
     const [type, id] = key.split(':');
-    await pool.query('INSERT INTO metric_policy_bindings (resource_key, group_id, payload, capabilities) VALUES (?, NULL, ?, ?)',
-      [key, JSON.stringify(published(key, selected)), '[]']);
+    await publishApplied(key, selected);
     await pool.query(`INSERT INTO metric_rollout_resources
       (resource_key, resource_type, resource_id, phase, revision, generation, gate_json, actor_id, request_id)
       VALUES (?, ?, ?, 'semantic', 2, 2, ?, 9, 'portfolio-mysql')`, [key, type, id, JSON.stringify({ sample_count: 20 })]);
