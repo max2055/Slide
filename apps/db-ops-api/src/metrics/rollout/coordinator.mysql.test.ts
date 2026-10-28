@@ -3,6 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { definitions, identify, sample } from '../../contracts/metrics/fixtures.js';
+import type { Resource } from '../../contracts/metrics/index.js';
+import { createConfigurationRegistry } from '../config/registry.js';
+import type { Published } from '../policy/model.js';
+import { resolvePolicy } from '../policy/resolver.js';
+import { MysqlPolicyStore } from '../policy/store.js';
 import { MysqlMetricStorage, seriesHash } from '../storage.js';
 import { RolloutControl } from './control.js';
 import { MysqlRolloutCoordinator } from './coordinator.js';
@@ -13,23 +18,41 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
   let root: Pool;
   let pool: Pool;
   let coordinator: MysqlRolloutCoordinator;
+  let policies: MysqlPolicyStore;
   const database = `max85_coordinator_${process.pid}`;
   const ref = { type: 'instance' as const, id: 1 };
-  const packagePin = { id: 'fixture', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}` };
+  const registry = createConfigurationRegistry();
+  const packagePin = (() => {
+    const { id, version, digest } = registry.list().find(item => item.package.id === 'mysql-basic')!.package;
+    return { id, version, digest };
+  })();
   const actor = { userId: 7, requestId: 'rollout-test' };
+  const publishedAt = (revision: number) => new Date(Date.UTC(2026, 9, 29, 0, 0, revision)).toISOString();
+  const resource: Resource = { type: 'instance', id: '1', attributes: {
+    'db.engine': { value: 'mysql', observed_at: publishedAt(1), source: 'fixture' },
+    'db.version': { value: '8.4.10', observed_at: publishedAt(1), source: 'fixture' },
+  } };
 
-  const published = (revision: number) => ({
-    binding: { resource: ref, package: packagePin, group_id: null, overrides: {}, revision },
-    resolved: { settings: { enabled: true } },
-    published_at: new Date(revision * 1000).toISOString(),
-    application: { applied_revision: revision, reported_at: new Date(revision * 1000).toISOString(), status: 'applied', error_code: null },
-  });
+  /**
+   * The exact `Published` the resolver writes, rather than a hand-written sparse
+   * payload: the strict reader must accept a row the producer actually stores.
+   */
+  const published = (revision: number): Published => {
+    const binding = { resource: ref, package: packagePin, group_id: null, overrides: {}, revision };
+    const resolved = resolvePolicy(registry, binding, null, resource, [], publishedAt(revision));
+    return { binding, resolved, published_at: publishedAt(revision),
+      application: { applied_revision: null, reported_at: null, status: 'pending', error_code: null } };
+  };
+  const writePublished = (revision: number) => policies.transaction(tx => tx.saveBinding(published(revision), true));
 
-  const observation = (definitionIndex: number, revision: number) => identify({
-    ...sample(definitions[definitionIndex].id),
-    resource_id: '1',
-    versions: { ...sample(definitions[definitionIndex].id).versions, config_revision: revision },
-  });
+  const observation = (definitionIndex: number, revision: number) => {
+    const base = sample(definitions[definitionIndex].id);
+    return identify({
+      ...base,
+      resource_id: '1',
+      versions: { ...base.versions, package_id: packagePin.id, package_version: packagePin.version, config_revision: revision },
+    });
+  };
 
   beforeAll(async () => {
     root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
@@ -37,6 +60,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 12 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     coordinator = new MysqlRolloutCoordinator(pool);
+    policies = new MysqlPolicyStore(() => pool);
   }, 120000);
 
   afterAll(async () => {
@@ -55,8 +79,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
     await pool.query('DELETE FROM metric_publications');
     await pool.query('DELETE FROM metric_observations');
     await pool.query('DELETE FROM metric_policy_bindings');
-    await pool.query('INSERT INTO metric_policy_bindings (resource_key, group_id, payload, capabilities) VALUES (?, NULL, ?, ?)',
-      ['instance:1', JSON.stringify(published(1)), '[]']);
+    await writePublished(1);
     const storage = new MysqlMetricStorage(pool);
     await storage.write(observation(0, 1), definitions[0]);
     await storage.write(observation(6, 1), definitions[6]);
@@ -111,7 +134,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
       derived_mismatches: 0,
       performance_regressions: 0,
     }, actor);
-    await pool.query('UPDATE metric_policy_bindings SET payload = ? WHERE resource_key = ?', [JSON.stringify(published(2)), 'instance:1']);
+    await writePublished(2);
 
     const legacy = await pool.getConnection();
     await legacy.beginTransaction();
@@ -137,7 +160,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
     expect(await coordinator.collectionEnabled(ref)).toBe(true);
 
     const before = await pool.query<RowDataPacket[]>('SELECT id, payload_hash FROM metric_observations ORDER BY id');
-    await pool.query('UPDATE metric_policy_bindings SET payload = ? WHERE resource_key = ?', [JSON.stringify(published(3)), 'instance:1']);
+    await writePublished(3);
     await expect(coordinator.rollback(ref, { expected_revision: 2, expected_generation: 2 }, actor))
       .resolves.toMatchObject({ phase: 'legacy', revision: 3, generation: 3, series_count: 2 });
     const [rolledBack] = await pool.query<RowDataPacket[]>('SELECT * FROM metric_rollout ORDER BY series_hash');
