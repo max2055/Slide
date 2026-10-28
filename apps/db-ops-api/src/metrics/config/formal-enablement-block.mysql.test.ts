@@ -22,26 +22,39 @@ import { admin } from '../policy/test-support.js';
 import { QualitySchema } from '../../contracts/metrics/observations.js';
 
 /**
- * MAX-238 formal-enablement-block package. On a disposable schema (METRICS_TEST_MYSQL_PORT) the
+ * MAX-238 formal-enablement-exempt package. On a disposable schema (METRICS_TEST_MYSQL_PORT) the
  * existing PolicyService.changeBinding publishes the installed packages for the two real targets
  * (instance 1 mysql3306 and server 3 192.168.49.130:22). Each resource then runs one existing
- * MetricConfigurationService.trialCurrent to observe at least one non-good sample and one existing
- * MetricConfigurationService.activate with the current binding revision.
+ * MetricConfigurationService.trialCurrent and one existing MetricConfigurationService.activate with
+ * the current binding revision.
  *
- * The acceptance sentence under test is "untested or required-item failure blocks enablement": while
- * a non-good sample remains and no explicit exemption parameter exists, activate must not publish.
- * The test records the observed decision, revisions, error code and status for both targets before
- * asserting, so a publish is reported as a missing condition with evidence rather than hidden.
+ * The 2026-10-27 package observed 15 non-good samples (112 total) whose reasons were all one of
+ * source_error, counter_baseline, precision_loss and not_applicable, and found that activate still
+ * published. The member confirmed that those four reasons are exempt for this enablement, so this
+ * package makes the exemption a named constant and asserts the opposite of the old blocking test:
+ * while every non-good reason on a resource is in that set, and the existing preconditions hold (one
+ * non-null good sample plus one succeeded/partial attempt), activate must publish. A non-good reason
+ * outside the set fails the test and is recorded in the evidence with its metric id, status and
+ * reason; it is never added to the set.
  *
- * No collector, status, scheduler, worker, route, template, binding, policy, migration or frontend
- * source is changed. Nothing is activated on the application database; the source is read with
- * SELECT only and its credentials are re-encrypted into the disposable copy.
+ * The publication rule in apps/db-ops-api/src/metrics/config/service.ts is unchanged: no required
+ * metric list is invented here, and no required-item parameter is added. No collector, status,
+ * scheduler, worker, route, template, binding, policy, migration or frontend source is changed.
+ * Nothing is activated on the application database; the source is read with SELECT only and its
+ * credentials are re-encrypted into the disposable copy.
  */
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const envFile = process.env.SLIDE_DEBUG_ENV_FILE;
-const database = `max238_formal_enablement_block_${process.pid}`;
+const database = `max238_formal_enablement_exempt_${process.pid}`;
 const instanceRef = { type: 'instance' as const, id: 1 };
 const serverRef = { type: 'server' as const, id: 3 };
+/**
+ * The four sample-quality reasons the member confirmed as exempt for this enablement. This is the
+ * whole set: a reason outside it must fail the test, not be appended here.
+ */
+const exemptNonGoodReasons = ['source_error', 'counter_baseline', 'precision_loss', 'not_applicable'] as const;
+/** Reasons that mean the value is missing; they must stay null and never become 0. */
+const missingValueReasons = ['source_error', 'counter_baseline', 'not_applicable'] as const;
 /** Migration 121 renames the metric v2 alert tables; count whichever name exists. */
 const alertTableNames = [
   { requested: 'metric_v2_alert_state', renamed: 'metric_alert_state' },
@@ -62,9 +75,9 @@ type Sample = { metric: { id: string; semantic_version: string }; value: unknown
   quality: { status: 'good' | 'partial' | 'unknown' | 'invalid'; reason: string }; unit: string };
 type Trial = { persisted: boolean; decision: string; error?: string; samples: Sample[];
   attempts: { collector_id: string; status: string; error: string | null }[] };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/formal-enablement-block-20261027.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/formal-enablement-exempt-20261028.json', import.meta.url));
 
-describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablement', () => {
+describe.skipIf(!port || !envFile)('MAX-238 exempt non-good samples still enable', () => {
   let root: Pool, pool: Pool, source: Pool;
   let packages: ReturnType<typeof createConfigurationRegistry>;
   let policies: PolicyService;
@@ -95,7 +108,7 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
       bindings: bindings.map(row => ({ resource_key: String(row.resource_key), revision: Number(row.revision) })),
     };
   };
-  /** Formal history and alert rows neither the trial nor a failed activation may create. */
+  /** Formal history and alert rows neither the trial nor the activation may create. */
   const formalRows = async () => {
     const counts: Record<string, number> = {
       normalized_observations: await count("SELECT COUNT(*) AS n FROM metric_observations WHERE stage = 'normalized'") };
@@ -157,7 +170,7 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
     await policies.changeBinding(admin, instanceRef, { expected_revision: 0, package: pinOf('mysql-diagnostics') }, true);
     await policies.changeBinding(admin, serverRef, { expected_revision: 0, package: pinOf('linux-host') }, true);
     // The trial transport reads through this asset connection, so open the authorized target once.
-    expect(await databaseService.addConnection(1, 'MAX238 formal enablement block', { host: instance.host, port: instance.port,
+    expect(await databaseService.addConnection(1, 'MAX238 formal enablement exempt', { host: instance.host, port: instance.port,
       user: instance.username, password: instancePassword, database: instance.database_name || 'mysql', db_type: 'mysql' })).toBe(true);
 
     alertTables = {};
@@ -185,7 +198,7 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
     vi.unstubAllEnvs();
   }, 60000);
 
-  it('does not publish while a non-good sample remains and records the observed decision', async () => {
+  it('publishes when every non-good reason is in the exempt set and records the observed decision', async () => {
     const before = await liveSnapshot();
     // The authorized source baseline this package must leave untouched.
     expect(before).toEqual({ database_instances: 5, servers: 1,
@@ -195,21 +208,26 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
     expect(rowsBefore).toEqual(zero);
 
     const resources = [
-      { ref: instanceRef, package: 'mysql-diagnostics', expected: { type: 'instance', id: 1 } },
-      { ref: serverRef, package: 'linux-host', expected: { type: 'server', id: 3 } },
+      { ref: instanceRef, package: 'mysql-diagnostics' },
+      { ref: serverRef, package: 'linux-host' },
     ] as const;
     const proof: Record<string, Record<string, unknown>> = {};
     const allSamples: { resource: string; sample: Sample }[] = [];
     const evidence: Record<string, unknown> = {};
+    const exempt = new Set<string>(exemptNonGoodReasons);
 
     try {
-      for (const { ref, package: packageId, expected } of resources) {
+      for (const { ref, package: packageId } of resources) {
         const key = `${ref.type}:${ref.id}`;
         // 1. One existing trial on the real target, with its per-sample quality preserved.
         const trial = await service.trialCurrent(admin, ref) as Trial;
         const nonGood = trial.samples.filter(sample => sample.quality.status !== 'good')
           .map(sample => ({ metric: sample.metric.id, quality: sample.quality, value: sample.value, unit: sample.unit }));
         for (const sample of trial.samples) allSamples.push({ resource: key, sample });
+        const preconditions = {
+          good_value_sample: trial.samples.some(sample => sample.value !== null && sample.quality.status === 'good'),
+          actionable_attempt: trial.attempts.some(attempt => ['succeeded', 'partial'].includes(attempt.status)),
+        };
 
         // 2. One existing activate call with the resource's current binding revision.
         const revisionBefore = await revisionOf(ref);
@@ -233,6 +251,8 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
           trial: { persisted: trial.persisted, decision: trial.decision, error: trial.error ?? null,
             samples: trial.samples.length, non_good: nonGood,
             attempts: trial.attempts.map(attempt => ({ collector_id: attempt.collector_id, status: attempt.status, error: attempt.error })) },
+          preconditions,
+          exempt_non_good: nonGood.every(entry => exempt.has(entry.quality.reason)),
           binding: { revision_before: revisionBefore, revision_after: revisionAfter,
             changed: revisionAfter !== revisionBefore, activate },
           status: { resource: status.resource, collection: status.collection, formal_visibility: status.formal_visibility,
@@ -240,12 +260,23 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
           formal_rows_after: rowsAfter,
         };
         // Every activation attempt was already recorded above; the evidence file is written before
-        // any assertion so a publish is reported with the facts that produced it.
+        // any assertion so an unexpected failure is reported with the facts that produced it.
       }
 
       const after = await liveSnapshot();
       const rowsAfter = await formalRows();
       const allNonGood = allSamples.filter(entry => entry.sample.quality.status !== 'good');
+      const unexempted = allNonGood
+        .filter(entry => !exempt.has(entry.sample.quality.reason))
+        .map(entry => ({ resource: entry.resource, metric: entry.sample.metric.id,
+          status: entry.sample.quality.status, reason: entry.sample.quality.reason }));
+      const missingFilled = allSamples
+        .filter(entry => (missingValueReasons as readonly string[]).includes(entry.sample.quality.reason)
+          && entry.sample.value !== null)
+        .map(entry => ({ resource: entry.resource, metric: entry.sample.metric.id,
+          status: entry.sample.quality.status, reason: entry.sample.quality.reason, value: entry.sample.value }));
+      const reasonCounts: Record<string, number> = {};
+      for (const entry of allNonGood) reasonCounts[entry.sample.quality.reason] = (reasonCounts[entry.sample.quality.reason] ?? 0) + 1;
       const known: Record<string, unknown> = {};
       for (const entry of knownExplanations) {
         const samples = allSamples.filter(candidate => candidate.resource === entry.resource
@@ -259,6 +290,8 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
         disposable_schema: `${database} on 127.0.0.1:${port}, dropped by afterAll` };
       evidence.targets = { instance: { id: 1, name: 'mysql3306', host: 'localhost', port: 3306 },
         server: { id: 3, host: '192.168.49.130', port: 22 } };
+      evidence.exempt = { reasons: [...exemptNonGoodReasons], confirmed_by_comment: '01a17ff8-3330-74cd-ba31-1eef5df30df5',
+        unexempted, missing_value_filled: missingFilled };
       evidence.results = proof;
       evidence.known = known;
       evidence.formal_rows = { before: rowsBefore, after: rowsAfter, zero };
@@ -268,18 +301,19 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
       evidence.totals = { samples: allSamples.length, good: allSamples.length - allNonGood.length,
         partial: allNonGood.filter(entry => entry.sample.quality.status === 'partial').length,
         unknown: allNonGood.filter(entry => entry.sample.quality.status === 'unknown').length,
-        invalid: allNonGood.filter(entry => entry.sample.quality.status === 'invalid').length, non_good: allNonGood.length };
-      evidence.blocking = Object.fromEntries(Object.entries(proof).map(([key, entry]) => {
-        const binding = entry.binding as { revision_before: number; revision_after: number; changed: boolean;
-          activate: { outcome: string; error_code: string | null; published: unknown; revision: unknown } };
+        invalid: allNonGood.filter(entry => entry.sample.quality.status === 'invalid').length,
+        non_good: allNonGood.length, by_reason: reasonCounts };
+      evidence.enablement = Object.fromEntries(Object.entries(proof).map(([key, entry]) => {
+        const binding = entry.binding as { revision_before: number; revision_after: number;
+          activate: { outcome: string; error_code: string | null; published: unknown } };
         return [key, { non_good_observed: (entry.trial as { non_good: unknown[] }).non_good.length,
-          revision_before: binding.revision_before, revision_after: binding.revision_after,
-          activate_error: binding.activate.error_code, published: !binding.changed ? false : true,
-          blocked: binding.activate.error_code === 'CONFIGURATION_TRIAL_FAILED' && !binding.changed }];
+          exempt_non_good: entry.exempt_non_good, revision_before: binding.revision_before,
+          revision_after: binding.revision_after, published: binding.activate.published,
+          activate_outcome: binding.activate.outcome, activate_error: binding.activate.error_code }];
       }));
-      evidence.requirement = { sentence: 'untested or required-item failure blocks enablement',
-        satisfied: Object.values(evidence.blocking as Record<string, { blocked: boolean }>)
-          .every(entry => entry.blocked) };
+      evidence.requirement = { sentence: 'exempt non-good reasons do not block enablement',
+        satisfied: Object.values(evidence.enablement as Record<string, { published: boolean }>)
+          .every(entry => entry.published === true) };
     } finally {
       mkdirSync(dirname(evidencePath), { recursive: true });
       writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
@@ -288,6 +322,15 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
     // A non-good sample must actually be present for this package to prove anything.
     const allNonGood = allSamples.filter(entry => entry.sample.quality.status !== 'good');
     expect(allNonGood.length, 'at least one non-good sample must remain').toBeGreaterThan(0);
+
+    // The exempt set is exactly the four confirmed reasons: anything else fails here and is already
+    // named in the evidence, and is never appended to the set to make the run pass.
+    const unexempted = allNonGood
+      .filter(entry => !exempt.has(entry.sample.quality.reason))
+      .map(entry => ({ resource: entry.resource, metric: entry.sample.metric.id,
+        status: entry.sample.quality.status, reason: entry.sample.quality.reason }));
+    expect(unexempted, 'non-good reasons outside the exempt set must fail, not be exempted').toEqual([]);
+
     for (const { resource, sample } of allNonGood) {
       expect(typeof sample.metric?.id, `${resource} sample must name its metric`).toBe('string');
       expect(() => QualitySchema.parse(sample.quality), `${resource} ${sample.metric.id} quality must match the contract`).not.toThrow();
@@ -298,22 +341,33 @@ describe.skipIf(!port || !envFile)('MAX-238 non-good trial samples block enablem
     for (const { resource, sample } of allSamples.filter(entry => entry.sample.quality.status === 'good')) {
       expect(sample.quality.reason, `${resource} ${sample.metric.id} good sample keeps reason none`).toBe('none');
     }
+    // A missing value stays null; it is not filled with 0 on the way into the trial result.
+    for (const { resource, sample } of allSamples.filter(entry =>
+      (missingValueReasons as readonly string[]).includes(entry.sample.quality.reason))) {
+      expect(sample.value, `${resource} ${sample.metric.id} missing value must stay null`).toBeNull();
+    }
 
-    // Required proof: a remaining non-good sample, with no explicit exemption parameter, blocks enablement.
+    // Required proof: exempt non-good samples, with the existing preconditions met, publish.
+    expect(Object.keys(proof).sort(), 'both authorized targets must be measured').toEqual(['instance:1', 'server:3']);
     for (const [key, entry] of Object.entries(proof)) {
       const binding = entry.binding as { revision_before: number; revision_after: number; changed: boolean;
-        activate: { outcome: string; error_code: string | null } };
-      const trial = entry.trial as { non_good: unknown[] };
-      if (trial.non_good.length === 0) continue;
-      expect(binding.activate.error_code, `${key} must be blocked by CONFIGURATION_TRIAL_FAILED while non-good samples remain`)
-        .toBe('CONFIGURATION_TRIAL_FAILED');
-      expect(binding.activate.outcome, `${key} activate must throw, not return a publication`).toBe('threw');
-      expect(binding.changed, `${key} binding revision must not move`).toBe(false);
-      expect(binding.revision_after, `${key} revision after activation`).toBe(binding.revision_before);
-      const status = entry.status as { collection: { state: string }; formal_visibility: { last_observed_at: string | null } };
-      expect(status.collection.state, `${key} must not report a succeeded collection`).not.toBe('succeeded');
-      expect(status.formal_visibility.last_observed_at, `${key} must not report a formal observation`).toBeNull();
+        activate: { outcome: string; error_code: string | null; error_message: string | null; published: boolean | null } };
+      const trial = entry.trial as { non_good: { quality: { reason: string } }[] };
+      const preconditions = entry.preconditions as { good_value_sample: boolean; actionable_attempt: boolean };
+      expect(trial.non_good.every(sample => exempt.has(sample.quality.reason)),
+        `${key} every non-good reason must be exempt`).toBe(true);
+      expect(preconditions, `${key} existing publication preconditions`).toEqual({ good_value_sample: true, actionable_attempt: true });
+      expect(binding.activate.outcome, `${key} activate must return, not throw CONFIGURATION_TRIAL_FAILED`).toBe('returned');
+      expect(binding.activate.error_code, `${key} activate must not report an error code`).toBeNull();
+      expect(binding.activate.published, `${key} exempt non-good samples must not block publication`).toBe(true);
+      expect(binding.changed, `${key} binding revision must increase`).toBe(true);
+      expect(binding.revision_after, `${key} revision after publication`).toBeGreaterThan(binding.revision_before);
       expect(entry.formal_rows_after, `${key} must not write formal history or alerts`).toEqual(zero);
     }
+
+    // The source application database was read only; the source pin and live revisions stay put.
+    const after = await liveSnapshot();
+    expect(after, 'the authorized source must be unchanged').toEqual(before);
+    expect(await formalRows(), 'no formal history or alerts may appear').toEqual(zero);
   }, 300000);
 });
