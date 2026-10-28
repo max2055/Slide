@@ -1,0 +1,275 @@
+{
+  "target": {
+    "id": 1,
+    "name": "mysql3306",
+    "host": "localhost",
+    "port": 3306,
+    "server_version": "9.6.0"
+  },
+  "pin": {
+    "id": "mysql-basic",
+    "version": "2.0.0",
+    "digest": "sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322"
+  },
+  "trial_call": {
+    "method": "MetricConfigurationService.trialCurrent",
+    "expected_revision": 1,
+    "persisted": false,
+    "decision": "attempted",
+    "error": null,
+    "sample_count": 1,
+    "attempt_count": 1
+  },
+  "response_shape": {
+    "top_level_keys": [
+      "applicability",
+      "attempts",
+      "capabilities",
+      "decision",
+      "lifecycle_evidence",
+      "persisted",
+      "samples",
+      "trial"
+    ],
+    "sample_keys": [
+      "metric",
+      "quality",
+      "unit",
+      "value"
+    ],
+    "attempt_keys": [
+      "binding_id",
+      "collector_id",
+      "config_revision",
+      "ended_at",
+      "error",
+      "id",
+      "observation_ids",
+      "resource_id",
+      "started_at",
+      "status"
+    ]
+  },
+  "items": {
+    "读取": {
+      "present": false,
+      "sources": [
+        null
+      ],
+      "sample_value": null,
+      "reason": "trial.samples/samples[].attempt 没有逐项读取结果字段；attempt.status 只是采集器级状态，不是该样本的读取结果"
+    },
+    "转换": {
+      "present": false,
+      "sources": [
+        null
+      ],
+      "sample_value": null,
+      "reason": "返回值没有 transform_version、预处理阶段或 raw→normalized 链路字段"
+    },
+    "单位校验": {
+      "present": false,
+      "sources": [
+        null
+      ],
+      "sample_value": null,
+      "reason": "samples[].unit 只是单位字符串（s），不是单位校验结果；返回值没有校验通过/失败字段"
+    },
+    "值": {
+      "present": true,
+      "sources": [
+        "samples[].value"
+      ],
+      "sample_value": {
+        "encoding": "float64",
+        "value": 195962
+      },
+      "reason": "来自样本自身的 value"
+    },
+    "时间": {
+      "present": true,
+      "sources": [
+        "attempts[].started_at"
+      ],
+      "sample_value": "2026-10-28T06:06:13.113Z",
+      "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
+    },
+    "耗时": {
+      "present": true,
+      "sources": [
+        "attempts[].ended_at - attempts[].started_at"
+      ],
+      "sample_value": 16,
+      "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
+    },
+    "错误": {
+      "present": true,
+      "sources": [
+        "attempts[].error"
+      ],
+      "sample_value": null,
+      "reason": "来自该样本对应采集 attempt 的 error（可为空）"
+    }
+  },
+  "missing_items": [
+    "读取",
+    "转换",
+    "单位校验"
+  ],
+  "samples": [
+    {
+      "metric": "db.uptime_seconds",
+      "value": {
+        "encoding": "float64",
+        "value": 195962
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "unit": "s"
+    }
+  ],
+  "attempts": [
+    {
+      "collector_id": "mysql-status",
+      "status": "succeeded",
+      "error": null,
+      "started_at": "2026-10-28T06:06:13.113Z",
+      "ended_at": "2026-10-28T06:06:13.129Z",
+      "duration_ms": 16,
+      "observation_count": 1
+    }
+  ],
+  "per_sample_items": [
+    {
+      "metric": "db.uptime_seconds",
+      "collector_id": "mysql-status",
+      "attempt_status": "succeeded",
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "unit": "s",
+      "items": {
+        "读取": {
+          "source": null,
+          "present": false,
+          "observed": null,
+          "reason": "trial.samples/samples[].attempt 没有逐项读取结果字段；attempt.status 只是采集器级状态，不是该样本的读取结果"
+        },
+        "转换": {
+          "source": null,
+          "present": false,
+          "observed": null,
+          "reason": "返回值没有 transform_version、预处理阶段或 raw→normalized 链路字段"
+        },
+        "单位校验": {
+          "source": null,
+          "present": false,
+          "observed": null,
+          "reason": "samples[].unit 只是单位字符串（s），不是单位校验结果；返回值没有校验通过/失败字段"
+        },
+        "值": {
+          "source": "samples[].value",
+          "present": true,
+          "observed": {
+            "encoding": "float64",
+            "value": 195962
+          },
+          "reason": "来自样本自身的 value"
+        },
+        "时间": {
+          "source": "attempts[].started_at",
+          "present": true,
+          "observed": "2026-10-28T06:06:13.113Z",
+          "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
+        },
+        "耗时": {
+          "source": "attempts[].ended_at - attempts[].started_at",
+          "present": true,
+          "observed": 16,
+          "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
+        },
+        "错误": {
+          "source": "attempts[].error",
+          "present": true,
+          "observed": null,
+          "reason": "来自该样本对应采集 attempt 的 error（可为空）"
+        }
+      }
+    }
+  ],
+  "formal_rows": {
+    "before": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    },
+    "after": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    },
+    "zero": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    }
+  },
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "boundaries": {
+    "activate_called": false,
+    "service_ts_changed": false,
+    "activation_predicate_changed": false,
+    "required_metric_list_added": false,
+    "target_writes": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
+    "stop_write_copy_switch_rollback_unbind": false
+  },
+  "error": {
+    "name": "AssertionError",
+    "message": "items with no field in the existing trial response: 读取、转换、单位校验: expected [ '读取', '转换', '单位校验' ] to deeply equal []"
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "1cff08b6002fed70c1d17a0830bf4e2ffe64672a",
+    "test": "trial-items.mysql.test.ts",
+    "disposable_schema": "max238_trial_items_29385 on 127.0.0.1:13306, dropped by afterAll",
+    "source_selected": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
+    "formal_tables": [
+      "metric_observations",
+      "metric_publications",
+      "alerts",
+      "alert_events",
+      "notification_records"
+    ]
+  }
+}
