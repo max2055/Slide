@@ -6,6 +6,9 @@ set -euo pipefail
 name="max238-e2e-$$"
 cleanup() { docker stop "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
+# A runner that kills the script without SIGTERM leaves its own container behind;
+# sweep only this fixture's prefix before starting a new one.
+docker ps --filter "name=max238-e2e-" --format '{{.Names}}' | xargs -r docker rm -f >/dev/null 2>&1 || true
 docker rm -f "$name" >/dev/null 2>&1 || true
 docker run --detach --rm --name "$name" --env MYSQL_ALLOW_EMPTY_PASSWORD=yes \
   --publish 127.0.0.1::3306 mysql:8.4 >/dev/null
