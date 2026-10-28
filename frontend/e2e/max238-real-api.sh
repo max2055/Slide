@@ -3,9 +3,10 @@
 # Starts a disposable MySQL on a random loopback port (never 3306), waits for it,
 # then runs the real API fixture on MAX238_API_PORT. The run owns exactly one
 # container, named and labelled with a per-run nonce; only that exact handle is
-# ever removed. Cleanup reports success only when the daemon answers that the
-# handle is gone: an unreachable daemon, an unreadable query, a wrong owner or a
-# failed delete is non-zero and names the handle still to be dealt with.
+# ever removed. Cleanup reports success only when the daemon answers with its
+# own not-found for the exact handle: an unreachable daemon, an inspect error
+# that is not that answer, a wrong owner or a failed delete is non-zero and
+# names the handle still to be dealt with.
 set -euo pipefail
 label_key="slide.max238.owner"
 api_port="${MAX238_API_PORT:-51839}"
@@ -14,16 +15,27 @@ handle_file="${MAX238_HANDLE_FILE:-$PWD/e2e/.max238-handle-$api_port.json}"
 log() { echo "max238 fixture: $*" >&2; }
 
 # Ask the daemon about one exact handle: 0 = present, 1 = the daemon answered
-# and the handle does not exist (the only state that may be called removed),
-# 2 = the daemon could not be asked, so existence is unknown.
+# that the handle does not exist (the only state that may be called removed),
+# 2 = the daemon could not answer, so existence is unknown. A failed inspect is
+# not proof of absence: only Docker's own not-found answer is. A daemon that
+# answered `info` and then errors on `inspect` — disconnect, timeout, refused
+# query — leaves the handle unknown, and the caller keeps its handle.
 ref_state() {
-  local ref="$1"
+  local ref="$1" err rc
   if ! docker info >/dev/null 2>&1; then
     log "docker daemon unavailable; cannot determine whether $ref exists"
     return 2
   fi
-  if docker inspect --type container "$ref" >/dev/null 2>&1; then printf 'present\n'; return 0; fi
-  printf 'absent\n'; return 1
+  if err="$(docker inspect --type container "$ref" 2>&1 >/dev/null)"; then
+    printf 'present\n'; return 0
+  else
+    rc=$?
+  fi
+  case "$err" in
+    *"No such object:"*|*"No such container:"*) printf 'absent\n'; return 1 ;;
+  esac
+  log "docker could not answer whether $ref exists (inspect exit $rc): ${err:-<no output>}; handle=$ref"
+  return 2
 }
 
 # remove_owned NAME NONCE
