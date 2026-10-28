@@ -1,5 +1,5 @@
 /**
- * MAX238-APPLY-IDEMPOTENCY-R3 browser evidence backend.
+ * MAX238-APPLY-IDEMPOTENCY-R3/R4 browser evidence backend.
  *
  * A real Fastify HTTP server exposing the real metric-configuration routes and
  * the real MySQL operation journal on a disposable schema (MAX238_TEST_MYSQL_PORT,
@@ -101,21 +101,30 @@ async function main() {
 
   const shutdown = async () => {
     await app.close().catch(() => undefined);
-    // The launcher's own trap may never run when a test runner kills the group;
-    // remove only the exact container this run was given, and only while its
-    // ownership label still proves it belongs to this run.
+    // The launcher's own trap may never run when a test runner kills the group.
+    // Delegate to the one harness cleanup: it removes only the exact labelled
+    // container and exits non-zero when it cannot prove it is gone, so an
+    // unverified residue is reported here instead of being dropped.
+    let cleanupCode = 0;
     const container = process.env.MAX238_E2E_CONTAINER, nonce = process.env.MAX238_E2E_NONCE;
     if (container && nonce) {
-      try {
-        const owner = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "slide.max238.owner"}}', container],
-          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-        if (owner === nonce) execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' });
-        else console.error(`MAX238 fixture: not removing ${container}; owner ${owner || '(none)'} is not ${nonce}`);
-      } catch { /* already removed or unavailable */ }
+      const harness = process.env.MAX238_HARNESS_PATH;
+      if (!harness) {
+        console.error(`MAX238 fixture: MAX238_HARNESS_PATH is missing; cannot verify removal of ${container} (owner ${nonce})`);
+        cleanupCode = 1;
+      } else {
+        try {
+          execFileSync('bash', [harness, '--cleanup', container, nonce], { stdio: 'inherit', timeout: 60_000 });
+        } catch (error) {
+          const status = (error as { status?: number | null }).status;
+          console.error(`MAX238 fixture: cleanup of ${container} (owner ${nonce}) failed with ${status ?? 'an unknown error'}; verify with: bash ${harness} --cleanup ${container} ${nonce}`);
+          cleanupCode = 1;
+        }
+      }
     }
     await pool.query(`DROP DATABASE IF EXISTS ${database}`).catch(() => undefined);
     await pool.end().catch(() => undefined); await root.end().catch(() => undefined);
-    process.exit(0);
+    process.exit(cleanupCode);
   };
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 }

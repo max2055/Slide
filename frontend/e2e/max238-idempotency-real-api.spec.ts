@@ -1,8 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 /**
- * MAX238-APPLY-IDEMPOTENCY-R3 browser evidence against a REAL API.
+ * MAX238-APPLY-IDEMPOTENCY-R3/R4 browser evidence against a REAL API.
  *
  * The real metric-configuration component is served by Vite and its requests go
  * through the Vite proxy to a real Fastify server (apps/db-ops-api/e2e/) whose
@@ -16,16 +17,14 @@ const fixture = '/e2e/fixtures/max238-idempotency-recovery.html';
 
 // Playwright stops its webServers after the tests; the disposable MySQL
 // container belongs to this fixture and is removed here regardless of how the
-// launcher was terminated. The API reports the exact handle and owner nonce,
-// and the launcher verifies that label before removing anything, so another
-// run's container — even one sharing the prefix — is never touched.
-test.afterAll(async () => {
-  type Handle = { container: string | null; nonce: string | null };
-  let handle: Handle;
-  try { handle = await (await fetch(`${api}/__test/handle`)).json() as Handle; }
-  catch { return; } // the launcher or server already removed its own exact handle
-  if (!handle.container || !handle.nonce) return;
-  execFileSync('bash', ['e2e/max238-real-api.sh', '--cleanup', handle.container, handle.nonce], { stdio: 'inherit' });
+// launcher was terminated. The handle this run wrote before creating the
+// container names the resource — the live API is only cross-checked, so
+// teardown still finds its own container after the API is gone. Any failure
+// propagates instead of being reported as cleaned up.
+const handleFile = process.env.MAX238_HANDLE_FILE
+  ?? fileURLToPath(new URL(`.max238-handle-${process.env.MAX238_API_PORT ?? 51839}.json`, import.meta.url));
+test.afterAll(() => {
+  execFileSync('bash', ['e2e/max238-real-api.sh', '--cleanup-handle', handleFile, '--api-url', api], { stdio: 'inherit' });
 });
 
 type State = { trials: number; journal: { state: string; target_revision: number; committed_at: string | null } | null; revision: number | null };
