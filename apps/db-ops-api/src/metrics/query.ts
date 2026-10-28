@@ -84,7 +84,7 @@ function lowerBound(times: number[], at: number): number {
   while (low < high) { const mid = (low + high) >> 1; if (times[mid] < at) low = mid + 1; else high = mid; }
   return low;
 }
-/** One bucket's rows plus the neighbour samples rate, hold and delta reducers need at its edges. */
+/** One bucket's rows plus the neighbour sample the hold, duration and pairing reducers need at each edge. */
 function bucketSlice(points: Point[], times: number[], from: number, to: number): Point[] {
   const first = lowerBound(times, from), after = lowerBound(times, to);
   return points.slice(first > 0 ? first - 1 : 0, Math.min(points.length, after + 1));
@@ -142,34 +142,54 @@ function mergeHistograms(groups: Group[]): Group {
     points: available.flatMap(g => g.points), coverage: Math.min(1, available.reduce((n, g) => n + g.coverage, 0)),
     ...qualityOf(available.flatMap(g => g.points)) };
 }
+/** One accepted counter delta between two trusted baselines, with the elapsed time it describes. */
+interface RateInterval { prior: Point; point: Point; delta: Rational; elapsed: number }
+/**
+ * Runs the counter state machine once over the complete window. Replaying it from an empty state
+ * inside each bucket loses the accepted baseline whenever the sample right before the bucket does
+ * not advance it (precision_loss, unknown, …): the next delta then spans less time, so the bucket's
+ * rate, coverage and quality change. Precomputed intervals keep the reducer linear in samples+buckets.
+ */
+function counterIntervals(q: SemanticQuery, points: Point[]): RateInterval[] {
+  let state: CounterState | null = null;
+  const intervals: RateInterval[] = [];
+  const outputDefinition: MetricDefinition = { ...q.definition, id: `${q.definition.id}.aggregate_delta`,
+    kind: 'gauge', temporality: 'instant', monotonic: false, aggregation: { ...q.definition.aggregation, time: ['last'], space: ['none'] } };
+  for (const point of points) {
+    if (!valid(point)) { state = null; continue; }
+    const prior = state?.baseline as Point | undefined;
+    const transition = processCounter(point, q.definition, outputDefinition, 'delta', state,
+      { context: { now: q.now, stale_after_ms: q.stale_after_ms }, max_gap_ms: q.max_gap_ms });
+    state = transition.state;
+    const delta = transition.output.observation.value;
+    // Only a transition between two trusted baselines is an interval; a reset/gap/baseline sample has no delta.
+    if (!prior || !delta || !('value' in delta)) continue;
+    intervals.push({ prior, point, delta: decode(delta), elapsed: time(point) - time(prior) });
+  }
+  return intervals;
+}
+/** Clips the precomputed intervals to one bucket; `ends` is the ascending end time of each interval. */
+function reduceRate(intervals: RateInterval[], ends: number[], from: number, to: number): Group {
+  const duration = to - from;
+  let total = rational(0n), covered = 0;
+  const used: Point[] = [], samples: Rational[] = [];
+  for (let i = lowerBound(ends, from); i < intervals.length && time(intervals[i].prior) < to; i++) {
+    const { prior, point, delta, elapsed } = intervals[i];
+    const ms = overlap(time(prior), time(point), from, to);
+    if (!ms) continue;
+    total = add(total, multiply(delta, rational(BigInt(ms), BigInt(elapsed))));
+    // The bucket envelope is in the reported unit: this interval's own rate, not the cumulative value.
+    samples.push(multiply(delta, rational(1000n, BigInt(elapsed))));
+    covered += ms; used.push(prior, point);
+  }
+  if (!covered) return empty();
+  return { value: divide(total, rational(BigInt(covered), 1000n)), coverage: covered / duration,
+    points: used, samples, ...qualityOf(used) };
+}
 /** `points` is already deduplicated, ascending, and sliced to one bucket plus its edge neighbours. */
 function reduceSeries(q: SemanticQuery, points: Point[], from: number, to: number): Group {
   const inside = points.filter(p => time(p) >= from && time(p) < to && valid(p));
   const duration = to - from;
-  if (q.mode === 'rate') {
-    let state: CounterState | null = null, total = rational(0n), covered = 0;
-    const used: Point[] = [], samples: Rational[] = [];
-    const outputDefinition: MetricDefinition = { ...q.definition, id: `${q.definition.id}.aggregate_delta`,
-      kind: 'gauge', temporality: 'instant', monotonic: false, aggregation: { ...q.definition.aggregation, time: ['last'], space: ['none'] } };
-    for (const point of points) {
-      if (!valid(point)) { state = null; continue; }
-      const prior = state?.baseline as Point | undefined;
-      const transition = processCounter(point, q.definition, outputDefinition, 'delta', state,
-        { context: { now: q.now, stale_after_ms: q.stale_after_ms }, max_gap_ms: q.max_gap_ms });
-      state = transition.state;
-      const delta = transition.output.observation.value;
-      if (!prior || !delta || !('value' in delta)) continue;
-      const elapsed = time(point) - time(prior), ms = overlap(time(prior), time(point), from, to);
-      if (!ms) continue;
-      total = add(total, multiply(decode(delta), rational(BigInt(ms), BigInt(elapsed))));
-      // The bucket envelope is in the reported unit: this interval's own rate, not the cumulative value.
-      samples.push(multiply(decode(delta), rational(1000n, BigInt(elapsed))));
-      covered += ms; used.push(prior, point);
-    }
-    if (!covered) return empty();
-    return { value: divide(total, rational(BigInt(covered), 1000n)), coverage: covered / duration,
-      points: used, samples, ...qualityOf(used) };
-  }
   if (q.mode === 'duration' || q.weighting === 'time') {
     let total = rational(0n), covered = 0;
     const used: Point[] = [], samples: Rational[] = [];
@@ -305,13 +325,18 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
   // Deduplicate once per series, then slice each bucket: a full-window scan per bucket would be
   // quadratic and cannot serve 1,440+ buckets at the target window without truncating.
   const prepared = data.map(unique), preparedAt = prepared.map(rows => rows.map(time));
+  // Counter rate depends on state carried across bucket edges, so its intervals are built once for
+  // the whole window instead of restarting the reducer from an empty state inside every bucket.
+  const rateIntervals = q.mode === 'rate' ? prepared.map(rows => counterIntervals(q, rows)) : null;
+  const rateEnds = rateIntervals?.map(rows => rows.map(interval => time(interval.point)));
   const preparedDenominators = denominators?.map(unique), preparedDenominatorAt = preparedDenominators?.map(rows => rows.map(time));
   for (let from = start; from < end; from += step) {
     const to = Math.min(end, from + step);
     const groups = prepared.map((rows, i) => q.mode === 'ratio'
       ? ratioSeries(q, bucketSlice(rows, preparedAt[i], from, to),
         bucketSlice(preparedDenominators![i], preparedDenominatorAt![i], from, to), from, to)
-      : reduceSeries(q, bucketSlice(rows, preparedAt[i], from, to), from, to));
+      : q.mode === 'rate' ? reduceRate(rateIntervals![i], rateEnds![i], from, to)
+        : reduceSeries(q, bucketSlice(rows, preparedAt[i], from, to), from, to));
     let group: Group;
     if (q.mode === 'ratio') {
       const validGroups = groups.filter(g => g.value !== null);

@@ -60,3 +60,31 @@
 - 公开原始值分页接口未开放：分页游标仅服务内部读取（不跨请求），原始样本按桶 `observed_at`/`sample_count`/`sources` 及更窄窗口追查；如需对外分页需另行定义公开契约。
 - 真实采集链路与容量 SLO qualification：本包未做，fixture 不冒充真实采集；延迟数据仅本机目标数据量（24h×1min）实测，未作容量声明。
 - 未在 3306 业务库、未部署、未跑真实目标采集；安全/权限/审计最终结论由 Chief 独立复核。
+
+## 5. R1 修正（2026-10-29）：计数器 rate 保留跨桶真实状态
+
+Chief 复审 F1（`max240-review.md`）确认：`9f2688f6d` 的按桶切片从空 `CounterState` 重放速率 reducer，只保留桶前**一个原始采样点**；当该点因 `precision_loss` 不推进基线时，更早被 `processCounter` 接受的可信基线被丢弃，同桶的 delta 区间、coverage 与 quality 随之改变。合法 uint64 反例（`host.network.bytes_total`，t=0/15/25/35 秒值 100/115/125/135，仅 t15 partial/precision_loss）在 `[20,30)` 桶：main `e11f6ba2e` 为 1 By/s、coverage 1、good；候选为 null、coverage 0.5、unknown/gap。
+
+修正（仅 `metrics/query.ts`，未改状态机规则、写侧、schema、policy、retention、worker、前端）：
+
+- 新增 `counterIntervals`：对每个系列在整窗上**一次**运行既有 `processCounter` 状态机（`!valid` 仍重置状态，precision_loss 仍不推进基线，reset/gap/segment/revision 规则不变），产出真实的“可信基线→可信基线”delta 区间。
+- 新增 `reduceRate`：按桶用二分定位并裁剪这些预计算区间，累计 delta/covered/samples/used，语义与 main 全窗 reducer 一致；不再每桶重建状态。
+- 计数器按桶重放的状态问题消除，同时保持线性复杂度（区间只算一次，桶间只做边界裁剪），未回退为 1440 桶全窗重扫，也未复制状态机。
+- 其余模式（time-weighted/duration/mean/gauge/histogram/ratio）不经过该路径，仍用原单前驱/后继切片；公开 `SemanticBucket`/`QueryStore` 契约未变。
+
+验证（本分支本次提交）：
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| RED→GREEN 回归 | `vitest run src/metrics/query.window.test.ts`（新用例） | 修正前 3 个失败（前驱 precision_loss、桶后不推进样本收尾、1440 桶规模）；修正后全部通过 |
+| 聚合单测 | `vitest run src/metrics/query.test.ts src/metrics/query.window.test.ts` | 22/22 通过 |
+| API 类型 | `pnpm --filter slide-api typecheck` | 退出 0 |
+| lint（改动文件） | `oxlint query.ts query.window.test.ts` | 0 error（仅既有未用参数警告） |
+| 真实 MySQL + 真实 HTTP | `METRICS_TEST_MYSQL_PORT=33307 vitest run src/metrics/rollout/history-window.mysql.test.ts` | 3/3 通过；24h/1440 桶 HTTP 91 ms |
+| 受影响模块 | `vitest run consumers/{service,capacity,operational} rollout/{routes,portfolio,legacy-write-fence} operations/baselines` | 80 通过 / 19 跳过（跳过项为未提供一次性 MySQL 端口的 MySQL 文件） |
+
+新增回归覆盖：跨 precision_loss 保持可信基线（值 1 By/s、coverage 1、good/exact，precision_loss 样本不进入 delta 与 sources）；多个连续不推进点；reset/来源变更不桥接旧基线；桶后不推进样本仍能收尾边界；超过 `max_gap_ms` 不做区间延展；1440 分钟桶全窗（含窗口前驱/后继）每桶 rate=1、coverage=1。
+
+环境与清理：一次性 `mysql:8.4` 容器（本次非 3306 主机端口 33307，容器 ID `d7a11ea8b2de`，运行期记录于工作目录），测试自建并 `DROP DATABASE max240_history_<pid>`，测试后删除容器；未连接共享 3306、未写业务库、未部署。
+
+未完成项与第 4 节相同，本包仍未完成 MAX-240 整单：UI/图形、历史阈值快照、停用/解绑后的授权历史、公开原始值分页、真实采集与容量 SLO 均未交付。本轮未重跑整仓/浏览器/真实目标采集，也未重跑未变的 `contracts:check`（无公开契约变化，沿用原结论）。
