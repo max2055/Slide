@@ -87,6 +87,32 @@ it('publishing a successful trial sends the current revision and reloads applica
   expect(el.trial).toBeNull(); expect(el.dirty).toBe(false);
 });
 
+it('reuses one operation key while the same publish intent is retried, and a changed intent gets a new key', async () => {
+  mock(); const el = await mount();
+  const keys: string[] = [];
+  const publish = async () => {
+    authFetch.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: 'TRIAL_FAILED' }) });
+    await el.execute('publish');
+    const call = authFetch.mock.calls.filter((c: any[]) => c[0].endsWith('/activate')).at(-1)!;
+    keys.push(JSON.parse(call[1].body).operation_key);
+  };
+  el.preview = { resources: [{ resolved: { settings: { enabled: true }, sources: {}, metric_templates: [], metric_sources: {} } }] };
+  el.trial = { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1, quality: { status: 'good' } }] };
+  await publish();
+  expect(keys[0]).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+  // The lost response keeps the intent: the same body repeats the same key.
+  el.preview = { resources: [{ resolved: { settings: { enabled: true }, sources: {}, metric_templates: [], metric_sources: {} } }] };
+  el.trial = { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1, quality: { status: 'good' } }] };
+  await publish();
+  expect(keys[1]).toBe(keys[0]);
+  // A changed configuration is a different intent and must not reuse the key.
+  el.overrides = { enabled: 'disable' };
+  el.preview = { resources: [{ resolved: { settings: { enabled: true }, sources: {}, metric_templates: [], metric_sources: {} } }] };
+  el.trial = { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1, quality: { status: 'good' } }] };
+  await publish();
+  expect(keys[2]).not.toBe(keys[0]);
+});
+
 it('keeps unsaved edits until the user confirms navigation', async () => {
   mock(); const el = await mount(); el.invalidate(); const leave = vi.fn(); el.confirmDiscard(leave); await el.updateComplete;
   expect(leave).not.toHaveBeenCalled(); expect(el.discardPending).toBe(true);

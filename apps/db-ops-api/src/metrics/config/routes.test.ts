@@ -54,6 +54,33 @@ describe('configuration HTTP routes', () => {
     expect(result.json().samples.some((s: any) => s.value === null && s.quality.reason === 'counter_baseline')).toBe(true);
     expect(result.body).not.toContain('canary-secret'); expect(store.bindings.size).toBe(0); expect(store.logs).toHaveLength(0);
   });
+  it('replays one client intent without a second trial, revision or audit; another intent collides', async () => {
+    const body = { ...payload, operation_key: 'intent-1' };
+    const url = `${base}/resources/instance/1/activate`;
+    const first = await app.inject({ method: 'POST', url, payload: body });
+    expect(first.statusCode).toBe(200); expect(first.json()).toMatchObject({ published: true });
+    expect(calls).toBe(1); expect(store.logs).toHaveLength(1);
+    const revision = store.bindings.get('instance:1')!.binding.revision;
+    const replay = await app.inject({ method: 'POST', url, payload: body });
+    expect(replay.statusCode).toBe(200); expect(replay.json()).toMatchObject({ published: true });
+    // No second trial, revision or audit row: the recorded publication is returned.
+    expect(calls).toBe(1); expect(store.logs).toHaveLength(1);
+    expect(store.bindings.get('instance:1')!.binding.revision).toBe(revision);
+    expect((await app.inject(`${base}/resources/instance/1/operations/intent-1`)).json())
+      .toMatchObject({ state: 'committed', operation: { resource: { type: 'instance', id: 1 }, target_revision: revision } });
+    expect((await app.inject(`${base}/resources/instance/1/operations/unused`)).json()).toEqual({ state: 'absent', operation: null });
+    const collision = await app.inject({ method: 'POST', url, payload: { ...body, overrides: { enabled: 'disable' } } });
+    expect(collision.statusCode).toBe(409); expect(collision.json().error).toBe('POLICY_OPERATION_CONFLICT');
+    expect(store.logs).toHaveLength(1); expect(calls).toBe(1);
+  });
+  it('guards the operation lookup with live read access and a valid key', async () => {
+    const url = `${base}/resources/instance/1/operations/intent-1`;
+    actor = { ...admin, permissions: ['instance:view'], instanceScopes: { 1: 'read-only' } };
+    expect((await app.inject(url)).statusCode).toBe(200);
+    actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
+    expect((await app.inject(url)).statusCode).toBe(403);
+    actor = admin; expect((await app.inject(`${base}/resources/instance/1/operations/bad%20key`)).statusCode).toBe(400);
+  });
   it('denies unauthenticated, read-only and malicious requests before transport', async () => {
     actor = undefined; expect((await trial()).statusCode).toBe(401);
     actor = { ...admin, permissions: ['instance:view'], instanceScopes: { 1: 'read-only' } };
