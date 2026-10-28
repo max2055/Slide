@@ -1,0 +1,130 @@
+{
+  "source_sha": "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259",
+  "release_head": "74115f22f9179a033fe774d1213962a0c3ea1a35",
+  "baseline": "e11f6ba2ed8108af585af022c4acf8817c1d1fec",
+  "files": [
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/model.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "5e257a4451b077399361b7a311986af4d7dfa780",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "5e257a4451b077399361b7a311986af4d7dfa780"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/resolver.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "585696e46176e829ed368a0ee19d9cf8cec01486",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "585696e46176e829ed368a0ee19d9cf8cec01486"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/service.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "139a3dbb53bfe328aec00e2f37f47a7d4ba51567",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "139a3dbb53bfe328aec00e2f37f47a7d4ba51567"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/store.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "33ff8d26d4edbbcd5ba7651405802fb5e7465d99",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "33ff8d26d4edbbcd5ba7651405802fb5e7465d99"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/persistence-codec.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "83e73e9502ac24713925774ea9bdf959104f3dce",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "83e73e9502ac24713925774ea9bdf959104f3dce"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/package-reader.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "bf9411f1ad9ed349cdd0717d46ef7f14b5953f8c",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "bf9411f1ad9ed349cdd0717d46ef7f14b5953f8c"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/coordinator.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "573eacf107a44c33aa447c5e6381d99fcdf5df03",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "573eacf107a44c33aa447c5e6381d99fcdf5df03"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/coordinator.mysql.test.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "52ec2754016834f6b5cb72b173995e54756505a5",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "52ec2754016834f6b5cb72b173995e54756505a5"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/portfolio.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "88098639e91e31bf3cb29472649d0085afebd728",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "88098639e91e31bf3cb29472649d0085afebd728"
+      },
+      "release_matches": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/portfolio.mysql.test.ts",
+      "blobs": {
+        "b0d2bdc84f2fb2b6ab645244ae9d66d3f9648259": "7bfd549deb1a35d0b39ecb5bc96ffc1341e59be2",
+        "74115f22f9179a033fe774d1213962a0c3ea1a35": "7bfd549deb1a35d0b39ecb5bc96ffc1341e59be2"
+      },
+      "release_matches": true
+    }
+  ],
+  "max240_ownership": "No query.ts/storage.ts/formal-store.ts/consumers changes in new package",
+  "max240_stable_inputs": [
+    {
+      "path": "apps/db-ops-api/src/contracts/metrics/validation.ts",
+      "R5_blob": "fedfbe24f1a1db98a5ea9b37f17de7f9bc6a9a4c",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/metrics/observations.ts",
+      "R5_blob": "2424d319f9d14989f19b5d8bc498936a8a4d9ef5",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/query.ts",
+      "R5_blob": "03bd5812681eb796ce314079973f1184841c7b4d",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/storage.ts",
+      "R5_blob": "f68d9119391a5cb44ee5a545a35d3d2472e993c5",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/formal-store.ts",
+      "R5_blob": "498304a0f91881a598912a1974d96fe556b307a4",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/consumers/service.ts",
+      "R5_blob": "53ab3db656c61be5081cf635bc3c8768b5a1cd2a",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/consumers/runtime.ts",
+      "R5_blob": "17c178f5cd843be762e6a75952f3f066d51dda7e",
+      "same_as_accepted_R3": true
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/consumers/routes.ts",
+      "R5_blob": "fef1d022ef4d2b941ef4c4e3fabf80427f5814e1",
+      "same_as_accepted_R3": true
+    }
+  ]
+}

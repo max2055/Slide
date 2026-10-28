@@ -1,0 +1,29 @@
+[
+  {
+    "job": "122972501786",
+    "relevant_log_lines": [
+      "2026-10-28T17:09:26.5237922Z \u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 3 \u23af\u23af\u23af\u23af\u23af\u23af\u23af",
+      "2026-10-28T17:09:26.5239009Z  FAIL  src/metrics/rollout/coordinator.mysql.test.ts > resource rollout coordinator > derives shadow series server-side and rejects an incomplete comparison gate",
+      "2026-10-28T17:09:26.5239769Z AssertionError: promise rejected \"BindingPersistenceError: BINDING_PAYLOAD_\u2026 { code: '\u2026' }\" instead of resolving",
+      "2026-10-28T17:09:26.5245444Z Caused by: BindingPersistenceError: BINDING_PAYLOAD_EFFECTIVE_INVALID",
+      "2026-10-28T17:09:26.5253043Z Serialized Error: { code: 'BINDING_PAYLOAD_EFFECTIVE_INVALID' }",
+      "2026-10-28T17:09:26.5254406Z  FAIL  src/metrics/rollout/coordinator.mysql.test.ts > resource rollout coordinator > rejects a caller zero gate when no server measurement exists",
+      "2026-10-28T17:09:26.5255824Z  FAIL  src/metrics/rollout/coordinator.mysql.test.ts > resource rollout coordinator > drains legacy writes, switches all series atomically, confirms applied, and rolls back without deleting history",
+      "2026-10-28T17:09:26.5256798Z BindingPersistenceError: BINDING_PAYLOAD_EFFECTIVE_INVALID",
+      "2026-10-28T17:09:26.5266034Z  Test Files  1 failed | 65 passed | 4 skipped (70)",
+      "2026-10-28T17:09:26.5266662Z       Tests  3 failed | 679 passed | 31 skipped (713)",
+      "2026-10-28T17:09:29.9969460Z ##[error]Process completed with exit code 1."
+    ]
+  },
+  {
+    "job": "122972501816",
+    "relevant_log_lines": [
+      "2026-10-28T17:10:33.2968630Z \u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 1 \u23af\u23af\u23af\u23af\u23af\u23af\u23af",
+      "2026-10-28T17:10:33.2970066Z  FAIL  src/metrics/rollout/portfolio.mysql.test.ts > Metrics portfolio persisted state > derives coverage and completion from all managed assets without exposing asset secrets",
+      "2026-10-28T17:10:33.2971332Z BindingPersistenceError: BINDING_PAYLOAD_LEGACY_INVALID",
+      "2026-10-28T17:10:33.2988599Z  Test Files  1 failed | 65 passed | 4 skipped (70)",
+      "2026-10-28T17:10:33.2990443Z       Tests  1 failed | 697 passed | 6 skipped (704)",
+      "2026-10-28T17:10:36.0017185Z ##[error]Process completed with exit code 1."
+    ]
+  }
+]
