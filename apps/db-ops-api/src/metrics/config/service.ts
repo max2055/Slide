@@ -51,29 +51,44 @@ export class MetricConfigurationService {
     // a duplicate gets the committed result or learns the intent is pending, and
     // neither starts a second trial. Unkeyed callers keep the previous behavior.
     const keyed = (input as { operation_key?: unknown } | null | undefined)?.operation_key !== undefined;
+    const live = () => this.currentActor(actor, guard);
+    // Which step failed decides what a retry may assume. Only a step that
+    // provably did not reach the target is safe to release; a trial that may
+    // have read the target, or a publication whose commit is unclear, is not.
+    let phase: 'preview' | 'trial' | 'trial-done' | 'publish' = 'preview';
     if (keyed) {
-      const begun = await this.policy.beginOperation(actor, ref, input);
+      const begun = await this.policy.beginOperation(actor, ref, input, live);
       if ('replayed' in begun) return { ...begun.replayed, status: await this.status(actor, ref) };
     }
     try {
-      const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
+      const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate, false, live);
       rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
       const candidate = candidateFingerprint(preview.resources[0]);
+      phase = 'trial';
       const trial = await this.trial(actor, ref, input, candidate, guard);
+      phase = 'trial-done';
       const disabled = !preview.resources[0].resolved.settings.enabled;
       rule(disabled || trial.samples.some(s => s.value !== null && s.quality.status === 'good')
         && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status)), 'CONFIGURATION_TRIAL_FAILED', 422);
       // Revalidates live permission, inventory and policy/group CAS after remote IO.
       guard.signal?.throwIfAborted();
       actor = await this.currentActor(actor, guard);
-      const result = await this.policy.changeBinding(actor, ref, input, true, candidate, keyed);
+      phase = 'publish';
+      const result = await this.policy.changeBinding(actor, ref, input, true, candidate, keyed, live);
       guard.published?.(result.resources[0].binding.revision);
       return { ...result, status: await this.status(actor, ref) };
     } catch (error) {
-      // A known in-process failure is not an unknown remote outcome: clear only
-      // this intent's own uncommitted claim so the same key may be retried. A
-      // committed publication and a claim orphaned by a crash are never cleared.
-      if (keyed) await this.policy.releaseOperation(ref, input).catch(() => undefined);
+      if (keyed) {
+        // The claim is cleared only when the failure itself proves nothing
+        // happened; an unknown trial read or an unclear commit stays pending and
+        // is resolved from the journal (a committed row is this intent's result).
+        const recovered = await this.policy.failedOperation(actor, ref, input,
+          phase === 'publish' ? 'publish' : phase === 'trial' ? 'trial' : 'before', live).catch(() => null);
+        if (recovered) {
+          guard.published?.(recovered.resources[0].binding.revision);
+          return { ...recovered, status: await this.status(actor, ref) };
+        }
+      }
       throw error;
     }
   }
@@ -93,7 +108,7 @@ export class MetricConfigurationService {
   }
   /** Read-only intent lookup; absent is a safe retry, pending is not. */
   operation(actor: ActorContext, ref: Ref, operationKey: string) {
-    return this.policy.operation(actor, ref, operationKey);
+    return this.policy.operation(actor, ref, operationKey, () => this.currentActor(actor, {}));
   }
   async trialCurrent(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, true);
@@ -102,7 +117,8 @@ export class MetricConfigurationService {
   }
   async trial(actor: ActorContext, ref: Ref, input: unknown, expectedCandidate?: string, guard: ActivationGuard = {}) {
     actor = await this.currentActor(actor, guard);
-    const preview = await this.policy.changeBinding(actor, ref, input, false, expectedCandidate);
+    const live = () => this.currentActor(actor, guard);
+    const preview = await this.policy.changeBinding(actor, ref, input, false, expectedCandidate, false, live);
     const next = preview.resources[0], plan = compilePlan(this.registry, next.resolved);
     const reservation = await this.store.reserve(ref);
     rule(reservation, 'TRIAL_BUSY', 409);
@@ -115,7 +131,7 @@ export class MetricConfigurationService {
         signal.throwIfAborted();
         actor = await this.currentActor(actor, guard);
         await reservation.connection.ping();
-        const current = await this.policy.changeBinding(actor, ref, input, false, candidateFingerprint(next));
+        const current = await this.policy.changeBinding(actor, ref, input, false, candidateFingerprint(next), false, live);
         rule(stable(current.resources[0].resolved.settings) === stable(next.resolved.settings)
           && stable(current.resources[0].resolved.metric_sources) === stable(next.resolved.metric_sources)
           && current.resources[0].resolved.plan.binding.policy_revision === next.resolved.plan.binding.policy_revision, 'POLICY_REVISION_CONFLICT', 409);

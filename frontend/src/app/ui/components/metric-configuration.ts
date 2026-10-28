@@ -131,6 +131,7 @@ export class MetricConfiguration extends LitElement {
     }, 250);
   }
   private root() { return `resources/${this.resourceType}/${this.resourceId}`; }
+  private refKey() { return `${this.resourceType}:${this.resourceId}`; }
   private invalidate() { this.editVersion++; this.dirty = true; this.preview = null; this.trial = null; this.activationStep = 0; this.error = ''; }
   private async load() {
     this.stopPolling();
@@ -159,6 +160,8 @@ export class MetricConfiguration extends LitElement {
       this.recommendations = recommendationOptions(recommendations); this.groups = groups.groups; this.collection = coverageAvailability(collection, recommendations);
       this.selected = published?.binding.package.digest ?? this.recommendations.find(r => r.recommended && r.status === 'supported')?.package.digest ?? '';
       this.attempts = attempts; this.loaded = true;
+      await this.restorePending(generation);
+      if (generation !== this.generation) return;
       if (published && !this.terminal(collection)) this.startPolling();
     } catch (error) { if (generation === this.generation) this.error = metricError(error); }
     finally { if (generation === this.generation) this.busy = false; }
@@ -199,12 +202,41 @@ export class MetricConfiguration extends LitElement {
   private publishKey = '';
   private publishIntent = '';
   @state() private publishPending = false;
+  /**
+   * The smallest record that survives a remount or refresh: which intent is
+   * unresolved for which user and resource. It holds the client key and the
+   * non-secret request body only, never credentials or collected values.
+   */
+  private intentStorageKey(resource = this.refKey()) {
+    let user = 'anon';
+    try {
+      const value = JSON.parse(localStorage.getItem('user') ?? 'null') as { id?: unknown } | null;
+      if (value && (typeof value.id === 'number' || typeof value.id === 'string')) user = String(value.id);
+    } catch { /* no user scope available; the tab and resource still isolate it */ }
+    return `slide.metric.publish.${user}.${resource}`;
+  }
+  private storedIntent(resource = this.refKey()) {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(this.intentStorageKey(resource)) ?? 'null') as { key?: unknown; intent?: unknown } | null;
+      if (typeof value?.key === 'string' && typeof value.intent === 'string') return { key: value.key, intent: value.intent };
+    } catch { /* an unusable record is not an absent intent */ }
+    return null;
+  }
+  private storeIntent(resource: string, key: string, intent: string) {
+    try { sessionStorage.setItem(this.intentStorageKey(resource), JSON.stringify({ key, intent })); } catch { /* in-memory key still applies */ }
+  }
+  private forgetIntent(resource: string) {
+    try { sessionStorage.removeItem(this.intentStorageKey(resource)); } catch { /* nothing persisted */ }
+  }
   private intentKey(body: unknown) {
-    const intent = JSON.stringify({ resource: `${this.resourceType}:${this.resourceId}`, body });
-    if (!this.publishKey || this.publishIntent !== intent) {
-      this.publishKey = `publish-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-      this.publishIntent = intent;
-    }
+    const intent = JSON.stringify({ resource: this.refKey(), body });
+    if (this.publishKey && this.publishIntent === intent) return this.publishKey;
+    // Only the same recorded intent may reuse its key; anything else is a new
+    // explicit user intent and gets a new one.
+    const stored = this.storedIntent();
+    if (stored && stored.intent === intent) { this.publishKey = stored.key; this.publishIntent = intent; return stored.key; }
+    this.publishKey = `publish-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    this.publishIntent = intent;
     return this.publishKey;
   }
   private clearIntent() { this.publishKey = ''; this.publishIntent = ''; this.publishPending = false; }
@@ -219,13 +251,15 @@ export class MetricConfiguration extends LitElement {
   /**
    * Query the original resource and key before any retry. A committed result is
    * recovered as success, a pending one keeps the intent without offering a
-   * blind retry, and only a provably absent key may be published again.
+   * blind retry, and only an explicit, well-formed absent may be published
+   * again. A request that finished after the view moved on must not query or
+   * change the resource now shown; its stored record is left for that resource.
    */
-  private async resolveOperation(key: string, failure: unknown): Promise<void> {
-    const generation = this.generation;
+  private async resolveOperation(resource: string, key: string, generation: number, failure: unknown, reload = true): Promise<void> {
+    if (generation !== this.generation) return;
     let state: OperationState;
     try {
-      state = await metricRequest<OperationState>(`config/${this.root()}/operations/${encodeURIComponent(key)}`);
+      state = await metricRequest<OperationState>(`config/resources/${resource.replace(':', '/')}/operations/${encodeURIComponent(key)}`);
     } catch {
       if (generation !== this.generation) return;
       this.publishPending = true;
@@ -233,10 +267,16 @@ export class MetricConfiguration extends LitElement {
       return;
     }
     if (generation !== this.generation) return;
+    if (!state || !['committed', 'pending', 'absent'].includes(state.state)) {
+      // An unreadable answer is not proof the intent is absent.
+      this.publishPending = true;
+      this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      return;
+    }
     if (state.state === 'committed') {
-      this.clearIntent(); this.dirty = false; this.preview = null; this.trial = null; this.error = '';
+      this.forgetIntent(resource); this.clearIntent(); this.dirty = false; this.preview = null; this.trial = null; this.error = '';
       showToast('已确认上次发布已完成，正在读取应用与正式数据状态', 'success');
-      await this.load();
+      if (reload) await this.load();
       this.activationStep = 3;
       return;
     }
@@ -245,9 +285,20 @@ export class MetricConfiguration extends LitElement {
       this.publishPending = true; this.error = '';
       return;
     }
+    this.forgetIntent(resource);
     this.publishPending = false;
     if (failure) { this.invalidate(); this.error = metricError(failure); }
     else { this.error = ''; showToast('未发现此前的发布记录，可以重新发布', 'info'); }
+  }
+  /**
+   * A refresh or remount must not turn an unresolved intent into a new one: its
+   * recorded key is restored so the only offered action is to query it.
+   */
+  private async restorePending(generation: number) {
+    const stored = this.storedIntent();
+    if (!stored) { this.clearIntent(); return; }
+    this.publishKey = stored.key; this.publishIntent = stored.intent; this.publishPending = true;
+    await this.resolveOperation(this.refKey(), stored.key, generation, null, false);
   }
   private async execute(operation: 'preview' | 'trial' | 'publish') {
     if (this.busy || !this.canManage || this.connectionPending) return;
@@ -255,12 +306,23 @@ export class MetricConfiguration extends LitElement {
     if (this.publishPending && operation !== 'publish') return;
     if (operation === 'trial' && !this.preview || operation === 'publish' && (!this.publishPending && (!this.preview || !this.publishReady()))) return;
     const generation = this.generation, editVersion = this.editVersion;
+    const resource = this.refKey();
     this.busy = true; this.error = '';
     let key = '';
     try {
+      if (operation === 'publish' && this.publishPending) {
+        // Only the recorded intent may be queried; the current editor state is
+        // a different (possibly invalid) candidate and must not replace its key.
+        if (!this.publishKey) { this.error = '无法确认上次发布结果，请重新打开资源后查询。'; return; }
+        await this.resolveOperation(resource, this.publishKey, generation, null); return;
+      }
       const body = this.candidate();
-      if (operation === 'publish') key = this.intentKey(body);
-      if (operation === 'publish' && this.publishPending) { await this.resolveOperation(key, null); return; }
+      if (operation === 'publish') {
+        key = this.intentKey(body);
+        // Recorded before the mutation leaves the browser: a refresh during the
+        // request must still find this intent instead of starting another.
+        this.storeIntent(resource, key, this.publishIntent);
+      }
       const path = operation === 'publish' ? `config/${this.root()}/activate` : `${operation === 'trial' ? 'config' : 'policy'}/${this.root()}/${operation}`;
       // A lost response keeps this key, so the client queries the original
       // resource and key before deciding how to continue.
@@ -269,14 +331,14 @@ export class MetricConfiguration extends LitElement {
       if (operation === 'preview') { this.trial = null; this.preview = result; this.activationStep = 1; }
       if (operation === 'trial') { this.trial = result; this.activationStep = this.publishReady() ? 2 : 1; }
       if (operation === 'publish') {
-        this.dirty = false; this.preview = null; this.trial = null; this.clearIntent();
+        this.dirty = false; this.preview = null; this.trial = null; this.clearIntent(); this.forgetIntent(resource);
         showToast('采集配置已发布，正在确认应用与正式数据状态', 'success');
         await this.load();
         this.activationStep = 3;
       }
     } catch (error) {
       // Never resend a mutation whose outcome is unknown: query the same key first.
-      if (operation === 'publish' && key) { await this.resolveOperation(key, error); return; }
+      if (operation === 'publish' && key) { await this.resolveOperation(resource, key, generation, error); return; }
       if (generation === this.generation) { this.invalidate(); this.error = metricError(error); }
     }
     finally { if (generation === this.generation) this.busy = false; }
