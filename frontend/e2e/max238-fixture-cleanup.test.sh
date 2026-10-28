@@ -42,7 +42,14 @@ case "${1:-}" in
       esac
     done
     [ -f "$state/inspect_fail" ] && die "Error response from daemon: query failed"
+    # A daemon that answered earlier can still fail later: after this many
+    # successful inspects, every further inspect errors without a not-found.
+    if [ -f "$state/inspect_fail_after" ]; then
+      seen="$(cat "$state/inspect_ok" 2>/dev/null || echo 0)"
+      [ "$seen" -ge "$(cat "$state/inspect_fail_after")" ] && die "Error response from daemon: query failed"
+    fi
     f="$(find_container "$ref")" || die "Error: No such object: $ref"
+    echo $(( $(cat "$state/inspect_ok" 2>/dev/null || echo 0) + 1 )) > "$state/inspect_ok"
     case "$fmt" in
       *'.Id'*) printf '%s %s\n' "$(sed -n '1p' "$f")" "$(sed -n '2p' "$f")" ;;
       *Labels*) printf '%s\n' "$(sed -n '2p' "$f")" ;;
@@ -120,6 +127,41 @@ invoke --cleanup max238-e2e-c n1
 want_code 1 "unreachable daemon is unknown, not removed"
 want_err "docker daemon unavailable"
 want_exists max238-e2e-c
+
+reset; add max238-e2e-i iiiii999 n1; touch "$state/inspect_fail"
+invoke --cleanup max238-e2e-i n1
+want_code 1 "an inspect error after a healthy info is unknown, not absent"
+want_err "could not answer whether max238-e2e-i exists"
+want_exists max238-e2e-i
+
+reset
+invoke --cleanup max238-e2e-i n1
+want_code 0 "a proven not-found is still an idempotent no-op"
+want_err "verified absent"
+
+reset; add max238-e2e-j jjjjj999 n2; write_handle max238-e2e-j n2; touch "$state/inspect_fail"
+export FAKE_CURL_EXIT=7
+invoke_handle "$work/handle.json"
+unset FAKE_CURL_EXIT
+want_code 1 "handle-file teardown refuses to guess when the query fails"
+want_err "could not answer whether max238-e2e-j exists"
+want_exists max238-e2e-j
+[ -f "$work/handle.json" ] && ok "handle file kept when existence is unknown" || bad "handle file removed while the resource may exist"
+
+reset; add max238-e2e-k kkkkk999 n3; write_handle max238-e2e-k n3; printf '2\n' > "$state/inspect_fail_after"
+export FAKE_CURL_EXIT=7
+invoke_handle "$work/handle.json"
+unset FAKE_CURL_EXIT
+want_code 1 "a delete that cannot be verified afterwards is not reported as removed"
+want_err "FAILED to verify removal"
+want_gone max238-e2e-k
+[ -f "$work/handle.json" ] && ok "handle file kept when the post-delete check fails" || bad "handle file removed without a verified removal"
+
+reset; add max238-e2e-l lllll999 n4; touch "$state/rm_fail"; printf '2\n' > "$state/inspect_fail_after"
+invoke --cleanup max238-e2e-l n4
+want_code 1 "a failed delete with a failing follow-up query is unknown"
+want_err "FAILED to remove"
+want_exists max238-e2e-l
 
 reset; add max238-e2e-d dddd4444 n1; touch "$state/rm_fail"
 invoke --cleanup max238-e2e-d n1
