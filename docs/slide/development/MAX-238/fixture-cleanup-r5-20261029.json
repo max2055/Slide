@@ -1,0 +1,110 @@
+{
+  "package": "MAX238-FIXTURE-CLEANUP-R5",
+  "date": "2026-10-29",
+  "branch": "agent/15coder1/max-238",
+  "base": "39077b228f345171bef3289a2dbda4374df54c03",
+  "implementation_commit": "d49a63da0",
+  "scope": [
+    "ref_state distinguishes present, proven-absent and unknown instead of reading every failed inspect as absent",
+    "the four counterexamples from review.md are regressions in the controlled fake-docker suite",
+    "the lightweight controlled regression runs in the existing frontend CI job"
+  ],
+  "not_changed": [
+    "apps/db-ops-api/src/metrics production code and tests",
+    "MAX240-owned read paths (metrics/query.ts, storage.ts readers, rollout/formal-store.ts readers, consumers/*)",
+    "activation predicates, required-metric list, policy/config/codec contracts",
+    "the fixture server, spec and playwright MAX-238 config"
+  ],
+  "file_sha256": {
+    ".github/workflows/ci.yml": "e6c498b6bd1e527592d6c278c00d6985889b719f38d2ab5ea566f1b8e18f63cd",
+    "frontend/e2e/max238-real-api.sh": "11d7d5f2d9b4455eacbeabf485367b27edaa050115dd4efea914e97223a99656",
+    "frontend/e2e/max238-fixture-cleanup.test.sh": "c67f0303d54da190f99d264674cbdd1456fdcd650b1268c5fb0a5f0d353a68e0"
+  },
+  "cleanup_contract": {
+    "present": "docker info answers and docker inspect --type container succeeds; exit 0",
+    "proven_absent": "inspect fails with Docker's own not-found answer ('No such object:' or 'No such container:'); the only state reported as removed",
+    "unknown": "docker info fails, or inspect fails with anything else (disconnect, timeout, server error, refused query); exit 2, original error and inspect exit code printed, handle named, handle file kept",
+    "shared_entries": [
+      "launcher start-up free-handle check",
+      "--cleanup",
+      "--cleanup-handle",
+      "remove_owned post-failed-delete and post-delete checks",
+      "launcher EXIT trap",
+      "API fixture shutdown (delegates to --cleanup)",
+      "browser afterAll (delegates to --cleanup-handle)"
+    ],
+    "ownership_unchanged": "only the exact container id whose slide.max238.owner label matches this run's nonce is removed; the API is cross-checked, never the identity source; no prefix sweep"
+  },
+  "checks": [
+    {
+      "command": "bash -n frontend/e2e/max238-real-api.sh && bash -n frontend/e2e/max238-fixture-cleanup.test.sh",
+      "result": "exit 0"
+    },
+    {
+      "command": "bash frontend/e2e/max238-fixture-cleanup.test.sh",
+      "result": "47 passed, 0 failed (controlled fake docker/curl, no real container touched)"
+    },
+    {
+      "command": "node --test scripts/ci/*.test.mjs",
+      "result": "22 pass, 0 fail"
+    },
+    {
+      "command": "parse .github/workflows/ci.yml and read the frontend job steps",
+      "result": "valid YAML; 'Fixture cleanup contract (controlled fake Docker)' sits after 'Run tests'"
+    }
+  ],
+  "controlled_fault_injection": {
+    "tool": "frontend/e2e/max238-fixture-cleanup.test.sh",
+    "new_fake_mode": "inspect succeeds N times (state/inspect_fail_after) and then reports an internal error without a not-found answer",
+    "counterexamples": [
+      "info ok, inspect internal error, resource present -> exit 1, 'could not answer whether ... exists', resource survives",
+      "handle-file teardown whose initial query fails, resource present -> exit 1, handle file kept",
+      "rm succeeds, post-delete inspect fails -> exit 1, 'FAILED to verify removal', handle file kept",
+      "rm fails, follow-up inspect fails -> exit 1, 'FAILED to remove', resource survives"
+    ],
+    "retained_coverage": [
+      "a genuine not-found stays an idempotent no-op (exit 0, verified absent)",
+      "owned handle removed; wrong owner refused; daemon unreachable; delete failure; parallel same-prefix neighbour; handle file missing/unreadable/matching/mismatched"
+    ],
+    "real_docker_used": false,
+    "not_claimed": "the stubs are not a real daemon failure; no real Docker service was stopped"
+  },
+  "real_docker_evidence": {
+    "not_found_message": "Error response from daemon: No such container: <name> (matches the proven-absent predicate)",
+    "absent_handle_cleanup": {
+      "command": "bash frontend/e2e/max238-real-api.sh --cleanup max238-e2e-r5-probe-<pid> r5probe",
+      "exit": 0,
+      "message": "verified absent: max238-e2e-r5-probe-<pid> (owner r5probe)"
+    },
+    "wrong_owner_then_own": {
+      "created": "max238-e2e-r5-owner-77220 via docker create with label slide.max238.owner=someone-else (alpine/socat, never started, no port mapping)",
+      "wrong_owner_exit": 1,
+      "wrong_owner_message": "refusing to remove ... label slide.max238.owner is 'someone-else', not 'r5probe'",
+      "container_survived": true,
+      "own_cleanup_exit": 0,
+      "own_cleanup_message": "removed ... (id 117489d365fd42b48193bcef245558465850f06e2c276d6eba2a7a5ab9fdf00f owner someone-else)",
+      "repeat_cleanup_exit": 0,
+      "repeat_cleanup_message": "verified absent",
+      "residue": 0
+    }
+  },
+  "ci_wiring": {
+    "file": ".github/workflows/ci.yml",
+    "job": "frontend",
+    "step": "Fixture cleanup contract (controlled fake Docker)",
+    "command": "bash frontend/e2e/max238-fixture-cleanup.test.sh",
+    "selection": "scripts/ci/plan.mjs already selects code/browser/integration for frontend/e2e/** changes; no new job, watcher or framework"
+  },
+  "reused_evidence": [
+    "R3 public keyed authorization and full protocol (bounded acceptance)",
+    "R4 author evidence: Chromium 4, disposable journal, API shutdown, typechecks and contracts",
+    "PUBLISH-REJECTIONS c14b06a0033cde3972a1722014921afc691c3c75"
+  ],
+  "limits": [
+    "harness state decision, regression and CI wiring only; production protocol/DB/module/frontend results from R3 are reused, not re-verified here",
+    "controlled stubs are not a real daemon failure; real disconnect/timeout/server errors were not reproduced (the local daemon was not touched)",
+    "the trial boundary remains a controlled fixture; no real login, target, collector or formal history/event chain",
+    "the strict binding-payload failures in portfolio.mysql.test.ts / coordinator.mysql.test.ts are out of scope and were not masked",
+    "no merge, no deployment; MAX238/MAX235 remain in_progress and this package is not whole-issue acceptance"
+  ]
+}
