@@ -47,6 +47,10 @@ export class MetricConfigurationService {
   async activate(actor: ActorContext, ref: Ref, input: unknown, guard: ActivationGuard = {}) {
     guard.signal?.throwIfAborted();
     actor = await this.currentActor(actor, guard);
+    // An intent that already published replays its recorded outcome before any
+    // trial IO; live permission and the configuration digest are revalidated.
+    const replayed = await this.policy.replay(actor, ref, input);
+    if (replayed) return { ...replayed, status: await this.status(actor, ref) };
     const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
     rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
     const candidate = candidateFingerprint(preview.resources[0]);
@@ -74,6 +78,10 @@ export class MetricConfigurationService {
   async attempts(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);
     return this.store.attempts(ref);
+  }
+  /** Read-only intent lookup; an absent key is authoritative for a safe retry. */
+  operation(actor: ActorContext, ref: Ref, operationKey: string) {
+    return this.policy.operation(actor, ref, operationKey);
   }
   async trialCurrent(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, true);

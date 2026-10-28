@@ -1,9 +1,10 @@
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
+import { z } from 'zod';
 import { dbConnection } from '../../db-connection.js';
 import { CapabilitySchema, TimestampSchema, type Capability } from '../../contracts/metrics/index.js';
 import { BindingPersistenceError } from '../bindings/persistence-codec.js';
 import { readLegacyPublished, TemplateBindingUnsupportedError } from '../bindings/package-reader.js';
-import { type Audit, type Group, type Published, type Ref, PolicyError, refKey, rule } from './model.js';
+import { type ApplyOperation, type Audit, type Group, type Published, type Ref, ConfigurationDigestSchema, OperationKeySchema, PolicyError, refKey, rule } from './model.js';
 import { PolicyTemplateGateway, type PolicyTemplateGatewayOptions } from './template-gateway.js';
 
 export interface PolicyTransaction {
@@ -17,6 +18,8 @@ export interface PolicyTransaction {
   saveBinding(value: Published, resetCapabilities: boolean): Promise<void>;
   audit(value: Audit): Promise<void>;
   audits(target: string, requestId?: string): Promise<Audit[]>;
+  applyOperation(operationKey: string): Promise<ApplyOperation | null>;
+  saveApplyOperation(value: ApplyOperation): Promise<void>;
 }
 export interface PolicyStore { transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> }
 const decode = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
@@ -60,6 +63,30 @@ const storedAudit = (raw: unknown): Audit => {
     throw new PolicyError('POLICY_AUDIT_INVALID', 500);
   }
   return value as unknown as Audit;
+};
+
+/**
+ * One recorded client intent. The result is the exact publication response, so
+ * a replay never recomputes a snapshot; its stored resources pass the same
+ * shared fence as a stored binding.
+ */
+const storedApplyOperation = (raw: Record<string, unknown>): ApplyOperation => {
+  const invalid = (): never => { throw new PolicyError('POLICY_OPERATION_INVALID', 500); };
+  const key = OperationKeySchema.safeParse(raw.operation_key);
+  const digest = ConfigurationDigestSchema.safeParse(raw.configuration_digest);
+  const actorId = Number(raw.actor_id), target = Number(raw.target_revision);
+  if (!key.success || !digest.success || typeof raw.resource_key !== 'string' || raw.resource_key.length === 0
+    || typeof raw.committed_at !== 'string' || !Number.isSafeInteger(actorId) || actorId <= 0
+    || !Number.isSafeInteger(target) || target <= 0) return invalid();
+  let result: unknown;
+  try { result = decode<unknown>(raw.result); } catch { return invalid(); }
+  const envelope = z.object({ published: z.literal(true), resources: z.array(z.unknown()).length(1),
+    affected_resources: z.number().int().nonnegative(), requests_per_hour_before: z.number(),
+    requests_per_hour_after: z.number() }).safeParse(result);
+  if (!envelope.success) return invalid();
+  return { operation_key: key.data, resource_key: raw.resource_key, actor_id: actorId, target_revision: target,
+    configuration_digest: digest.data, committed_at: raw.committed_at,
+    result: { ...envelope.data, resources: envelope.data.resources.map(storedPublished) } };
 };
 
 // SQL already serializes all policy transactions on one row. Admit waiters
@@ -139,6 +166,17 @@ class MysqlTransaction implements PolicyTransaction {
       ? await this.rows('SELECT payload FROM metric_policy_audit WHERE target = ? ORDER BY id DESC LIMIT 100', [target])
       : await this.rows("SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.request_id')) = ? ORDER BY id DESC LIMIT 1", [target,requestId]);
     return rows.map(r => storedAudit(decode(r.payload)));
+  }
+  async applyOperation(operationKey: string): Promise<ApplyOperation | null> {
+    const rows = await this.rows(`SELECT operation_key, resource_key, actor_id, target_revision, configuration_digest, result, committed_at
+      FROM metric_policy_apply_operations WHERE operation_key = ?`, [operationKey]);
+    return rows[0] ? storedApplyOperation(rows[0]) : null;
+  }
+  async saveApplyOperation(value: ApplyOperation): Promise<void> {
+    await this.connection.execute(`INSERT INTO metric_policy_apply_operations
+      (operation_key, resource_key, actor_id, target_revision, configuration_digest, result, committed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`, [value.operation_key, value.resource_key, value.actor_id,
+      value.target_revision, value.configuration_digest, JSON.stringify(value.result), value.committed_at]);
   }
 }
 

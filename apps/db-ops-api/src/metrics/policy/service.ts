@@ -1,11 +1,12 @@
 import type { ActorContext } from '../../auth/actor-context.js';
+import { createHash } from 'node:crypto';
 import { canManageResource, canReadResource, MysqlResourceRelationStore } from '../../resources/resource-service.js';
 import { configurationInventory } from '../config/inventory.js';
 import { type Resource } from '../../contracts/metrics/index.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
 import { type PolicyStore, type PolicyTransaction, MysqlPolicyStore } from './store.js';
-import { BindingChangeSchema, GroupChangeSchema, PolicyIdSchema, RefSchema, PolicyError, type Ref, type Group,
+import { BindingChangeSchema, GroupChangeSchema, OperationKeySchema, PolicyIdSchema, RefSchema, PolicyError, type BindingChange, type Ref, type Group,
   type Binding, type Published, refKey, rule } from './model.js';
 import { resolvePolicy } from './resolver.js';
 
@@ -15,6 +16,10 @@ export function candidateFingerprint(next: Published): string {
   return stable({binding:next.binding,settings:next.resolved.settings,sources:next.resolved.sources,metric_sources:next.resolved.metric_sources,
     applicability:next.resolved.applicability,policy_revision:next.resolved.plan.binding.policy_revision,
     metrics:next.resolved.metric_templates.map(t=>({metric:t.metric,source:t.source,enabled:t.enabled}))});
+}
+/** The canonical configuration digest an operation key binds to its target revision. */
+export function configurationDigest(next: Published): string {
+  return `sha256:${createHash('sha256').update(candidateFingerprint(next)).digest('hex')}`;
 }
 export class PolicyService {
   constructor(private readonly store: PolicyStore, private readonly registry: PackageRegistry,
@@ -93,44 +98,108 @@ export class PolicyService {
       return { can_manage: members.length ? members.every(member => canManageResource(actor, member.binding.resource)) : actor.permissions.includes('*') };
     });
   }
+  /** Resolve the intended publication from the request. No write, no revision CAS. */
+  private async candidate(tx: PolicyTransaction, actor: ActorContext, ref: Ref, change: BindingChange, previous: Published | null) {
+    const pin = change.package ?? previous?.binding.package; rule(pin, 'POLICY_PACKAGE_REQUIRED');
+    const groupId = change.group_id === undefined ? previous?.binding.group_id ?? null : change.group_id;
+    const group = groupId ? await tx.group(groupId) : null;
+    rule(!groupId || group, 'POLICY_GROUP_NOT_FOUND', 404);
+    // Joining/leaving a group also changes the group's impact set: require management of its current members.
+    for (const id of new Set([previous?.binding.group_id, groupId].filter((id): id is string => Boolean(id)))) {
+      if (id !== previous?.binding.group_id || id !== groupId) await this.groupAccess(actor, tx, id, true);
+    }
+    const binding: Binding = { resource: ref, package: pin, group_id: groupId,
+      overrides: change.overrides ?? previous?.binding.overrides ?? {}, revision: change.expected_revision + 1 };
+    const at = this.clock(), next = await this.resolve(tx, binding, group, previous, at);
+    // A package is an immutable execution input, not the resource identity. Resolve
+    // inherited overrides against the target (unknown metrics fail explicitly),
+    // and reject known incompatible replacements on preview AND direct publish.
+    if (previous && stable(previous.binding.package) !== stable(pin)) {
+      rule(!next.resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
+    }
+    return { binding, group, groupId, next, at, changedPackage: !previous || stable(previous.binding.package) !== stable(pin) };
+  }
+  /** The recorded intent for this key, if any. Another resource or target revision is a collision. */
+  private async recorded(tx: PolicyTransaction, ref: Ref, change: BindingChange) {
+    if (change.operation_key === undefined) return null;
+    const recorded = await tx.applyOperation(change.operation_key);
+    if (!recorded) return null;
+    rule(recorded.resource_key === refKey(ref), 'POLICY_OPERATION_CONFLICT', 409);
+    rule(recorded.target_revision === change.expected_revision + 1, 'POLICY_OPERATION_CONFLICT', 409);
+    return recorded;
+  }
   async changeBinding(actor: ActorContext, ref: Ref, input: unknown, publish: boolean, expectedCandidate?: string) {
     await this.assertAccess(actor, ref, true);
     const change = BindingChangeSchema.parse(input);
     return this.store.transaction(async tx => {
+      // A client operation key binds one authorized resource, target revision and
+      // canonical configuration digest. It is checked inside the serialized
+      // policy transaction, so concurrent duplicates and restarts both replay
+      // the recorded publication instead of writing a second revision.
+      const operationKey = publish ? change.operation_key : undefined;
+      const recorded = operationKey === undefined ? null : await this.recorded(tx, ref, change);
       const previous = await tx.binding(ref);
-      rule((previous?.binding.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
-      const pin = change.package ?? previous?.binding.package; rule(pin, 'POLICY_PACKAGE_REQUIRED');
-      const groupId = change.group_id === undefined ? previous?.binding.group_id ?? null : change.group_id;
-      const group = groupId ? await tx.group(groupId) : null;
-      rule(!groupId || group, 'POLICY_GROUP_NOT_FOUND', 404);
-      // Joining/leaving a group also changes the group's impact set: require management of its current members.
-      for (const id of new Set([previous?.binding.group_id, groupId].filter((id): id is string => Boolean(id)))) {
-        if (id !== previous?.binding.group_id || id !== groupId) await this.groupAccess(actor, tx, id, true);
-      }
-      const binding: Binding = { resource: ref, package: pin, group_id: groupId,
-        overrides: change.overrides ?? previous?.binding.overrides ?? {}, revision: change.expected_revision + 1 };
-      const at = this.clock(), next = await this.resolve(tx, binding, group, previous, at);
-      // A package is an immutable execution input, not the resource identity. Resolve
-      // inherited overrides against the target (unknown metrics fail explicitly),
-      // and reject known incompatible replacements on preview AND direct publish.
-      if (previous && stable(previous.binding.package) !== stable(pin)) {
-        rule(!next.resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
+      // A replay is not evaluated against the revision it already published.
+      rule(recorded !== null || (previous?.binding.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
+      const { binding, group, groupId, next, at, changedPackage } = await this.candidate(tx, actor, ref, change, previous);
+      if (recorded) {
+        // Reusing a key for another resource, revision or configuration is a collision.
+        rule(configurationDigest(next) === recorded.configuration_digest, 'POLICY_OPERATION_CONFLICT', 409);
+        return recorded.result;
       }
       if (expectedCandidate !== undefined) rule(candidateFingerprint(next) === expectedCandidate, 'POLICY_REVISION_CONFLICT', 409);
       const result = { published: publish, resources: [next], affected_resources: 1,
         requests_per_hour_before: previous?.resolved.impact.requests_per_hour_estimate ?? 0,
         requests_per_hour_after: next.resolved.impact.requests_per_hour_estimate };
       if (publish) {
-        await tx.saveBinding(next, !previous || stable(previous.binding.package) !== stable(pin));
+        await tx.saveBinding(next, changedPackage);
         await tx.audit({ actor_id: actor.userId, request_id: actor.requestId, action: 'binding.publish', target: refKey(ref), revision: binding.revision, at,
-          configuration: { package: pin, group_id: groupId, overrides: binding.overrides, group } });
+          configuration: { package: binding.package, group_id: groupId, overrides: binding.overrides, group } });
         // Membership revisions prevent preview→publish races even when no policy value changed.
         for (const id of new Set([previous?.binding.group_id, groupId].filter((id): id is string => Boolean(id)))) {
           const changed = (await tx.group(id))!;
           await tx.saveGroup({ ...changed, revision: changed.revision + 1 });
         }
+        // The journal row is committed with the binding, revision and audit it records.
+        if (operationKey !== undefined) {
+          await tx.saveApplyOperation({ operation_key: operationKey, resource_key: refKey(ref), actor_id: actor.userId,
+            target_revision: binding.revision, configuration_digest: configurationDigest(next), result: { ...result, published: true }, committed_at: at });
+        }
       }
       return result;
+    });
+  }
+  /**
+   * The recorded publication for exactly this intent, or null when no key was
+   * sent or nothing was recorded. The digest is recomputed from the same request,
+   * so a key reused for a different configuration is a collision. Callers must
+   * already hold live authorization; nothing here is written.
+   */
+  async replay(actor: ActorContext, ref: Ref, input: unknown) {
+    await this.assertAccess(actor, ref, true);
+    const change = BindingChangeSchema.parse(input);
+    if (change.operation_key === undefined) return null;
+    return this.store.transaction(async tx => {
+      const recorded = await this.recorded(tx, ref, change);
+      if (!recorded) return null;
+      const { next } = await this.candidate(tx, actor, ref, change, await tx.binding(ref));
+      rule(configurationDigest(next) === recorded.configuration_digest, 'POLICY_OPERATION_CONFLICT', 409);
+      return recorded.result;
+    });
+  }
+  /**
+   * Authoritative operation lookup. It runs under the same policy lock as a
+   * publication, so an absent key means no publication with that key is in
+   * flight; a retry is safe. A key recorded for another resource is not disclosed.
+   */
+  async operation(actor: ActorContext, ref: Ref, operationKey: string) {
+    await this.assertAccess(actor, ref, false);
+    OperationKeySchema.parse(operationKey);
+    return this.store.transaction(async tx => {
+      const recorded = await tx.applyOperation(operationKey);
+      if (!recorded || recorded.resource_key !== refKey(ref)) return { state: 'absent' as const, operation: null };
+      return { state: 'committed' as const, operation: { resource: ref, target_revision: recorded.target_revision,
+        configuration_digest: recorded.configuration_digest, committed_at: recorded.committed_at } };
     });
   }
   async changeGroup(actor: ActorContext, id: string, input: unknown, publish: boolean) {

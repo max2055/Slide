@@ -188,6 +188,18 @@ export class MetricConfiguration extends LitElement {
     return { expected_revision: this.published?.binding.revision ?? 0, package: { id: pack.id, version: pack.version, digest: pack.digest },
       group_id: this.groupId || null, overrides: this.overrides };
   }
+  /** One operation key per publish intent, reused only while that exact intent is retried. */
+  private publishKey = '';
+  private publishIntent = '';
+  private intentKey(body: unknown) {
+    const intent = JSON.stringify(body);
+    if (!this.publishKey || this.publishIntent !== intent) {
+      this.publishKey = `publish-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      this.publishIntent = intent;
+    }
+    return this.publishKey;
+  }
+  private clearIntent() { this.publishKey = ''; this.publishIntent = ''; }
   private publishReady() {
     return trialPassed(this.trial) || (!!this.trial && !this.trial.error && this.trial.decision === 'disabled'
       && this.preview?.resources[0]?.resolved.settings.enabled === false);
@@ -204,12 +216,15 @@ export class MetricConfiguration extends LitElement {
     this.busy = true; this.error = '';
     try {
       const path = operation === 'publish' ? `config/${this.root()}/activate` : `${operation === 'trial' ? 'config' : 'policy'}/${this.root()}/${operation}`;
-      const result = await metricRequest<Preview & Trial>(path, this.candidate());
+      const body = this.candidate();
+      // A lost response keeps this key, so the next publish of the same intent
+      // replays the recorded publication instead of a blind second revision.
+      const result = await metricRequest<Preview & Trial>(path, operation === 'publish' ? { ...body, operation_key: this.intentKey(body) } : body);
       if (generation !== this.generation || editVersion !== this.editVersion) return;
       if (operation === 'preview') { this.trial = null; this.preview = result; this.activationStep = 1; }
       if (operation === 'trial') { this.trial = result; this.activationStep = this.publishReady() ? 2 : 1; }
       if (operation === 'publish') {
-        this.dirty = false; this.preview = null; this.trial = null;
+        this.dirty = false; this.preview = null; this.trial = null; this.clearIntent();
         showToast('采集配置已发布，正在确认应用与正式数据状态', 'success');
         await this.load();
         this.activationStep = 3;

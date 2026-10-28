@@ -13979,6 +13979,10 @@
               }
             ]
           },
+          "operation_key": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
           "overrides": {
             "additionalProperties": false,
             "properties": {
@@ -15169,6 +15173,10 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "operation_key": {
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                          "type": "string"
                         },
                         "overrides": {
                           "additionalProperties": false,
@@ -17039,6 +17047,81 @@
           "formal_visibility",
           "coverage",
           "blockers"
+        ],
+        "type": "object"
+      },
+      "MetricOperationState": {
+        "$id": "MetricOperationState",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "committed_at": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "configuration_digest": {
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "target_revision": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "target_revision",
+                  "configuration_digest",
+                  "committed_at"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "committed",
+              "absent"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "operation"
         ],
         "type": "object"
       },
@@ -27708,7 +27791,7 @@
     },
     "/api/metrics/config/resources/{type}/{id}/activate": {
       "post": {
-        "description": "Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly.",
+        "description": "Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical configuration digest; its replay returns the recorded publication without a second revision, publication or audit, and reuse for another intent is rejected.",
         "operationId": "activateMetricConfiguration",
         "parameters": [
           {
@@ -27780,7 +27863,7 @@
             "description": "Resource not found"
           },
           "409": {
-            "description": "Revision conflict or trial busy; no implicit retry"
+            "description": "Revision conflict, operation-key collision or trial busy; no implicit retry"
           },
           "422": {
             "description": "Incompatible package or trial failed; not published"
@@ -27830,6 +27913,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MetricConfigurationMigration"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/config/resources/{type}/{id}/operations/{key}": {
+      "get": {
+        "description": "Authoritative read of one client operation key under the same serialization as publication: absent means no publication with that key is in flight and the intent may be retried. A key recorded for another resource is reported absent, never disclosed.",
+        "operationId": "getMetricConfigurationOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricOperationState"
                 }
               }
             },
