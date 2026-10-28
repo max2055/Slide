@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 
 /**
- * MAX238-APPLY-IDEMPOTENCY-R2 browser evidence against a REAL API.
+ * MAX238-APPLY-IDEMPOTENCY-R3 browser evidence against a REAL API.
  *
  * The real metric-configuration component is served by Vite and its requests go
  * through the Vite proxy to a real Fastify server (apps/db-ops-api/e2e/) whose
@@ -16,11 +16,16 @@ const fixture = '/e2e/fixtures/max238-idempotency-recovery.html';
 
 // Playwright stops its webServers after the tests; the disposable MySQL
 // container belongs to this fixture and is removed here regardless of how the
-// launcher was terminated.
-test.afterAll(() => {
-  const names = execFileSync('docker', ['ps', '--filter', 'name=max238-e2e-', '--format', '{{.Names}}'],
-    { encoding: 'utf8' }).trim();
-  if (names) execFileSync('docker', ['rm', '-f', ...names.split('\n')], { stdio: 'ignore' });
+// launcher was terminated. The API reports the exact handle and owner nonce,
+// and the launcher verifies that label before removing anything, so another
+// run's container — even one sharing the prefix — is never touched.
+test.afterAll(async () => {
+  type Handle = { container: string | null; nonce: string | null };
+  let handle: Handle;
+  try { handle = await (await fetch(`${api}/__test/handle`)).json() as Handle; }
+  catch { return; } // the launcher or server already removed its own exact handle
+  if (!handle.container || !handle.nonce) return;
+  execFileSync('bash', ['e2e/max238-real-api.sh', '--cleanup', handle.container, handle.nonce], { stdio: 'inherit' });
 });
 
 type State = { trials: number; journal: { state: string; target_revision: number; committed_at: string | null } | null; revision: number | null };

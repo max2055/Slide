@@ -168,7 +168,7 @@ describe.skipIf(process.env.UNIFIED_METRICS_REAL !== 'true')('real MySQL 9.6 and
       }
     });
     app=Fastify();const auth=async(req:any)=>{req.user=admin;};
-    await registerMetricPolicyRoutes(app,auth,policy);await registerMetricConfigurationRoutes(app,auth,service);await registerMetricConsumerRoutes(app,auth,consumer);
+    await registerMetricPolicyRoutes(app,auth,policy,async seed => seed);await registerMetricConfigurationRoutes(app,auth,service);await registerMetricConsumerRoutes(app,auth,consumer);
     base=await app.listen({host:'127.0.0.1',port:0});
     if(ui){
       expect(refs[0].id).toBe(1);

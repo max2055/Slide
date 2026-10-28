@@ -56,7 +56,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       // Fixed simulated remote target; HTTP, policy persistence, CAS and reservation are real.
       resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }] : [], []] } }),
     }) }, configurationReader(() => pool));
-    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy); await registerMetricConfigurationRoutes(app, auth, service);
+    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
     base = await app.listen({ host: '127.0.0.1', port: 0 });
     vite = await createServer({ configFile: false, root: fileURLToPath(new URL('../../../../../frontend', import.meta.url)),
       server: { host: '127.0.0.1', port: 0, proxy: { '/api': base } }, logLevel: 'error' });

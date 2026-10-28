@@ -209,20 +209,23 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
     const formalBefore = await formalRows();
     const auditsBeforeTrial = await auditCount(key);
     let advancedRevision: number | null = null;
-    let guardChecks = 0;
+    let guardChecks = 0, trialFinished = false;
     let trialOutcome: Awaited<ReturnType<MetricConfigurationService['trial']>> | null = null;
     const originalTrial = service.trial.bind(service);
     const trialSpy = vi.spyOn(service, 'trial').mockImplementation(async (...args) => {
       const outcome = await originalTrial(...args);
       trialOutcome = outcome;
+      trialFinished = true;
       return outcome;
     });
     // The trial finishes (persisted=false) before the pre-publish currentActor revalidation; the
     // other connection advances the revision exactly there, so only the publish can be refused.
+    // The position is detected from the trial result, not a fixed checker count: the trial itself
+    // revalidates inside its own policy transaction and must not be advanced under the row lock.
     const guard: ActivationGuard = {
       async check() {
         guardChecks += 1;
-        if (guardChecks === 6 && advancedRevision === null) {
+        if (trialFinished && advancedRevision === null) {
           const advanced = await policies2.changeBinding(admin, instanceRef,
             { expected_revision: trialRevision, overrides: { interval_ms: { mode: 'set', value: 45000 } } }, true);
           advancedRevision = advanced.resources[0].binding.revision;

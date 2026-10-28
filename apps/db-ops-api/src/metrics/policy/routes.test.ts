@@ -1,10 +1,11 @@
 import Fastify from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBuiltinRegistry, builtinReleases } from '../packages/builtins.js';
 import { PolicyService } from './service.js';
 import { registerMetricPolicyRoutes } from './routes.js';
+import type { PolicyStore } from './store.js';
 import { MemoryPolicyStore, testResources, admin, pin, at } from './test-support.js';
-import type { ActorContext } from '../../auth/actor-context.js';
+import { actorContextService, ActorAuthenticationError, type ActorContext } from '../../auth/actor-context.js';
 
 describe('policy API', () => {
   let app: ReturnType<typeof Fastify>, store: MemoryPolicyStore, actor: ActorContext | undefined;
@@ -14,7 +15,7 @@ describe('policy API', () => {
   const create = (id = 1, extra = {}) => post(`/resources/instance/${id}/publish`, { expected_revision: 0, package: pin, ...extra });
   beforeEach(async () => {
     store = new MemoryPolicyStore(); actor = admin; app = Fastify();
-    await registerMetricPolicyRoutes(app, async request => { (request as any).user = actor; }, new PolicyService(store, createBuiltinRegistry(), testResources, () => at));
+    await registerMetricPolicyRoutes(app, async request => { (request as any).user = actor; }, new PolicyService(store, createBuiltinRegistry(), testResources, () => at), async () => actor!);
   });
   afterEach(async () => { await app.close(); });
   it('preview has no side effects; publish is queryable with pending application and atomic audit', async () => {
@@ -99,5 +100,105 @@ describe('policy API', () => {
     expect((await get(`/resources/${type}/1`)).statusCode).toBe(200);
     actor = { ...admin, permissions: ['instance:*'] };
     expect((await get(`/resources/${type}/1`)).statusCode).toBe(403);
+  });
+});
+
+/**
+ * The public policy entries can wait for admission and the policy row lock after
+ * the request snapshot was authorized. Every one of them re-reads the live actor
+ * inside the serialized transaction, including a keyed replay whose response was
+ * lost. The gate stands in for that wait; no target or production identity is used.
+ */
+function gatedStore(memory: MemoryPolicyStore) {
+  let block = false, enter!: () => void, release!: () => void;
+  let entered = new Promise<void>(resolve => { enter = resolve; });
+  let gate = new Promise<void>(resolve => { release = resolve; });
+  const store: PolicyStore = { transaction: async fn => {
+    if (block) { block = false; enter(); await gate; }
+    return memory.transaction(fn);
+  } };
+  return { store, arm() {
+    block = true;
+    entered = new Promise<void>(resolve => { enter = resolve; });
+    gate = new Promise<void>(resolve => { release = resolve; });
+    return { entered, release: () => release() };
+  } };
+}
+
+describe('policy API lock-wait authorization', () => {
+  const revoked: ActorContext = { ...admin, permissions: [], instanceScopes: {} };
+  const publish = { expected_revision: 0, package: pin };
+  it('revalidates a committed keyed replay at the production publish route after its lock wait', async () => {
+    const memory = new MemoryPolicyStore();
+    const gated = gatedStore(memory);
+    const policy = new PolicyService(gated.store, createBuiltinRegistry(), testResources, () => at);
+    const input = { ...publish, operation_key: 'replay-after-lock' };
+    await policy.changeBinding(admin, { type: 'instance', id: 1 }, input, true);
+    let current: ActorContext = admin;
+    const live = vi.spyOn(actorContextService, 'revalidateActor').mockImplementation(async () => current);
+    const app = Fastify();
+    // No reload argument: the registered production wiring must re-read the actor.
+    await registerMetricPolicyRoutes(app, async request => { (request as any).user = admin; }, policy);
+    try {
+      const wait = gated.arm();
+      const response = app.inject({ method: 'POST', url: '/api/metrics/policy/resources/instance/1/publish', payload: input });
+      await wait.entered;
+      current = revoked;
+      wait.release();
+      expect((await response).statusCode).toBe(403);
+      expect(live).toHaveBeenCalledWith(admin, admin.requestId);
+      // The denial neither repeats nor hides a second write: the recorded publication is untouched.
+      expect(memory.logs).toHaveLength(1);
+      expect(memory.bindings.get('instance:1')!.binding.revision).toBe(1);
+      expect(memory.operations.get('replay-after-lock')!.state).toBe('committed');
+    } finally { live.mockRestore(); await app.close(); }
+  });
+  it('refuses reads, previews and publications whose grants are revoked during the lock wait', async () => {
+    const memory = new MemoryPolicyStore();
+    const gated = gatedStore(memory);
+    const policy = new PolicyService(gated.store, createBuiltinRegistry(), testResources, () => at);
+    await policy.changeBinding(admin, { type: 'instance', id: 1 }, publish, true);
+    let current: ActorContext = admin;
+    const app = Fastify();
+    await registerMetricPolicyRoutes(app, async request => { (request as any).user = admin; }, policy, async () => current);
+    const attempts: Array<[string, string, unknown?]> = [
+      ['GET', '/api/metrics/policy/resources/instance/1'],
+      ['GET', '/api/metrics/policy/resources/instance/1/effective'],
+      ['GET', '/api/metrics/policy/resources/instance/1/audit'],
+      ['POST', '/api/metrics/policy/resources/instance/1/preview', { expected_revision: 1 }],
+      ['POST', '/api/metrics/policy/resources/instance/1/publish', { expected_revision: 1, overrides: { enabled: 'disable' } }],
+      ['POST', '/api/metrics/policy/resources/instance/1/publish', { expected_revision: 1, overrides: { enabled: 'disable' }, operation_key: 'revoked-new-intent' }],
+      ['GET', '/api/metrics/policy/groups/missing'],
+      ['GET', '/api/metrics/policy/groups/missing/access'],
+      ['POST', '/api/metrics/policy/groups/missing/publish', { expected_revision: 0, overrides: {} }],
+    ];
+    try {
+      for (const [method, url, payload] of attempts) {
+        current = admin;
+        const wait = gated.arm();
+        const response = app.inject({ method, url, ...(payload === undefined ? {} : { payload }) } as any);
+        await wait.entered;
+        current = revoked;
+        wait.release();
+        expect((await response).statusCode, url).toBe(403);
+      }
+      // Permission denials leave no publication, revision, audit or journal row.
+      expect(memory.bindings.get('instance:1')!.binding.revision).toBe(1);
+      expect(memory.logs).toHaveLength(1);
+      expect(memory.operations.size).toBe(0);
+    } finally { await app.close(); }
+  });
+  it('treats a revoked session during the lock wait as re-authentication, not a policy refusal', async () => {
+    const memory = new MemoryPolicyStore();
+    const policy = new PolicyService(memory, createBuiltinRegistry(), testResources, () => at);
+    await policy.changeBinding(admin, { type: 'instance', id: 1 }, publish, true);
+    const app = Fastify();
+    await registerMetricPolicyRoutes(app, async request => { (request as any).user = admin; }, policy,
+      async () => { throw new ActorAuthenticationError(); });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/metrics/policy/resources/instance/1' });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toEqual({ error: 'POLICY_AUTH_REQUIRED' });
+    } finally { await app.close(); }
   });
 });
