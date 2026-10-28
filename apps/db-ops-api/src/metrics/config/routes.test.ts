@@ -73,6 +73,33 @@ describe('configuration HTTP routes', () => {
     expect(collision.statusCode).toBe(409); expect(collision.json().error).toBe('POLICY_OPERATION_CONFLICT');
     expect(store.logs).toHaveLength(1); expect(calls).toBe(1);
   });
+  it('reports a keyed activate in its trial as pending, refuses the duplicate, and replays after recovery', async () => {
+    let release!: () => void, entered!: () => void, released = false;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    pending = () => { if (released) return Promise.resolve();
+      entered(); return new Promise<void>(resolve => { release = () => { released = true; resolve(); }; }); };
+    const body = { ...payload, operation_key: 'http-intent-pending' };
+    const url = `${base}/resources/instance/1/activate`;
+    const running = app.inject({ method: 'POST', url, payload: body });
+    await started;
+    const during = await app.inject(`${base}/resources/instance/1/operations/http-intent-pending`);
+    expect(during.json()).toMatchObject({ state: 'pending',
+      operation: { resource: { type: 'instance', id: 1 }, target_revision: 1, configuration_digest: null, committed_at: null } });
+    const before = calls;
+    const duplicate = await app.inject({ method: 'POST', url, payload: body });
+    expect(duplicate.statusCode).toBe(409); expect(duplicate.json().error).toBe('POLICY_OPERATION_PENDING');
+    expect(calls).toBe(before);
+    release();
+    expect((await running).statusCode).toBe(200);
+    expect((await app.inject(`${base}/resources/instance/1/operations/http-intent-pending`)).json())
+      .toMatchObject({ state: 'committed', operation: { target_revision: 1 } });
+    expect(store.logs).toHaveLength(1);
+    const afterTrial = calls;
+    // The client that lost the original response recovers, then replays the key.
+    const retry = await app.inject({ method: 'POST', url, payload: body });
+    expect(retry.statusCode).toBe(200); expect(calls).toBe(afterTrial);
+    expect(store.bindings.get('instance:1')!.binding.revision).toBe(1); expect(store.logs).toHaveLength(1);
+  });
   it('guards the operation lookup with live read access and a valid key', async () => {
     const url = `${base}/resources/instance/1/operations/intent-1`;
     actor = { ...admin, permissions: ['instance:view'], instanceScopes: { 1: 'read-only' } };
