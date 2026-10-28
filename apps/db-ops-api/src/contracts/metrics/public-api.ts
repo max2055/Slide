@@ -18,9 +18,9 @@ export const MetricPolicyGroupsSchema = z.strictObject({ groups: z.array(z.stric
   overrides: OverridesSchema, can_manage: z.boolean(),
 })) });
 export const MetricOperationStateSchema = z.strictObject({
-  state: z.enum(['committed', 'absent']),
+  state: z.enum(['committed', 'pending', 'absent']),
   operation: z.strictObject({ resource: RefSchema, target_revision: z.number().int().positive(),
-    configuration_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), committed_at: z.iso.datetime() }).nullable(),
+    configuration_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(), committed_at: z.iso.datetime().nullable() }).nullable(),
 });
 export const metricPublicSchemas = {
   ...metricBulkSchemas,
@@ -52,14 +52,14 @@ export const metricPublicPaths = {
     description: 'Same resource type only; actual engine/version/protocol applicability. Unknown is never a compatible recommendation.',
     responses: { '200': response('MetricRecommendations'), ...errors } } },
   '/api/metrics/config/resources/{type}/{id}/activate': { post: { operationId: 'activateMetricConfiguration', security: [{ bearerAuth: [] }], parameters,
-    description: 'Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical configuration digest; its replay returns the recorded publication without a second revision, publication or audit, and reuse for another intent is rejected.',
+    description: 'Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical request: a committed replay returns the recorded publication without a second trial, revision, publication or audit, a duplicate while the same intent is pending is rejected without a second trial, and reuse for another intent is rejected.',
     requestBody: { required: true, content: { 'application/json': { schema: schema('MetricBindingChange') } } },
     responses: { '200': { description: 'Published policy preview and independently evaluated status', content: { 'application/json': { schema: { type: 'object', required: ['published', 'status'],
       properties: { published: { const: true }, status: schema('MetricConfigurationStatus') } } } } }, ...errors,
       '409': { description: 'Revision conflict, operation-key collision or trial busy; no implicit retry' }, '422': { description: 'Incompatible package or trial failed; not published' } } } },
   '/api/metrics/config/resources/{type}/{id}/operations/{key}': { get: { operationId: 'getMetricConfigurationOperation', security: [{ bearerAuth: [] }],
     parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],
-    description: 'Authoritative read of one client operation key under the same serialization as publication: absent means no publication with that key is in flight and the intent may be retried. A key recorded for another resource is reported absent, never disclosed.',
+    description: 'Authoritative read of one client operation key under the same serialization as publication: committed returns the recorded publication, pending means the intent was reserved and its outcome is in flight or unknown after a restart (not safely retryable), and absent means no intent with that key was ever recorded, so a same-key retry cannot duplicate a publication. A key recorded for another resource is reported absent, never disclosed.',
     responses: { '200': response('MetricOperationState'), ...errors } } },
   '/api/metrics/policy/groups': { get: { operationId: 'listMetricPolicyGroups', security: [{ bearerAuth: [] }],
     parameters: [{ name: 'query', in: 'query', schema: { type: 'string', maxLength: 128 } }],

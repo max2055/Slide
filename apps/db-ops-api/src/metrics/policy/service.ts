@@ -7,7 +7,7 @@ import { createConfigurationRegistry } from '../config/registry.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
 import { type PolicyStore, type PolicyTransaction, MysqlPolicyStore } from './store.js';
 import { BindingChangeSchema, GroupChangeSchema, OperationKeySchema, PolicyIdSchema, RefSchema, PolicyError, type BindingChange, type Ref, type Group,
-  type Binding, type Published, refKey, rule } from './model.js';
+  type Binding, type Published, type PublicationResult, refKey, rule } from './model.js';
 import { resolvePolicy } from './resolver.js';
 
 export interface PolicyResources { exists(ref: Ref): Promise<boolean>; inventory(ref: Ref): Promise<Resource | null> }
@@ -20,6 +20,19 @@ export function candidateFingerprint(next: Published): string {
 /** The canonical configuration digest an operation key binds to its target revision. */
 export function configurationDigest(next: Published): string {
   return `sha256:${createHash('sha256').update(candidateFingerprint(next)).digest('hex')}`;
+}
+/**
+ * The canonical client request one operation key recorded. Omitted fields stay
+ * omitted: they are never filled from the current binding, group or inventory,
+ * so a later intent can neither change nor be mistaken for this one.
+ */
+export function intentFingerprint(change: BindingChange): string {
+  return `sha256:${createHash('sha256').update(stable({
+    expected_revision: change.expected_revision,
+    ...(change.package === undefined ? {} : { package: change.package }),
+    ...(change.group_id === undefined ? {} : { group_id: change.group_id }),
+    ...(change.overrides === undefined ? {} : { overrides: change.overrides }),
+  })).digest('hex')}`;
 }
 export class PolicyService {
   constructor(private readonly store: PolicyStore, private readonly registry: PackageRegistry,
@@ -119,34 +132,76 @@ export class PolicyService {
     }
     return { binding, group, groupId, next, at, changedPackage: !previous || stable(previous.binding.package) !== stable(pin) };
   }
-  /** The recorded intent for this key, if any. Another resource or target revision is a collision. */
+  /** The recorded intent for this key, if any. Another resource, target revision or request is a collision. */
   private async recorded(tx: PolicyTransaction, ref: Ref, change: BindingChange) {
     if (change.operation_key === undefined) return null;
     const recorded = await tx.applyOperation(change.operation_key);
     if (!recorded) return null;
     rule(recorded.resource_key === refKey(ref), 'POLICY_OPERATION_CONFLICT', 409);
     rule(recorded.target_revision === change.expected_revision + 1, 'POLICY_OPERATION_CONFLICT', 409);
+    rule(recorded.intent_digest === intentFingerprint(change), 'POLICY_OPERATION_CONFLICT', 409);
     return recorded;
   }
-  async changeBinding(actor: ActorContext, ref: Ref, input: unknown, publish: boolean, expectedCandidate?: string) {
+  /**
+   * Reserve one keyed activate intent before any trial IO. Serialized with
+   * publication, so a duplicate key either replays a committed result or learns
+   * that this intent is still pending; neither starts a second trial.
+   */
+  async beginOperation(actor: ActorContext, ref: Ref, input: unknown): Promise<{ replayed: PublicationResult } | { claimed: true }> {
+    await this.assertAccess(actor, ref, true);
+    const change = BindingChangeSchema.parse(input);
+    const operationKey = change.operation_key;
+    rule(operationKey !== undefined, 'POLICY_OPERATION_KEY_REQUIRED', 400);
+    const intent = intentFingerprint(change);
+    return this.store.transaction(async tx => {
+      const recorded = await tx.applyOperation(operationKey);
+      if (recorded) {
+        rule(recorded.resource_key === refKey(ref), 'POLICY_OPERATION_CONFLICT', 409);
+        rule(recorded.target_revision === change.expected_revision + 1, 'POLICY_OPERATION_CONFLICT', 409);
+        rule(recorded.intent_digest === intent, 'POLICY_OPERATION_CONFLICT', 409);
+        // Pending covers both "another request is working this intent" and
+        // "the process that claimed it stopped before confirming"; neither may
+        // start a second trial or be reported as safely retryable.
+        rule(recorded.state === 'committed' && recorded.result !== null, 'POLICY_OPERATION_PENDING', 409);
+        return { replayed: recorded.result };
+      }
+      await tx.saveApplyOperation({ operation_key: operationKey, resource_key: refKey(ref), actor_id: actor.userId,
+        target_revision: change.expected_revision + 1, intent_digest: intent, configuration_digest: null,
+        state: 'pending', claimed_at: this.clock(), result: null, committed_at: null });
+      return { claimed: true as const };
+    });
+  }
+  /**
+   * Drop this request's own claim after a known, in-process failure. Only an
+   * uncommitted claim of the same intent is removed: a committed publication is
+   * never erased, and a claim orphaned by a crashed process stays pending so its
+   * unknown remote outcome is not silently retried. No caller route; internal.
+   */
+  async releaseOperation(ref: Ref, input: unknown): Promise<void> {
+    const change = BindingChangeSchema.parse(input);
+    if (change.operation_key === undefined) return;
+    await this.store.transaction(tx => tx.releaseApplyOperation(change.operation_key!, refKey(ref), intentFingerprint(change)));
+  }
+  async changeBinding(actor: ActorContext, ref: Ref, input: unknown, publish: boolean, expectedCandidate?: string, finishClaim = false) {
     await this.assertAccess(actor, ref, true);
     const change = BindingChangeSchema.parse(input);
     return this.store.transaction(async tx => {
       // A client operation key binds one authorized resource, target revision and
-      // canonical configuration digest. It is checked inside the serialized
-      // policy transaction, so concurrent duplicates and restarts both replay
-      // the recorded publication instead of writing a second revision.
+      // canonical client request. It is checked inside the serialized policy
+      // transaction, so concurrent duplicates and restarts both replay the
+      // recorded publication instead of writing a second revision.
       const operationKey = publish ? change.operation_key : undefined;
       const recorded = operationKey === undefined ? null : await this.recorded(tx, ref, change);
+      // A committed intent replays its recorded publication. Current configuration
+      // is never its input, so a later intent cannot change what it recovers.
+      if (recorded?.state === 'committed') { rule(recorded.result, 'POLICY_OPERATION_INVALID', 500); return recorded.result; }
+      // A pending intent is an activate in flight or an unknown remote outcome.
+      rule(recorded === null || finishClaim, 'POLICY_OPERATION_PENDING', 409);
+      // Only the caller that reserved this key may complete the publication.
+      rule(!finishClaim || recorded !== null, 'POLICY_OPERATION_CONFLICT', 409);
       const previous = await tx.binding(ref);
-      // A replay is not evaluated against the revision it already published.
-      rule(recorded !== null || (previous?.binding.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
+      rule((previous?.binding.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
       const { binding, group, groupId, next, at, changedPackage } = await this.candidate(tx, actor, ref, change, previous);
-      if (recorded) {
-        // Reusing a key for another resource, revision or configuration is a collision.
-        rule(configurationDigest(next) === recorded.configuration_digest, 'POLICY_OPERATION_CONFLICT', 409);
-        return recorded.result;
-      }
       if (expectedCandidate !== undefined) rule(candidateFingerprint(next) === expectedCandidate, 'POLICY_REVISION_CONFLICT', 409);
       const result = { published: publish, resources: [next], affected_resources: 1,
         requests_per_hour_before: previous?.resolved.impact.requests_per_hour_estimate ?? 0,
@@ -160,10 +215,13 @@ export class PolicyService {
           const changed = (await tx.group(id))!;
           await tx.saveGroup({ ...changed, revision: changed.revision + 1 });
         }
-        // The journal row is committed with the binding, revision and audit it records.
+        // The journal row is committed with the binding, revision and audit it
+        // records: a promotion of this intent's own claim, never a second row.
         if (operationKey !== undefined) {
           await tx.saveApplyOperation({ operation_key: operationKey, resource_key: refKey(ref), actor_id: actor.userId,
-            target_revision: binding.revision, configuration_digest: configurationDigest(next), result: { ...result, published: true }, committed_at: at });
+            target_revision: binding.revision, intent_digest: intentFingerprint(change),
+            configuration_digest: configurationDigest(next), state: 'committed', claimed_at: recorded?.claimed_at ?? at,
+            result: { ...result, published: true }, committed_at: at });
         }
       }
       return result;
@@ -171,9 +229,9 @@ export class PolicyService {
   }
   /**
    * The recorded publication for exactly this intent, or null when no key was
-   * sent or nothing was recorded. The digest is recomputed from the same request,
-   * so a key reused for a different configuration is a collision. Callers must
-   * already hold live authorization; nothing here is written.
+   * sent or nothing was recorded. The stored intent is compared as it was
+   * recorded; a pending intent is not a publication. Callers must already hold
+   * live authorization; nothing here is written.
    */
   async replay(actor: ActorContext, ref: Ref, input: unknown) {
     await this.assertAccess(actor, ref, true);
@@ -182,15 +240,16 @@ export class PolicyService {
     return this.store.transaction(async tx => {
       const recorded = await this.recorded(tx, ref, change);
       if (!recorded) return null;
-      const { next } = await this.candidate(tx, actor, ref, change, await tx.binding(ref));
-      rule(configurationDigest(next) === recorded.configuration_digest, 'POLICY_OPERATION_CONFLICT', 409);
+      rule(recorded.state === 'committed' && recorded.result !== null, 'POLICY_OPERATION_PENDING', 409);
       return recorded.result;
     });
   }
   /**
-   * Authoritative operation lookup. It runs under the same policy lock as a
-   * publication, so an absent key means no publication with that key is in
-   * flight; a retry is safe. A key recorded for another resource is not disclosed.
+   * Authoritative operation lookup under the same serialization as publication.
+   * An absent key means no intent with that key was ever recorded, so a retry
+   * cannot duplicate a publication. A pending key means its outcome is in flight
+   * or unknown and must not be retried blindly. A key recorded for another
+   * resource is not disclosed.
    */
   async operation(actor: ActorContext, ref: Ref, operationKey: string) {
     await this.assertAccess(actor, ref, false);
@@ -198,6 +257,8 @@ export class PolicyService {
     return this.store.transaction(async tx => {
       const recorded = await tx.applyOperation(operationKey);
       if (!recorded || recorded.resource_key !== refKey(ref)) return { state: 'absent' as const, operation: null };
+      if (recorded.state === 'pending') return { state: 'pending' as const, operation: { resource: ref,
+        target_revision: recorded.target_revision, configuration_digest: null, committed_at: null } };
       return { state: 'committed' as const, operation: { resource: ref, target_revision: recorded.target_revision,
         configuration_digest: recorded.configuration_digest, committed_at: recorded.committed_at } };
     });

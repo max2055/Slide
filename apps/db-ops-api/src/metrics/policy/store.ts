@@ -4,7 +4,7 @@ import { dbConnection } from '../../db-connection.js';
 import { CapabilitySchema, TimestampSchema, type Capability } from '../../contracts/metrics/index.js';
 import { BindingPersistenceError } from '../bindings/persistence-codec.js';
 import { readLegacyPublished, TemplateBindingUnsupportedError } from '../bindings/package-reader.js';
-import { type ApplyOperation, type Audit, type Group, type Published, type Ref, ConfigurationDigestSchema, OperationKeySchema, PolicyError, refKey, rule } from './model.js';
+import { type ApplyOperation, type Audit, type Group, type Published, type Ref, ConfigurationDigestSchema, IntentDigestSchema, OperationKeySchema, PolicyError, refKey, rule } from './model.js';
 import { PolicyTemplateGateway, type PolicyTemplateGatewayOptions } from './template-gateway.js';
 
 export interface PolicyTransaction {
@@ -20,6 +20,7 @@ export interface PolicyTransaction {
   audits(target: string, requestId?: string): Promise<Audit[]>;
   applyOperation(operationKey: string): Promise<ApplyOperation | null>;
   saveApplyOperation(value: ApplyOperation): Promise<void>;
+  releaseApplyOperation(operationKey: string, resourceKey: string, intentDigest: string): Promise<void>;
 }
 export interface PolicyStore { transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> }
 const decode = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
@@ -66,26 +67,35 @@ const storedAudit = (raw: unknown): Audit => {
 };
 
 /**
- * One recorded client intent. The result is the exact publication response, so
- * a replay never recomputes a snapshot; its stored resources pass the same
- * shared fence as a stored binding.
+ * One recorded client intent. A committed row's result is the exact publication
+ * response, so a replay never recomputes a snapshot; its stored resources pass
+ * the same shared fence as a stored binding. A pending row has no publication
+ * yet and must not carry one.
  */
 const storedApplyOperation = (raw: Record<string, unknown>): ApplyOperation => {
   const invalid = (): never => { throw new PolicyError('POLICY_OPERATION_INVALID', 500); };
   const key = OperationKeySchema.safeParse(raw.operation_key);
-  const digest = ConfigurationDigestSchema.safeParse(raw.configuration_digest);
+  const intent = IntentDigestSchema.safeParse(raw.intent_digest);
+  const state = z.enum(['pending', 'committed']).safeParse(raw.state);
   const actorId = Number(raw.actor_id), target = Number(raw.target_revision);
-  if (!key.success || !digest.success || typeof raw.resource_key !== 'string' || raw.resource_key.length === 0
-    || typeof raw.committed_at !== 'string' || !Number.isSafeInteger(actorId) || actorId <= 0
-    || !Number.isSafeInteger(target) || target <= 0) return invalid();
+  if (!key.success || !intent.success || !state.success || typeof raw.resource_key !== 'string' || raw.resource_key.length === 0
+    || typeof raw.claimed_at !== 'string' || raw.claimed_at.length === 0
+    || !Number.isSafeInteger(actorId) || actorId <= 0 || !Number.isSafeInteger(target) || target <= 0) return invalid();
+  const base = { operation_key: key.data, resource_key: raw.resource_key, actor_id: actorId,
+    target_revision: target, intent_digest: intent.data, state: state.data, claimed_at: raw.claimed_at };
+  if (state.data === 'pending') {
+    if (raw.configuration_digest !== null || raw.result !== null || raw.committed_at !== null) return invalid();
+    return { ...base, configuration_digest: null, result: null, committed_at: null };
+  }
+  const digest = ConfigurationDigestSchema.safeParse(raw.configuration_digest);
+  if (!digest.success || typeof raw.committed_at !== 'string' || raw.committed_at.length === 0) return invalid();
   let result: unknown;
   try { result = decode<unknown>(raw.result); } catch { return invalid(); }
   const envelope = z.object({ published: z.literal(true), resources: z.array(z.unknown()).length(1),
     affected_resources: z.number().int().nonnegative(), requests_per_hour_before: z.number(),
     requests_per_hour_after: z.number() }).safeParse(result);
   if (!envelope.success) return invalid();
-  return { operation_key: key.data, resource_key: raw.resource_key, actor_id: actorId, target_revision: target,
-    configuration_digest: digest.data, committed_at: raw.committed_at,
+  return { ...base, configuration_digest: digest.data, committed_at: raw.committed_at,
     result: { ...envelope.data, resources: envelope.data.resources.map(storedPublished) } };
 };
 
@@ -168,15 +178,28 @@ class MysqlTransaction implements PolicyTransaction {
     return rows.map(r => storedAudit(decode(r.payload)));
   }
   async applyOperation(operationKey: string): Promise<ApplyOperation | null> {
-    const rows = await this.rows(`SELECT operation_key, resource_key, actor_id, target_revision, configuration_digest, result, committed_at
+    const rows = await this.rows(`SELECT operation_key, resource_key, actor_id, target_revision, intent_digest,
+      configuration_digest, state, claimed_at, result, committed_at
       FROM metric_policy_apply_operations WHERE operation_key = ?`, [operationKey]);
     return rows[0] ? storedApplyOperation(rows[0]) : null;
   }
   async saveApplyOperation(value: ApplyOperation): Promise<void> {
+    // The claim and its commit are separate transactions, so the commit promotes
+    // the row this intent already reserved instead of inserting a second one.
     await this.connection.execute(`INSERT INTO metric_policy_apply_operations
-      (operation_key, resource_key, actor_id, target_revision, configuration_digest, result, committed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`, [value.operation_key, value.resource_key, value.actor_id,
-      value.target_revision, value.configuration_digest, JSON.stringify(value.result), value.committed_at]);
+      (operation_key, resource_key, actor_id, target_revision, intent_digest, configuration_digest, state, claimed_at, result, committed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE state = VALUES(state), configuration_digest = VALUES(configuration_digest),
+        result = VALUES(result), committed_at = VALUES(committed_at)`, [value.operation_key, value.resource_key,
+      value.actor_id, value.target_revision, value.intent_digest, value.configuration_digest, value.state,
+      value.claimed_at, value.result === null ? null : JSON.stringify(value.result), value.committed_at]);
+  }
+  async releaseApplyOperation(operationKey: string, resourceKey: string, intentDigest: string): Promise<void> {
+    // Only an uncommitted claim of this exact intent is cleared; a committed
+    // publication and a claim orphaned by a crash both stay.
+    await this.connection.execute(`DELETE FROM metric_policy_apply_operations
+      WHERE operation_key = ? AND resource_key = ? AND intent_digest = ? AND state = 'pending'`,
+    [operationKey, resourceKey, intentDigest]);
   }
 }
 

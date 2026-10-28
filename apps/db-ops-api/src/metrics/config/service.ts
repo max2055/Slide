@@ -47,23 +47,35 @@ export class MetricConfigurationService {
   async activate(actor: ActorContext, ref: Ref, input: unknown, guard: ActivationGuard = {}) {
     guard.signal?.throwIfAborted();
     actor = await this.currentActor(actor, guard);
-    // An intent that already published replays its recorded outcome before any
-    // trial IO; live permission and the configuration digest are revalidated.
-    const replayed = await this.policy.replay(actor, ref, input);
-    if (replayed) return { ...replayed, status: await this.status(actor, ref) };
-    const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
-    rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
-    const candidate = candidateFingerprint(preview.resources[0]);
-    const trial = await this.trial(actor, ref, input, candidate, guard);
-    const disabled = !preview.resources[0].resolved.settings.enabled;
-    rule(disabled || trial.samples.some(s => s.value !== null && s.quality.status === 'good')
-      && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status)), 'CONFIGURATION_TRIAL_FAILED', 422);
-    // Revalidates live permission, inventory and policy/group CAS after remote IO.
-    guard.signal?.throwIfAborted();
-    actor = await this.currentActor(actor, guard);
-    const result = await this.policy.changeBinding(actor, ref, input, true, candidate);
-    guard.published?.(result.resources[0].binding.revision);
-    return { ...result, status: await this.status(actor, ref) };
+    // A keyed intent is reserved for the whole activate, not just its publication:
+    // a duplicate gets the committed result or learns the intent is pending, and
+    // neither starts a second trial. Unkeyed callers keep the previous behavior.
+    const keyed = (input as { operation_key?: unknown } | null | undefined)?.operation_key !== undefined;
+    if (keyed) {
+      const begun = await this.policy.beginOperation(actor, ref, input);
+      if ('replayed' in begun) return { ...begun.replayed, status: await this.status(actor, ref) };
+    }
+    try {
+      const preview = await this.policy.changeBinding(actor, ref, input, false, guard.candidate);
+      rule(!preview.resources[0].resolved.applicability.some(c => c.status === 'unsupported'), 'PACKAGE_INCOMPATIBLE', 422);
+      const candidate = candidateFingerprint(preview.resources[0]);
+      const trial = await this.trial(actor, ref, input, candidate, guard);
+      const disabled = !preview.resources[0].resolved.settings.enabled;
+      rule(disabled || trial.samples.some(s => s.value !== null && s.quality.status === 'good')
+        && trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status)), 'CONFIGURATION_TRIAL_FAILED', 422);
+      // Revalidates live permission, inventory and policy/group CAS after remote IO.
+      guard.signal?.throwIfAborted();
+      actor = await this.currentActor(actor, guard);
+      const result = await this.policy.changeBinding(actor, ref, input, true, candidate, keyed);
+      guard.published?.(result.resources[0].binding.revision);
+      return { ...result, status: await this.status(actor, ref) };
+    } catch (error) {
+      // A known in-process failure is not an unknown remote outcome: clear only
+      // this intent's own uncommitted claim so the same key may be retried. A
+      // committed publication and a claim orphaned by a crash are never cleared.
+      if (keyed) await this.policy.releaseOperation(ref, input).catch(() => undefined);
+      throw error;
+    }
   }
   catalog(actor: ActorContext) {
     rule(actor.permissions.some(p => ['*', 'metric:view', 'metric:*', 'instance:view', 'instance:manage', 'servers:view', 'servers:manage', 'network_devices:view', 'network_devices:manage'].includes(p)), 'POLICY_FORBIDDEN', 403);
@@ -79,7 +91,7 @@ export class MetricConfigurationService {
     await this.policy.assertAccess(actor, ref, false);
     return this.store.attempts(ref);
   }
-  /** Read-only intent lookup; an absent key is authoritative for a safe retry. */
+  /** Read-only intent lookup; absent is a safe retry, pending is not. */
   operation(actor: ActorContext, ref: Ref, operationKey: string) {
     return this.policy.operation(actor, ref, operationKey);
   }

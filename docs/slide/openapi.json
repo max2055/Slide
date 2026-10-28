@@ -17061,13 +17061,27 @@
                 "additionalProperties": false,
                 "properties": {
                   "committed_at": {
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "configuration_digest": {
-                    "pattern": "^sha256:[a-f0-9]{64}$",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "pattern": "^sha256:[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "resource": {
                     "additionalProperties": false,
@@ -17114,6 +17128,7 @@
           "state": {
             "enum": [
               "committed",
+              "pending",
               "absent"
             ],
             "type": "string"
@@ -27791,7 +27806,7 @@
     },
     "/api/metrics/config/resources/{type}/{id}/activate": {
       "post": {
-        "description": "Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical configuration digest; its replay returns the recorded publication without a second revision, publication or audit, and reuse for another intent is rejected.",
+        "description": "Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical request: a committed replay returns the recorded publication without a second trial, revision, publication or audit, a duplicate while the same intent is pending is rejected without a second trial, and reuse for another intent is rejected.",
         "operationId": "activateMetricConfiguration",
         "parameters": [
           {
@@ -27943,7 +27958,7 @@
     },
     "/api/metrics/config/resources/{type}/{id}/operations/{key}": {
       "get": {
-        "description": "Authoritative read of one client operation key under the same serialization as publication: absent means no publication with that key is in flight and the intent may be retried. A key recorded for another resource is reported absent, never disclosed.",
+        "description": "Authoritative read of one client operation key under the same serialization as publication: committed returns the recorded publication, pending means the intent was reserved and its outcome is in flight or unknown after a restart (not safely retryable), and absent means no intent with that key was ever recorded, so a same-key retry cannot duplicate a publication. A key recorded for another resource is reported absent, never disclosed.",
         "operationId": "getMetricConfigurationOperation",
         "parameters": [
           {

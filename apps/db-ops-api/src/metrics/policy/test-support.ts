@@ -23,6 +23,7 @@ export class MemoryPolicyStore implements PolicyStore {
   logs: Audit[] = [];
   operations = new Map<string, ApplyOperation>();
   failAudit = false;
+  failOperation = false;
   private tail: Promise<unknown> = Promise.resolve();
   async transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> {
     const execute = async () => {
@@ -40,7 +41,11 @@ export class MemoryPolicyStore implements PolicyStore {
         audit: async value => { if (this.failAudit) throw new Error('audit failed with secret'); logs.push(value); },
         audits: async target => logs.filter(a => a.target === target),
         applyOperation: async key => structuredClone(operations.get(key) ?? null),
-        saveApplyOperation: async value => { operations.set(value.operation_key, structuredClone(value)); },
+        saveApplyOperation: async value => { if (this.failOperation) throw new Error('operation journal failed'); operations.set(value.operation_key, structuredClone(value)); },
+        releaseApplyOperation: async (key, resourceKey, intentDigest) => {
+          const stored = operations.get(key);
+          if (stored?.state === 'pending' && stored.resource_key === resourceKey && stored.intent_digest === intentDigest) operations.delete(key);
+        },
       };
       const result = await fn(tx);
       this.groups = groups; this.bindings = bindings; this.logs = logs; this.caps = caps; this.operations = operations;

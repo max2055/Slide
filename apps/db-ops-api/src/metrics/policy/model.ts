@@ -60,9 +60,19 @@ export type Published = { binding: Binding; resolved: Resolved; published_at: st
 /** Exactly the publication response a replay returns; never a recomputed snapshot. */
 export type PublicationResult = { published: true; resources: Published[]; affected_resources: number;
   requests_per_hour_before: number; requests_per_hour_after: number };
+/**
+ * One recorded client intent. A pending row records the intent before any trial
+ * starts and carries no publication; it becomes committed in the same
+ * transaction as the binding, revision and audit it records.
+ */
 export type ApplyOperation = { operation_key: string; resource_key: string; actor_id: number; target_revision: number;
-  configuration_digest: string; result: PublicationResult; committed_at: string };
-export const ConfigurationDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+  /** sha256 of the canonical client request; replays compare this, never current configuration. */
+  intent_digest: string; /** Resolved candidate digest; only known once committed. */
+  configuration_digest: string | null; state: 'pending' | 'committed'; claimed_at: string;
+  result: PublicationResult | null; committed_at: string | null };
+const sha256Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+export const ConfigurationDigestSchema = sha256Digest;
+export const IntentDigestSchema = sha256Digest;
 export type Audit = { actor_id: number; request_id: string; action: 'binding.publish' | 'group.publish'; target: string; revision: number; at: string;
   configuration: { package?: Binding['package']; group_id?: string | null; overrides: Overrides; group?: Group | null } };
 export const refKey = (ref: Ref) => `${ref.type}:${ref.id}`;
