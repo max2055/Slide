@@ -21,9 +21,14 @@ const formal = `FROM metric_publications p
     AND JSON_EXTRACT(b.payload, '$.binding.revision') <> r.published_revision)
   AND o.stage = 'normalized' AND o.payload IS NOT NULL`;
 
+/** Bounded reads: `page_rows` caps one statement, `max_rows` caps the whole series window. */
+export interface WindowReadLimits { page_rows: number; max_rows: number }
+/** 31 days at the 60s default interval is 44,640 samples; denser custom windows fail closed. */
+export const DEFAULT_WINDOW_READ_LIMITS: WindowReadLimits = { page_rows: 1000, max_rows: 50_000 };
+
 /** Formal consumers never fall back to unaccepted shadow evidence. Invalid/unknown values remain visible. */
 export class MysqlFormalMetricStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool, private readonly limits: WindowReadLimits = DEFAULT_WINDOW_READ_LIMITS) {}
 
   /** Historical source states are migration facts, never a fallback to historical metric tables. */
   async sourceState(input: Ref): Promise<'legacy' | 'semantic' | 'pending'> {
@@ -83,6 +88,59 @@ export class MysqlFormalMetricStore {
       const [next] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? ORDER BY p.observed_at, p.observation_id DESC LIMIT 1`, [seriesHash(series), sqlTime(to)]);
       await c.commit();
       return [...prior, ...rows, ...next].map(r => decode<NormalizedObservation>(r.payload));
+    } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
+  }
+
+  /**
+   * Complete half-open [from, to) read of one series plus the predecessor and
+   * successor samples the reducers need at the window edges. Rows are read in
+   * deterministic ascending (observed_at, observation_id) keyset pages inside one
+   * REPEATABLE READ snapshot with the rollout row locked: a page boundary cannot
+   * duplicate or skip same-timestamp rows, and a concurrent switch or rollback
+   * cannot mix read modes or leak a newer fact into a later page. The cursor is
+   * internal to this call, never reused across requests, so every read runs the
+   * caller's current authorization. Exceeding max_rows fails closed instead of
+   * returning a silently truncated window.
+   */
+  async readWindow(series: Series, from: string, to: string): Promise<NormalizedObservation[]> {
+    const { page_rows: pageRows, max_rows: maxRows } = this.limits;
+    if (!Number.isInteger(pageRows) || pageRows < 1 || !Number.isInteger(maxRows) || maxRows < pageRows
+      || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
+      || Date.parse(to) - Date.parse(from) > 31 * 86400000) throw new Error('ROLLOUT_QUERY_RANGE');
+    const key = seriesHash(series);
+    // Same consistent snapshot as queryWindow, held across every page.
+    const c = await this.pool.getConnection();
+    try {
+      await c.beginTransaction();
+      const [control] = await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
+      if (!control.length || control[0].read_mode !== 'semantic' || control[0].published_revision !== control[0].applied_revision) {
+        await c.commit(); return [];
+      }
+      const base = `SELECT o.payload, p.observation_id AS publication_id ${formal} AND p.series_hash = ?`;
+      const [prior] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at < ?
+        ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`, [key, sqlTime(from)]);
+      const rows: NormalizedObservation[] = [];
+      let cursor: { at: string; id: string } | null = null;
+      for (;;) {
+        const page = cursor
+          ? (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
+              AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))
+              ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
+            [key, sqlTime(from), sqlTime(to), cursor.at, cursor.at, cursor.id]))[0]
+          : (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
+              ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
+            [key, sqlTime(from), sqlTime(to)]))[0];
+        const decoded = page.map(r => decode<NormalizedObservation>(r.payload));
+        rows.push(...decoded);
+        if (rows.length > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
+        if (page.length < pageRows) break;
+        const last = decoded[decoded.length - 1];
+        cursor = { at: sqlTime(last.observed_at), id: String(page[page.length - 1].publication_id) };
+      }
+      const [next] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ?
+        ORDER BY p.observed_at, p.observation_id DESC LIMIT 1`, [key, sqlTime(to)]);
+      await c.commit();
+      return [...prior.map(r => decode<NormalizedObservation>(r.payload)), ...rows, ...next.map(r => decode<NormalizedObservation>(r.payload))];
     } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
   }
 

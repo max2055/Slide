@@ -8,6 +8,8 @@ import type { Series } from './storage.js';
 import type { CounterState } from './state.js';
 
 type Point = NormalizedObservation;
+/** Bounded response: 7 days at the 60s default interval is 10,080 buckets; longer windows need coarser buckets. */
+export const MAX_BUCKETS = 10_080;
 type Space = 'none' | 'sum' | 'min' | 'max' | 'weighted_mean' | 'merge';
 type Mode = 'last' | 'min' | 'max' | 'mean' | 'rate' | 'ratio' | 'duration' | 'merge' | 'quantile';
 export interface SemanticQuery {
@@ -32,6 +34,8 @@ export interface SemanticQuery {
   state_value?: number;
   quantile?: number;
 }
+/** Downsampling keeps the bucket envelope so a spike is never flattened into the selected mode. */
+export interface BucketStats { count: number; min: NonNullable<Point['value']>; max: NonNullable<Point['value']>; avg: NonNullable<Point['value']> }
 export interface SemanticBucket {
   contract_version: typeof CONTRACT_VERSION;
   metric: Point['metric'];
@@ -46,16 +50,20 @@ export interface SemanticBucket {
   /** Latest valid input used to evaluate freshness; independent of the query window. */
   observed_at?: string | null;
   sample_count: number;
+  /** count/min/max/avg of the samples behind value; null where the bucket has no scalar samples. */
+  stats: BucketStats | null;
   sources: { id: string; source: Point['source']; versions: Point['versions'] }[];
 }
 export interface QueryStore {
   queryWindow(series: Series, from: string, to: string, limit?: number): Promise<Point[]>;
+  /** Complete window read (prior + window + successor) in one snapshot; falls back to queryWindow. */
+  readWindow?(series: Series, from: string, to: string): Promise<Point[]>;
   inventory(type: Resource['type'], id: string): Promise<Resource | null>;
 }
 type Group = { value: Rational | null; histogram?: Extract<NonNullable<Point['value']>, { encoding: 'histogram' }>;
   summary?: Extract<NonNullable<Point['value']>, { encoding: 'summary' }>;
-  coverage: number; points: Point[]; accuracy: Point['accuracy']; quality: Point['quality'] };
-const empty = (): Group => ({ value: null, coverage: 0, points: [], accuracy: 'unknown', quality: { status: 'unknown', reason: 'missing_input' } });
+  coverage: number; points: Point[]; samples: Rational[]; accuracy: Point['accuracy']; quality: Point['quality'] };
+const empty = (): Group => ({ value: null, coverage: 0, points: [], samples: [], accuracy: 'unknown', quality: { status: 'unknown', reason: 'missing_input' } });
 const valid = (p: Point) => p.value !== null && (p.quality.status === 'good' || p.quality.status === 'partial');
 const scalar = (p: Point): Rational => {
   if (!p.value || !('value' in p.value)) throw new Error('QUERY_SCALAR_REQUIRED');
@@ -69,6 +77,27 @@ function unique(points: Point[]): Point[] {
   const byTime = new Map<number, Point>();
   for (const p of [...points].sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id))) byTime.set(time(p), p);
   return [...byTime.values()].sort((a, b) => time(a) - time(b));
+}
+/** First index at or after `at` in an ascending, duplicate-free time array. */
+function lowerBound(times: number[], at: number): number {
+  let low = 0, high = times.length;
+  while (low < high) { const mid = (low + high) >> 1; if (times[mid] < at) low = mid + 1; else high = mid; }
+  return low;
+}
+/** One bucket's rows plus the neighbour samples rate, hold and delta reducers need at its edges. */
+function bucketSlice(points: Point[], times: number[], from: number, to: number): Point[] {
+  const first = lowerBound(times, from), after = lowerBound(times, to);
+  return points.slice(first > 0 ? first - 1 : 0, Math.min(points.length, after + 1));
+}
+/** Bucket envelope of the values actually used; never padded, invented or reused across buckets. */
+function statsOf(samples: Rational[], type: MetricDefinition['value_type']): BucketStats | null {
+  if (!samples.length) return null;
+  const low = samples.reduce((a, b) => compare(b, a) < 0 ? b : a);
+  const high = samples.reduce((a, b) => compare(b, a) > 0 ? b : a);
+  const mean = divide(samples.reduce(add, rational(0n)), rational(BigInt(samples.length)));
+  const encoded = [encode(low, type).value, encode(high, type).value, encode(mean, 'float64').value];
+  return encoded.some(v => v === null) ? null
+    : { count: samples.length, min: encoded[0]!, max: encoded[1]!, avg: encoded[2]! };
 }
 function qualityOf(points: Point[]): Pick<Group, 'accuracy' | 'quality'> {
   return points.reduce((result, p) => ({
@@ -113,13 +142,13 @@ function mergeHistograms(groups: Group[]): Group {
     points: available.flatMap(g => g.points), coverage: Math.min(1, available.reduce((n, g) => n + g.coverage, 0)),
     ...qualityOf(available.flatMap(g => g.points)) };
 }
-function reduceSeries(q: SemanticQuery, rows: Point[], from: number, to: number): Group {
-  const points = unique(rows);
+/** `points` is already deduplicated, ascending, and sliced to one bucket plus its edge neighbours. */
+function reduceSeries(q: SemanticQuery, points: Point[], from: number, to: number): Group {
   const inside = points.filter(p => time(p) >= from && time(p) < to && valid(p));
   const duration = to - from;
   if (q.mode === 'rate') {
     let state: CounterState | null = null, total = rational(0n), covered = 0;
-    const used: Point[] = [];
+    const used: Point[] = [], samples: Rational[] = [];
     const outputDefinition: MetricDefinition = { ...q.definition, id: `${q.definition.id}.aggregate_delta`,
       kind: 'gauge', temporality: 'instant', monotonic: false, aggregation: { ...q.definition.aggregation, time: ['last'], space: ['none'] } };
     for (const point of points) {
@@ -130,18 +159,20 @@ function reduceSeries(q: SemanticQuery, rows: Point[], from: number, to: number)
       state = transition.state;
       const delta = transition.output.observation.value;
       if (!prior || !delta || !('value' in delta)) continue;
-      const ms = overlap(time(prior), time(point), from, to);
+      const elapsed = time(point) - time(prior), ms = overlap(time(prior), time(point), from, to);
       if (!ms) continue;
-      total = add(total, multiply(decode(delta), rational(BigInt(ms), BigInt(time(point) - time(prior)))));
+      total = add(total, multiply(decode(delta), rational(BigInt(ms), BigInt(elapsed))));
+      // The bucket envelope is in the reported unit: this interval's own rate, not the cumulative value.
+      samples.push(multiply(decode(delta), rational(1000n, BigInt(elapsed))));
       covered += ms; used.push(prior, point);
     }
     if (!covered) return empty();
     return { value: divide(total, rational(BigInt(covered), 1000n)), coverage: covered / duration,
-      points: used, ...qualityOf(used) };
+      points: used, samples, ...qualityOf(used) };
   }
   if (q.mode === 'duration' || q.weighting === 'time') {
     let total = rational(0n), covered = 0;
-    const used: Point[] = [];
+    const used: Point[] = [], samples: Rational[] = [];
     for (let i = 0; i < points.length; i++) {
       const p = points[i];
       if (!valid(p)) continue;
@@ -150,12 +181,12 @@ function reduceSeries(q: SemanticQuery, rows: Point[], from: number, to: number)
       if (!ms) continue;
       if (q.mode === 'duration') {
         if (compare(scalar(p), rational(BigInt(q.state_value!))) === 0) total = add(total, rational(BigInt(ms)));
-      } else total = add(total, multiply(scalar(p), rational(BigInt(ms))));
+      } else { total = add(total, multiply(scalar(p), rational(BigInt(ms)))); samples.push(scalar(p)); }
       covered += ms; used.push(p);
     }
     if (!covered) return empty();
     return { value: q.mode === 'duration' ? total : divide(total, rational(BigInt(covered))),
-      coverage: covered / duration, points: used, ...qualityOf(used) };
+      coverage: covered / duration, points: used, samples, ...qualityOf(used) };
   }
   if (q.definition.kind === 'summary') {
     const last = inside.at(-1);
@@ -181,7 +212,7 @@ function reduceSeries(q: SemanticQuery, rows: Point[], from: number, to: number)
     for (const v of values.slice(1)) if ((q.mode === 'min' ? compare(v, value) < 0 : compare(v, value) > 0)) value = v;
   } else if (q.mode === 'mean') value = divide(values.reduce(add, rational(0n)), rational(BigInt(values.length)));
   return { value, coverage: new Set(inside.map(p => Math.floor((time(p) - from) / q.interval_ms))).size / Math.ceil(duration / q.interval_ms),
-    points: inside, ...qualityOf(inside) };
+    points: inside, samples: values, ...qualityOf(inside) };
 }
 function ratioSeries(q: SemanticQuery, numerator: Point[], denominator: Point[], from: number, to: number): Group {
   const denominators = new Map(unique(denominator).map(p => [time(p), p]));
@@ -198,7 +229,7 @@ function ratioSeries(q: SemanticQuery, numerator: Point[], denominator: Point[],
     slots.add(Math.floor((time(p) - from) / q.interval_ms)); pairs.push(p, other);
   }
   return pairs.length ? { value: divide(n, d), coverage: slots.size / Math.ceil((to - from) / q.interval_ms),
-    points: pairs, ...qualityOf(pairs) } : zero ? { ...empty(), quality: { status: 'unknown', reason: 'invalid_denominator' } } : empty();
+    points: pairs, samples: [], ...qualityOf(pairs) } : zero ? { ...empty(), quality: { status: 'unknown', reason: 'invalid_denominator' } } : empty();
 }
 function spatial(q: SemanticQuery, groups: Group[]): Group {
   const good = groups.filter(g => g.value || g.histogram || g.summary);
@@ -220,7 +251,7 @@ function spatial(q: SemanticQuery, groups: Group[]): Group {
   }
   const points = good.flatMap(g => g.points);
   return { value, coverage: groups.reduce((n, g) => n + g.coverage, 0) / groups.length,
-    points, ...qualityOf(points) };
+    points, samples: good.flatMap(g => g.samples), ...qualityOf(points) };
 }
 function validateQuery(q: SemanticQuery): void {
   validateDefinition(q.definition);
@@ -270,17 +301,24 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
   }
   const result: SemanticBucket[] = [];
   const start = Date.parse(q.from), end = Date.parse(q.to), step = q.bucket_ms ?? end - start;
-  if (Math.ceil((end - start) / step) > 1000) throw new Error('QUERY_LIMIT_EXCEEDED');
+  if (Math.ceil((end - start) / step) > MAX_BUCKETS) throw new Error('QUERY_LIMIT_EXCEEDED');
+  // Deduplicate once per series, then slice each bucket: a full-window scan per bucket would be
+  // quadratic and cannot serve 1,440+ buckets at the target window without truncating.
+  const prepared = data.map(unique), preparedAt = prepared.map(rows => rows.map(time));
+  const preparedDenominators = denominators?.map(unique), preparedDenominatorAt = preparedDenominators?.map(rows => rows.map(time));
   for (let from = start; from < end; from += step) {
     const to = Math.min(end, from + step);
-    const groups = data.map((rows, i) => q.mode === 'ratio' ? ratioSeries(q, rows, denominators![i], from, to) : reduceSeries(q, rows, from, to));
+    const groups = prepared.map((rows, i) => q.mode === 'ratio'
+      ? ratioSeries(q, bucketSlice(rows, preparedAt[i], from, to),
+        bucketSlice(preparedDenominators![i], preparedDenominatorAt![i], from, to), from, to)
+      : reduceSeries(q, bucketSlice(rows, preparedAt[i], from, to), from, to));
     let group: Group;
     if (q.mode === 'ratio') {
       const validGroups = groups.filter(g => g.value !== null);
       const numerator = validGroups.flatMap(g => g.points.filter(p => p.metric.id === q.numerator!.id));
       const denominator = validGroups.flatMap(g => g.points.filter(p => p.metric.id === q.denominator!.id));
       group = validGroups.length ? { value: divide(numerator.map(scalar).reduce(add, rational(0n)), denominator.map(scalar).reduce(add, rational(0n))),
-        coverage: groups.reduce((n, g) => n + g.coverage, 0) / groups.length, points: validGroups.flatMap(g => g.points),
+        coverage: groups.reduce((n, g) => n + g.coverage, 0) / groups.length, points: validGroups.flatMap(g => g.points), samples: [],
         ...qualityOf(validGroups.flatMap(g => g.points)) } : groups.find(g => g.quality.reason === 'invalid_denominator') ?? empty();
     } else group = spatial(q, groups);
     const coverage = Math.min(1, group.coverage);
@@ -288,6 +326,7 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
     let accuracy = group.accuracy;
     let quality = group.quality;
     let precisionLoss = false;
+    const targetType = q.mode === 'rate' || q.mode === 'ratio' || q.mode === 'mean' || q.mode === 'duration' ? 'float64' : q.definition.value_type;
     if (group.summary) value = group.summary;
     else if (group.histogram && q.mode === 'merge') value = group.histogram;
     else if (group.histogram && q.mode === 'quantile') {
@@ -299,7 +338,6 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
       else quality = { status: 'unknown', reason: 'partial_input' };
     } else if (group.value) {
       const scaled = q.mode === 'ratio' && q.definition.unit === '%' ? multiply(group.value, rational(100n)) : group.value;
-      const targetType = q.mode === 'rate' || q.mode === 'ratio' || q.mode === 'mean' || q.mode === 'duration' ? 'float64' : q.definition.value_type;
       const encoded = encode(scaled, targetType);
       value = encoded.value;
       if (!encoded.exact) { accuracy = 'estimated'; precisionLoss = true; }
@@ -313,13 +351,15 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
     }
     const sources = [...new Map(group.points.map(p => [p.id, { id: p.id, source: p.source, versions: p.versions }])).values()];
     const latest = Math.max(...group.points.filter(p => valid(p) && time(p) < to).map(time));
+    // A null bucket is a gap: its envelope must not expose samples the value refused to vouch for.
+    const stats = value === null || q.mode === 'ratio' ? null : statsOf(group.samples, targetType);
     result.push({ contract_version: CONTRACT_VERSION, metric: { id: q.definition.id, semantic_version: q.definition.semantic_version },
       unit: q.mode === 'rate' ? (q.definition.unit === 'By' ? 'By/s' : 'count/s') : q.mode === 'duration' ? 'ms' : q.definition.unit,
       dimensions: q.space === 'none' ? { ...q.series[0].dimensions } : null,
       window: { from: new Date(from).toISOString(), to: new Date(to).toISOString() }, value, quality, accuracy, coverage,
       freshness: Number.isFinite(latest) ? freshness(new Date(latest).toISOString(), q.now, q.stale_after_ms) : 'unknown',
       observed_at: Number.isFinite(latest) ? new Date(latest).toISOString() : null,
-      sample_count: new Set(group.points.filter(p => time(p) >= from && time(p) < to).map(p => p.id)).size, sources });
+      sample_count: new Set(group.points.filter(p => time(p) >= from && time(p) < to).map(p => p.id)).size, stats, sources });
   }
   return result;
 }
@@ -332,7 +372,11 @@ export class SemanticQueryService {
     validateQuery(q);
     const refs = q.series.flatMap(s => q.mode === 'ratio' ? [q.numerator!, q.denominator!].map(d => ({ ...s, metric: { id: d.id, semantic_version: d.semantic_version } })) : [s]);
     for (const ref of refs) if (!await this.authorize(ref)) throw new Error('QUERY_FORBIDDEN');
-    const fetch = (definition: MetricDefinition) => Promise.all(q.series.map(s => this.store.queryWindow({ ...s, metric: { id: definition.id, semantic_version: definition.semantic_version } }, q.from, q.to)));
+    // A store able to page internally reads the complete window; authorization above still runs first.
+    const fetch = (definition: MetricDefinition) => Promise.all(q.series.map(s => {
+      const series = { ...s, metric: { id: definition.id, semantic_version: definition.semantic_version } };
+      return this.store.readWindow ? this.store.readWindow(series, q.from, q.to) : this.store.queryWindow(series, q.from, q.to);
+    }));
     return aggregate(q, await fetch(q.mode === 'ratio' ? q.numerator! : q.definition), q.mode === 'ratio' ? await fetch(q.denominator!) : undefined);
   }
   async inventory(type: Resource['type'], id: string): Promise<Resource | null> {
