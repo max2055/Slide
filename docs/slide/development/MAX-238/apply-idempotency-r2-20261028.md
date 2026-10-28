@@ -82,4 +82,4 @@
 
 ## 安全 PR
 
-见交付评论中的草稿 PR 链接与发布分支；发布历史从已确认干净的远程基线独立构造，不复用含 qualification 运行快照的原分支祖先。
+草稿 PR：https://github.com/max2055/Slide/pull/567，发布分支 `agent/15coder1/max-238-release`，基 `origin/main` `e11f6ba2e` 的单个独立提交。排除 `CLAUDE.md`（工作区运行规则）与 `attachments/`（协调交接材料），不复用含 qualification 运行快照的原分支祖先；未合并、未部署。
