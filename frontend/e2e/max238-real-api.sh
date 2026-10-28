@@ -17,5 +17,5 @@ for _ in $(seq 1 120); do
   if docker exec "$name" mysqladmin ping -uroot --silent >/dev/null 2>&1; then break; fi
   sleep 1
 done
-MAX238_TEST_MYSQL_PORT="$port" MAX238_API_PORT="${MAX238_API_PORT:-51839}" \
+MAX238_TEST_MYSQL_PORT="$port" MAX238_API_PORT="${MAX238_API_PORT:-51839}" MAX238_E2E_CONTAINER="$name" \
   ../apps/db-ops-api/node_modules/.bin/tsx ../apps/db-ops-api/e2e/max238-real-api-server.ts

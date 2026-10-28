@@ -16,6 +16,7 @@
 import Fastify from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { dbConnection } from '../src/db-connection.js';
 import { MigrationRunner } from '../src/migrations/runner.js';
 import type { MigrationPool } from '../src/migrations/types.js';
@@ -96,6 +97,11 @@ async function main() {
 
   const shutdown = async () => {
     await app.close().catch(() => undefined);
+    // The launcher's own trap may never run when a test runner kills the group;
+    // stop the disposable container from whichever process receives the signal.
+    if (process.env.MAX238_E2E_CONTAINER) {
+      try { execFileSync('docker', ['rm', '-f', process.env.MAX238_E2E_CONTAINER], { stdio: 'ignore' }); } catch { /* already gone */ }
+    }
     await pool.query(`DROP DATABASE IF EXISTS ${database}`).catch(() => undefined);
     await pool.end().catch(() => undefined); await root.end().catch(() => undefined);
     process.exit(0);

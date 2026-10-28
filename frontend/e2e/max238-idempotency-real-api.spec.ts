@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 
 /**
  * MAX238-APPLY-IDEMPOTENCY-R2 browser evidence against a REAL API.
@@ -12,6 +13,15 @@ import { expect, test, type Page } from '@playwright/test';
  */
 const api = `http://127.0.0.1:${process.env.MAX238_API_PORT ?? 51839}`;
 const fixture = '/e2e/fixtures/max238-idempotency-recovery.html';
+
+// Playwright stops its webServers after the tests; the disposable MySQL
+// container belongs to this fixture and is removed here regardless of how the
+// launcher was terminated.
+test.afterAll(() => {
+  const names = execFileSync('docker', ['ps', '--filter', 'name=max238-e2e-', '--format', '{{.Names}}'],
+    { encoding: 'utf8' }).trim();
+  if (names) execFileSync('docker', ['rm', '-f', ...names.split('\n')], { stdio: 'ignore' });
+});
 
 type State = { trials: number; journal: { state: string; target_revision: number; committed_at: string | null } | null; revision: number | null };
 const serverState = async (key: string): Promise<State> => (await fetch(`${api}/__test/state?key=${encodeURIComponent(key)}`)).json() as Promise<State>;
