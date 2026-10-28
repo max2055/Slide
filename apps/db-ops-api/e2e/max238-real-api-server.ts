@@ -1,5 +1,5 @@
 /**
- * MAX238-APPLY-IDEMPOTENCY-R2 browser evidence backend.
+ * MAX238-APPLY-IDEMPOTENCY-R3 browser evidence backend.
  *
  * A real Fastify HTTP server exposing the real metric-configuration routes and
  * the real MySQL operation journal on a disposable schema (MAX238_TEST_MYSQL_PORT,
@@ -12,6 +12,7 @@
  *   POST /__test/trial/gate        the next trial waits until released
  *   POST /__test/trial/release     release a gated trial
  *   GET  /__test/state?key=...     journal state, trial count and revision
+ *   GET  /__test/handle            this run's exact container and owner nonce
  */
 import Fastify from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -76,6 +77,8 @@ async function main() {
     return { gated: true };
   });
   app.post('/__test/trial/release', async () => { state.release?.(); state.release = null; return { released: true }; });
+  app.get('/__test/handle', async () => ({ container: process.env.MAX238_E2E_CONTAINER ?? null,
+    nonce: process.env.MAX238_E2E_NONCE ?? null, pid: process.pid, port: apiPort, cwd: process.cwd() }));
   app.get('/__test/state', async request => {
     const key = (request.query as { key?: string }).key ?? '';
     const [operations] = await pool.query<RowDataPacket[]>(
@@ -89,18 +92,26 @@ async function main() {
   await registerMetricConfigurationRoutes(app, async request => {
     (request as unknown as { user?: ActorContext }).user = admin;
   }, service);
+  // The fixture identity is fixed; production registration re-reads the live session.
   await registerMetricPolicyRoutes(app, async request => {
     (request as unknown as { user?: ActorContext }).user = admin;
-  }, policyService);
+  }, policyService, async seed => seed);
   await app.listen({ host: '127.0.0.1', port: apiPort });
   console.log(`MAX238 e2e API on 127.0.0.1:${apiPort}, disposable schema ${database}`);
 
   const shutdown = async () => {
     await app.close().catch(() => undefined);
     // The launcher's own trap may never run when a test runner kills the group;
-    // stop the disposable container from whichever process receives the signal.
-    if (process.env.MAX238_E2E_CONTAINER) {
-      try { execFileSync('docker', ['rm', '-f', process.env.MAX238_E2E_CONTAINER], { stdio: 'ignore' }); } catch { /* already gone */ }
+    // remove only the exact container this run was given, and only while its
+    // ownership label still proves it belongs to this run.
+    const container = process.env.MAX238_E2E_CONTAINER, nonce = process.env.MAX238_E2E_NONCE;
+    if (container && nonce) {
+      try {
+        const owner = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "slide.max238.owner"}}', container],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (owner === nonce) execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' });
+        else console.error(`MAX238 fixture: not removing ${container}; owner ${owner || '(none)'} is not ${nonce}`);
+      } catch { /* already removed or unavailable */ }
     }
     await pool.query(`DROP DATABASE IF EXISTS ${database}`).catch(() => undefined);
     await pool.end().catch(() => undefined); await root.end().catch(() => undefined);

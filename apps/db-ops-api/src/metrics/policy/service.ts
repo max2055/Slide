@@ -56,6 +56,10 @@ export class PolicyService {
     await this.assertAccess(current, ref, write);
     return current;
   }
+  /** Group entries re-read the actor too; their membership checks then run against it. */
+  private async liveActor(actor: ActorContext, check?: () => Promise<ActorContext>): Promise<ActorContext> {
+    return check ? check() : actor;
+  }
   private async groupAccess(actor: ActorContext, tx: PolicyTransaction, id: string, write: boolean): Promise<Published[]> {
     const members = await tx.members(id);
     if (!members.length) rule(actor.permissions.includes('*'), 'POLICY_FORBIDDEN', 403);
@@ -72,17 +76,24 @@ export class PolicyService {
       applied_revision: previous?.application.applied_revision ?? null, reported_at: previous?.application.reported_at ?? null, status: 'pending', error_code: null,
     } };
   }
-  async binding(actor: ActorContext, ref: Ref): Promise<Published> {
-    await this.assertAccess(actor, ref, false);
-    return this.store.transaction(async tx => { const result = await tx.binding(ref); rule(result, 'POLICY_NOT_FOUND', 404); return result; });
-  }
-  async audits(actor: ActorContext, ref: Ref, requestId?: string) {
-    await this.assertAccess(actor, ref, true);
-    return this.store.transaction(tx => tx.audits(refKey(ref), requestId));
-  }
-  async effective(actor: ActorContext, ref: Ref) {
+  async binding(actor: ActorContext, ref: Ref, check?: () => Promise<ActorContext>): Promise<Published> {
     await this.assertAccess(actor, ref, false);
     return this.store.transaction(async tx => {
+      await this.live(actor, ref, false, check);
+      const result = await tx.binding(ref); rule(result, 'POLICY_NOT_FOUND', 404); return result;
+    });
+  }
+  async audits(actor: ActorContext, ref: Ref, requestId?: string, check?: () => Promise<ActorContext>) {
+    await this.assertAccess(actor, ref, true);
+    return this.store.transaction(async tx => {
+      await this.live(actor, ref, true, check);
+      return tx.audits(refKey(ref), requestId);
+    });
+  }
+  async effective(actor: ActorContext, ref: Ref, check?: () => Promise<ActorContext>) {
+    await this.assertAccess(actor, ref, false);
+    return this.store.transaction(async tx => {
+      await this.live(actor, ref, false, check);
       const published = await tx.binding(ref); rule(published, 'POLICY_NOT_FOUND', 404);
       const resource = await this.resources.inventory(ref) ?? { type: ref.type, id: String(ref.id), attributes: {} };
       // Re-evaluate evidence at query time without changing the published policy or application acknowledgement.
@@ -94,17 +105,19 @@ export class PolicyService {
         published_policy_revision: snapshot.plan.binding.policy_revision, application: published.application, resolved };
     });
   }
-  async group(actor: ActorContext, id: string) {
+  async group(actor: ActorContext, id: string, check?: () => Promise<ActorContext>) {
     PolicyIdSchema.parse(id);
     return this.store.transaction(async tx => {
+      actor = await this.liveActor(actor, check);
       await this.groupAccess(actor, tx, id, false);
       const group = await tx.group(id); rule(group, 'POLICY_NOT_FOUND', 404);
       return group;
     });
   }
-  async groups(actor: ActorContext, query = '') {
+  async groups(actor: ActorContext, query = '', check?: () => Promise<ActorContext>) {
     rule(query.length <= 128, 'POLICY_INPUT_INVALID');
     return this.store.transaction(async tx => {
+      actor = await this.liveActor(actor, check);
       const visible: Array<Group & {can_manage: boolean}> = [];
       for (const group of await tx.groups()) {
         if (!group.id.toLowerCase().includes(query.toLowerCase())) continue;
@@ -117,9 +130,10 @@ export class PolicyService {
       return { groups: visible };
     });
   }
-  async groupPermissions(actor: ActorContext, id: string) {
+  async groupPermissions(actor: ActorContext, id: string, check?: () => Promise<ActorContext>) {
     PolicyIdSchema.parse(id);
     return this.store.transaction(async tx => {
+      actor = await this.liveActor(actor, check);
       const members = await this.groupAccess(actor, tx, id, false);
       return { can_manage: members.length ? members.every(member => canManageResource(actor, member.binding.resource)) : actor.permissions.includes('*') };
     });
@@ -306,10 +320,11 @@ export class PolicyService {
         configuration_digest: recorded.configuration_digest, committed_at: recorded.committed_at } };
     });
   }
-  async changeGroup(actor: ActorContext, id: string, input: unknown, publish: boolean) {
+  async changeGroup(actor: ActorContext, id: string, input: unknown, publish: boolean, check?: () => Promise<ActorContext>) {
     PolicyIdSchema.parse(id);
     const change = GroupChangeSchema.parse(input);
     return this.store.transaction(async tx => {
+      actor = await this.liveActor(actor, check);
       const members = await this.groupAccess(actor, tx, id, true);
       const previous = await tx.group(id);
       rule((previous?.revision ?? 0) === change.expected_revision, 'POLICY_REVISION_CONFLICT', 409);
