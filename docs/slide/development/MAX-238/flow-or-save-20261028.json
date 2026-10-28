@@ -1,0 +1,165 @@
+{
+  "save_only": {
+    "resource": "instance:1",
+    "before": {
+      "state": "unbound",
+      "published_revision": null,
+      "rows": 0
+    },
+    "pin": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "overrides": {
+      "enabled": "disable"
+    },
+    "read_back": {
+      "revision": 1,
+      "pin": {
+        "id": "mysql-basic",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "version": "1.0.0"
+      },
+      "rows": 1
+    },
+    "status": {
+      "binding_state": "bound",
+      "published_revision": 1,
+      "applied_revision": null,
+      "application": "pending",
+      "policy_enabled": false,
+      "effective_enabled": false,
+      "source": "resource",
+      "collection_state": "disabled"
+    },
+    "formal_rows": {
+      "metric_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0
+    },
+    "target_contacted": false
+  },
+  "flow": {
+    "resource": "instance:2",
+    "target": {
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306,
+      "server_version": "9.6.0",
+      "disposable_row_db_version": "8.0.46"
+    },
+    "pin": {
+      "id": "mysql-representative",
+      "version": "1.0.0",
+      "digest": "sha256:c785f27645ad4dd658b7212a8edbdfc719f6a69135e5fec799f625714bb45460"
+    },
+    "check": {
+      "binding_state": "bound",
+      "published_revision": 1,
+      "applied_revision": null,
+      "application": "pending",
+      "policy_enabled": true,
+      "effective_enabled": true,
+      "collection_state": "pending",
+      "formal_rows": {
+        "metric_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0
+      }
+    },
+    "trial": {
+      "persisted": false,
+      "decision": "attempted",
+      "error": null,
+      "good_samples": 5,
+      "sample_count": 8,
+      "attempt_statuses": [
+        "failed",
+        "succeeded",
+        "succeeded",
+        "succeeded",
+        "succeeded"
+      ],
+      "formal_rows": {
+        "metric_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0
+      }
+    },
+    "activation": {
+      "published": true,
+      "revision": 2,
+      "pin": {
+        "id": "mysql-representative",
+        "digest": "sha256:c785f27645ad4dd658b7212a8edbdfc719f6a69135e5fec799f625714bb45460",
+        "version": "1.0.0"
+      },
+      "rows": 1
+    },
+    "saved_instance": {
+      "pin": {
+        "id": "mysql-basic",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "overrides": {
+        "enabled": "disable"
+      },
+      "rows": 1
+    },
+    "formal_rows_after": {
+      "metric_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0
+    }
+  },
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ],
+      "max238_schemas": 0
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ],
+      "max238_schemas": 0
+    },
+    "unchanged": true
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "b053c42a1d21f5cd14baef6438731b34820da8ed",
+    "test": "flow-or-save.mysql.test.ts",
+    "disposable_schema": "max238_flow_or_save_23580 on 127.0.0.1:13306, dropped by afterAll",
+    "source_selected": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
+    "formal_tables": [
+      "metric_observations",
+      "alerts",
+      "alert_events",
+      "notification_records",
+      "metric_publications"
+    ]
+  }
+}
