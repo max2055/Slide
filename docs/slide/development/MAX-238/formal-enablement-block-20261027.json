@@ -1,0 +1,783 @@
+{
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "2fa795e2a11cd77cd8312177015c32851c4c53a7",
+    "test": "formal-enablement-block.mysql.test.ts",
+    "disposable_schema": "max238_formal_enablement_block_38840 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22
+    }
+  },
+  "results": {
+    "instance:1": {
+      "package": "mysql-diagnostics",
+      "trial": {
+        "persisted": false,
+        "decision": "attempted",
+        "error": null,
+        "samples": 30,
+        "non_good": [
+          {
+            "metric": "mysql.innodb.deadlocks_total",
+            "quality": {
+              "status": "unknown",
+              "reason": "source_error"
+            },
+            "value": null,
+            "unit": "count"
+          },
+          {
+            "metric": "mysql.transaction_commands.commit_rate",
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "value": null,
+            "unit": "count/s"
+          },
+          {
+            "metric": "mysql.transaction_commands.rollback_rate",
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "value": null,
+            "unit": "count/s"
+          },
+          {
+            "metric": "mysql.transaction_commands.completed_rate",
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "value": null,
+            "unit": "count/s"
+          },
+          {
+            "metric": "mysql.queries.per_second",
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "value": null,
+            "unit": "count/s"
+          }
+        ],
+        "attempts": [
+          {
+            "collector_id": "diagnostics_connections",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostics_limit",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostics_transactions",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostics_size",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostics_queries",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostic_counters",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "buffer_pages",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "uptime_diagnostics",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostic_gauges",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "diagnostic_ratios",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "innodb_diagnostics",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "thread_cache",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "active_transactions",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "replication_channels",
+            "status": "succeeded",
+            "error": null
+          }
+        ]
+      },
+      "binding": {
+        "revision_before": 1,
+        "revision_after": 2,
+        "changed": true,
+        "activate": {
+          "outcome": "returned",
+          "published": true,
+          "revision": 2,
+          "error_code": null,
+          "error_message": null
+        }
+      },
+      "status": {
+        "resource": {
+          "type": "instance",
+          "id": 1
+        },
+        "collection": {
+          "state": "pending",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "in_flight": false
+        },
+        "formal_visibility": {
+          "state": "pending",
+          "source": "none",
+          "last_observed_at": null,
+          "generation": null,
+          "freshness": "unknown"
+        },
+        "blockers": [
+          "APPLICATION_PENDING",
+          "CAPABILITY_UNKNOWN",
+          "AWAITING_SAMPLE"
+        ]
+      },
+      "formal_rows_after": {
+        "normalized_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0,
+        "metric_v2_alert_state": 0,
+        "metric_v2_alert_transitions": 0
+      }
+    },
+    "server:3": {
+      "package": "linux-host",
+      "trial": {
+        "persisted": false,
+        "decision": "attempted",
+        "error": null,
+        "samples": 82,
+        "non_good": [
+          {
+            "metric": "linux.filesystem.inode_used_percent",
+            "quality": {
+              "status": "unknown",
+              "reason": "not_applicable"
+            },
+            "value": null,
+            "unit": "%"
+          },
+          {
+            "metric": "linux.filesystem.inode_used_percent",
+            "quality": {
+              "status": "unknown",
+              "reason": "not_applicable"
+            },
+            "value": null,
+            "unit": "%"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.37185361737416767
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.12867759262650308
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.09989238826314657
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000011478585264366167
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.3699259440104167
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.01182026928295585
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000043044694741373124
+            },
+            "unit": "1"
+          },
+          {
+            "metric": "linux.filesystem.used_ratio",
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000014348231580457709
+            },
+            "unit": "1"
+          }
+        ],
+        "attempts": [
+          {
+            "collector_id": "linux-basic",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-host-gauges",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-filesystem",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-network",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-block",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-diagnostic-gauges-v1",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-filesystem-diagnostics-v1",
+            "status": "succeeded",
+            "error": null
+          },
+          {
+            "collector_id": "linux-network-diagnostics-v1",
+            "status": "succeeded",
+            "error": null
+          }
+        ]
+      },
+      "binding": {
+        "revision_before": 1,
+        "revision_after": 2,
+        "changed": true,
+        "activate": {
+          "outcome": "returned",
+          "published": true,
+          "revision": 2,
+          "error_code": null,
+          "error_message": null
+        }
+      },
+      "status": {
+        "resource": {
+          "type": "server",
+          "id": 3
+        },
+        "collection": {
+          "state": "pending",
+          "last_attempt_at": null,
+          "last_success_at": null,
+          "in_flight": false
+        },
+        "formal_visibility": {
+          "state": "pending",
+          "source": "none",
+          "last_observed_at": null,
+          "generation": null,
+          "freshness": "unknown"
+        },
+        "blockers": [
+          "APPLICATION_PENDING",
+          "CAPABILITY_UNKNOWN",
+          "AWAITING_SAMPLE"
+        ]
+      },
+      "formal_rows_after": {
+        "normalized_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0,
+        "metric_v2_alert_state": 0,
+        "metric_v2_alert_transitions": 0
+      }
+    }
+  },
+  "known": {
+    "instance:1 mysql.innodb.deadlocks_total": {
+      "expected": {
+        "status": "unknown",
+        "reason": "source_error"
+      },
+      "observed": [
+        {
+          "status": "unknown",
+          "reason": "source_error",
+          "value": null
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "instance:1 mysql.transaction_commands.commit_rate": {
+      "expected": {
+        "status": "unknown",
+        "reason": "counter_baseline"
+      },
+      "observed": [
+        {
+          "status": "unknown",
+          "reason": "counter_baseline",
+          "value": null
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "instance:1 mysql.transaction_commands.rollback_rate": {
+      "expected": {
+        "status": "unknown",
+        "reason": "counter_baseline"
+      },
+      "observed": [
+        {
+          "status": "unknown",
+          "reason": "counter_baseline",
+          "value": null
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "instance:1 mysql.transaction_commands.completed_rate": {
+      "expected": {
+        "status": "unknown",
+        "reason": "counter_baseline"
+      },
+      "observed": [
+        {
+          "status": "unknown",
+          "reason": "counter_baseline",
+          "value": null
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "instance:1 mysql.queries.per_second": {
+      "expected": {
+        "status": "unknown",
+        "reason": "counter_baseline"
+      },
+      "observed": [
+        {
+          "status": "unknown",
+          "reason": "counter_baseline",
+          "value": null
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "server:3 linux.filesystem.inode_used_percent": {
+      "expected": {
+        "status": "unknown",
+        "reason": "not_applicable"
+      },
+      "observed": [
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 2
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 2
+          }
+        },
+        {
+          "status": "unknown",
+          "reason": "not_applicable",
+          "value": null
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "unknown",
+          "reason": "not_applicable",
+          "value": null
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 1
+          }
+        }
+      ],
+      "verdict": "non_good_present"
+    },
+    "server:3 linux.filesystem.used_ratio": {
+      "expected": {
+        "status": "partial",
+        "reason": "precision_loss"
+      },
+      "observed": [
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.37185361737416767
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 0
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 0
+          }
+        },
+        {
+          "status": "good",
+          "reason": "none",
+          "value": {
+            "encoding": "float64",
+            "value": 0
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.12867759262650308
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.09989238826314657
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.000011478585264366167
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.3699259440104167
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.01182026928295585
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.000043044694741373124
+          }
+        },
+        {
+          "status": "partial",
+          "reason": "precision_loss",
+          "value": {
+            "encoding": "float64",
+            "value": 0.000014348231580457709
+          }
+        }
+      ],
+      "verdict": "non_good_present"
+    }
+  },
+  "formal_rows": {
+    "before": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "after": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "zero": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    }
+  },
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "tables": {
+    "alert_tables": {
+      "metric_v2_alert_state": "metric_alert_state",
+      "metric_v2_alert_transitions": "metric_alert_transitions"
+    },
+    "formal_tables": [
+      "alerts",
+      "alert_events",
+      "notification_records",
+      "metric_publications"
+    ],
+    "note": "migration 121 renames metric_v2_alert_state/metric_v2_alert_transitions; the resolved post-migration names were counted"
+  },
+  "totals": {
+    "samples": 112,
+    "good": 97,
+    "partial": 8,
+    "unknown": 7,
+    "invalid": 0,
+    "non_good": 15
+  },
+  "blocking": {
+    "instance:1": {
+      "non_good_observed": 5,
+      "revision_before": 1,
+      "revision_after": 2,
+      "activate_error": null,
+      "published": true,
+      "blocked": false
+    },
+    "server:3": {
+      "non_good_observed": 10,
+      "revision_before": 1,
+      "revision_after": 2,
+      "activate_error": null,
+      "published": true,
+      "blocked": false
+    }
+  },
+  "requirement": {
+    "sentence": "untested or required-item failure blocks enablement",
+    "satisfied": false
+  }
+}

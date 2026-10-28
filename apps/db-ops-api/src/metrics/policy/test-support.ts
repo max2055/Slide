@@ -1,6 +1,6 @@
 import type { Capability, Resource } from '../../contracts/metrics/index.js';
 import { builtinReleases } from '../packages/builtins.js';
-import { type Audit, type Group, type Published, type Ref, type Binding, refKey } from './model.js';
+import { type ApplyOperation, type Audit, type Group, type Published, type Ref, type Binding, refKey } from './model.js';
 import type { PolicyStore, PolicyTransaction } from './store.js';
 
 export const at = '2026-09-18T00:00:00.000Z';
@@ -21,11 +21,14 @@ export class MemoryPolicyStore implements PolicyStore {
   bindings = new Map<string, Published>();
   caps = new Map<string, Capability[]>();
   logs: Audit[] = [];
+  operations = new Map<string, ApplyOperation>();
   failAudit = false;
+  failOperation = false;
   private tail: Promise<unknown> = Promise.resolve();
   async transaction<T>(fn: (tx: PolicyTransaction) => Promise<T>): Promise<T> {
     const execute = async () => {
       const groups = structuredClone(this.groups), bindings = structuredClone(this.bindings), logs = structuredClone(this.logs), caps = structuredClone(this.caps);
+      const operations = structuredClone(this.operations);
       const tx: PolicyTransaction = {
         groups: async () => structuredClone([...groups.values()]),
         group: async id => structuredClone(groups.get(id) ?? null),
@@ -37,9 +40,15 @@ export class MemoryPolicyStore implements PolicyStore {
         saveBinding: async (value, reset) => { bindings.set(refKey(value.binding.resource), structuredClone(value)); if (reset) caps.delete(refKey(value.binding.resource)); },
         audit: async value => { if (this.failAudit) throw new Error('audit failed with secret'); logs.push(value); },
         audits: async target => logs.filter(a => a.target === target),
+        applyOperation: async key => structuredClone(operations.get(key) ?? null),
+        saveApplyOperation: async value => { if (this.failOperation) throw new Error('operation journal failed'); operations.set(value.operation_key, structuredClone(value)); },
+        releaseApplyOperation: async (key, resourceKey, intentDigest) => {
+          const stored = operations.get(key);
+          if (stored?.state === 'pending' && stored.resource_key === resourceKey && stored.intent_digest === intentDigest) operations.delete(key);
+        },
       };
       const result = await fn(tx);
-      this.groups = groups; this.bindings = bindings; this.logs = logs; this.caps = caps;
+      this.groups = groups; this.bindings = bindings; this.logs = logs; this.caps = caps; this.operations = operations;
       return result;
     };
     const result = this.tail.then(execute); this.tail = result.catch(() => undefined); return result;

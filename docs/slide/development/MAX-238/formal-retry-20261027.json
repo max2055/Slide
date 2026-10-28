@@ -1,0 +1,180 @@
+{
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "schedule": {
+    "first": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+        "revision": 1,
+        "next_due_ms": 1793115429853
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "96ef605c-a903-4db9-a885-a24acaeb8045",
+        "revision": 1,
+        "next_due_ms": 1793115435887
+      }
+    ],
+    "completed": [
+      {
+        "resource_key": "instance:1",
+        "job_id": null,
+        "next_due_ms": 1793115496562
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": null,
+        "next_due_ms": 1793115500001
+      }
+    ]
+  },
+  "in_progress_retick": {
+    "started_at": "2026-10-27T15:37:06.979Z",
+    "tick_result": 0,
+    "jobs": [
+      {
+        "job_id": "4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+        "state": "queued",
+        "fencing_token": 0
+      },
+      {
+        "job_id": "96ef605c-a903-4db9-a885-a24acaeb8045",
+        "state": "queued",
+        "fencing_token": 0
+      }
+    ],
+    "schedule_job_ids": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "4737fdb2-6edf-429c-bb38-7130dda8bbbf"
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "96ef605c-a903-4db9-a885-a24acaeb8045"
+      }
+    ]
+  },
+  "completed": {
+    "outcomes": [
+      "completed",
+      "completed"
+    ],
+    "jobs": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+        "fencing_token": 1,
+        "attempts": 1,
+        "idempotency_key": "metric:instance:1:4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+        "observations": 30
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "96ef605c-a903-4db9-a885-a24acaeb8045",
+        "fencing_token": 1,
+        "attempts": 1,
+        "idempotency_key": "metric:server:3:96ef605c-a903-4db9-a885-a24acaeb8045",
+        "observations": 82
+      }
+    ]
+  },
+  "post_completion_retick": {
+    "tick_result": 0,
+    "workflow_job_rows": 2,
+    "fencing_tokens": [
+      1,
+      1
+    ],
+    "schedule_job_ids": [
+      null,
+      null
+    ],
+    "observations": {
+      "instance:1": 30,
+      "server:3": 82
+    }
+  },
+  "duplicate_idempotency": [
+    {
+      "resource_key": "instance:1",
+      "original_job_id": "4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+      "attempted_job_id": "5d41b66c-7e70-4ff1-80ab-ce1c1e2104b6",
+      "idempotency_key": "metric:instance:1:4737fdb2-6edf-429c-bb38-7130dda8bbbf",
+      "rows_for_key": 1,
+      "state": "completed",
+      "observations_before": 30,
+      "observations_after": 30
+    },
+    {
+      "resource_key": "server:3",
+      "original_job_id": "96ef605c-a903-4db9-a885-a24acaeb8045",
+      "attempted_job_id": "c703f143-5c97-4d68-b0ef-9d9580cabb55",
+      "idempotency_key": "metric:server:3:96ef605c-a903-4db9-a885-a24acaeb8045",
+      "rows_for_key": 1,
+      "state": "completed",
+      "observations_before": 82,
+      "observations_after": 82
+    }
+  ],
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "195f0c2ee8acec496475341c46341ae4968e30bb",
+    "test": "formal-retry.mysql.test.ts",
+    "disposable_schema": "max238_formal_retry_9980 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22
+    }
+  }
+}

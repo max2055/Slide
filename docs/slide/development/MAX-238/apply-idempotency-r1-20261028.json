@@ -1,0 +1,128 @@
+{
+  "reserve_restart": {
+    "reserved": {
+      "operation_key": "r1-reserve",
+      "resource_key": "instance:1",
+      "actor_id": 1,
+      "target_revision": 1,
+      "intent_digest": "sha256:3d899a295608cb779a9a53bf004b1a46a164d4ff0167bf31c273a70b3d379cc0",
+      "configuration_digest": null,
+      "state": "pending",
+      "claimed_at": "2026-10-28T15:20:52.009Z",
+      "committed_at": null
+    },
+    "lookup": {
+      "state": "pending",
+      "operation": {
+        "resource": {
+          "type": "instance",
+          "id": 1
+        },
+        "target_revision": 1,
+        "configuration_digest": null,
+        "committed_at": null
+      }
+    },
+    "binding_revision": null,
+    "audits": 0
+  },
+  "commit_replay": {
+    "published_revision": 1,
+    "journal": {
+      "operation_key": "r1-reserve",
+      "resource_key": "instance:1",
+      "actor_id": 1,
+      "target_revision": 1,
+      "intent_digest": "sha256:3d899a295608cb779a9a53bf004b1a46a164d4ff0167bf31c273a70b3d379cc0",
+      "configuration_digest": "sha256:8a0207e3212ec911b4833ddb155bb8c92fbf37f8aab5dc76b6e46dfc45be5abb",
+      "state": "committed",
+      "claimed_at": "2026-10-28T15:20:52.009Z",
+      "committed_at": "2026-10-28T15:20:52.017Z"
+    },
+    "later_revision": 2,
+    "replayed_revision": 1,
+    "replayed_published_at": "2026-10-28T15:20:52.017Z",
+    "audits": 2
+  },
+  "payload_collision": {
+    "error": {
+      "name": "Error",
+      "code": "POLICY_OPERATION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_OPERATION_CONFLICT"
+    },
+    "audits": 2
+  },
+  "concurrent_claims": {
+    "fulfilled": 1,
+    "rejected": 1,
+    "rejected_code": "POLICY_OPERATION_PENDING",
+    "journal_rows": 1
+  },
+  "rollback": {
+    "failed_error": {
+      "name": "Error",
+      "code": "ER_SIGNAL_EXCEPTION",
+      "status": null,
+      "message": "blocked journal write"
+    },
+    "binding_after_failure": null,
+    "audits_after_failure": 0,
+    "journal_after_failure": null,
+    "published_revision": 1,
+    "audits": 1
+  },
+  "authorization": {
+    "claim_error": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "replay_error": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "read_only_lookup": {
+      "state": "committed",
+      "operation": {
+        "resource": {
+          "type": "instance",
+          "id": 6
+        },
+        "target_revision": 1,
+        "configuration_digest": "sha256:99393331bc4510a55addb0ef8435dd4bfc37ed7a7f7361d78ee4a35445d6a79e",
+        "committed_at": "2026-10-28T15:20:52.062Z"
+      }
+    },
+    "unscoped_error": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    }
+  },
+  "cross_resource": {
+    "other_resource_error": {
+      "name": "Error",
+      "code": "POLICY_OPERATION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_OPERATION_CONFLICT"
+    },
+    "collision_binding": null
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "eb7d098ce77009287ec512db3aff952d9cc4da70",
+    "test": "apply-idempotency-r1.mysql.test.ts",
+    "disposable_schema": "max238_apply_idempotency_r1_36579 on 127.0.0.1:13306, dropped by afterAll",
+    "boundaries": {
+      "activate_called": false,
+      "trial_called": false,
+      "worker_started": false,
+      "target_connection_opened": false
+    }
+  }
+}

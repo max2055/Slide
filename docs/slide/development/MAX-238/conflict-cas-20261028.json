@@ -1,0 +1,174 @@
+{
+  "baseline": {
+    "revision": 1,
+    "package": {
+      "id": "mysql-basic",
+      "digest": "sha256:9b7ef81926609831bb8b11fa4969a03a83ba74cacd6dc1746fa8fb7724ab9792",
+      "version": "1.1.0"
+    },
+    "binding_rows": 1
+  },
+  "conflict": {
+    "submitted": {
+      "id": "linux-host",
+      "version": "1.1.0",
+      "digest": "sha256:b5797402cec6302f57563b644f442fffd45b75c0a67c843b73356c2be67f8d2f"
+    },
+    "error": {
+      "code": "POLICY_PACKAGE_RESOURCE",
+      "message": "POLICY_PACKAGE_RESOURCE",
+      "status": 400
+    },
+    "revision_before": 1,
+    "revision_after": 1,
+    "remaining_package": {
+      "id": "mysql-basic",
+      "digest": "sha256:9b7ef81926609831bb8b11fa4969a03a83ba74cacd6dc1746fa8fb7724ab9792",
+      "version": "1.1.0"
+    }
+  },
+  "concurrent_revision": {
+    "expected_revision": 1,
+    "submitted": [
+      {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+      },
+      {
+        "id": "mysql-diagnostics",
+        "version": "1.0.0",
+        "digest": "sha256:55bb3cf6aaa2c1f469d06e0cb17591344dd90e4baf56511b527ec76854ad3642"
+      }
+    ],
+    "winner": {
+      "connection": "pool",
+      "package": {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+      }
+    },
+    "loser": {
+      "connection": "pool2",
+      "package": {
+        "id": "mysql-diagnostics",
+        "version": "1.0.0",
+        "digest": "sha256:55bb3cf6aaa2c1f469d06e0cb17591344dd90e4baf56511b527ec76854ad3642"
+      },
+      "error": {
+        "code": "POLICY_REVISION_CONFLICT",
+        "message": "POLICY_REVISION_CONFLICT",
+        "status": 409
+      }
+    },
+    "revision_before": 1,
+    "revision_after": 2,
+    "remaining_package": {
+      "id": "mysql-diagnostics",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+      "version": "1.1.0"
+    },
+    "binding_rows": 1,
+    "audit_delta": 1
+  },
+  "stale_trial": {
+    "expected_revision": 2,
+    "trial": {
+      "persisted": false,
+      "decision": "disabled",
+      "attempts": 0,
+      "samples": 0
+    },
+    "guard_checks": 6,
+    "advanced_revision": 3,
+    "publish": {
+      "code": "POLICY_REVISION_CONFLICT",
+      "message": "POLICY_REVISION_CONFLICT",
+      "status": 409
+    },
+    "stale_candidate_publish": {
+      "code": "POLICY_REVISION_CONFLICT",
+      "message": "POLICY_REVISION_CONFLICT",
+      "status": 409
+    },
+    "revision_before": 2,
+    "revision_after": 3,
+    "remaining_package": {
+      "id": "mysql-diagnostics",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+      "version": "1.1.0"
+    },
+    "remaining_overrides": {
+      "interval_ms": {
+        "mode": "set",
+        "value": 45000
+      }
+    },
+    "formal_rows_before": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "formal_rows_after": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "audit_delta": 1
+  },
+  "permission_change": {
+    "publish": {
+      "code": "POLICY_FORBIDDEN",
+      "message": "POLICY_FORBIDDEN",
+      "status": 403
+    },
+    "activate": {
+      "code": "POLICY_FORBIDDEN",
+      "message": "POLICY_FORBIDDEN",
+      "status": 403
+    },
+    "activation_checks": 2,
+    "revision_before": 3,
+    "revision_after": 3,
+    "remaining_package": {
+      "id": "mysql-diagnostics",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+      "version": "1.1.0"
+    },
+    "audit_delta": 0
+  },
+  "product_code": {
+    "service_ts_changed": false,
+    "policy_service_ts_changed": false,
+    "store_ts_changed": false,
+    "activate_predicate_changed": false,
+    "required_metrics_list_changed": false
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "5dd57cd08542f47326c90fd638dadfec57886f0f",
+    "test": "conflict-cas.mysql.test.ts",
+    "disposable_schema": "max238_conflict_cas_6076 on 127.0.0.1:13306, dropped by afterAll",
+    "ports_contacted": [
+      "127.0.0.1:13306"
+    ],
+    "application_database_3306": "not contacted"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "db_type": "mysql",
+      "db_version": "8.0.46",
+      "credential": "empty"
+    }
+  }
+}

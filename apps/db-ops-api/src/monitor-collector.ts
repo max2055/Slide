@@ -7,14 +7,18 @@ import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.j
 import { assertWorkflowActive } from './workflows/execution-context.js';
 import { dbConnection } from './db-connection.js';
 import { assetCollectionEnabled } from './metrics/config/effective-state.js';
+import { readLegacyPublished } from './metrics/bindings/package-reader.js';
 import { metricConfigurationService } from './metrics/config/routes.js';
 const actor = (id:number) => ({userId:0,username:'diagnostic-records',roles:[],permissions:['instance:view','collector:manage'],instanceScopes:{[id]:'read-write' as const},sessionVersion:0,requestId:`diagnostic-records:${id}`});
 async function enabled(id:number):Promise<boolean>{
   if(process.env.METRICS_COLLECTION_ENABLED!=='true')return false;
   const pool=dbConnection.getPool();if(!pool||!await assetCollectionEnabled(pool,{type:'instance',id}))return false;
   const [rows]=await pool.execute<import('mysql2/promise').RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key=?',[`instance:${id}`]);
-  const published=rows[0]?(typeof rows[0].payload==='string'?JSON.parse(rows[0].payload):rows[0].payload):null;
-  return !published || published.resolved.settings.enabled;
+  // No binding keeps the existing diagnostic default. A template row, or any
+  // unreadable snapshot, is never dereferenced as `Published` and never falls
+  // back to "enabled": only a validated legacy row can say it is enabled.
+  if(!rows[0])return true;
+  try{return readLegacyPublished(rows[0].payload).resolved.settings.enabled;}catch{return false;}
 }
 class MonitorCollector {
   start(_config?:unknown):void {}

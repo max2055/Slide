@@ -12,6 +12,7 @@ import type { PackageResult } from '../packages/runner.js';
 import type { CounterState } from '../state.js';
 import { type Published, type Ref, type Group, refKey, rule } from '../policy/model.js';
 import { resolvePolicy } from '../policy/resolver.js';
+import { bindingReadCode, readLegacyPublished, readStoredBinding, TEMPLATE_BINDING_UNSUPPORTED } from '../bindings/package-reader.js';
 import { compilePlan, hash, type CollectorPlan } from './compiler.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 
@@ -20,14 +21,37 @@ export const GLOBAL_CONCURRENCY = 4;
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
 export interface ExecutionSnapshot { published: Published; plan: CollectorPlan; states: Map<string, CounterState>; tickets?: Map<string, Ticket> }
 export interface Reservation { connection: PoolConnection; release(): Promise<void> }
+/** A scan separates legal legacy rows from rows the old single-package path must never touch. */
+export interface ScheduleScan { published: Published[]; rejected: Array<{ resource_key: string; code: string }> }
 
 /** Short transactions share the policy publication lock. Never hold a transaction during remote IO. */
 export class MysqlScheduleStore {
   constructor(readonly pool: Pool, private readonly registry: PackageRegistry,
     private readonly rolloutTicket?: Ticket | 'production') {}
+  /**
+   * A mixed scan is isolated per row: template/corrupt rows are reported with a
+   * stable code and never enter the legacy compile/enqueue/formalization path,
+   * while every legal legacy row still ticks.
+   */
+  async scan(): Promise<ScheduleScan> {
+    const [rows] = await this.pool.query<RowDataPacket[]>('SELECT resource_key, payload FROM metric_policy_bindings ORDER BY resource_key');
+    const published: Published[] = [], rejected: ScheduleScan['rejected'] = [];
+    for (const row of rows) {
+      try {
+        const stored = readStoredBinding(row.payload);
+        if (stored.source === 'template') rejected.push({ resource_key: String(row.resource_key), code: TEMPLATE_BINDING_UNSUPPORTED });
+        else published.push(stored.published);
+      } catch (error) {
+        rejected.push({ resource_key: String(row.resource_key), code: bindingReadCode(error) ?? 'BINDING_ROW_UNREADABLE' });
+      }
+    }
+    return { published, rejected };
+  }
+  /** An all-or-nothing legacy view for callers that must not skip a non-legacy row. */
   async list(): Promise<Published[]> {
-    const [rows] = await this.pool.query<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings ORDER BY resource_key');
-    return rows.map(r => decode<Published>(r.payload));
+    const scan = await this.scan();
+    if (scan.rejected.length) throw new Error(scan.rejected[0].code);
+    return scan.published;
   }
   private async transaction<T>(fn: (c: PoolConnection) => Promise<T>): Promise<T> {
     const c = await this.pool.getConnection();
@@ -40,15 +64,18 @@ export class MysqlScheduleStore {
   }
   async current(c: Pick<Pool, 'execute'> | PoolConnection, ref: Ref): Promise<Published | null> {
     const [rows] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
-    return rows[0] ? decode<Published>(rows[0].payload) : null;
+    return rows[0] ? readLegacyPublished(rows[0].payload) : null;
   }
   async enqueue(published: Published, now: number): Promise<boolean> {
-    if (published.binding.resource.type === 'instance') {
-      try { await instanceAccessLifecycle.assertAvailable(published.binding.resource.id); } catch { return false; }
+    // Direct enqueue must discern its input before any resource I/O; a template
+    // candidate or a corrupt snapshot never reaches the legacy compiler or queue.
+    const input = readLegacyPublished(published);
+    if (input.binding.resource.type === 'instance') {
+      try { await instanceAccessLifecycle.assertAvailable(input.binding.resource.id); } catch { return false; }
     }
     // Compile before any write; corrupt configuration never queues a job or advances applied revision.
-    const plan = compilePlan(this.registry, published.resolved), ref = published.binding.resource;
-    rule(plan.revision === published.binding.revision && refKey(ref) === refKey(plan.resource), 'PLAN_IDENTITY');
+    const plan = compilePlan(this.registry, input.resolved), ref = input.binding.resource;
+    rule(plan.revision === input.binding.revision && refKey(ref) === refKey(plan.resource), 'PLAN_IDENTITY');
     return this.transaction(async c => {
       const current = await this.current(c, ref);
       if (!current || current.binding.revision !== plan.revision) return false;
