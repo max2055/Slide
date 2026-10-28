@@ -62,10 +62,10 @@
         "samples[].read.attempt_id + samples[].read.status"
       ],
       "observed": {
-        "attempt_id": "trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status",
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
         "status": "succeeded"
       },
-      "reason": "该观测 source.attempt_id 对齐到的 attempt trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status 的 status"
+      "reason": "该观测 source.attempt_id 对齐到的 attempt trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status 的 status"
     },
     "转换": {
       "present": true,
@@ -99,7 +99,7 @@
       ],
       "observed": {
         "encoding": "float64",
-        "value": 204427
+        "value": 204468
       },
       "reason": "来自样本自身的 value"
     },
@@ -110,7 +110,7 @@
       "sources": [
         "attempts[].started_at"
       ],
-      "observed": "2026-10-28T08:27:18.504Z",
+      "observed": "2026-10-28T08:27:59.187Z",
       "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
     },
     "耗时": {
@@ -120,7 +120,7 @@
       "sources": [
         "attempts[].ended_at - attempts[].started_at"
       ],
-      "observed": 19,
+      "observed": 18,
       "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
     },
     "错误": {
@@ -142,7 +142,7 @@
       "metric": "db.uptime_seconds",
       "value": {
         "encoding": "float64",
-        "value": 204427
+        "value": 204468
       },
       "quality": {
         "status": "good",
@@ -150,7 +150,7 @@
       },
       "unit": "s",
       "read": {
-        "attempt_id": "trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status",
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
         "status": "succeeded"
       },
       "transform": {
@@ -167,9 +167,9 @@
       "collector_id": "mysql-status",
       "status": "succeeded",
       "error": null,
-      "started_at": "2026-10-28T08:27:18.504Z",
-      "ended_at": "2026-10-28T08:27:18.523Z",
-      "duration_ms": 19,
+      "started_at": "2026-10-28T08:27:59.187Z",
+      "ended_at": "2026-10-28T08:27:59.205Z",
+      "duration_ms": 18,
       "observation_count": 1
     }
   ],
@@ -178,7 +178,7 @@
       "metric": "db.uptime_seconds",
       "collector_id": "mysql-status",
       "read": {
-        "attempt_id": "trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status",
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
         "status": "succeeded"
       },
       "transform": {
@@ -188,7 +188,7 @@
         "input_unit": "s",
         "output_unit": "s"
       },
-      "attempt_id": "trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status",
+      "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
       "attempt_status": "succeeded",
       "quality": {
         "status": "good",
@@ -200,10 +200,10 @@
           "source": "samples[].read.attempt_id + samples[].read.status",
           "present": true,
           "observed": {
-            "attempt_id": "trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status",
+            "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
             "status": "succeeded"
           },
-          "reason": "该观测 source.attempt_id 对齐到的 attempt trial:c2655d98-1822-4f00-89c6-a29d595baca1:mysql-status 的 status"
+          "reason": "该观测 source.attempt_id 对齐到的 attempt trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status 的 status"
         },
         "转换": {
           "source": "samples[].transform.version",
@@ -225,20 +225,20 @@
           "present": true,
           "observed": {
             "encoding": "float64",
-            "value": 204427
+            "value": 204468
           },
           "reason": "来自样本自身的 value"
         },
         "时间": {
           "source": "attempts[].started_at",
           "present": true,
-          "observed": "2026-10-28T08:27:18.504Z",
+          "observed": "2026-10-28T08:27:59.187Z",
           "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
         },
         "耗时": {
           "source": "attempts[].ended_at - attempts[].started_at",
           "present": true,
-          "observed": 19,
+          "observed": 18,
           "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
         },
         "错误": {
@@ -307,9 +307,9 @@
   },
   "run": {
     "branch": "agent/15coder1/max-238",
-    "head": "ac964cc820e1d288dad698bbaacc84db2c5f0b52",
+    "head": "195a0a503a28f68dacc539029292490bd270a1ce",
     "test": "trial-items.mysql.test.ts",
-    "disposable_schema": "max238_trial_items_40176 on 127.0.0.1:13306, dropped by afterAll",
+    "disposable_schema": "max238_trial_items_40539 on 127.0.0.1:13306, dropped by afterAll",
     "source_selected": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
     "formal_tables": [
       "metric_observations",

@@ -8,12 +8,12 @@
 
 | 项 | 返回里的来源键 | 本次读到的值 | 结论 |
 |---|---|---|---|
-| 读取 | `samples[].read.attempt_id` + `samples[].read.status` | `trial:c2655d98-…:mysql-status`、`succeeded` | 成立，取该观测 `source.attempt_id` 对齐到的 attempt |
+| 读取 | `samples[].read.attempt_id` + `samples[].read.status` | `trial:31ff9bb2-…:mysql-status`、`succeeded` | 成立，取该观测 `source.attempt_id` 对齐到的 attempt |
 | 转换 | `samples[].transform.version` | `1.0.0` | 成立，等于该观测已有的 `versions.transform_version` |
 | 单位校验 | `samples[].unit_check.input_unit` + `samples[].unit_check.output_unit` | `s` / `s` | 成立，取产生该样本的采集映射上已声明的一对单位 |
-| 值 | `samples[].value` | `{ encoding: 'float64', value: 204427 }` | 成立 |
-| 时间 | `attempts[].started_at` | `2026-10-28T08:27:18.504Z` | 成立（采集器粒度） |
-| 耗时 | `attempts[].ended_at - attempts[].started_at` | `19` ms | 成立（只用现有时间戳相减） |
+| 值 | `samples[].value` | `{ encoding: 'float64', value: 204468 }` | 成立 |
+| 时间 | `attempts[].started_at` | `2026-10-28T08:27:59.187Z` | 成立（采集器粒度） |
+| 耗时 | `attempts[].ended_at - attempts[].started_at` | `18` ms | 成立（只用现有时间戳相减） |
 | 错误 | `attempts[].error` | `null`（该次尝试无错误） | 成立（可为空） |
 
 核对口径：
@@ -28,7 +28,8 @@
 | 项 | 值 |
 |---|---|
 | 分支 | `agent/15coder1/max-238` |
-| 基点 / 证据 `run.head` | `ac964cc820e1d288dad698bbaacc84db2c5f0b52` |
+| 基点 | `ac964cc820e1d288dad698bbaacc84db2c5f0b52` |
+| 证据 `run.head` | `195a0a503a28f68dacc539029292490bd270a1ce` |
 | 测试文件 | `apps/db-ops-api/src/metrics/config/trial-items.mysql.test.ts` |
 | 实现文件 | `apps/db-ops-api/src/metrics/config/service.ts`（仅 `trial()` 成功样本投影） |
 | 证据 JSON | `docs/slide/development/MAX-238/trial-items-20261028.json`（测试写出） |
