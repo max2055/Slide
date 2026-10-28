@@ -25,14 +25,17 @@ import { admin } from '../policy/test-support.js';
  * by item, the read, the transform, the unit check, the value, the time, the duration and the
  * error".
  *
- * Every item is looked up in the trial response itself (samples and their collector attempts). The
- * test deliberately does not substitute quality.status/quality.reason for read/transform/unit-check,
- * does not count the unit string as a unit check, and invents no timer. An item with no field in the
- * existing response is recorded as missing and the test fails at that item instead of passing.
+ * Every item is looked up in the trial response itself: read from samples[].read, transform from
+ * samples[].transform.version, unit check from the samples[].unit_check pair, and value/time/
+ * duration/error from the existing sample and attempt keys. The test deliberately does not
+ * substitute samples[].unit, attempt.status or quality for read/transform/unit-check, and invents
+ * no timer. An item with no field in this response is recorded as missing and the test fails at
+ * that item instead of passing.
  *
- * No product code is changed: config/service.ts, policy/*, resolver.ts, access.ts, routes, registry,
- * builtins, migrations and the frontend keep their current shape. activate is never called, formal
- * history/alerts stay empty, and the application database is read with SELECT only.
+ * The only product change is the success sample projection in MetricConfigurationService.trial();
+ * the activation predicate (config/service.ts:54-56), policy/*, resolver.ts, access.ts, routes,
+ * registry, builtins, migrations and the frontend keep their current shape. activate is never
+ * called, formal history/alerts stay empty, and the application database is read with SELECT only.
  */
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const envFile = process.env.SLIDE_DEBUG_ENV_FILE;
@@ -43,8 +46,11 @@ const formalTables = ['metric_observations', 'metric_publications', 'alerts', 'a
 const itemOrder = ['读取', '转换', '单位校验', '值', '时间', '耗时', '错误'] as const;
 type Item = (typeof itemOrder)[number];
 type Sample = { metric: { id: string; semantic_version: string }; value: unknown;
-  quality: { status: string; reason: string }; unit: string };
-type Attempt = { collector_id: string; started_at: string; ended_at?: string; status: string;
+  quality: { status: string; reason: string }; unit: string;
+  read?: { attempt_id: string; status: string };
+  transform?: { version: string };
+  unit_check?: { input_unit: string; output_unit: string } };
+type Attempt = { id: string; collector_id: string; started_at: string; ended_at?: string; status: string;
   error: string | null; observation_ids: string[] };
 type Trial = { persisted: boolean; decision: string; error?: string; samples: Sample[]; attempts: Attempt[] };
 /** Where one item was read from in the existing trial response, or why no field exists. */
@@ -176,46 +182,74 @@ describe.skipIf(!port || !envFile)('MAX-238 a trial returns read, transform, uni
 
       const duration = (attempt: Attempt) => attempt.ended_at
         ? Date.parse(attempt.ended_at) - Date.parse(attempt.started_at) : null;
-      /** Read the seven items from the sample and its attempt; null source means no such field. */
-      const verdicts = (sample: Sample, attempt: Attempt | undefined): Record<Item, ItemVerdict> => ({
-        读取: { source: null, present: false, observed: null,
-          reason: 'trial.samples/samples[].attempt 没有逐项读取结果字段；attempt.status 只是采集器级状态，不是该样本的读取结果' },
-        转换: { source: null, present: false, observed: null,
-          reason: '返回值没有 transform_version、预处理阶段或 raw→normalized 链路字段' },
-        单位校验: { source: null, present: false, observed: null,
-          reason: `samples[].unit 只是单位字符串（${sample.unit}），不是单位校验结果；返回值没有校验通过/失败字段` },
-        值: { source: 'samples[].value', present: 'value' in sample, observed: sample.value,
-          reason: '来自样本自身的 value' },
-        时间: { source: attempt ? 'attempts[].started_at' : null, present: Boolean(attempt?.started_at),
-          observed: attempt?.started_at ?? null, reason: '来自该样本对应采集 attempt 的开始时间（采集器粒度）' },
-        耗时: { source: attempt ? 'attempts[].ended_at - attempts[].started_at' : null,
-          present: attempt ? duration(attempt) !== null : false, observed: attempt ? duration(attempt) : null,
-          reason: '只用现有 attempt 已带的可相减时间戳，没有另造计时' },
-        错误: { source: attempt ? 'attempts[].error' : null, present: attempt ? 'error' in attempt : false,
-          observed: attempt?.error ?? null, reason: '来自该样本对应采集 attempt 的 error（可为空）' },
-      });
+      /** The attempt for a sample, through its own read pointer first, then its metric's collector. */
+      const attemptOf = (sample: Sample): Attempt | undefined => {
+        const read = sample.read && attempts.find(candidate => candidate.id === sample.read!.attempt_id);
+        return read ?? attempts.find(candidate =>
+          candidate.collector_id === collectorOf.get(`${sample.metric.id}@${sample.metric.semantic_version}`));
+      };
+      /** Read the seven items from this response; null source means no such field. */
+      const verdicts = (sample: Sample): Record<Item, ItemVerdict> => {
+        const attempt = attemptOf(sample), unitCheck = sample.unit_check;
+        return {
+          读取: sample.read?.attempt_id && sample.read.status
+            ? { source: 'samples[].read.attempt_id + samples[].read.status', present: true,
+              observed: { attempt_id: sample.read.attempt_id, status: sample.read.status },
+              reason: `该观测 source.attempt_id 对齐到的 attempt ${sample.read.attempt_id} 的 status` }
+            : { source: null, present: false, observed: null,
+              reason: '样本没有 read.attempt_id/read.status；attempt.status 只是采集器级状态，不能代替逐项读取' },
+          转换: sample.transform?.version
+            ? { source: 'samples[].transform.version', present: true, observed: sample.transform.version,
+              reason: '该观测已有的 versions.transform_version' }
+            : { source: null, present: false, observed: null,
+              reason: '样本没有 transform.version；quality 或采集器状态不能代替转换版本' },
+          单位校验: unitCheck?.input_unit && unitCheck.output_unit
+            ? { source: 'samples[].unit_check.input_unit + samples[].unit_check.output_unit',
+              present: true, observed: unitCheck,
+              reason: '产生该样本的采集映射上已声明的一对输入/输出单位；不是 samples[].unit' }
+            : { source: null, present: false, observed: null,
+              reason: `样本没有 unit_check；samples[].unit 只是单位字符串（${sample.unit}），不能代替校验` },
+          值: { source: 'samples[].value', present: 'value' in sample, observed: sample.value,
+            reason: '来自样本自身的 value' },
+          时间: { source: attempt ? 'attempts[].started_at' : null, present: Boolean(attempt?.started_at),
+            observed: attempt?.started_at ?? null, reason: '来自该样本对应采集 attempt 的开始时间（采集器粒度）' },
+          耗时: { source: attempt ? 'attempts[].ended_at - attempts[].started_at' : null,
+            present: attempt ? duration(attempt) !== null : false, observed: attempt ? duration(attempt) : null,
+            reason: '只用现有 attempt 已带的可相减时间戳，没有另造计时' },
+          错误: { source: attempt ? 'attempts[].error' : null, present: attempt ? 'error' in attempt : false,
+            observed: attempt?.error ?? null, reason: '来自该样本对应采集 attempt 的 error（可为空）' },
+        };
+      };
 
       const perSample: Record<string, unknown>[] = [];
       for (const sample of samples) {
         const key = `${sample.metric.id}@${sample.metric.semantic_version}`;
         const collectorId = collectorOf.get(key);
-        const attempt = attempts.find(candidate => candidate.collector_id === collectorId);
-        const items = verdicts(sample, attempt);
+        const attempt = attemptOf(sample);
+        const items = verdicts(sample);
         perSample.push({ metric: sample.metric.id, collector_id: collectorId ?? null,
-          attempt_status: attempt?.status ?? null, quality: sample.quality, unit: sample.unit,
+          read: sample.read ?? null, transform: sample.transform ?? null, unit_check: sample.unit_check ?? null,
+          attempt_id: attempt?.id ?? null, attempt_status: attempt?.status ?? null,
+          quality: sample.quality, unit: sample.unit,
           items: Object.fromEntries(itemOrder.map(item => [item, items[item]])) });
       }
-      // Aggregate per item: present only when every sample's item is readable.
+      // Each item must be readable from at least one real sample; the three projected items must
+      // additionally be readable together on the same sample.
       for (const item of itemOrder) {
         const entries = perSample.map(entry => (entry.items as Record<string, ItemVerdict>)[item]);
+        const readable = entries.filter(entry => entry.present);
         itemProof[item] = {
-          present: entries.length > 0 && entries.every(entry => entry.present),
-          sources: [...new Set(entries.map(entry => entry.source))],
-          sample_value: entries[0]?.observed ?? null,
-          reason: entries[0]?.reason ?? '没有样本可核对',
+          present: entries.length > 0 && readable.length > 0,
+          present_samples: readable.length, sample_count: entries.length,
+          sources: [...new Set(readable.map(entry => entry.source))],
+          observed: readable[0]?.observed ?? null,
+          reason: readable.length === entries.length ? readable[0]?.reason ?? null
+            : (entries.find(entry => !entry.present)?.reason ?? '没有样本可核对'),
         };
       }
       const missing = itemOrder.filter(item => (itemProof[item] as { present: boolean }).present === false);
+      const projectedTogether = samples.filter(sample => sample.read?.attempt_id && sample.read.status
+        && sample.transform?.version && sample.unit_check?.input_unit && sample.unit_check.output_unit).length;
 
       const rowsAfter = await formalRows();
       const sourceAfter = await liveSnapshot();
@@ -227,8 +261,11 @@ describe.skipIf(!port || !envFile)('MAX-238 a trial returns read, transform, uni
       evidence.response_shape = { top_level_keys: topKeys, sample_keys: sampleKeys, attempt_keys: attemptKeys };
       evidence.items = itemProof;
       evidence.missing_items = missing;
+      evidence.aggregation = '每项要求至少一条实际样本可读；读取/转换/单位校验还要求落在同一条样本上';
+      evidence.projected_together_samples = projectedTogether;
       evidence.samples = samples.slice(0, 20).map(sample => ({ metric: sample.metric.id,
-        value: sample.value, quality: sample.quality, unit: sample.unit }));
+        value: sample.value, quality: sample.quality, unit: sample.unit,
+        read: sample.read ?? null, transform: sample.transform ?? null, unit_check: sample.unit_check ?? null }));
       evidence.attempts = attempts.map(attempt => ({ collector_id: attempt.collector_id, status: attempt.status,
         error: attempt.error, started_at: attempt.started_at, ended_at: attempt.ended_at ?? null,
         duration_ms: duration(attempt), observation_count: attempt.observation_ids.length }));
@@ -236,8 +273,10 @@ describe.skipIf(!port || !envFile)('MAX-238 a trial returns read, transform, uni
       evidence.formal_rows = { before: rowsBefore, after: rowsAfter, zero: zeroRows };
       evidence.readonly = { pre: sourceBefore, post: sourceAfter,
         unchanged: JSON.stringify(sourceBefore) === JSON.stringify(sourceAfter) };
-      evidence.boundaries = { activate_called: false, service_ts_changed: false,
-        activation_predicate_changed: false, required_metric_list_added: false,
+      evidence.boundaries = { activate_called: false,
+        service_ts_changed: 'trial() success sample projection only (read/transform/unit_check)',
+        activation_predicate_changed: false, activation_predicate_lines: 'config/service.ts:54-56 unchanged',
+        required_metric_list_added: false,
         target_writes: 'SELECT only; no INSERT/UPDATE/DELETE on the application database',
         stop_write_copy_switch_rollback_unbind: false };
 
@@ -246,9 +285,12 @@ describe.skipIf(!port || !envFile)('MAX-238 a trial returns read, transform, uni
       expect(attempts.length, 'at least one collection attempt must be returned by the existing trial').toBeGreaterThan(0);
       expect(trial.persisted, 'trial must not persist').toBe(false);
       expect(rowsAfter, 'the trial must not write formal history or alerts').toEqual(zeroRows);
-      // 5. Every one of the seven items must be readable from this response. This package stops at
-      // the first missing item instead of treating it as passed.
-      expect(missing, `items with no field in the existing trial response: ${missing.join('、')}`).toEqual([]);
+      // 5. Every one of the seven items must be readable from this response, and read/transform/
+      // unit check must come out of one actual sample. This package stops at the first missing item
+      // instead of treating it as passed.
+      expect(missing, `items with no field in this trial response: ${missing.join('、')}`).toEqual([]);
+      expect(projectedTogether, 'at least one actual sample must read read, transform and unit_check together')
+        .toBeGreaterThan(0);
     } catch (error) {
       const caught = error as { name?: string; message?: string };
       evidence.error = { name: caught.name ?? 'Error', message: String(caught.message ?? error) };

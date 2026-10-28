@@ -117,10 +117,25 @@ export class MetricConfigurationService {
       await check();
       await access.assertCurrent?.();
       rule(result.observations.length <= s.max_series_per_resource, 'TRIAL_SERIES_LIMIT');
+      const release = this.registry.get(next.binding.package);
+      // Unit pairs already declared by the mapping that produced each sample; never synthesized.
+      const unitChecks = new Map<string, { input_unit: string; output_unit: string }>();
+      for (const collector of release.package.collectors) for (const mapping of collector.mappings)
+        unitChecks.set(`${collector.id}|${mapping.metric.id}@${mapping.metric.semantic_version}`,
+          { input_unit: mapping.input_unit, output_unit: mapping.output_unit });
+      const attemptsById = new Map(result.attempts.map(attempt => [attempt.id, attempt]));
       return { trial: true, persisted: false, decision: result.decision, attempts: result.attempts,
         capabilities: result.capabilities, applicability: checkApplicability(this.registry.get(next.binding.package).package, access.resource, new Date().toISOString()), lifecycle_evidence: access.evidence.counter || access.evidence.host_counter_epochs || access.evidence.snmp ? 'available' : 'unavailable',
-        samples: result.observations.map(o => ({ metric: o.observation.metric,
-          value: o.observation.value, quality: o.observation.quality, unit: o.observation.unit })) };
+        samples: result.observations.map(({ observation: o }) => {
+          // Read: the attempt this observation's own source points at; no collector-wide status is copied.
+          const attempt = attemptsById.get(o.source.attempt_id)
+            ?? result.attempts.find(candidate => candidate.observation_ids.includes(o.id));
+          const units = unitChecks.get(`${o.source.collector_id}|${o.metric.id}@${o.metric.semantic_version}`);
+          return { metric: o.metric, value: o.value, quality: o.quality, unit: o.unit,
+            ...(attempt ? { read: { attempt_id: attempt.id, status: attempt.status } } : {}),
+            ...(o.versions.transform_version ? { transform: { version: o.versions.transform_version } } : {}),
+            ...(units ? { unit_check: units } : {}) };
+        }) };
     } catch (error) {
       if (controller.signal.aborted) return { trial: true, persisted: false, decision: 'failed', error: 'timeout', attempts: [], capabilities: [], samples: [] };
       if (error instanceof AdapterError) return { trial: true, persisted: false, decision: 'failed', error: error.code, attempts: [], capabilities: [], samples: [] };
