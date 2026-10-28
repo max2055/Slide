@@ -1,0 +1,9 @@
+fix(max238): document the operation-key lookup in the public path manifest
+
+The static manifest asserted 98 paths while buildOpenApiDocument already
+generated 99: the registered GET /api/metrics/config/resources/{type}/{id}
+/operations/{key} route was missing. Add it in sorted position and pin the
+operationId, bearer security, type/id/key parameters, MetricOperationState
+response and documented error set against the generated contract.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>

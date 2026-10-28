@@ -1,0 +1,2 @@
+- ROLLOUT-CONTRACT-REGRESSION-R1（提交 6）：公开路径静态 manifest 补上已注册的 `GET /api/metrics/config/resources/{type}/{id}/operations/{key}`（排序位于 `/migration` 与 `/recommendations` 之间），口径 99 条与生成物一致；新增最小断言固定 operationId、bearer security、`type`/`id`/`key` 参数、`MetricOperationState` 响应与 400/401/403/404/503 文档集合。`public-api.test.ts` 由 9 passed / 1 failed 转为 10 passed / 0 failed；`contracts:check`、`tsc --noEmit` exit 0；相关 `metrics/config` routes、metrics contracts、status、idempotency-R2 87 passed。本提交只改测试，生成物无漂移。
+
