@@ -397,6 +397,21 @@ export class MysqlScheduleStore {
     return schedule.length === 1 ? current : null;
   }
 
+  /**
+   * The same live fence outside a write transaction, for every point where a
+   * template execution is about to resolve a credential or issue another target
+   * read. A stale job may lose its lease, its revision or its collection switch
+   * after `beginTemplate`; the final commit refusing the result cannot take back
+   * a request that was already sent.
+   */
+  async assertCurrentTemplate(ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext): Promise<void> {
+    await this.transaction(async c => {
+      const current = await this.currentTemplate(c, ref);
+      rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
+      rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+    });
+  }
+
   /** Fenced commit of template observations: formal normalized write, attempts and cadence. */
   async commitTemplate(snapshot: TemplateExecutionSnapshot,
     results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>,

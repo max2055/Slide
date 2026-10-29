@@ -90,6 +90,9 @@ export class MetricScheduler {
       const plan = current.pending.plan;
       timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), plan.settings.timeout_ms);
       const settings = plan.settings;
+      // Resolving a credential can wait on a lock too: the live fence must hold
+      // before it starts, not only at the commit that refuses a late result.
+      await this.store.assertCurrentTemplate(ref, revision, job, executionContext);
       const access: Awaited<ReturnType<CollectorAccess['resolve']>> = settings.enabled ? await this.access.resolve(ref) : {
         resource: { type: ref.type, id: String(ref.id), attributes: {} }, credential_ref: 'credential:disabled', evidence: {},
         resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
@@ -98,9 +101,13 @@ export class MetricScheduler {
       signal.throwIfAborted();
       const snapshot = await this.store.beginTemplate(ref, revision, job, executionContext, this.clock());
       if (!snapshot) return;
+      // Before every request, retry and post-IO boundary: the same live template
+      // job fence the legacy path applies, so a stale job cannot keep reading the
+      // target even though its eventual commit would be refused.
       const check = async () => {
         signal.throwIfAborted();
         await reservation.connection.ping();
+        await this.store.assertCurrentTemplate(ref, revision, job, executionContext);
         await access.assertCurrent?.();
         signal.throwIfAborted();
       };

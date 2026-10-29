@@ -31,7 +31,9 @@ import {
 } from '../../contracts/metrics/templates.js';
 import { checkApplicability, type ApplicabilityCheck } from '../packages/applicability.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
-import { canManageResource, canReadResource, MysqlResourceRelationStore } from '../../resources/resource-service.js';
+import {
+  canManageResource, canReadResource, MysqlResourceRelationStore, type ResourceRelationStore,
+} from '../../resources/resource-service.js';
 import { configurationInventory } from '../config/inventory.js';
 import type { CollectorAccess } from '../scheduler/service.js';
 import { MysqlScheduleStore } from '../scheduler/store.js';
@@ -49,6 +51,8 @@ import { BindingTransactionError } from '../bindings/transaction-guard.js';
 import type { BindingApplicationOutcome } from '../bindings/transaction-adapter.js';
 import type { BindingSqlConnection, TrustedBindingInputs } from '../bindings/mysql-host.js';
 import { MySqlTemplateRepository, type TemplateSqlConnection, type TemplateSqlPool } from './mysql-repository.js';
+import type { TemplateRepository } from './repository.js';
+import { repinTemplateVersion, type RepinResult } from './repin.js';
 import { runPackage, type PackageResult } from '../packages/runner.js';
 
 export type TemplateBindingErrorCode =
@@ -180,6 +184,40 @@ export function poolTemplatePort(pool: Pool): MySqlTemplateRepository {
   return new MySqlTemplateRepository(pool as unknown as TemplateSqlPool);
 }
 
+/**
+ * One transaction over the whole re-pin publication sequence. Every accepted
+ * repository operation already runs on the connection it is given; sharing one
+ * connection means a refusal at any boundary rolls back the item versions, the
+ * draft, the version, the current pointer and their audit chain together.
+ */
+export interface TemplatePublication {
+  transaction<T>(run: (repository: TemplateRepository) => Promise<T>): Promise<T>;
+}
+
+export function mysqlTemplatePublication(pool: Pool): TemplatePublication {
+  return {
+    async transaction<T>(run: (repository: TemplateRepository) => Promise<T>): Promise<T> {
+      const connection = await (pool as unknown as TemplateSqlPool).getConnection();
+      // Only a confirmed commit or rollback makes the connection reusable.
+      let reusable = false;
+      try {
+        await connection.beginTransaction();
+        try {
+          const result = await run(new MySqlTemplateRepository(connectionTemplatePool(connection)));
+          await connection.commit();
+          reusable = true;
+          return result;
+        } catch (error) {
+          try { await connection.rollback(); reusable = true; } catch { /* discard instead */ }
+          throw error;
+        }
+      } finally {
+        if (reusable) connection.release(); else connection.destroy();
+      }
+    },
+  };
+}
+
 export interface TemplateBindingDeps {
   readonly pool: () => Pool | null;
   readonly registry: PackageRegistry;
@@ -193,7 +231,13 @@ export interface TemplateBindingDeps {
    * of re-checking the snapshot. Without it the service fails closed.
    */
   readonly reload?: (actor: ActorContext) => Promise<ActorContext>;
+  /** The accepted resource relation store; tests inject a controlled boundary. */
+  readonly relations?: ResourceRelationStore;
+  /** Where a re-pin publishes; defaults to one MySQL transaction on `pool`. */
+  readonly templatePublication?: TemplatePublication;
 }
+
+export type TemplateRepinResult = RepinResult | { unchanged: true; template_id: string; version: number };
 
 interface TrustedContext {
   resource: Resource;
@@ -203,9 +247,11 @@ interface TrustedContext {
 }
 
 export class TemplateBindingService {
-  private readonly relations = new MysqlResourceRelationStore();
+  private readonly relations: ResourceRelationStore;
 
-  constructor(private readonly deps: TemplateBindingDeps) {}
+  constructor(private readonly deps: TemplateBindingDeps) {
+    this.relations = deps.relations ?? new MysqlResourceRelationStore();
+  }
 
   private pool(): Pool {
     const pool = this.deps.pool();
@@ -349,9 +395,13 @@ export class TemplateBindingService {
    * release at a time through the existing runner, restricted to the plan's own
    * collector and metric selection; nothing is persisted.
    */
-  private async execute(ref: Ref, plan: TemplateCollectionPlan, revision: number) {
+  private async execute(ref: Ref, plan: TemplateCollectionPlan, revision: number,
+    authorize: () => Promise<void>) {
     const access = await this.deps.access.resolve(ref);
     if (access.resource.type !== ref.type || access.resource.id !== String(ref.id)) fail('TEMPLATE_BINDING_TRIAL_FAILED', 422);
+    // Resolving the credential may have waited; the grant that read it is not
+    // necessarily the grant that issues the first request.
+    await authorize();
     const settings = plan.settings;
     const results: Array<{ release_ref: string; result: PackageResult }> = [];
     for (const release of plan.releases) {
@@ -364,8 +414,12 @@ export class TemplateBindingService {
         ...access, binding_id: refKey(ref), attempt_id: `template-trial:${refKey(ref)}:${revision}:${release.release_ref}`,
         config_revision: revision, observed_at: this.now().toISOString(),
         clock: () => this.now().toISOString(), collector_ids: release.collector_ids, metric_keys: release.metric_keys,
-        before_request: async () => { await access.assertCurrent?.(); },
+        // Every actual read (including an adapter's additional reads and retries)
+        // runs on a freshly re-read grant, never on the one that started the trial.
+        before_request: async () => { await authorize(); await access.assertCurrent?.(); },
       });
+      // After the IO, before any further release can reach the target.
+      await authorize();
       results.push({ release_ref: release.release_ref, result });
     }
     return { results, access };
@@ -381,15 +435,19 @@ export class TemplateBindingService {
 
     const reservation = await new MysqlScheduleStore(this.pool(), this.deps.registry).reserve(ref);
     if (!reservation) fail('TEMPLATE_BINDING_BUSY', 409);
+    // Taking a lock, waiting on a resolution or issuing a read can all span a
+    // revocation; every one of them re-reads the trusted session and boundary.
+    const authorize = async () => { await this.assertAccess(await this.live(actor), ref, true); };
     let executed: Awaited<ReturnType<TemplateBindingService['execute']>>;
     try {
-      // Taking the resource lock can wait; the trial's remote reads must run on
-      // the grant that holds now, not on the one the request arrived with.
-      await this.assertAccess(await this.live(actor), ref, true);
-      executed = await this.execute(ref, plan, candidate.revision);
+      await authorize();
+      executed = await this.execute(ref, plan, candidate.revision, authorize);
     } finally {
       await reservation!.release();
     }
+    // The receipt is the persisted result of those reads: never write it on a
+    // grant that no longer holds.
+    await authorize();
 
     type Computation = PackageResult['observations'][number];
     const observations = new Map<string, Computation>();
@@ -533,6 +591,28 @@ export class TemplateBindingService {
       },
       templateVersions: () => versions,
     };
+  }
+
+  /**
+   * Publish a compatible version for this resource. The whole sequence is one
+   * transaction, and the live grant is re-read after the read-only analysis and
+   * before every write (item version, draft, version, current pointer), so a
+   * revocation leaves no partial publication behind.
+   */
+  async repin(actor: ActorContext, ref: Ref, templateId: string): Promise<TemplateRepinResult> {
+    await this.assertAccess(actor, ref, true);
+    const authorize = async (): Promise<ActorContext> => {
+      const current = await this.live(actor);
+      await this.assertAccess(current, ref, true);
+      return current;
+    };
+    const resource = await this.inventory(ref);
+    if (!resource) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
+    const publication = this.deps.templatePublication ?? mysqlTemplatePublication(this.pool());
+    return publication.transaction(repository => repinTemplateVersion({
+      repository, registry: this.deps.registry, templateId, resource,
+      at: this.now().toISOString(), requestId: actor.requestId, actor, authorize,
+    }));
   }
 
   /** Read one binding row through the shared codec; a template row keeps its own shape. */

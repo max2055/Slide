@@ -31,8 +31,7 @@ import { metricJsonSchemas } from '../../contracts/metrics/public-api.js';
 import {
   TemplateBindingService, poolTemplatePort, templateBindingErrorStatus,
 } from './binding-service.js';
-import { repinTemplateVersion, templatePinOf, RepinError } from './repin.js';
-import { configurationInventory } from '../config/inventory.js';
+import { templatePinOf, RepinError } from './repin.js';
 
 const registry = createConfigurationRegistry();
 const productionPool = (): Pool | null => dbConnection.getPool();
@@ -158,20 +157,15 @@ export async function registerMetricTemplateRoutes(
       const actor = actorOf(request);
       if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
       if (!hasPermission(new Set(actor.permissions), 'metric:manage')) return reply.code(403).send({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
-      const pool = productionPool();
-      if (!pool) return reply.code(503).send({ error: 'TEMPLATE_BINDING_STORE_UNAVAILABLE' });
       const input = z.strictObject({ resource: RefSchema }).safeParse(request.body);
       if (!input.success) return reply.code(400).send({ error: 'TEMPLATE_BINDING_INPUT_INVALID' });
       try {
         // Re-pinning publishes a new global template version on the strength of
         // this resource's applicability: the caller must manage that resource,
-        // not merely hold `metric:manage` over some scope.
-        await service.assertAccess(actor, input.data.resource, true);
-        const resource = await configurationInventory(input.data.resource);
-        const result = await repinTemplateVersion({
-          repository: poolTemplatePort(pool), registry, templateId: (request.params as { templateId: string }).templateId,
-          resource, requestId: actor.requestId, actor,
-        });
+        // not merely hold `metric:manage` over some scope. The service re-reads
+        // that live grant at every publication boundary.
+        const result = await service.repin(actor, input.data.resource,
+          (request.params as { templateId: string }).templateId);
         if ('unchanged' in result) return { unchanged: true, template_id: result.template_id, version: result.version };
         return {
           unchanged: false, template_id: result.template_id, from_version: result.from_version,
