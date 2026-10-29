@@ -45,6 +45,7 @@ import { buildTemplateCollectionPlan, type TemplateCollectionPlan } from '../bin
 import { issueTrialReceipt, type TrialReceiptItem } from '../bindings/trial-receipt-issuer.js';
 import { writeTrialReceipt } from '../bindings/trial-receipt-writer.js';
 import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
+import { BindingTransactionError } from '../bindings/transaction-guard.js';
 import type { BindingApplicationOutcome } from '../bindings/transaction-adapter.js';
 import type { BindingSqlConnection, TrustedBindingInputs } from '../bindings/mysql-host.js';
 import { MySqlTemplateRepository, type TemplateSqlConnection, type TemplateSqlPool } from './mysql-repository.js';
@@ -186,6 +187,12 @@ export interface TemplateBindingDeps {
   readonly access: CollectorAccess;
   readonly clock?: () => Date;
   readonly inventory?: (ref: Ref) => Promise<Resource | null>;
+  /**
+   * The live actor source (the accepted session re-read). A request actor is a
+   * snapshot; every boundary that can wait for a lock re-reads it here instead
+   * of re-checking the snapshot. Without it the service fails closed.
+   */
+  readonly reload?: (actor: ActorContext) => Promise<ActorContext>;
 }
 
 interface TrustedContext {
@@ -217,6 +224,17 @@ export class TemplateBindingService {
     RefSchema.parse(ref);
     if (!(write ? canManageResource(actor, ref) : canReadResource(actor, ref))) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
     if (!await this.relations.exists(ref)) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
+  }
+
+  /**
+   * The live grant at a boundary that waited (lock, admission, remote IO). It is
+   * never answered from the actor the request arrived with: session revocation,
+   * a changed permission set and a narrowed resource boundary are all read again.
+   */
+  private async live(actor: ActorContext): Promise<ActorContext> {
+    const reload = this.deps.reload;
+    if (!reload) fail('TEMPLATE_BINDING_STORE_UNAVAILABLE', 503);
+    return reload(actor);
   }
 
   /** The exact candidate a request names; `revision` is the base, never the target. */
@@ -365,6 +383,9 @@ export class TemplateBindingService {
     if (!reservation) fail('TEMPLATE_BINDING_BUSY', 409);
     let executed: Awaited<ReturnType<TemplateBindingService['execute']>>;
     try {
+      // Taking the resource lock can wait; the trial's remote reads must run on
+      // the grant that holds now, not on the one the request arrived with.
+      await this.assertAccess(await this.live(actor), ref, true);
       executed = await this.execute(ref, plan, candidate.revision);
     } finally {
       await reservation!.release();
@@ -449,14 +470,22 @@ export class TemplateBindingService {
     const candidate = this.candidate(ref, body);
     const input = body as { receipt_id?: unknown; caller_key?: unknown };
     if (typeof input.receipt_id !== 'string' || typeof input.caller_key !== 'string') fail('TEMPLATE_BINDING_INPUT_INVALID');
+    // A session revoked inside the locked boundary is re-authentication, not a
+    // generic host failure; keep that error to surface it unchanged.
+    let authError: unknown;
     const store = new MysqlPolicyStore(this.deps.pool, {
-      trustedInputs: connection => this.trustedInputs(connection, actor, candidate),
+      trustedInputs: connection => this.trustedInputs(connection, actor, candidate, error => { authError = error; }),
       trustedNow: () => this.now().toISOString(),
       registry: this.deps.registry,
     });
-    return store.templateGateway().apply({
-      resource: ref, candidate, receipt_id: input.receipt_id, caller_key: input.caller_key,
-    });
+    try {
+      return await store.templateGateway().apply({
+        resource: ref, candidate, receipt_id: input.receipt_id, caller_key: input.caller_key,
+      });
+    } catch (error) {
+      if (authError !== undefined) throw authError;
+      throw error;
+    }
   }
 
   /**
@@ -464,16 +493,23 @@ export class TemplateBindingService {
    * immutable versions: the converted templates never contain an item that was
    * not resolved to a collectable capability, so all of them are required.
    */
-  private trustedInputs(connection: BindingSqlConnection, actor: ActorContext, candidate: ResourceBindingCandidate): TrustedBindingInputs {
+  private trustedInputs(connection: BindingSqlConnection, actor: ActorContext, candidate: ResourceBindingCandidate,
+    onAuthError?: (error: unknown) => void): TrustedBindingInputs {
     const versions = new MySqlTemplateRepository(connectionTemplatePool(connection));
     return {
       authorize: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const context = await this.contextOn(connection, target, candidate.group_id);
+        // The host calls this after its own row lock, and again after every
+        // asynchronous read. Both answers come from a live grant, never from the
+        // actor snapshot that opened the request.
+        let current: ActorContext;
+        try { current = await this.live(actor); }
+        catch (error) { onAuthError?.(error); throw error; }
+        const live = await this.contextOn(connection, target, candidate.group_id);
         return {
-          allowed: canManageResource(actor, target),
+          allowed: canManageResource(current, target),
           cancelled: false,
-          dependency_digest: this.dependencyDigest(context, credentialReference(target)),
+          dependency_digest: this.dependencyDigest(live, credentialReference(target)),
         };
       },
       applicationContext: async resource => {
@@ -535,5 +571,9 @@ export class TemplateBindingService {
 export const templateBindingErrorStatus = (error: unknown): { status: number; code: string } | null => {
   if (error instanceof TemplateBindingError) return { status: error.status, code: error.code };
   if (error instanceof PolicyError) return { status: error.status, code: error.code };
+  // The accepted guard's refusal is a permission answer for this resource.
+  if (error instanceof BindingTransactionError && error.code === 'TRANSACTION_FORBIDDEN') {
+    return { status: 403, code: 'TEMPLATE_BINDING_FORBIDDEN' };
+  }
   return null;
 };

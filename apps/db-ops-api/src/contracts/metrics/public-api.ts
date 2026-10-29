@@ -3,6 +3,12 @@ import { metricBulkSchemas, metricBulkPaths } from './bulk.js';
 import { MetricConfigurationStatusSchema } from './configuration-status.js';
 import { PackageReleaseSchema } from '../../metrics/packages/model.js';
 import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/policy/model.js';
+import {
+  TemplateBindingApplyBodySchema, TemplateBindingApplyResponseSchema, TemplateBindingBodySchema,
+  TemplateBindingPreviewSchema, TemplateBindingStatusSchema, TemplateCatalogSchema,
+  TemplateRepinBodySchema, TemplateRepinResponseSchema, TemplateTrialBodySchema, TemplateTrialResponseSchema,
+  TemplateVersionDetailSchema,
+} from './template-bindings.js';
 
 const metric = z.strictObject({ id: z.string(), semantic_version: z.string() });
 export const MetricRecommendationsSchema = z.strictObject({
@@ -30,6 +36,17 @@ export const metricPublicSchemas = {
   MetricRecommendations: MetricRecommendationsSchema,
   MetricPolicyGroups: MetricPolicyGroupsSchema,
   MetricOperationState: MetricOperationStateSchema,
+  TemplateCatalog: TemplateCatalogSchema,
+  TemplateVersionDetail: TemplateVersionDetailSchema,
+  TemplateRepinResponse: TemplateRepinResponseSchema,
+  TemplateRepinBody: TemplateRepinBodySchema,
+  TemplateBindingStatus: TemplateBindingStatusSchema,
+  TemplateBindingPreview: TemplateBindingPreviewSchema,
+  TemplateTrialResponse: TemplateTrialResponseSchema,
+  TemplateBindingApplyResponse: TemplateBindingApplyResponseSchema,
+  TemplateBindingRequest: TemplateBindingBodySchema,
+  TemplateTrialRequest: TemplateTrialBodySchema,
+  TemplateBindingApplyRequest: TemplateBindingApplyBodySchema,
 };
 export const metricJsonSchemas = Object.fromEntries(Object.entries(metricPublicSchemas).map(([name, schema]) =>
   [name, { ...z.toJSONSchema(schema, { unrepresentable: 'throw' }), $id: name }]));
@@ -65,4 +82,41 @@ export const metricPublicPaths = {
     parameters: [{ name: 'query', in: 'query', schema: { type: 'string', maxLength: 128 } }],
     description: 'At most 100 visible groups; every member must be readable. Empty groups require admin. Management permission is evaluated separately.',
     responses: { '200': response('MetricPolicyGroups'), ...errors } } },
+  '/api/metrics/templates': { get: { operationId: 'listMetricTemplates', security: [{ bearerAuth: [] }],
+    description: 'Persisted native template identities and their immutable versions. Requires metric:view; read-only, private/no-store.',
+    responses: { '200': response('TemplateCatalog'), ...errors } } },
+  '/api/metrics/templates/{templateId}/versions/{version}': { get: { operationId: 'getMetricTemplateVersion',
+    security: [{ bearerAuth: [] }],
+    parameters: [{ name: 'templateId', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } },
+      { name: 'version', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }],
+    description: 'One immutable published version with its composition, items and provenance. Requires metric:view; a missing version is 404, never a synthesized one.',
+    responses: { '200': response('TemplateVersionDetail'), ...errors } } },
+  '/api/metrics/templates/{templateId}/repin': { post: { operationId: 'repinMetricTemplateVersion',
+    security: [{ bearerAuth: [] }],
+    parameters: [{ name: 'templateId', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } }],
+    description: 'Publishes one new immutable template version whose items pin an installed release that applies to the named resource. Requires metric:manage and live management permission on that resource; the published audit records the real caller. Never edits a published version, never relaxes applicability and never widens permission.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateRepinBody') } } },
+    responses: { '200': response('TemplateRepinResponse'), ...errors,
+      '422': { description: 'No compatible release, or the item semantics changed; nothing was published' } } } },
+  '/api/metrics/template-bindings/{type}/{id}': { get: { operationId: 'getMetricTemplateBinding',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Binding source, pending template plan, application status, effective revision and pins as independent facts. Requires read access to the resource; a failure never becomes "unbound".',
+    responses: { '200': response('TemplateBindingStatus'), ...errors } } },
+  '/api/metrics/template-bindings/{type}/{id}/preview': { post: { operationId: 'previewMetricTemplateBinding',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Walks preflight → compile → resolve → plan for the exact pinned versions and reports every item decision with its release and applicability to the live target. Requires live management permission on this resource. Nothing is persisted.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateBindingRequest') } } },
+    responses: { '200': response('TemplateBindingPreview'), ...errors, '422': { description: 'Not executable for this target' } } } },
+  '/api/metrics/template-bindings/{type}/{id}/trial': { post: { operationId: 'trialMetricTemplateBinding',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Real read-only collection of the plan through the accepted collector access, written only as a v2 trial receipt: never a formal observation, history row or alert. Live permission is re-read after the resource lock and before any remote request. Busy is 409; a mandatory item that was not proven read/transform/unit is an explicit optional exclusion, never a pass.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateTrialRequest') } } },
+    responses: { '200': response('TemplateTrialResponse'), ...errors,
+      '409': { description: 'Trial busy or receipt id collision' }, '422': { description: 'Not executable or trial failed' } } } },
+  '/api/metrics/template-bindings/{type}/{id}/apply': { post: { operationId: 'applyMetricTemplateBinding',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Stages one pending binding revision through the accepted host: live authorization (re-read after the policy lock), CAS on the trusted revision, operation key and audit in one transaction. An already committed caller key replays its receipt without a second revision; an unknown outcome must be looked up, never resent. A committed staging is reported as pending application until a fenced worker applies it.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateBindingApplyRequest') } } },
+    responses: { '200': response('TemplateBindingApplyResponse'), ...errors,
+      '409': { description: 'Revision or operation-key conflict; no implicit retry' }, '422': { description: 'Receipt invalid, expired or consumed' } } } },
 };
