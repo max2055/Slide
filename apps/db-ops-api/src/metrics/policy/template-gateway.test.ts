@@ -640,8 +640,12 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     const { db } = await seedApplied();
     const schedulerStore = new MysqlScheduleStore(asPool(new FakePool(db)), fixtureRegistry());
     const scan = await schedulerStore.scan();
+    // A template row is its own scan class: it is executed from its pending plan
+    // and never enters the legacy `published` list.
     expect(scan.published).toEqual([]);
-    expect(scan.rejected).toEqual([{ resource_key: RESOURCE_KEY, code: TEMPLATE_BINDING_UNSUPPORTED }]);
+    expect(scan.rejected).toEqual([]);
+    expect(scan.templates.map(entry => entry.resource_key)).toEqual([RESOURCE_KEY]);
+    expect(scan.templates[0].decoded.binding.revision).toBe(5);
     expect(await rejection(schedulerStore.list())).toBe(TEMPLATE_BINDING_UNSUPPORTED);
     expect(await rejection(schedulerStore.current(asPool(new FakePool(db)), RESOURCE))).toBe(TEMPLATE_BINDING_UNSUPPORTED);
 
@@ -655,7 +659,8 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     // tick() isolates the rejected row and a stale enqueue instead of throwing.
     const record = vi.spyOn(platformLogs, 'record');
     const stub = {
-      scan: async () => ({ published: [legacyPublished() as never], rejected: [{ resource_key: RESOURCE_KEY, code: TEMPLATE_BINDING_UNSUPPORTED }] }),
+      scan: async () => ({ published: [legacyPublished() as never], templates: [],
+        rejected: [{ resource_key: RESOURCE_KEY, code: TEMPLATE_BINDING_UNSUPPORTED }] }),
       enqueue: async () => { throw new TemplateBindingUnsupportedError(); },
     } as unknown as MysqlScheduleStore;
     expect(await new MetricScheduler(stub, fixtureRegistry(), {} as never, () => 0).tick()).toBe(0);
@@ -667,6 +672,7 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     const jobStore = {
       pool: {},
       reserve: async () => ({ connection: { ping: async () => undefined }, release: async () => undefined }),
+      currentTemplate: async () => null,
       current: async () => { throw new TemplateBindingUnsupportedError(); },
       event: async (_ref: unknown, _revision: number, _job: string, code: string) => { events.push(code); },
     } as unknown as MysqlScheduleStore;
@@ -687,8 +693,9 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     const formalization = new MetricFormalization(asPool(new FakePool(db)), fixtureRegistry());
     await formalization.reconcile(RESOURCE, 4);
     await formalization.reconcile(RESOURCE, 4);
-    // The template row is not cached as a successfully reconciled package row.
-    expect(db.log.filter(entry => entry.at === 'bindingRead').length - bindingReads).toBe(2);
+    // The template row is now a formalization candidate (skipped without a
+    // committed sample batch) and its fingerprint is cached like the package path.
+    expect(db.log.filter(entry => entry.at === 'bindingRead').length - bindingReads).toBe(1);
 
     expect(await rejection(new MysqlPortfolioInventory(asPool(new FakePool(db)), []).list()))
       .toBe(PORTFOLIO_TEMPLATE_BINDING_UNSUPPORTED);
