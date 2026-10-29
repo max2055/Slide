@@ -180,19 +180,24 @@ export class SemanticMetrics extends LitElement {
     return n !== null && !unitMismatch(metric, b.unit) && ['good', 'partial'].includes(b.quality.status) ? n : null;
   }
   private bucketSummary(metric: MetricResult, series: MetricResult['series'][number]) {
-    let valid = 0, gap = 0, unsafe = 0, mismatch = 0, records = 0;
+    let good = 0, partial = 0, gap = 0, unsafe = 0, mismatch = 0, records = 0;
     for (const b of series.buckets) {
       if (unitMismatch(metric, b.unit)) mismatch++;
       else if (b.value && !('value' in b.value)) records++;
       else if (bucketNumber(b) === null) { if (b.value && 'value' in b.value && b.value.value != null) unsafe++; else gap++; }
-      else if (!['good', 'partial'].includes(b.quality.status)) gap++;
-      else valid++;
+      else if (b.quality.status === 'good') good++;
+      else if (b.quality.status === 'partial') partial++;
+      else gap++;
     }
-    return { valid, gap, unsafe, mismatch, records };
+    return { good, partial, gap, unsafe, mismatch, records };
   }
   private renderTrend(metric: MetricResult, series: MetricResult['series'][number]) {
     const data = series.buckets.map(b => this.chartValue(metric, b));
-    const min = series.buckets.map(b => safeNumber(b.stats?.min?.value)), max = series.buckets.map(b => safeNumber(b.stats?.max?.value));
+    // The envelope must obey the same drawable condition as the line: a bucket the line
+    // refuses (unit mismatch, non-scalar, unsafe precision, unknown/invalid) must not leak
+    // its min/max as a dashed range. Drawable in-bucket spikes are still preserved.
+    const min = series.buckets.map((b, i) => data[i] === null ? null : safeNumber(b.stats?.min?.value));
+    const max = series.buckets.map((b, i) => data[i] === null ? null : safeNumber(b.stats?.max?.value));
     // Keep the bucket envelope so a spike inside a bucket is never flattened to the selected mode.
     const envelope = min.some((v, i) => v !== null && max[i] !== null && v !== max[i]) ? { min, max } : {};
     return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? metric.definition.unit}
@@ -213,14 +218,14 @@ export class SemanticMetrics extends LitElement {
     const key = metric.definition.id + JSON.stringify(series.dimensions);
     const last = series.buckets.at(-1), summary = this.bucketSummary(metric, series);
     const mismatch = unitMismatch(metric, last?.unit);
-    const notes = [summary.gap ? `缺口 ${summary.gap}` : '', summary.unsafe ? `超出安全数值精度 ${summary.unsafe}` : '', summary.mismatch ? `单位不符 ${summary.mismatch}` : '', summary.records ? `非标量记录 ${summary.records}` : ''].filter(Boolean);
+    const notes = [summary.gap ? `断点 ${summary.gap}` : '', summary.unsafe ? `超出安全数值精度 ${summary.unsafe}` : '', summary.mismatch ? `单位不符 ${summary.mismatch}` : '', summary.records ? `非标量记录 ${summary.records}` : ''].filter(Boolean);
     return html`<div>
       ${Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ')}
       ${last ? html`<div>${last.value && !('value' in last.value) ? html`<strong>${last.value.encoding} 记录</strong>（非标量，不做折线）<details><summary>记录内容</summary><pre>${JSON.stringify(last.value, null, 2)}</pre></details>`
         : html`<strong>${last.value && 'value' in last.value ? last.value.value : '未知'}</strong> ${last.unit} · 最近时间桶 · 覆盖率 ${(last.coverage * 100).toFixed(0)}%`}</div>
         ${observedTime(last)}${qualityBadges(last)}
         ${mismatch ? html`<p class="error" role="alert">单位不符：该时间桶单位 ${last.unit} 与指标定义 ${metric.definition.unit} 不一致，不参与数值与曲线。</p>` : nothing}` : html`<p>暂无可用观测</p>`}
-      <p class="hint">时间桶 ${series.buckets.length} 个：有效 ${summary.valid}${notes.length ? ` · ${notes.join(' · ')}` : ''}。缺失与超出安全精度的区间保留断点，不补 0。</p>
+      <p class="hint">时间桶 ${series.buckets.length} 个：良好 ${summary.good}${summary.partial ? ` · 部分覆盖 ${summary.partial}` : ''}${notes.length ? ` · ${notes.join(' · ')}` : ''}。缺失、质量未知或无效、单位不符及超出安全精度的桶保留断点，不补 0；过期但当时 good/partial 的值照常显示。${summary.partial ? '部分覆盖不代表当前健康。' : ''}</p>
       <details @toggle=${(e: Event) => {
         const next = new Set(this.bucketKeys); (e.target as HTMLDetailsElement).open ? next.add(key) : next.delete(key); this.bucketKeys = next;
       }}><summary>时间桶明细（聚合值，不是原始采样）</summary>${this.bucketKeys.has(key) ? this.renderBuckets(metric, series) : nothing}</details>
@@ -298,7 +303,7 @@ export class SemanticMetrics extends LitElement {
           ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
       })}</div>`)}</div>` : nothing}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
-      <p class="window">缺失、过期、质量不明及超出安全数值精度的区间保留断点；桶内峰值以最小/最大包络显示。全部维度与精确值可在观测明细中核对。</p>` : nothing}
+      <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}
     <details><summary>行为基线与资格</summary>
       <label>基线指标与维度<select aria-label="基线指标与维度" .value=${this.baselineKey} ?disabled=${this.accessInvalidated || this.busy} @change=${(e:Event)=>this.baselineKey=(e.target as HTMLSelectElement).value}><option value="">选择指标与维度</option>${baselineSeries.map(({metric,series},index)=>html`<option value=${index}>${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</option>`)}</select></label>
       ${this.baselineKey !== '' && baseline ? html`<operations-behavior-baseline .resourceType=${this.resourceType} .resourceId=${this.resourceId} .metric=${baseline.metric.definition.id} .dimensions=${baseline.series.dimensions}></operations-behavior-baseline>` : html`<p>选择实际可见指标的一个维度后，可评估其行为基线。样本不足时偏离保持未知。</p>`}

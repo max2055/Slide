@@ -233,3 +233,44 @@ it('discards a late response from an earlier window after a fast switch', async 
   finish(ok(withBuckets([bucketAt(0)]))); await settle();
   expect(chartOf(el).timeData).toHaveLength(2);
 });
+
+// ---- MAX240-HISTORY-UI correction regressions ----
+const stats = (min: number, max: number) => ({ count: 2, min: { encoding: 'float64', value: min },
+  max: { encoding: 'float64', value: max }, avg: { encoding: 'float64', value: (min + max) / 2 } });
+it('applies the same drawable condition to the min/max envelope as to the line', async () => {
+  const mismatch = bucketAt(0, 60_000, { unit: 'ms', stats: stats(1, 9) });
+  const invalid = bucketAt(1, 60_000, { quality: { status: 'invalid', reason: 'source_error' }, stats: stats(2, 8) });
+  const unsafe = bucketAt(2, 60_000, { value: { encoding: 'uint64', value: '9007199254740993' }, stats: stats(3, 7) });
+  const record = bucketAt(3, 60_000, { value: { encoding: 'histogram', buckets: [{ upper_bound: 1, count: '2' }] }, stats: stats(4, 6) });
+  const staleGood = bucketAt(4, 60_000, { freshness: 'stale', stats: stats(1, 9) });
+  const data = withBuckets([mismatch, invalid, unsafe, record, staleGood]);
+  (data.metrics[0].definition as any).kind = 'gauge';
+  authFetch.mockResolvedValue(ok(data));
+  const el = await mount(); await el.updateComplete;
+  const series = chartOf(el).series[0];
+  // Unit mismatch, invalid quality, unsafe precision and non-scalar records are breaks;
+  // their stats must not reappear as a dashed envelope.
+  expect(series.data).toEqual([null, null, null, null, 14]);
+  expect(series.min).toEqual([null, null, null, null, 1]);
+  expect(series.max).toEqual([null, null, null, null, 9]);
+});
+it('counts partial buckets separately and keeps their points on the curve', async () => {
+  const partial = bucketAt(1, 60_000, { quality: { status: 'partial', reason: 'gap' }, coverage: 0.5 });
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0), partial])));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  const text = el.shadowRoot!.textContent!;
+  expect(text).toContain('良好 1 · 部分覆盖 1');
+  expect(text).toContain('部分覆盖不代表当前健康');
+  expect(text).not.toContain('有效 2');
+});
+it('keeps stale good history drawn and describes only non-drawable buckets as breaks', async () => {
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0, 60_000, { freshness: 'stale' }),
+    bucketAt(1, 60_000, { freshness: 'stale' })], 'temporary_failure')));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  const text = el.shadowRoot!.textContent!;
+  expect(text).toContain('过期但当时 good/partial 的值照常显示');
+  expect(text).not.toContain('缺失、过期');
+  expect(text).toContain('断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶');
+});
