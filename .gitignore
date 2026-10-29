@@ -30,3 +30,4 @@ tmp/
 /.multica/
 /apps/db-ops-api/.qualification/
 /.planning/phases/
+.e2e/

@@ -408,7 +408,10 @@ async function start() {
           database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : inst.db_type === 'mysql' ? 'mysql' : undefined),
           db_type: inst.db_type,
         }), () => databaseService.removeConnection(inst.id));
-        if (ok) { recoveredConnections.add(inst.id); reconnected++; }
+        if (ok) {
+          recoveredConnections.add(inst.id); reconnected++;
+          await instanceDatabaseService.recordDetectedVersion(inst.id, await databaseService.detectVersion(inst.id));
+        }
       } catch (e: any) {
         startup.signal.throwIfAborted();
         console.warn(`  ⚠️  实例 ${inst.name} (id=${inst.id}) 重连失败: ${e.message}`);
@@ -1500,6 +1503,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
+        await instanceDatabaseService.recordDetectedVersion(Number(id), await databaseService.detectVersion(Number(id)));
         return reply.send({ success: true, message: '连接已建立，统一采集按当前绑定调度',
           configuration: await metricConfigurationService.status((request as any).user, { type: 'instance', id: Number(id) }) });
       } else {
