@@ -46,8 +46,14 @@ const itemKey = (item: { template_id: string; item_id: string; item_version: num
 const samePin = (left: TemplatePin[], right: TemplatePin[]) => pinKeySort(left) === pinKeySort(right);
 const pinKeySort = (pins: TemplatePin[]) => pins.map(pinKey).sort().join('|');
 const overridesEmpty = (value: Record<string, unknown>) => Object.keys(value).length === 0;
+/** Key order is not part of an intent; two renderings of one configuration must compare equal. */
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
+      .map(key => [key, canonical((value as Record<string, unknown>)[key])]))
+    : value;
 /** One apply intent per exact configuration; `pending` means its outcome is unconfirmed. */
-interface IntentRecord { key: string; intent: string; pending: boolean; draft?: number }
+interface IntentRecord { key: string; intent: string; pending: boolean }
 
 /**
  * Apply intents written during this page load. `sessionStorage` may reject a
@@ -60,8 +66,29 @@ const intentStorageMessage = '发布意图无法写入会话存储，只能在�
 /** Without a durable copy there is no safe recovery, so the write is never sent. */
 const intentStorageRefusal = '无法把发布意图写入会话存储，已在发送前拒绝本次发布，未写入任何配置；修改仍保留在页面中。请恢复浏览器存储后重试。';
 const intentCorruptMessage = '已存储的发布意图记录损坏，无法安全判断上次发布结果；已停止发送写请求。请清理该资源的本地会话记录或换用新标签页后重试。';
+/** Without a signed session there is no stable principal an intent could be recovered for. */
+const intentPrincipalMessage = '无法确认当前登录主体，已在发送前拒绝本次发布，未写入任何配置；修改仍保留在页面中。请重新登录后重试。';
 /** One browser tab owns this map; a suite that simulates many tabs resets it per case. */
 export function resetIntentMemory() { intentMemory.clear(); }
+
+/**
+ * The principal of the signed session, from the access token the server issued.
+ * The cached `user` profile is not used: it can be missing or corrupt while the
+ * session is still valid, and a per-instance random token would silently change
+ * the recovery key on every remount. `null` means no reliable identity.
+ */
+function sessionPrincipal(): string | null {
+  let token: string | null;
+  try { token = localStorage.getItem('token'); } catch { return null; }
+  const part = token?.split('.')[1];
+  if (!part) return null;
+  try {
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4))) as { userId?: unknown };
+    return typeof payload.userId === 'number' && Number.isSafeInteger(payload.userId) && payload.userId > 0
+      ? `user-${payload.userId}` : null;
+  } catch { return null; }
+}
 
 /**
  * Per-rejection messages. The server answers with one stable code and, for a
@@ -159,8 +186,6 @@ export class NativeTemplateConfiguration extends LitElement {
    * including `previewStale=false` and `trialReady=true` transitions.
    */
   private draftVersion = 0;
-  /** Only used when the principal cannot be read; never shared across page loads. */
-  private readonly principalToken = `tab-${Math.random().toString(36).slice(2, 10)}`;
 
   // Catalog: the full authorized catalog is paged, never truncated to one page.
   @state() private templates: TemplateSummary[] = [];
@@ -315,6 +340,9 @@ export class NativeTemplateConfiguration extends LitElement {
       this.names = Object.fromEntries(page.templates.map(entry => [entry.template_id, entry.name]));
       this.seedFromBinding(binding);
       this.loaded = true;
+      // Background recovery lookups never block the editor: a user edit made
+      // while one is in flight must be possible and must survive its answer.
+      this.busy = false;
       await this.restorePending(generation);
       if (generation !== this.generation) return;
       if (binding.source === 'template' && !this.terminal(status)) this.startPolling();
@@ -618,18 +646,11 @@ export class NativeTemplateConfiguration extends LitElement {
 
   /* --- unresolved apply intents ------------------------------------------- */
 
-  private intentStorageKey(resource = this.refKey()) {
-    let user = 'anon';
-    try {
-      const value = JSON.parse(localStorage.getItem('user') ?? 'null') as { id?: unknown } | null;
-      if (value && (typeof value.id === 'number' || typeof value.id === 'string')) user = String(value.id);
-    } catch {
-      // The principal cannot be read. A shared "anon" key would let a later
-      // session in this tab read an earlier principal's intents, so the key is
-      // scoped to this page load instead (recoverable only in this tab).
-      user = `unreadable-${this.principalToken}`;
-    }
-    return `slide.metric.native.apply.${user}.${resource}`;
+  private intentStorageKey(resource = this.refKey()): string | null {
+    const principal = sessionPrincipal();
+    // No signed session means no stable recovery identity: a per-instance key
+    // would look like recovery while losing the record on the next remount.
+    return principal ? `slide.metric.native.apply.${principal}.${resource}` : null;
   }
   private validIntents(value: unknown): IntentRecord[] | null {
     if (!Array.isArray(value)) return null;
@@ -639,10 +660,7 @@ export class NativeTemplateConfiguration extends LitElement {
     const valid = value.every((entry): entry is IntentRecord => !!entry
       && typeof (entry as { key?: unknown }).key === 'string'
       && typeof (entry as { intent?: unknown }).intent === 'string'
-      && typeof (entry as { pending?: unknown }).pending === 'boolean'
-      && ((entry as { draft?: unknown }).draft === undefined
-        || (typeof (entry as { draft?: unknown }).draft === 'number'
-          && Number.isSafeInteger((entry as { draft: number }).draft))));
+      && typeof (entry as { pending?: unknown }).pending === 'boolean');
     return valid ? value as IntentRecord[] : null;
   }
   /**
@@ -653,6 +671,10 @@ export class NativeTemplateConfiguration extends LitElement {
    */
   private storedIntents(resource = this.refKey()): IntentRecord[] {
     const storageKey = this.intentStorageKey(resource);
+    if (!storageKey) {
+      this.intentStorageError = intentPrincipalMessage;
+      return [];
+    }
     const memory = intentMemory.get(storageKey);
     let stored: IntentRecord[] | null;
     let unreadable = false;
@@ -684,6 +706,7 @@ export class NativeTemplateConfiguration extends LitElement {
    */
   private persistIntents(next: IntentRecord[], resource = this.refKey()): boolean {
     const storageKey = this.intentStorageKey(resource);
+    if (!storageKey) { this.intentStorageError = intentPrincipalMessage; return false; }
     let durable = true;
     try {
       if (next.length) sessionStorage.setItem(storageKey, JSON.stringify(next));
@@ -706,7 +729,7 @@ export class NativeTemplateConfiguration extends LitElement {
    * same configuration is the same intent, so it keeps the same operation key
    * instead of becoming a second write under a different key.
    */
-  private intentIdentity() { return JSON.stringify({ resource: this.refKey(), body: this.requestBody() }); }
+  private intentIdentity() { return JSON.stringify(canonical({ resource: this.refKey(), body: this.requestBody() })); }
   private pendingFor(intent: string) { return this.unresolved.find(entry => entry.intent === intent) ?? null; }
   /** One key per intent for the whole session, whether or not it is still open. */
   private intentKey(intent: string) {
@@ -725,9 +748,7 @@ export class NativeTemplateConfiguration extends LitElement {
     // A corrupt/unreadable store was already reported; do not overwrite it with a
     // record that would hide a still-unconfirmed write.
     if (this.intentStorageError) return false;
-    // The draft version records which edit set this intent came from, so a later
-    // committed answer never discards edits the user made after that point.
-    const next = [...rest, { key, intent, pending: true, draft: this.draftVersion }];
+    const next: IntentRecord[] = [...rest, { key, intent, pending: true }];
     // Keep the key map bounded; settled intents are the only ones ever dropped.
     const settled = next.filter(entry => !entry.pending);
     const bounded = next.length > 20
@@ -736,6 +757,7 @@ export class NativeTemplateConfiguration extends LitElement {
     // The durable write must succeed before the in-memory/UI copy exists: a
     // record here would advertise a recovery for a request that was never sent.
     const storageKey = this.intentStorageKey();
+    if (!storageKey) { this.intentStorageError = intentPrincipalMessage; return false; }
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(bounded));
       this.intentStorageLimited = false;
@@ -754,12 +776,15 @@ export class NativeTemplateConfiguration extends LitElement {
     this.persistIntents(entries.map(entry => entry.key === key ? { ...entry, pending: false } : entry));
   }
   /**
-   * The draft version the intent was created from, if it is still the current
-   * one. A null `intentDraft` (an older record) can never prove that, so it is
-   * treated as a different draft.
+   * Whether the current draft is still exactly the recorded intent. The intent
+   * string carries the resource and the whole request body (pins, settings,
+   * metric decisions, parameters, group, base revision), so it stays comparable
+   * across a component remount. A per-instance edit counter can reset and
+   * collide, which would let an old answer settle a newer draft.
    */
-  private sameIntentDraft(intentDraft?: number): boolean {
-    return intentDraft !== undefined && intentDraft === this.draftVersion;
+  private intentStillCurrent(key: string): boolean {
+    const entry = this.allIntents().find(candidate => candidate.key === key);
+    return !!entry && entry.intent === this.intentIdentity();
   }
   /**
    * Query the journal for one exact intent. The association is the original
@@ -769,24 +794,24 @@ export class NativeTemplateConfiguration extends LitElement {
    * before this query started or while it was in flight.
    */
   private async lookup(key: string, generation: number, failure: unknown | null,
-    reload = true, intentDraft?: number): Promise<void> {
+    reload = true): Promise<void> {
     let state;
     try { state = await readTemplateOperation(this.resourceType, this.resourceId, key); }
     catch {
       if (generation !== this.generation) return;
-      if (this.sameIntentDraft(intentDraft)) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      if (this.intentStillCurrent(key)) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (generation !== this.generation) return;
     if (!state || !['committed', 'pending', 'absent'].includes(state.state)) {
-      if (this.sameIntentDraft(intentDraft)) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      if (this.intentStillCurrent(key)) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (state.state === 'committed') {
       this.settleIntent(key);
       this.error = '';
       showToast('已确认上次发布已提交', 'success');
-      if (!this.sameIntentDraft(intentDraft)) {
+      if (!this.intentStillCurrent(key)) {
         // Recovery stays separate from the current edit: only the old intent is
         // settled. The newer draft, its settings and its preview are untouched;
         // the old revision is not projected onto the new intent.
@@ -821,7 +846,7 @@ export class NativeTemplateConfiguration extends LitElement {
     const intent = this.intentIdentity();
     const pending = this.pendingFor(intent);
     // The same intent is never resent: an unconfirmed outcome is looked up.
-    if (pending) { await this.lookup(pending.key, generation, null, true, pending.draft); return; }
+    if (pending) { await this.lookup(pending.key, generation, null, true); return; }
     if (!this.applyReady() || !this.trial) return;
     const body = this.requestBody();
     const payload = { ...body, receipt_id: this.trial.receipt_id };
@@ -837,13 +862,13 @@ export class NativeTemplateConfiguration extends LitElement {
     try {
       const result = await applyTemplateBinding(this.resourceType, this.resourceId, { ...payload, caller_key: key });
       if (generation !== this.generation || draft !== this.draftVersion) { this.restorePendingLater(); return; }
-      await this.handleApplyResult(result, key, generation, draft);
+      await this.handleApplyResult(result, key, generation);
     } catch (error) {
       // Never resend a mutation whose outcome is unknown: query the same key first.
-      if (generation === this.generation) await this.lookup(key, generation, error, true, draft);
+      if (generation === this.generation) await this.lookup(key, generation, error, true);
     } finally { if (generation === this.generation) this.busy = false; }
   }
-  private async handleApplyResult(result: TemplateApplyResult, key: string, generation: number, draft?: number) {
+  private async handleApplyResult(result: TemplateApplyResult, key: string, generation: number) {
     if (result.kind === 'committed' || result.kind === 'replay') {
       const revision = result.kind === 'committed' ? result.revision : result.target_revision;
       this.settleIntent(key);
@@ -857,7 +882,7 @@ export class NativeTemplateConfiguration extends LitElement {
       return;
     }
     if (result.kind === 'operation_lookup_required' || result.kind === 'commit_unknown') {
-      await this.lookup(key, generation, null, true, draft); return;
+      await this.lookup(key, generation, null, true); return;
     }
     if (result.kind === 'rejected' || result.kind === 'rolled_back') {
       // A rejection is a terminal answer: nothing was written under this key.
@@ -877,7 +902,7 @@ export class NativeTemplateConfiguration extends LitElement {
     if (!stored.length) return;
     for (const entry of stored) {
       if (generation !== this.generation) return;
-      await this.lookup(entry.key, generation, null, false, entry.draft);
+      await this.lookup(entry.key, generation, null, false);
     }
   }
 
