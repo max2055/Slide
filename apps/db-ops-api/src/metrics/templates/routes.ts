@@ -63,6 +63,9 @@ const bodyOf = (schema: z.ZodType): Record<string, unknown> => {
 export const templateBindingService = new TemplateBindingService({
   pool: productionPool, registry, access: createAssetCollectorAccess(),
   reload: actor => actorContextService.revalidateActor(actor, actor.requestId),
+  // Persistence boundaries re-read on the connection already held (receipt
+  // writer / re-pin transaction), so no second pool connection is needed.
+  reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId),
 });
 
 const ref = (params: unknown) => {

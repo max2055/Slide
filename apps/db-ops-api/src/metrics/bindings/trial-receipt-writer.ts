@@ -5,9 +5,17 @@
  * the **same** policy pool provider and the **same** exported
  * `withPolicyAdmission` gate as `MysqlPolicyStore.transaction`, writing only the
  * two columns the accepted B2E host reads (`receipt_id`, `payload`). It takes one
- * connection, starts no transaction, takes no `metric_policy_lock` and calls no
- * apply/gateway/config path: receipt commit and the later enable are two
- * separate transactions (see `docs/slide/development/MAX-238/b2g-trial-receipt-issuer.md`).
+ * connection and one short transaction of its own: it never takes
+ * `metric_policy_lock` and calls no apply/gateway/config path (see
+ * `docs/slide/development/MAX-238/b2g-trial-receipt-issuer.md`).
+ *
+ * MAX-238 / COLLECTION-DISPLAY-E2E-R4: the persistence itself is now the same
+ * authorization boundary as the reads that produced it. The admission queue, the
+ * pool's connection acquisition and the INSERT (which can wait on a row lock) can
+ * all outlive the grant that opened the request, so a caller-supplied
+ * `authorize` is re-read after each of those waits — on the held connection, so
+ * no second pool connection is taken while one is out. A refusal after the
+ * INSERT rolls it back: nothing is autocommitted and then rejected.
  *
  * Idempotency comes from the `PRIMARY KEY (receipt_id)` candidate row, not from a
  * read-then-write gap: a duplicate insert is followed by one exact read on the
@@ -41,9 +49,19 @@ export const TRIAL_RECEIPT_INSERT_SQL =
 /** Mirrors the accepted B2E host payload bound (1 MiB); no value is truncated. */
 const PAYLOAD_BYTES_LIMIT = 1024 * 1024;
 
+/** The executor a boundary check runs on: the held connection, never a second one. */
+export type TrialReceiptExecutor = Pick<PoolConnection, 'execute'>;
+
 export interface TrialReceiptWriterDeps {
   /** The existing `MysqlPolicyStore` pool provider; no other pool is created. */
   readonly pool: () => Pool | null;
+  /**
+   * The trusted live grant at every boundary that can wait. An offline/fixture
+   * caller omits it; a public caller must supply it, and a missing live source is
+   * a refusal, never an implicit pass. The held connection is passed so the check
+   * takes no second connection from the pool.
+   */
+  readonly authorize?: (connection?: TrialReceiptExecutor) => Promise<void>;
 }
 
 /**
@@ -143,39 +161,85 @@ export async function writeTrialReceipt(
   }
 
   return withPolicyAdmission(pool, async () => {
+    const authorize = deps.authorize;
+    // The admission queue can wait arbitrarily; the grant is re-read after it.
+    await authorize?.();
     let connection: PoolConnection;
     try {
       connection = await pool.getConnection();
     } catch {
       throw new TrialReceiptWriteError('TRIAL_RECEIPT_WRITER_UNAVAILABLE');
     }
+    // `settled` means the transaction was confirmed committed or rolled back; only
+    // then is the connection safe to reuse instead of discarding.
+    let settled = false;
     try {
-      let inserted: Rows;
+      // The persistence transaction reads its live grant with a plain SELECT;
+      // READ COMMITTED makes that a current read (not the transaction's opening
+      // snapshot) without taking the row locks a `FOR SHARE` would hold until
+      // commit. A revocation can therefore commit during the INSERT wait.
       try {
-        inserted = await connection.execute(TRIAL_RECEIPT_INSERT_SQL, [receiptId, text]) as unknown as Rows;
-      } catch (error) {
-        // The primary key is the only uniqueness authority; anything else is a store failure.
-        if (!isDuplicateEntry(error)) throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
-        let rows: Record<string, unknown>[];
-        try {
-          rows = rowsOf(await readStoredPayload(connection, receiptId));
-        } catch (readError) {
-          // A failed read proves nothing about the existing row; never treat it as a replay.
-          if (readError instanceof TrialReceiptWriteError) throw readError;
-          throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
-        }
-        // Two rows is a broken invariant and zero rows proves nothing; both fail closed.
-        if (rows.length !== 1) throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
-        return samePayload(rows[0].payload, text, payload)
-          ? { kind: 'replay' as const, persisted: false as const, receipt_id: receiptId }
-          : { kind: 'collision' as const, persisted: false as const, receipt_id: receiptId };
-      }
-      if (affectedRowsOf(inserted) !== 1) {
+        await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+        await connection.beginTransaction();
+      } catch {
         throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
       }
-      return { kind: 'inserted' as const, persisted: true as const, receipt_id: receiptId };
+      try {
+        // Acquiring the connection waited too. From here on every check runs on
+        // this connection, so a small pool cannot be exhausted by the check.
+        await authorize?.(connection);
+        let inserted: Rows;
+        try {
+          inserted = await connection.execute(TRIAL_RECEIPT_INSERT_SQL, [receiptId, text]) as unknown as Rows;
+        } catch (error) {
+          // The primary key is the only uniqueness authority; anything else is a store failure.
+          if (!isDuplicateEntry(error)) throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
+          let rows: Record<string, unknown>[];
+          try {
+            rows = rowsOf(await readStoredPayload(connection, receiptId));
+          } catch (readError) {
+            // A failed read proves nothing about the existing row; never treat it as a replay.
+            if (readError instanceof TrialReceiptWriteError) throw readError;
+            throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
+          }
+          // Two rows is a broken invariant and zero rows proves nothing; both fail closed.
+          if (rows.length !== 1) throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
+          // The failed INSERT may also have waited on a row lock; answer the
+          // replay/collision only under the grant that held after that wait.
+          await authorize?.(connection);
+          const outcome = samePayload(rows[0].payload, text, payload)
+            ? { kind: 'replay' as const, persisted: false as const, receipt_id: receiptId }
+            : { kind: 'collision' as const, persisted: false as const, receipt_id: receiptId };
+          // The receipt insert wrote nothing; end the transaction without keeping locks.
+          try { await connection.rollback(); } catch { throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE'); }
+          settled = true;
+          return outcome;
+        }
+        if (affectedRowsOf(inserted) !== 1) {
+          throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE');
+        }
+        // The INSERT can wait on a row lock. The row is not visible to anyone
+        // until the commit, so this last read is the persistence boundary: a
+        // grant revoked during the wait rolls the insert back below.
+        await authorize?.(connection);
+        // A commit whose outcome was not observed is unknown, not success; the
+        // caller gets a stable store failure and the connection is discarded.
+        try { await connection.commit(); } catch { throw new TrialReceiptWriteError('TRIAL_RECEIPT_STORE_UNAVAILABLE'); }
+        settled = true;
+        return { kind: 'inserted' as const, persisted: true as const, receipt_id: receiptId };
+      } catch (error) {
+        if (!settled) {
+          try { await connection.rollback(); settled = true; } catch { /* discard instead */ }
+        }
+        throw error;
+      }
     } finally {
-      try { connection.release(); } catch { /* released exactly once */ }
+      if (settled) {
+        try { connection.release(); } catch { /* released exactly once */ }
+      } else {
+        // An unconfirmed transaction must never return to the pool.
+        try { connection.destroy(); } catch { /* discarded exactly once */ }
+      }
     }
   });
 }

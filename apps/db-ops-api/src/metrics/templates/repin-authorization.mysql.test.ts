@@ -146,8 +146,29 @@ describe.skipIf(!port)('re-pin publication authorization on isolated MySQL', () 
     } finally { await server.close(); }
   });
 
-  it('answers a revoked session with re-authentication and writes nothing', async () => {
+  it('rolls back every write when the grant is revoked at the pre-commit boundary', async () => {
     const before = await state();
+    let calls = 0;
+    const server = await app(async () => {
+      calls += 1;
+      // Reads (#1), item (#2), draft (#3), version (#4) and current pointer (#5)
+      // all run inside the transaction; only the final pre-commit read refuses.
+      return calls >= 6 ? revoked : admin;
+    });
+    try {
+      const response = await repin(server);
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
+      expect(calls).toBe(6);
+      const after = await state();
+      expect(after.versions).toEqual([1]);
+      expect(after.template.current_published_version).toBe(1);
+      expect(after.template.revision).toBe(before.template.revision);
+      expect(after.draft.revision).toBe(before.draft.revision);
+    } finally { await server.close(); }
+  });
+
+  it('answers a revoked session with re-authentication and writes nothing', async () => {    const before = await state();
     const server = await app(async () => { throw new ActorAuthenticationError(); });
     try {
       const response = await repin(server);

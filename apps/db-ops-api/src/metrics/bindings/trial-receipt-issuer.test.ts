@@ -250,7 +250,8 @@ function issuerOptions(overrides: Partial<TrialReceiptIssuerOptions> = {}): Tria
 class FakeDatabase {
   receipts = new Map<string, string>();
   writes = { receipt: 0 };
-  log: Array<{ sql: string; params: unknown[] }> = [];
+  /** Every SQL statement and transaction boundary, in call order. */
+  events: string[] = [];
   connections = 0;
   active = 0;
   maxActive = 0;
@@ -259,7 +260,7 @@ class FakeDatabase {
   /** One pool per database, so the store's admission WeakMap is actually shared. */
   readonly pool = new FakePool(this);
 
-  eventNames(): string[] { return this.log.map(entry => entry.sql.replace(/\s+/g, ' ').trim()); }
+  eventNames(): string[] { return this.events.map(sql => sql.replace(/\s+/g, ' ').trim()); }
 }
 
 class FakePool {
@@ -280,22 +281,58 @@ const INSERT_KEY = normalize(TRIAL_RECEIPT_INSERT_SQL);
 const HOST_READ_KEY = normalize(MYSQL_BINDING_HOST_SQL.receiptRead);
 
 class FakeConnection {
+  /** Rows this transaction inserted; applied by COMMIT, discarded by ROLLBACK. */
+  private pending = new Map<string, string>();
+  private open = false;
+
   constructor(readonly db: FakeDatabase, readonly pool: FakePool) {}
 
-  async execute(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
-    this.db.log.push({ sql, params: [...params] });
-    const key = normalize(sql);
-    if (key === INSERT_KEY) {
-      const [receiptId, payload] = params as [string, string];
-      if (this.db.receipts.has(receiptId)) throw duplicateEntry();
+  async beginTransaction(): Promise<void> {
+    this.open = true;
+    this.db.events.push('BEGIN');
+  }
+  async commit(): Promise<void> {
+    for (const [receiptId, payload] of this.pending) {
+      if (this.db.receipts.has(receiptId)) {
+        // The real PRIMARY KEY would have refused this INSERT already.
+        throw new Error('fixture: duplicate committed row');
+      }
       this.db.receipts.set(receiptId, payload);
       this.db.writes.receipt++;
+    }
+    this.pending.clear();
+    this.open = false;
+    this.db.events.push('COMMIT');
+  }
+  async rollback(): Promise<void> {
+    this.pending.clear();
+    this.open = false;
+    this.db.events.push('ROLLBACK');
+  }
+
+  async execute(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
+    const key = normalize(sql);
+    // Transaction settings are setup, not receipt persistence.
+    if (/^SET TRANSACTION ISOLATION LEVEL READ COMMITTED$/i.test(key)) return [{}, []];
+    this.db.events.push(sql);
+    if (key === INSERT_KEY) {
+      const [receiptId, payload] = params as [string, string];
+      // A row locked by another transaction is not visible to this one until it
+      // commits; the fixture treats a committed row as the duplicate authority.
+      if (this.db.receipts.has(receiptId) || this.pending.has(receiptId)) throw duplicateEntry();
+      if (!this.open) {
+        // Autocommit (the pre-R4 writer): the row is visible without a COMMIT.
+        this.db.receipts.set(receiptId, payload);
+        this.db.writes.receipt++;
+        return [{ affectedRows: 1 }, []];
+      }
+      this.pending.set(receiptId, payload);
       return [{ affectedRows: 1 }, []];
     }
     if (key === HOST_READ_KEY) {
       if (this.db.failReceiptRead) throw new Error('fixture: receipt read failed');
       const receiptId = params[0] as string;
-      const stored = this.db.receipts.get(receiptId);
+      const stored = this.db.receipts.get(receiptId) ?? this.pending.get(receiptId);
       if (stored === undefined) return [[], []];
       // Two rows model the broken global-uniqueness invariant the host refuses.
       if (this.db.duplicateRows.has(receiptId)) return [[{ payload: stored }, { payload: stored }], []];
@@ -305,6 +342,7 @@ class FakeConnection {
   }
 
   release(): void { this.pool.released(); }
+  destroy(): void { this.pool.released(); }
 }
 
 /** A v2 guard port whose receipt read is exactly the accepted B2E host SELECT. */
@@ -366,9 +404,9 @@ describe('MAX-238 B2G trial-receipt issuer', () => {
     const before = db.connections;
     const outcome = await write(db, issued);
     expect(outcome).toEqual({ kind: 'inserted', persisted: true, receipt_id: RECEIPT_ID });
-    // Writer takes exactly one connection and writes only the two host columns.
+    // Writer takes exactly one connection, one short transaction and the two host columns.
     expect(db.connections - before).toBe(1);
-    expect(db.eventNames()).toEqual([INSERT_KEY]);
+    expect(db.eventNames()).toEqual(['BEGIN', INSERT_KEY, 'COMMIT']);
     expect(db.writes.receipt).toBe(1);
     expect(JSON.parse(db.receipts.get(RECEIPT_ID)!) as unknown).toEqual(issued.payload);
 
@@ -416,8 +454,10 @@ describe('MAX-238 B2G trial-receipt issuer', () => {
     expect(db.writes.receipt).toBe(1);
     expect(JSON.parse(db.receipts.get(RECEIPT_ID)!) as unknown).toEqual(issued.payload);
 
-    // No policy lock, no nested transaction: the receipt write is its own statement.
-    expect(db.eventNames().every(statement => !/metric_policy_lock|^begin$/i.test(statement))).toBe(true);
+    // Its own short transaction per write, never the policy lock: each replay and
+    // the collision commit nothing.
+    expect(db.eventNames().filter(event => event === 'BEGIN')).toHaveLength(3);
+    expect(db.eventNames().every(event => !/metric_policy_lock/i.test(event))).toBe(true);
   });
 
   it('fails closed when the duplicate read sees two rows or fails', async () => {
@@ -452,6 +492,80 @@ describe('MAX-238 B2G trial-receipt issuer', () => {
     expect(results.map(result => result.kind)).toEqual(['inserted', 'inserted']);
     expect(db.writes.receipt).toBe(2);
     expect(db.maxActive).toBe(1);
+  });
+
+  /**
+   * R4: the writer is the persistence boundary. A grant re-read only before the
+   * waits proves nothing; every check after a wait must run, and a refusal after
+   * the INSERT must roll it back rather than autocommit and then answer 403.
+   */
+  describe('persistence boundary authorization', () => {
+    const refusal = Object.assign(new Error('grant revoked'), { code: 'TEMPLATE_BINDING_FORBIDDEN' });
+
+    it('re-reads the grant after the connection wait, on the held connection', async () => {
+      const db = new FakeDatabase();
+      const issued = await issue();
+      const seen: Array<unknown> = [];
+      let calls = 0;
+      const authorize = async (connection?: unknown) => {
+        calls += 1;
+        seen.push(connection);
+        // The first check runs after the admission queue, before the pool wait;
+        // the second runs on the connection the wait returned.
+        if (calls >= 2) throw refusal;
+      };
+      await expect(writeTrialReceipt(issued, { pool: () => db.pool as unknown as Pool, authorize }))
+        .rejects.toBe(refusal);
+      expect(calls).toBe(2);
+      expect(seen[0]).toBeUndefined();
+      expect(seen[1]).toBeDefined();
+      expect(db.receipts.size).toBe(0);
+      expect(db.eventNames()).toContain('ROLLBACK');
+      expect(db.active).toBe(0);
+    });
+
+    it('rolls the INSERT back when the grant is revoked while the row lock waits', async () => {
+      const db = new FakeDatabase();
+      const issued = await issue();
+      let calls = 0;
+      const authorize = async () => {
+        calls += 1;
+        // Post-admission and post-connection hold; the post-INSERT read refuses.
+        if (calls >= 3) throw refusal;
+      };
+      await expect(writeTrialReceipt(issued, { pool: () => db.pool as unknown as Pool, authorize }))
+        .rejects.toBe(refusal);
+      expect(calls).toBe(3);
+      expect(db.receipts.size).toBe(0);
+      expect(db.writes.receipt).toBe(0);
+      expect(db.eventNames().slice(-2)).toEqual([INSERT_KEY, 'ROLLBACK']);
+      expect(db.active).toBe(0);
+    });
+
+    it('does not hand a replayed receipt to a caller whose grant was revoked during its INSERT', async () => {
+      const db = new FakeDatabase();
+      const issued = await issue();
+      await write(db, issued);
+      let calls = 0;
+      const authorize = async () => {
+        calls += 1;
+        if (calls >= 3) throw refusal;
+      };
+      await expect(writeTrialReceipt(issued, { pool: () => db.pool as unknown as Pool, authorize }))
+        .rejects.toBe(refusal);
+      // The duplicate read happened, but no outcome was reported and the one
+      // committed row is unchanged.
+      expect(db.eventNames().slice(-2)).toEqual([HOST_READ_KEY, 'ROLLBACK']);
+      expect(db.receipts.size).toBe(1);
+      expect(db.writes.receipt).toBe(1);
+    });
+
+    it('keeps the offline writer compatible when no grant source is supplied', async () => {
+      const db = new FakeDatabase();
+      const issued = await issue();
+      expect((await write(db, issued)).kind).toBe('inserted');
+      expect(db.receipts.size).toBe(1);
+    });
   });
 
   it('rejects a request that carries any receipt fact, before any write', async () => {
