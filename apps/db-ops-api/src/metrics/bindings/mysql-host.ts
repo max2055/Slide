@@ -18,7 +18,7 @@
  * and the candidate DDL in `b2e-candidate-schema.sql`.
  */
 import { z } from 'zod';
-import { ResourceTypeSchema } from '../../contracts/metrics/index.js';
+import { CapabilitySchema, ResourceTypeSchema, type Capability } from '../../contracts/metrics/index.js';
 import { TimestampSchema } from '../../contracts/metrics/definitions.js';
 import {
   HashIdSchema, ResourceBindingCandidateSchema,
@@ -288,6 +288,7 @@ const IntentSchema = z.strictObject({
     applied_revision: TargetRevisionSchema.nullable(),
     previous_resolution_identity: HashIdSchema.nullable(),
   }),
+  capabilities: z.array(CapabilitySchema),
   operation: z.strictObject({
     key: OperationKeySchema,
     caller_key: IdTextSchema,
@@ -331,6 +332,7 @@ interface ValidatedIntent {
   decided_at: string;
   applied_revision: number | null;
   previous_resolution_identity: HashId | null;
+  capabilities: Capability[];
   operation: BindingApplicationIntent['operation'];
   audit: BindingApplicationIntent['audit'];
 }
@@ -390,6 +392,7 @@ function validateIntent(intent: unknown): ValidatedIntent {
     target_revision: value.target_revision,
     binding: binding.data,
     resolution_identity: value.pending.resolution_identity,
+    capabilities: value.capabilities as Capability[],
     plan: plan as unknown as TemplateCollectionPlan,
     decided_at: value.pending.decided_at,
     applied_revision: value.application.applied_revision,
@@ -631,7 +634,7 @@ class MysqlTransactionHost implements BindingApplicationHost {
         // The primary key is the CAS: a concurrent first binding conflicts here,
         // exactly like a revision mismatch would on an existing row.
         ? await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingInsert, [
-          bytes(valid.resource_key), payloadText, valid.binding.group_id, '[]',
+          bytes(valid.resource_key), payloadText, valid.binding.group_id, JSON.stringify(valid.capabilities),
         ])
         : await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdate, [
           payloadText, valid.binding.group_id, bytes(valid.resource_key), valid.base_revision,

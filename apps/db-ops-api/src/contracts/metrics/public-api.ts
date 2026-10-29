@@ -6,7 +6,7 @@ import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/p
 import {
   TemplateBindingApplyBodySchema, TemplateBindingApplyResponseSchema, TemplateBindingBodySchema,
   TemplateBindingPreviewSchema, TemplateBindingStatusSchema, TemplateCatalogSchema,
-  TemplateOperationStateSchema, TemplateRepinBodySchema, TemplateRepinResponseSchema,
+  TemplateOperationStateSchema, TemplateProbeResponseSchema, TemplateRepinBodySchema, TemplateRepinResponseSchema,
   TemplateTrialBodySchema, TemplateTrialResponseSchema, TemplateVersionDetailSchema,
 } from './template-bindings.js';
 
@@ -43,6 +43,7 @@ export const metricPublicSchemas = {
   TemplateBindingStatus: TemplateBindingStatusSchema,
   TemplateOperationState: TemplateOperationStateSchema,
   TemplateBindingPreview: TemplateBindingPreviewSchema,
+  TemplateProbeResponse: TemplateProbeResponseSchema,
   TemplateTrialResponse: TemplateTrialResponseSchema,
   TemplateBindingApplyResponse: TemplateBindingApplyResponseSchema,
   TemplateBindingRequest: TemplateBindingBodySchema,
@@ -114,6 +115,12 @@ export const metricPublicPaths = {
     parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],
     description: 'Authoritative read of one native apply intent from the host operation journal written with that binding revision and audit. `committed` returns the exact recorded target revision and digests; `pending` is an unknown outcome that must not be resent; `absent` proves no operation with that key exists for this resource. A key recorded for another resource is reported absent, never disclosed. Requires live read access on the resource, re-read after the operation row is read.',
     responses: { '200': response('TemplateOperationState'), ...errors } } },
+  '/api/metrics/template-bindings/{type}/{id}/probe': { post: { operationId: 'probeMetricTemplateBindingCapabilities',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Bootstrap capability acquisition for an unbound resource: one bounded read-only probe through already registered implementations, pinned versions and a trusted applicable target. It persists the observed capability facts under the exact resource, pins, credential reference, base revision and candidate intent, never a binding, revision, receipt, audit or applied marker. A bound resource is 409: its published capabilities stay authoritative. Requires live management permission, re-read after the resource lock and after every remote read and persistence wait; failures persist nothing.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateBindingRequest') } } },
+    responses: { '200': response('TemplateProbeResponse'), ...errors,
+      '409': { description: 'Resource already bound or probe busy' }, '422': { description: 'No implementable item or the probe failed; nothing was stored' } } } },
   '/api/metrics/template-bindings/{type}/{id}/preview': { post: { operationId: 'previewMetricTemplateBinding',
     security: [{ bearerAuth: [] }], parameters,
     description: 'Walks preflight → compile → resolve → plan for the exact pinned versions and reports every item decision with its release and applicability to the live target. Requires live management permission on this resource. Nothing is persisted.',

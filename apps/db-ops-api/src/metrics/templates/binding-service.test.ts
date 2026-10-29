@@ -141,6 +141,10 @@ function fakeConnection() {
       state.statements.push(key);
       if (key === normalize(MYSQL_BINDING_HOST_SQL.lock)) return [[{ id: 1 }], []];
       if (key.startsWith('SELECT capabilities FROM metric_policy_bindings')) return [[], []];
+      // Bootstrap evidence is a separate store; these fixtures never seed it, so
+      // an unbound resource has no probed capability facts here.
+      if (key.startsWith('SELECT payload FROM metric_capability_evidence')) return [[], []];
+      if (key.startsWith('SELECT 1 FROM metric_policy_bindings')) return [[], []];
       if (key === normalize(TRIAL_RECEIPT_INSERT_SQL)) {
         await state.beforeInsert?.();
         const [receiptId, payload] = params as [string, string];
