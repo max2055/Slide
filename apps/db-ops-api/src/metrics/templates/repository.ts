@@ -37,6 +37,8 @@ export interface TemplateSummary {
 
 export interface TemplateListQuery {
   status?: TemplateStatus;
+  /** Case-insensitive substring of the template display name. */
+  query?: string;
   cursor?: string;
   limit?: number;
 }
@@ -198,6 +200,7 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
     const rows = [...this.templates.values()]
       .filter(template => (query.status === undefined ? true : template.status === query.status))
+      .filter(template => (query.query === undefined ? true : template.name.toLowerCase().includes(query.query.toLowerCase())))
       .filter(template => (query.cursor === undefined ? true : template.template_id > query.cursor))
       .sort((a, b) => (a.template_id < b.template_id ? -1 : 1))
       .map(template => ({

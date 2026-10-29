@@ -32,15 +32,30 @@ import {
   TemplateBindingService, poolTemplatePort, templateBindingErrorStatus,
 } from './binding-service.js';
 import { templatePinOf, RepinError } from './repin.js';
+import { BindingCandidateError } from '../bindings/compile.js';
+import { BindingPreflightError } from '../bindings/preflight.js';
+import { TemplateResolutionError } from '../bindings/resolve.js';
 
 const registry = createConfigurationRegistry();
 const productionPool = (): Pool | null => dbConnection.getPool();
 
 /** The generated JSON schema of one public component; the route and OpenAPI share it. */
 const json = (name: keyof typeof metricJsonSchemas): Record<string, unknown> => metricJsonSchemas[name] as Record<string, unknown>;
-/** Every rejection the flow can answer with; stable codes only, never a driver message. */
-const errorSchema = { type: 'object', properties: { error: { type: 'string' }, item_id: { type: 'string' } },
-  required: ['error'], additionalProperties: {} } as const;
+/**
+ * Every rejection the flow can answer with; stable codes only, never a driver
+ * message. Structured conflict fields exist so the UI can name the exact item
+ * or setting that has to be resolved before the flow may continue.
+ */
+const errorSchema = { type: 'object', properties: {
+  error: { type: 'string' }, item_id: { type: 'string' }, template_id: { type: ['string', 'null'] },
+  parameter: { type: ['string', 'null'] }, field: { type: ['string', 'null'] }, rule: { type: ['string', 'null'] },
+  release: { type: ['string', 'null'] },
+  canonical_metric: { type: 'object', additionalProperties: true },
+  providers: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  conflicts: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  values: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  location: { type: 'object', additionalProperties: true },
+}, required: ['error'], additionalProperties: {} } as const;
 const refusal = (status: number) => ({ [status]: errorSchema });
 const refusals = (statuses: number[]) => Object.assign({}, ...statuses.map(refusal));
 const resourceParams = { type: 'object', additionalProperties: false, required: ['type', 'id'],
@@ -74,10 +89,26 @@ const ref = (params: unknown) => {
   return RefSchema.parse({ type: p.type, id: Number(p.id) });
 };
 
-const refuse = (error: unknown, fallback: string) => {
+interface Refusal { status: number; code: string; extra?: Record<string, unknown> }
+const refuse = (error: unknown, fallback: string): Refusal => {
   if (error instanceof ActorAuthenticationError) return { status: 401, code: 'POLICY_AUTH_REQUIRED' };
   const mapped = templateBindingErrorStatus(error);
   if (mapped) return mapped;
+  // Candidate/preflight/resolution rejections are business answers about the
+  // exact pin or item, not server failures: the caller must resolve them.
+  if (error instanceof BindingCandidateError) return { status: 422, code: error.code, extra: {
+    template_id: error.location.pin?.template_id ?? null, item_id: error.location.item?.item_id ?? null,
+    release: error.location.release?.id ?? null,
+  } };
+  if (error instanceof BindingPreflightError) return { status: 422, code: error.code, extra: {
+    conflicts: error.conflicts.map(conflict => ({ code: conflict.code, canonical_metric: conflict.canonical_metric,
+      providers: conflict.providers })),
+  } };
+  if (error instanceof TemplateResolutionError) return { status: 422, code: error.code, extra: {
+    template_id: error.location.template_id, parameter: error.location.parameter, field: error.location.field,
+    rule: error.rule, location: error.location,
+    ...(error.conflicts.length ? { conflicts: error.conflicts } : {}),
+  } };
   if (error instanceof z.ZodError) return { status: 400, code: 'TEMPLATE_BINDING_INPUT_INVALID' };
   return { status: 500, code: fallback };
 };
@@ -90,7 +121,11 @@ export async function registerMetricTemplateRoutes(
   const actorOf = (request: unknown) => (request as { user?: ActorContext }).user;
 
   app.route({ method: 'GET', url: '/api/metrics/templates', preHandler: [verifyToken],
-    schema: { response: { 200: json('TemplateCatalog'), ...refusals([401, 403, 500, 503]) } },
+    schema: { querystring: { type: 'object', additionalProperties: false, properties: {
+      query: { type: 'string', maxLength: 128 }, status: { type: 'string', enum: ['draft', 'active', 'deprecated', 'archived'] },
+      cursor: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+      limit: { type: 'integer', minimum: 1, maximum: 50 } } },
+    response: { 200: json('TemplateCatalog'), ...refusals([400, 401, 403, 500, 503]) } },
     handler: async (request, reply) => {
     reply.header('Cache-Control', 'private, no-store');
     const actor = actorOf(request);
@@ -98,9 +133,13 @@ export async function registerMetricTemplateRoutes(
     if (!hasPermission(new Set(actor.permissions), 'metric:view')) return reply.code(403).send({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
     const pool = productionPool();
     if (!pool) return reply.code(503).send({ error: 'TEMPLATE_BINDING_STORE_UNAVAILABLE' });
+    const params = (request.query ?? {}) as { query?: string; status?: 'draft' | 'active' | 'deprecated' | 'archived';
+      cursor?: string; limit?: number };
     try {
       const repository = poolTemplatePort(pool);
-      const page = await repository.listTemplates({ limit: 100 });
+      const page = await repository.listTemplates({
+        query: params.query?.trim() || undefined, status: params.status, cursor: params.cursor, limit: params.limit,
+      });
       const templates = [];
       for (const summary of page.items) {
         const versions = await repository.listVersions(summary.template_id);
@@ -111,7 +150,7 @@ export async function registerMetricTemplateRoutes(
             status: version.status })),
         });
       }
-      return { templates };
+      return { templates, next_cursor: page.next_cursor };
     } catch {
       return reply.code(500).send({ error: 'TEMPLATE_LIST_FAILED' });
     }
@@ -178,7 +217,7 @@ export async function registerMetricTemplateRoutes(
       } catch (error) {
         if (error instanceof RepinError) return reply.code(422).send({ error: error.code, item_id: error.item_id });
         const mapped = refuse(error, 'TEMPLATE_REPIN_FAILED');
-        return reply.code(mapped.status).send({ error: mapped.code });
+        return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
       }
     } });
 
@@ -213,8 +252,28 @@ export async function registerMetricTemplateRoutes(
               name: error instanceof Error ? error.name : typeof error },
             error instanceof Error ? error.message.slice(0, 200) : 'unknown');
           }
-          return reply.code(mapped.status).send({ error: mapped.code });
+          return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
         }
       } });
   }
+
+  // Recovery for one client apply intent. The row is the native host's own
+  // operation record (written in its apply transaction), never a legacy table
+  // nor an inference from the current binding.
+  app.route({ method: 'GET', url: `${root}/:type/:id/operations/:key`, preHandler: [verifyToken],
+    schema: { params: { type: 'object', additionalProperties: false, required: ['type', 'id', 'key'],
+      properties: { ...resourceParams.properties, key: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } } },
+      response: { 200: json('TemplateOperationState'), ...refusals([400, 401, 403, 404, 500, 503]) } },
+    handler: async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const actor = actorOf(request);
+      if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+      try {
+        const params = request.params as { type: string; id: string; key: string };
+        return await service.operation(actor, ref(params), params.key);
+      } catch (error) {
+        const mapped = refuse(error, 'TEMPLATE_OPERATION_FAILED');
+        return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
+      }
+    } });
 }

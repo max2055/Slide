@@ -146,6 +146,17 @@ export interface TemplateTrialResult {
   releases: Array<{ release_ref: string; decision: string }>;
 }
 
+export interface TemplateOperationState {
+  state: 'committed' | 'pending' | 'absent';
+  operation: {
+    resource: Ref;
+    target_revision: number;
+    candidate_digest: HashId;
+    resolution_identity: HashId;
+    status: 'committed' | 'unknown' | 'pending';
+  } | null;
+}
+
 export interface TemplateBindingStatus {
   source: 'template' | 'package' | 'unbound';
   revision: number | null;
@@ -659,6 +670,34 @@ export class TemplateBindingService {
     }), async connection => { await authorize(connection); });
   }
 
+  /**
+   * The native host's own operation record for one caller key. It is written in
+   * the same transaction as the binding revision and its audit, so a committed
+   * row is proof that intent was applied. A row for another resource is reported
+   * absent (never disclosed), and the live grant is re-read after the read so a
+   * revocation that lands during the query is still refused.
+   */
+  async operation(actor: ActorContext, ref: Ref, callerKey: string): Promise<TemplateOperationState> {
+    await this.assertAccess(actor, ref, false);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(callerKey)) fail('TEMPLATE_BINDING_INPUT_INVALID');
+    const [rows] = await this.pool().execute<RowDataPacket[]>(
+      `SELECT resource_key, target_revision, candidate_digest, resolution_identity, status
+         FROM metric_policy_operations WHERE caller_key = ? LIMIT 2`, [callerKey]);
+    // Decimal keys are binary in DDL; compare their UTF-8 text.
+    const row = rows.find(candidate => String(candidate.resource_key) === refKey(ref));
+    // A revoke that lands while the row is being read must not return its facts.
+    await this.assertAccess(await this.live(actor), ref, false);
+    if (!row) return { state: 'absent', operation: null };
+    const rawStatus = String(row.status);
+    const status = rawStatus === 'committed' ? 'committed' as const
+      : rawStatus === 'unknown' ? 'unknown' as const : 'pending' as const;
+    return { state: status === 'committed' ? 'committed' : 'pending', operation: {
+      resource: ref, target_revision: Number(row.target_revision),
+      candidate_digest: String(row.candidate_digest) as HashId,
+      resolution_identity: String(row.resolution_identity) as HashId, status,
+    } };
+  }
+
   /** Read one binding row through the shared codec; a template row keeps its own shape. */
   async status(actor: ActorContext, ref: Ref): Promise<TemplateBindingStatus> {
     await this.assertAccess(actor, ref, false);
@@ -695,9 +734,17 @@ export class TemplateBindingService {
 export const templateBindingErrorStatus = (error: unknown): { status: number; code: string } | null => {
   if (error instanceof TemplateBindingError) return { status: error.status, code: error.code };
   if (error instanceof PolicyError) return { status: error.status, code: error.code };
-  // The accepted guard's refusal is a permission answer for this resource.
-  if (error instanceof BindingTransactionError && error.code === 'TRANSACTION_FORBIDDEN') {
-    return { status: 403, code: 'TEMPLATE_BINDING_FORBIDDEN' };
+  // The accepted guard's refusals are business answers: a permission refusal,
+  // a stale revision/operation key, a changed dependency or an expired/consumed
+  // receipt. None of them may collapse into a 500 the client would retry blindly.
+  if (error instanceof BindingTransactionError) {
+    if (error.code === 'TRANSACTION_FORBIDDEN') return { status: 403, code: 'TEMPLATE_BINDING_FORBIDDEN' };
+    if (error.code === 'TRANSACTION_INPUT_INVALID') return { status: 400, code: error.code };
+    if (error.code === 'TRANSACTION_AUTH_UNAVAILABLE' || error.code === 'TRANSACTION_OPERATION_UNAVAILABLE') {
+      return { status: 503, code: error.code };
+    }
+    if (error.code.startsWith('TRANSACTION_RECEIPT_')) return { status: 422, code: error.code };
+    return { status: 409, code: error.code };
   }
   return null;
 };

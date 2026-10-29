@@ -469,6 +469,15 @@ export class MysqlScheduleStore {
       // Re-checked after the last asynchronous work: anything written below is
       // rolled back if the lease, revision or switch changed during the call.
       rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      // A template run is capability evidence for the exact releases it read:
+      // without this, the next preview would see only expired/absent evidence
+      // and could never enable a freshly applied template. The legacy path
+      // refreshes the same column in the same transaction position.
+      const capabilities = results.flatMap(({ result }) => result.capabilities ?? []);
+      if (capabilities.length) {
+        await c.execute('UPDATE metric_policy_bindings SET capabilities = ? WHERE resource_key = ?',
+          [JSON.stringify(capabilities), refKey(ref)]);
+      }
       await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ? WHERE resource_key = ?',
         [JSON.stringify(Object.fromEntries(states)), now, now + plan.settings.interval_ms, refKey(ref)]);
       return true;

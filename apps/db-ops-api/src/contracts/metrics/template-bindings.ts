@@ -10,8 +10,8 @@
  */
 import { z } from 'zod';
 import {
-  HashIdSchema, PackageCompositionEntrySchema, SourceChainSchema,
-  TemplateIdSchema, TemplatePinSchema, TemplateVersionStatusSchema, VersionNumberSchema,
+  HashIdSchema, PackageCompositionEntrySchema, SourceChainSchema, TemplateIdSchema,
+  TemplateParametersSchema, TemplatePinSchema, TemplateVersionStatusSchema, VersionNumberSchema,
 } from './templates.js';
 import { RefSchema } from '../../metrics/policy/model.js';
 
@@ -55,6 +55,8 @@ export const TemplateCatalogSchema = z.looseObject({
       version: VersionNumberSchema, content_hash: HashIdSchema, status: TemplateVersionStatusSchema,
     })),
   })),
+  /** Opaque forward cursor; `null` is the last page. */
+  next_cursor: z.string().nullable(),
 });
 
 /** One immutable version exactly as stored, with its composition and provenance. */
@@ -69,7 +71,7 @@ export const TemplateVersionDetailSchema = z.looseObject({
     canonical_metric: MetricRefOutSchema, unit: z.string(), dimensions: z.record(z.string(), z.string()),
     collector_ref: z.looseObject({ package_release: z.string(), implementation_id: z.string() }),
   })),
-  parameters: z.unknown(),
+  parameters: TemplateParametersSchema,
   source_chain: SourceChainSchema,
   published_at: Timestamp,
 });
@@ -106,6 +108,44 @@ const ExclusionSchema = z.looseObject({
   blocking: z.boolean(),
 });
 
+/**
+ * Recovery for one native apply intent. `committed` is the host's own operation
+ * row (written with the binding revision and audit); `pending` is an unknown
+ * outcome that must not be resent; `absent` proves no intent with that key was
+ * recorded for this resource.
+ */
+export const TemplateOperationStateSchema = z.strictObject({
+  state: z.enum(['committed', 'pending', 'absent']),
+  operation: z.strictObject({
+    resource: RefSchema, target_revision: z.number().int().positive(),
+    candidate_digest: HashIdSchema, resolution_identity: HashIdSchema,
+    status: z.enum(['committed', 'unknown', 'pending']),
+  }).nullable(),
+});
+
+/**
+ * The stored pending plan of a template binding. It is a plan, not an applied
+ * configuration: `target_revision` becomes the published revision only when the
+ * host transaction commits, and application is reported separately.
+ */
+export const TemplatePendingSchema = z.looseObject({
+  base_revision: z.number().int().nonnegative(),
+  target_revision: z.number().int().positive(),
+  resolution_identity: HashIdSchema,
+  plan: z.looseObject({
+    // Explicit keys: a record schema emits `propertyNames`, which Fastify's
+    // strict response serializer cannot compile.
+    settings: z.looseObject({ enabled: z.boolean(), interval_ms: z.number(), timeout_ms: z.number(),
+      stale_after_ms: z.number(), max_counter_gap_ms: z.number(), max_rows: z.number(),
+      max_concurrency: z.number(), max_series_per_resource: z.number() }),
+    parameters: z.array(z.unknown()),
+    releases: z.array(z.unknown()),
+    excluded: z.array(z.unknown()),
+  }),
+  decided_at: Timestamp,
+  operation_key: z.string(),
+});
+
 /** The binding state of one resource; independent facts are never collapsed. */
 export const TemplateBindingStatusSchema = z.looseObject({
   source: z.enum(['template', 'package', 'unbound']),
@@ -113,10 +153,13 @@ export const TemplateBindingStatusSchema = z.looseObject({
   application: z.strictObject({
     status: z.string(), applied_revision: z.number().int().nonnegative().nullable(),
     reported_at: Timestamp.nullable(), error_code: z.string().nullable(),
+    /** The template application carries the identity it was applied for; a legacy row does not. */
+    resolution_identity: HashIdSchema.nullable().optional(),
   }).nullable(),
   template_pins: z.array(TemplatePinSchema),
-  pending: z.unknown(),
-  effective: z.strictObject({ revision: z.number().int(), resolution_identity: z.string() }).nullable(),
+  pending: TemplatePendingSchema.nullable(),
+  /** `resolution_identity` is null when the previous effective snapshot came from a package row. */
+  effective: z.strictObject({ revision: z.number().int(), resolution_identity: z.string().nullable() }).nullable(),
   published_at: Timestamp.nullable(),
 });
 

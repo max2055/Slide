@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createConfigurationRegistry } from './registry.js';
-import { MetricConfigurationReader, configurationStatus, type ConfigurationEvidence } from './status.js';
+import { MetricConfigurationReader, configurationStatus, type ConfigurationEvidence, type TemplateBindingFacts } from './status.js';
 import { PolicyService } from '../policy/service.js';
+import { PolicyError } from '../policy/model.js';
 import { admin, at, MemoryPolicyStore, pin, resource, testResources } from '../policy/test-support.js';
 
 const ref = {type:'instance' as const,id:1};
@@ -48,6 +49,30 @@ describe('independent resource configuration facts',()=>{
     expect(result.packages.filter(p=>p.compatibility==='compatible').every(p=>p.release.package.applicability.some(a=>a.attribute==='db.engine'&&a.values.includes('mysql')))).toBe(true);
     delete inventory.attributes['db.version'];
     expect((await reader.recommendations(admin,ref)).packages.some(p=>p.recommended)).toBe(false);
+  });
+  it('reads a templates-v1 binding through its own facts, never as an unbound resource',async()=>{
+    const settings={enabled:true,interval_ms:60000,timeout_ms:5000,stale_after_ms:120000,max_counter_gap_ms:300000,
+      max_rows:100,max_concurrency:1,max_series_per_resource:100};
+    const facts:TemplateBindingFacts={revision:5,published_at:at,application:{status:'pending',applied_revision:4},settings,
+      enabled_overridden:true,metrics:[{metric:{id:'db.uptime_seconds',semantic_version:'1.0.0'},enabled:true,decision:'collect',capability:'supported'},
+        {metric:{id:'mysql.threads_running',semantic_version:'1.0.0'},enabled:false,decision:'disabled',capability:'supported'}]};
+    const registry=createConfigurationRegistry();
+    const policy={assertAccess:async()=>undefined,effective:async()=>{throw new PolicyError('TEMPLATE_BINDING_UNSUPPORTED',409);}} as unknown as PolicyService;
+    const reader=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence,
+      template:async()=>facts},async()=>[],()=>at);
+    const status=await reader.status(admin,ref);
+    expect(status.binding).toEqual({state:'bound',package:null,published_revision:5,applied_revision:4,application:'pending'});
+    expect(status.effective_enabled).toMatchObject({enabled:true,policy_enabled:true,source:'resource'});
+    expect(status.coverage.find(m=>m.metric.id==='db.uptime_seconds')).toMatchObject({state:'covered'});
+    expect(status.coverage.find(m=>m.metric.id==='mysql.threads_running')).toMatchObject({state:'disabled',reason:'METRIC_DISABLED'});
+    expect(status.blockers).toEqual(expect.arrayContaining(['APPLICATION_PENDING','AWAITING_SAMPLE']));
+    expect(status.formal_visibility).toMatchObject({state:'pending',source:'none'});
+    // A template row that vanishes between the two reads is an error, not "unbound".
+    const missing=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence,
+      template:async()=>null},async()=>[],()=>at);
+    await expect(missing.status(admin,ref)).rejects.toThrow('POLICY_BINDING_INVALID');
+    const noPort=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence},async()=>[],()=>at);
+    await expect(noPort.status(admin,ref)).rejects.toThrow('POLICY_STORE_UNAVAILABLE');
   });
   it('reports an exact applied custom binding without repeating activation, while retaining formal gaps',async()=>{
     const s=setup();
