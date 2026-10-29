@@ -18,12 +18,16 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { Pool } from 'mysql2/promise';
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
-import { ActorAuthenticationError } from '../../auth/actor-context.js';
+import { ActorAuthenticationError, actorContextService } from '../../auth/actor-context.js';
 import { hasPermission } from '../../auth/require-permission.js';
 import { dbConnection } from '../../db-connection.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { createAssetCollectorAccess } from '../config/access.js';
 import { RefSchema, rule } from '../policy/model.js';
+import {
+  TemplateBindingApplyBodySchema, TemplateRepinBodySchema, TemplateTrialBodySchema, TemplateBindingBodySchema,
+} from '../../contracts/metrics/template-bindings.js';
+import { metricJsonSchemas } from '../../contracts/metrics/public-api.js';
 import {
   TemplateBindingService, poolTemplatePort, templateBindingErrorStatus,
 } from './binding-service.js';
@@ -33,9 +37,33 @@ import { configurationInventory } from '../config/inventory.js';
 const registry = createConfigurationRegistry();
 const productionPool = (): Pool | null => dbConnection.getPool();
 
+/** The generated JSON schema of one public component; the route and OpenAPI share it. */
+const json = (name: keyof typeof metricJsonSchemas): Record<string, unknown> => metricJsonSchemas[name] as Record<string, unknown>;
+/** Every rejection the flow can answer with; stable codes only, never a driver message. */
+const errorSchema = { type: 'object', properties: { error: { type: 'string' }, item_id: { type: 'string' } },
+  required: ['error'], additionalProperties: {} } as const;
+const refusal = (status: number) => ({ [status]: errorSchema });
+const refusals = (statuses: number[]) => Object.assign({}, ...statuses.map(refusal));
+const resourceParams = { type: 'object', additionalProperties: false, required: ['type', 'id'],
+  properties: { type: { type: 'string', enum: ['instance', 'server', 'network_device'] },
+    id: { type: 'string', pattern: '^[1-9][0-9]*$' } } };
+const templateIdParams = { type: 'object', additionalProperties: false, required: ['templateId'],
+  properties: { templateId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } } };
+const versionParams = { type: 'object', additionalProperties: false, required: ['templateId', 'version'],
+  properties: { templateId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+    version: { type: 'string', pattern: '^[0-9]+$' } } };
+
+const bodyOf = (schema: z.ZodType): Record<string, unknown> => {
+  const document = z.toJSONSchema(schema, { unrepresentable: 'throw' }) as Record<string, unknown>;
+  // Fastify's validator only needs the shape; the dialect marker is not a keyword there.
+  const { $schema: _dialect, ...body } = document;
+  return body;
+};
+
 /** One service for the process; the access object owns the per-resource caches. */
 export const templateBindingService = new TemplateBindingService({
   pool: productionPool, registry, access: createAssetCollectorAccess(),
+  reload: actor => actorContextService.revalidateActor(actor, actor.requestId),
 });
 
 const ref = (params: unknown) => {
@@ -59,7 +87,9 @@ export async function registerMetricTemplateRoutes(
 ): Promise<void> {
   const actorOf = (request: unknown) => (request as { user?: ActorContext }).user;
 
-  app.route({ method: 'GET', url: '/api/metrics/templates', preHandler: [verifyToken], handler: async (request, reply) => {
+  app.route({ method: 'GET', url: '/api/metrics/templates', preHandler: [verifyToken],
+    schema: { response: { 200: json('TemplateCatalog'), ...refusals([401, 403, 500, 503]) } },
+    handler: async (request, reply) => {
     reply.header('Cache-Control', 'private, no-store');
     const actor = actorOf(request);
     if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
@@ -86,6 +116,8 @@ export async function registerMetricTemplateRoutes(
   } });
 
   app.route({ method: 'GET', url: '/api/metrics/templates/:templateId/versions/:version', preHandler: [verifyToken],
+    schema: { params: versionParams,
+      response: { 200: json('TemplateVersionDetail'), ...refusals([400, 401, 403, 404, 500, 503]) } },
     handler: async (request, reply) => {
       reply.header('Cache-Control', 'private, no-store');
       const actor = actorOf(request);
@@ -119,6 +151,8 @@ export async function registerMetricTemplateRoutes(
   // items pin an installed release that applies to this target. Never edits the
   // published version and never relaxes applicability.
   app.route({ method: 'POST', url: '/api/metrics/templates/:templateId/repin', preHandler: [verifyToken],
+    schema: { params: templateIdParams, body: bodyOf(TemplateRepinBodySchema),
+      response: { 200: json('TemplateRepinResponse'), ...refusals([400, 401, 403, 404, 422, 500, 503]) } },
     bodyLimit: 16384, handler: async (request, reply) => {
       reply.header('Cache-Control', 'private, no-store');
       const actor = actorOf(request);
@@ -129,10 +163,14 @@ export async function registerMetricTemplateRoutes(
       const input = z.strictObject({ resource: RefSchema }).safeParse(request.body);
       if (!input.success) return reply.code(400).send({ error: 'TEMPLATE_BINDING_INPUT_INVALID' });
       try {
+        // Re-pinning publishes a new global template version on the strength of
+        // this resource's applicability: the caller must manage that resource,
+        // not merely hold `metric:manage` over some scope.
+        await service.assertAccess(actor, input.data.resource, true);
         const resource = await configurationInventory(input.data.resource);
         const result = await repinTemplateVersion({
           repository: poolTemplatePort(pool), registry, templateId: (request.params as { templateId: string }).templateId,
-          resource, requestId: actor.requestId,
+          resource, requestId: actor.requestId, actor,
         });
         if ('unchanged' in result) return { unchanged: true, template_id: result.template_id, version: result.version };
         return {
@@ -142,19 +180,29 @@ export async function registerMetricTemplateRoutes(
         };
       } catch (error) {
         if (error instanceof RepinError) return reply.code(422).send({ error: error.code, item_id: error.item_id });
-        return reply.code(500).send({ error: 'TEMPLATE_REPIN_FAILED' });
+        const mapped = refuse(error, 'TEMPLATE_REPIN_FAILED');
+        return reply.code(mapped.status).send({ error: mapped.code });
       }
     } });
 
   const root = '/api/metrics/template-bindings';
-  const flow: Array<{ method: 'GET' | 'POST'; suffix: string; run: (actor: ActorContext, params: unknown, body: unknown) => Promise<unknown> }> = [
-    { method: 'GET', suffix: '', run: (actor, params) => service.status(actor, ref(params)) },
-    { method: 'POST', suffix: '/preview', run: (actor, params, body) => service.preview(actor, ref(params), body) },
-    { method: 'POST', suffix: '/trial', run: (actor, params, body) => service.trial(actor, ref(params), body) },
-    { method: 'POST', suffix: '/apply', run: (actor, params, body) => service.apply(actor, ref(params), body) },
+  const flow: Array<{ method: 'GET' | 'POST'; suffix: string; response: string;
+    body?: z.ZodType;
+    run: (actor: ActorContext, params: unknown, body: unknown) => Promise<unknown> }> = [
+    { method: 'GET', suffix: '', response: 'TemplateBindingStatus',
+      run: (actor, params) => service.status(actor, ref(params)) },
+    { method: 'POST', suffix: '/preview', response: 'TemplateBindingPreview', body: TemplateBindingBodySchema,
+      run: (actor, params, body) => service.preview(actor, ref(params), body) },
+    { method: 'POST', suffix: '/trial', response: 'TemplateTrialResponse', body: TemplateTrialBodySchema,
+      run: (actor, params, body) => service.trial(actor, ref(params), body) },
+    { method: 'POST', suffix: '/apply', response: 'TemplateBindingApplyResponse', body: TemplateBindingApplyBodySchema,
+      run: (actor, params, body) => service.apply(actor, ref(params), body) },
   ];
   for (const route of flow) {
     app.route({ method: route.method, url: `${root}/:type/:id${route.suffix}`, preHandler: [verifyToken],
+      schema: { params: resourceParams, ...(route.body ? { body: bodyOf(route.body) } : {}),
+        response: { 200: json(route.response as keyof typeof metricJsonSchemas),
+          ...refusals([400, 401, 403, 404, 409, 422, 500, 503]) } },
       bodyLimit: 65536, handler: async (request, reply) => {
         reply.header('Cache-Control', 'private, no-store');
         const actor = actorOf(request);

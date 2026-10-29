@@ -1,0 +1,223 @@
+/**
+ * MAX-238 / COLLECTION-DISPLAY-E2E-R2 — the public contract of the native
+ * template catalog and the binding flow (preview → trial → apply).
+ *
+ * These schemas are the single source of truth for three artifacts that must not
+ * drift: the OpenAPI document, the generated client types, and the Fastify route
+ * schema. Every shape below mirrors what the real handlers return; fields the
+ * flow only carries through (the internal execution plan) stay open objects so a
+ * documented envelope never silently drops data.
+ */
+import { z } from 'zod';
+import {
+  HashIdSchema, PackageCompositionEntrySchema, SourceChainSchema,
+  TemplateIdSchema, TemplatePinSchema, TemplateVersionStatusSchema, VersionNumberSchema,
+} from './templates.js';
+import { RefSchema } from '../../metrics/policy/model.js';
+
+const Timestamp = z.iso.datetime();
+const ResourceTypeSchema = z.enum(['instance', 'server', 'network_device']);
+const ReleaseSchema = z.strictObject({
+  id: z.string(), version: z.string(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+});
+const MetricRefOutSchema = z.strictObject({ id: z.string(), semantic_version: z.string() });
+const ApplicabilitySchema = z.strictObject({
+  attribute: z.string(),
+  value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  supported_values: z.array(z.string()),
+  status: z.enum(['supported', 'unsupported', 'unknown']),
+});
+const SettingsSchema = z.strictObject({
+  enabled: z.boolean(), interval_ms: z.number(), timeout_ms: z.number(), stale_after_ms: z.number(),
+  max_counter_gap_ms: z.number(), max_rows: z.number(), max_concurrency: z.number(), max_series_per_resource: z.number(),
+});
+const BudgetSchema = z.strictObject({
+  estimate: z.literal(true), request_unit: z.literal('logical_reads'),
+  estimated_series_upper_bound: z.number(), max_series_per_resource: z.number(), requests_per_hour_estimate: z.number(),
+});
+const ResolvedParameterSchema = z.strictObject({
+  name: z.string(), type: z.enum(['number', 'integer', 'boolean', 'string']),
+  default: z.union([z.number(), z.string(), z.boolean(), z.null()]),
+  override: z.union([z.number(), z.string(), z.boolean(), z.null()]),
+  effective: z.union([z.number(), z.string(), z.boolean()]),
+  source: z.enum(['default', 'override']),
+});
+const ResolvedParametersSchema = z.strictObject({
+  pin: TemplatePinSchema, parameters: z.array(ResolvedParameterSchema),
+});
+
+/** The catalog: persisted template identities and their immutable version heads. */
+export const TemplateCatalogSchema = z.looseObject({
+  templates: z.array(z.looseObject({
+    template_id: TemplateIdSchema, name: z.string(), status: z.string(),
+    current_published_version: z.number().int().positive().nullable(),
+    versions: z.array(z.strictObject({
+      version: VersionNumberSchema, content_hash: HashIdSchema, status: TemplateVersionStatusSchema,
+    })),
+  })),
+});
+
+/** One immutable version exactly as stored, with its composition and provenance. */
+export const TemplateVersionDetailSchema = z.looseObject({
+  template_id: TemplateIdSchema,
+  version: VersionNumberSchema,
+  status: TemplateVersionStatusSchema,
+  content_hash: HashIdSchema,
+  package_composition: z.array(PackageCompositionEntrySchema),
+  items: z.array(z.looseObject({
+    item_id: z.string(), version: VersionNumberSchema, display_name: z.string(),
+    canonical_metric: MetricRefOutSchema, unit: z.string(), dimensions: z.record(z.string(), z.string()),
+    collector_ref: z.looseObject({ package_release: z.string(), implementation_id: z.string() }),
+  })),
+  parameters: z.unknown(),
+  source_chain: SourceChainSchema,
+  published_at: Timestamp,
+});
+
+/** Re-pinning either publishes one new immutable version or reports the target unchanged. */
+export const TemplateRepinResponseSchema = z.union([
+  z.strictObject({ unchanged: z.literal(true), template_id: TemplateIdSchema, version: VersionNumberSchema }),
+  z.looseObject({
+    unchanged: z.literal(false), template_id: TemplateIdSchema,
+    from_version: VersionNumberSchema, to_version: VersionNumberSchema, content_hash: HashIdSchema,
+    changes: z.array(z.strictObject({
+      item_id: z.string(),
+      from: z.strictObject({ version: VersionNumberSchema, release: z.string(), implementation_id: z.string() }),
+      to: z.strictObject({ version: VersionNumberSchema, release: z.string(), implementation_id: z.string() }),
+      reason: z.literal('target_version_incompatible'),
+    })),
+    pin: TemplatePinSchema,
+  }),
+]);
+
+const ItemViewSchema = z.strictObject({
+  template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
+  canonical_metric: MetricRefOutSchema, unit: z.string(), dimensions: z.record(z.string(), z.string()),
+  release: ReleaseSchema, release_ref: z.string(), collector_id: z.string(), implementation_id: z.string(),
+  enabled: z.boolean(),
+  decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
+  capability: z.enum(['supported', 'unsupported', 'unknown']),
+});
+const ExclusionSchema = z.looseObject({
+  pin: TemplatePinSchema, template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
+  release: ReleaseSchema, metric: MetricRefOutSchema,
+  decision: z.enum(['disabled', 'unsupported', 'capability_unknown']),
+  reason: z.enum(['settings_disabled', 'metric_disabled', 'capability_unsupported', 'capability_unknown']),
+  blocking: z.boolean(),
+});
+
+/** The binding state of one resource; independent facts are never collapsed. */
+export const TemplateBindingStatusSchema = z.looseObject({
+  source: z.enum(['template', 'package', 'unbound']),
+  revision: z.number().int().nonnegative().nullable(),
+  application: z.strictObject({
+    status: z.string(), applied_revision: z.number().int().nonnegative().nullable(),
+    reported_at: Timestamp.nullable(), error_code: z.string().nullable(),
+  }).nullable(),
+  template_pins: z.array(TemplatePinSchema),
+  pending: z.unknown(),
+  effective: z.strictObject({ revision: z.number().int(), resolution_identity: z.string() }).nullable(),
+  published_at: Timestamp.nullable(),
+});
+
+/** Preview: every item's decision, its exact release and why it applies (or not). */
+export const TemplateBindingPreviewSchema = z.looseObject({
+  template: z.literal(true),
+  resource: RefSchema,
+  revision: z.number().int().nonnegative(),
+  resolution_identity: HashIdSchema,
+  executable: z.boolean(),
+  settings: SettingsSchema,
+  parameters: z.array(ResolvedParametersSchema),
+  releases: z.array(z.looseObject({
+    release: ReleaseSchema, release_ref: z.string(), interval_ms: z.number(), timeout_ms: z.number(),
+    collector_ids: z.array(z.string()), metric_keys: z.array(z.string()),
+    requests_per_hour_estimate: z.number(), applicability: z.array(ApplicabilitySchema),
+  })),
+  items: z.array(ItemViewSchema),
+  excluded: z.array(ExclusionSchema),
+  budget: BudgetSchema,
+  plan: z.looseObject({
+    kind: z.literal('template_collection_plan'), internal: z.literal(true),
+    persisted: z.literal(false), applied: z.literal(false), executable: z.boolean(),
+    identity: HashIdSchema, resource: z.strictObject({ type: ResourceTypeSchema, id: z.string() }),
+    revision: z.number().int().nonnegative(), settings: SettingsSchema,
+    parameters: z.array(ResolvedParametersSchema),
+    releases: z.array(z.unknown()), excluded: z.array(ExclusionSchema), budget: BudgetSchema,
+  }),
+});
+
+/** Trial: real read-only evidence, never a formal observation and never persisted. */
+export const TemplateTrialResponseSchema = z.looseObject({
+  trial: z.literal(true),
+  persisted: z.literal(false),
+  decision: z.enum(['attempted', 'disabled', 'unsupported', 'capability_unknown']),
+  receipt_id: z.string(),
+  expires_at: Timestamp,
+  resolution_identity: HashIdSchema,
+  items: z.array(z.strictObject({
+    template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
+    phases: z.strictObject({ read: z.boolean(), transform: z.boolean(), unit: z.boolean() }),
+  })),
+  optional_exclusions: z.array(z.strictObject({
+    template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
+  })),
+  samples: z.array(z.looseObject({
+    template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
+    metric: MetricRefOutSchema, value: z.unknown(), unit: z.string(), observed_at: Timestamp,
+    quality: z.unknown(),
+    read: z.looseObject({ collector_id: z.string(), attempt_ids: z.array(z.string()), status: z.string() }),
+    transform: z.looseObject({ version: z.string() }),
+    unit_check: z.looseObject({ input_unit: z.string(), output_unit: z.string() }),
+  })),
+  attempts: z.array(z.unknown()),
+  releases: z.array(z.strictObject({ release_ref: z.string(), decision: z.string() })),
+});
+
+const OperationKeySchema = z.strictObject({ key: z.string(), caller_key: z.string() });
+
+/** Apply: a staged binding is never reported as applied; an unknown is a lookup. */
+export const TemplateBindingApplyResponseSchema = z.union([
+  z.looseObject({ kind: z.literal('legacy_delegate') }),
+  z.looseObject({
+    kind: z.literal('replay'), persisted: z.literal(false),
+    resource: RefSchema, base_revision: z.number().int(), target_revision: z.number().int(),
+    candidate_digest: HashIdSchema,
+    operation: OperationKeySchema.extend({ receipt_id: z.string(), status: z.literal('committed') }),
+  }),
+  z.looseObject({
+    kind: z.literal('operation_lookup_required'), persisted: z.literal(false),
+    resource: RefSchema, candidate_digest: HashIdSchema,
+    operation: OperationKeySchema.extend({ status: z.literal('unknown') }),
+  }),
+  z.looseObject({
+    kind: z.literal('rejected'), status: z.literal('rejected'), persisted: z.literal(false),
+    committed: z.literal(false), code: z.string(),
+  }),
+  z.looseObject({
+    kind: z.literal('committed'), status: z.literal('committed'), persisted: z.literal(true),
+    committed: z.literal(true), revision: z.number().int().positive(),
+    resolution_identity: HashIdSchema,
+    operation: OperationKeySchema.extend({ receipt_id: z.string(), status: z.literal('committed') }),
+  }),
+  z.looseObject({
+    kind: z.literal('rolled_back'), status: z.literal('rolled_back'),
+    persisted: z.literal(false), committed: z.literal(false), code: z.string(),
+  }),
+  z.looseObject({
+    kind: z.literal('commit_unknown'), status: z.literal('unknown'),
+    persisted: z.literal('unknown'), committed: z.literal('unknown'), cause: z.string(), lookup: z.literal(true),
+    operation: OperationKeySchema.extend({ status: z.literal('unknown') }),
+  }),
+]);
+
+/** Request bodies: the raw candidate plus the trial receipt / idempotency key. */
+export const TemplateBindingBodySchema = z.strictObject({
+  expected_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  template_pins: z.array(TemplatePinSchema).min(1),
+  overrides: z.record(z.string(), z.unknown()).optional(),
+  group_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable().optional(),
+});
+export const TemplateTrialBodySchema = TemplateBindingBodySchema.extend({ receipt_id: z.string() });
+export const TemplateBindingApplyBodySchema = TemplateTrialBodySchema.extend({ caller_key: z.string() });
+export const TemplateRepinBodySchema = z.strictObject({ resource: RefSchema });

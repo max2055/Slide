@@ -117,12 +117,18 @@ export async function repinTemplateVersion(options: {
   resource: Resource;
   at?: string;
   requestId?: string;
+  /**
+   * The caller of an HTTP request. The published version carries the real
+   * operator in its audit; only an offline maintenance run without a caller is
+   * attributed to the accepted non-human maintenance identity.
+   */
+  actor?: ActorContext;
 }): Promise<RepinResult | { unchanged: true; template_id: string; version: number }> {
   const { repository, registry, templateId, resource } = options;
   const at = options.at ?? new Date().toISOString();
   const requestId = options.requestId ?? 'max238-template-repin';
   const service = new MetricTemplateService(repository, registry, { now: () => at });
-  const actor = maintenanceActor(requestId);
+  const actor = options.actor ?? maintenanceActor(requestId);
 
   const template = await repository.getTemplate(templateId);
   if (!template) throw new RepinError('REPIN_TEMPLATE_NOT_FOUND');

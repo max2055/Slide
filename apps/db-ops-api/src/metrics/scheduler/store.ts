@@ -373,6 +373,30 @@ export class MysqlScheduleStore {
     });
   }
 
+  /**
+   * The same live fence the accepted legacy path applies, for one template
+   * revision: cancellation, resource lifecycle and collection switch, the exact
+   * current binding revision, this job's running lease (owner, fencing token,
+   * expiry) and the schedule row that still names it. A stale, expired,
+   * cancelled, disabled or unbound execution must never write.
+   */
+  private async validTemplate(c: PoolConnection, ref: Ref, revision: number, job: ClaimedJob,
+    ctx: JobExecutionContext): Promise<DecodedTemplateBindingPayload | null> {
+    ctx.signal.throwIfAborted();
+    if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
+    if (!await assetCollectionEnabled(c, ref, true)) return null;
+    const current = await this.currentTemplate(c, ref);
+    if (!current || current.binding.revision !== revision) return null;
+    const [jobs] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
+    [job.id, ctx.workerId, ctx.fencingToken]);
+    if (jobs.length !== 1) return null;
+    const [schedule] = await c.execute<RowDataPacket[]>(
+      'SELECT job_id FROM metric_schedule WHERE resource_key = ? AND revision = ? AND job_id = ?',
+      [refKey(ref), revision, job.id]);
+    return schedule.length === 1 ? current : null;
+  }
+
   /** Fenced commit of template observations: formal normalized write, attempts and cadence. */
   async commitTemplate(snapshot: TemplateExecutionSnapshot,
     results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>,
@@ -380,8 +404,7 @@ export class MysqlScheduleStore {
     const { decoded, plan } = snapshot;
     const ref = decoded.binding.resource, revision = decoded.binding.revision;
     return this.transaction(async c => {
-      const current = await this.currentTemplate(c, ref);
-      if (!current || current.binding.revision !== revision) return false;
+      if (!await this.validTemplate(c, ref, revision, job, ctx)) return false;
       const [rows] = await c.execute<RowDataPacket[]>('SELECT job_id FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       if (rows[0]?.job_id !== job.id) return false;
       const storage = new MysqlMetricStorage(c as unknown as Pool, () => new Date(now));
@@ -428,6 +451,9 @@ export class MysqlScheduleStore {
       }
       const states = new Map(snapshot.states);
       for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
+      // Re-checked after the last asynchronous work: anything written below is
+      // rolled back if the lease, revision or switch changed during the call.
+      rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
       await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ? WHERE resource_key = ?',
         [JSON.stringify(Object.fromEntries(states)), now, now + plan.settings.interval_ms, refKey(ref)]);
       return true;
@@ -437,10 +463,11 @@ export class MysqlScheduleStore {
   async recordTemplateFailure(snapshot: TemplateExecutionSnapshot,
     results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>,
     job: ClaimedJob, ctx: JobExecutionContext, now: number): Promise<void> {
-    const ref = snapshot.decoded.binding.resource;
+    const ref = snapshot.decoded.binding.resource, revision = snapshot.decoded.binding.revision;
     await this.transaction(async c => {
-      const current = await this.currentTemplate(c, ref);
-      rule(current && current.binding.revision === snapshot.decoded.binding.revision, 'SCHEDULE_STALE_EXECUTION');
+      // Failure rows are an execution side effect too: only a live lease for the
+      // current revision may append them.
+      rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
       for (const { result } of results) {
         for (const attempt of result.attempts) {
           await c.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
