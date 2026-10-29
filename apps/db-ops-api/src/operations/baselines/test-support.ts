@@ -13,5 +13,5 @@ export function syntheticWindow(mode: BaselineInput['mode'] = 'daily'): Baseline
     metric: { id: 'host.cpu.used_ratio', semantic_version: '1.0.0' }, unit: '%', dimensions: {},
     window: { from: new Date(from + i * HOUR).toISOString(), to: new Date(from + (i + 1) * HOUR).toISOString() },
     value: { encoding: 'float64', value: 40 }, quality: { status: 'good', reason: 'none' }, accuracy: 'exact', coverage: 1,
-    freshness: 'stale', sample_count: 60, sources: [] })) };
+    freshness: 'stale', sample_count: 60, stats: null, sources: [] })) };
 }

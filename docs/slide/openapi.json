@@ -17042,6 +17042,550 @@
         ],
         "type": "object"
       },
+      "MetricObservationPage": {
+        "$id": "MetricObservationPage",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1.0.0",
+            "type": "string"
+          },
+          "dimensions": {
+            "additionalProperties": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "metric": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                "type": "string"
+              },
+              "semantic_version": {
+                "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "semantic_version"
+            ],
+            "type": "object"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "accuracy": {
+                  "enum": [
+                    "exact",
+                    "estimated",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                "id": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "observed_at": {
+                  "allOf": [
+                    {
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    {
+                      "pattern": ":\\d{2}(?:\\.\\d{1,3})?Z$"
+                    }
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reason": {
+                      "enum": [
+                        "none",
+                        "partial_input",
+                        "legacy_unknown",
+                        "counter_baseline",
+                        "counter_reset",
+                        "counter_wrap",
+                        "gap",
+                        "missing_input",
+                        "invalid_denominator",
+                        "precision_loss",
+                        "source_error",
+                        "clock_skew",
+                        "cardinality_exceeded",
+                        "not_applicable"
+                      ],
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "good",
+                        "partial",
+                        "unknown",
+                        "invalid"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "sources": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "source": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "attempt_id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "binding_id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "collector_id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "metric_binding_id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "binding_id",
+                          "metric_binding_id",
+                          "collector_id",
+                          "attempt_id"
+                        ],
+                        "type": "object"
+                      },
+                      "versions": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "config_revision": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991,
+                            "type": "integer"
+                          },
+                          "contract": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          },
+                          "package_id": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "package_version": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          },
+                          "transform_version": {
+                            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "contract",
+                          "package_id",
+                          "package_version",
+                          "transform_version",
+                          "config_revision"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "source",
+                      "versions"
+                    ],
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "unit": {
+                  "enum": [
+                    "1",
+                    "By",
+                    "s",
+                    "ms",
+                    "%",
+                    "bit/s",
+                    "By/s",
+                    "count",
+                    "count/s"
+                  ],
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "encoding": {
+                                  "const": "float64",
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "encoding",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "encoding": {
+                                  "const": "int64",
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "pattern": "^(0|-?[1-9]\\d*)$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "encoding",
+                                "value"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "encoding": {
+                                  "const": "uint64",
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "pattern": "^(0|[1-9]\\d*)$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "encoding",
+                                "value"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "buckets": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "count": {
+                                    "pattern": "^(0|[1-9]\\d*)$",
+                                    "type": "string"
+                                  },
+                                  "upper_bound": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "const": "+Inf",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "upper_bound",
+                                  "count"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "count": {
+                              "pattern": "^(0|[1-9]\\d*)$",
+                              "type": "string"
+                            },
+                            "encoding": {
+                              "const": "histogram",
+                              "type": "string"
+                            },
+                            "sum": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "encoding",
+                            "count",
+                            "sum",
+                            "buckets"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "count": {
+                              "pattern": "^(0|[1-9]\\d*)$",
+                              "type": "string"
+                            },
+                            "encoding": {
+                              "const": "summary",
+                              "type": "string"
+                            },
+                            "quantiles": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "quantile": {
+                                    "maximum": 1,
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "quantile",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "sum": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "encoding",
+                            "count",
+                            "sum",
+                            "quantiles"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "observed_at",
+                "value",
+                "unit",
+                "quality",
+                "accuracy",
+                "sources"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "order": {
+            "const": "observed_at,observation_id",
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              },
+              "to": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "contract_version",
+          "resource",
+          "metric",
+          "dimensions",
+          "window",
+          "order",
+          "total",
+          "has_more",
+          "observations"
+        ],
+        "type": "object"
+      },
+      "MetricObservationPageRequest": {
+        "$id": "MetricObservationPageRequest",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "dimensions": {
+            "additionalProperties": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "from": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "metric": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                "type": "string"
+              },
+              "semantic_version": {
+                "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "semantic_version"
+            ],
+            "type": "object"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "to": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource",
+          "metric",
+          "dimensions",
+          "from",
+          "to",
+          "limit"
+        ],
+        "type": "object"
+      },
       "MetricPolicyGroups": {
         "$id": "MetricPolicyGroups",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27958,6 +28502,54 @@
               }
             },
             "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/observations": {
+      "post": {
+        "description": "Read-only formal raw observations, page by page. Current authorization is re-evaluated from each request, so a cursor cannot move to another resource, metric, version, dimensions or window. Same formal fence as the aggregate query: shadow, rolled-back and unaccepted revisions never appear. Half-open [from, to), ascending (observed_at, observation_id) keyset pages without duplicates or gaps at a same-timestamp boundary; no zero fill and no aggregate predecessor/successor. total and has_more come from the same snapshot. A window above the 50,000-row bound returns 400 instead of a truncated total.",
+        "operationId": "listMetricObservations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricObservationPageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricObservationPage"
+                }
+              }
+            },
+            "description": "Authorized raw observation page"
           },
           "400": {
             "description": "Invalid input"

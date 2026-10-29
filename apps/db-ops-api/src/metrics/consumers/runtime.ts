@@ -11,6 +11,8 @@ const pool = () => { const p = dbConnection.getPool(); rule(p, 'METRIC_STORE_UNA
 const decode = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v;
 export const consumerStore: ConsumerStore = {
   queryWindow: (...args) => new MysqlFormalMetricStore(pool()).queryWindow(...args),
+  readWindow: (...args) => new MysqlFormalMetricStore(pool()).readWindow(...args),
+  readObservationPage: (...args) => new MysqlFormalMetricStore(pool()).readObservationPage(...args),
   inventory: (type, id) => configurationInventory({ type, id: Number(id) }),
   latestCapacity: (...args) => new MysqlFormalMetricStore(pool()).latestCapacity(...args),
   dimensions: (...args) => new MysqlFormalMetricStore(pool()).dimensions(...args),

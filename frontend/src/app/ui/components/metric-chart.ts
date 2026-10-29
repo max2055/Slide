@@ -18,8 +18,11 @@ import { formatMetricTime, isMetricTimestamp } from './metric-time.js';
 
 export interface MetricSeries {
   name: string;
-  data: number[];
+  data: Array<number | null>;
   color?: string;
+  /** Optional bucket envelope; shown as dashed bounds so an in-bucket spike survives downsampling. */
+  min?: Array<number | null>;
+  max?: Array<number | null>;
 }
 
 export interface ThresholdConfig {
@@ -229,7 +232,8 @@ export class MetricChart extends LitElement {
       const muted = style.getPropertyValue("--muted").trim();
       const border = style.getPropertyValue("--border").trim();
 
-      const seriesOptions = this.series.map((s, index) => {
+      const seriesOptions: Record<string, unknown>[] = [];
+      this.series.forEach((s, index) => {
         const rgba = s.color ? this._resolveColor(s.color) : undefined;
         const color = (opacity: number) => rgba
           ? `rgba(${rgba[0]},${rgba[1]},${rgba[2]},${rgba[3] * opacity})`
@@ -277,7 +281,13 @@ export class MetricChart extends LitElement {
           };
         }
 
-        return base;
+        seriesOptions.push(base);
+        // The envelope keeps the bucket's own minimum/maximum visible without pretending
+        // they are another measurement series.
+        if (s.min) seriesOptions.push({ name: `${s.name} · 下限`, type: "line" as const, data: s.min, smooth: true, showSymbol: false,
+          lineStyle: { width: 1, type: "dashed" as const, opacity: 0.7 }, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
+        if (s.max) seriesOptions.push({ name: `${s.name} · 上限`, type: "line" as const, data: s.max, smooth: true, showSymbol: false,
+          lineStyle: { width: 1, type: "dashed" as const, opacity: 0.7 }, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
       });
 
       const option: EChartsOption = {
@@ -292,7 +302,7 @@ export class MetricChart extends LitElement {
           },
         },
         legend: {
-          data: this.series.map((s) => s.name),
+          data: seriesOptions.map((s) => s.name as string),
           top: 0,
           right: 10,
           textStyle: { color: text, fontSize: 12 },
@@ -302,7 +312,7 @@ export class MetricChart extends LitElement {
         grid: {
           left: 50,
           right: 20,
-          top: this.series.length > 1 ? 36 : 10,
+          top: seriesOptions.length > 1 ? 36 : 10,
           bottom: 30,
         },
         xAxis: {

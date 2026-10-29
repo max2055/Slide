@@ -1,8 +1,16 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
-import { SemanticMetrics } from './semantic-metrics.js';
+// jsdom cannot initialize the ECharts canvas; the chart element only needs to accept its inputs here.
+vi.mock('./metric-chart.js', () => {
+  if (!customElements.get('metric-chart')) customElements.define('metric-chart', class extends HTMLElement {});
+  return {};
+});
+import { SemanticMetrics, bucketMsFor } from './semantic-metrics.js';
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+// The status strip adds its own read-only requests; window assertions always target the query call.
+const queryCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/query');
+const lastQuery = () => JSON.parse(queryCalls().at(-1)![1].body);
 const result = { profile: { columns: [{ key: 'uptime', metric: { id: 'db.uptime_seconds' }, label: '运行时长' }] }, window: { from: 'start', to: 'end' }, metrics: [
   { definition: { id: 'db.uptime_seconds', category: 'canonical', meaning: 'Database uptime', unit: 's' }, state: 'available', series: [{ dimensions: {}, buckets: [{ value: { encoding: 'uint64', value: '9007199254740993' }, unit: 's', coverage: 1, quality: { status: 'good', reason: 'none' }, freshness: 'fresh', accuracy: 'exact', sources: [{ id: 'source' }], window: { from: 'start', to: 'end' } }] }] },
 ] };
@@ -24,7 +32,7 @@ it('keeps a relative query window exactly divisible by its bucket when the clock
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
   vi.spyOn(Date, 'now').mockImplementation(() => { const captured = now; vi.setSystemTime(++now); return captured; });
   await el.load();
-  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  const query = lastQuery();
   expect(Date.parse(query.to) - Date.parse(query.from)).toBe(3_600_000);
   expect((Date.parse(query.to) - Date.parse(query.from)) % query.bucket_ms).toBe(0);
 });
@@ -81,7 +89,7 @@ it('keeps the selected metric through window loading, refresh, empty series and 
   finish({ ok: true, json: async () => data }); await settle();
   expect(select.value).toBe('mysql.key_cache.used_percent');
   expect(el.shadowRoot!.querySelectorAll('.metric-name')).toHaveLength(1);
-  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  const query = lastQuery();
   expect(query.view).toBe('all'); // Selection filters the all-metric response locally.
   expect(Date.parse(query.to) - Date.parse(query.from)).toBe(6 * 3600000);
   await el.load(); await el.updateComplete; expect(select.value).toBe('mysql.key_cache.used_percent');
@@ -91,4 +99,421 @@ it('keeps the selected metric through window loading, refresh, empty series and 
   expect(el.shadowRoot!.textContent).toContain('当前窗口未返回所选指标');
   select.value = ''; select.dispatchEvent(new Event('change')); await el.updateComplete;
   expect(select.value).toBe(''); expect(el.shadowRoot!.querySelectorAll('.metric-name')).toHaveLength(1);
+});
+
+// ---- MAX240-HISTORY-UI regression coverage ----
+const ok = (data: unknown) => ({ ok: true, status: 200, json: async () => data });
+const instant = '2026-10-14T01:02:03.000Z';
+const bucketAt = (index: number, span = 60_000, overrides: Record<string, unknown> = {}) => ({
+  value: { encoding: 'float64', value: 10 + index }, unit: 's', coverage: 1,
+  quality: { status: 'good', reason: 'none' }, freshness: 'stale', observed_at: instant, accuracy: 'exact', sources: [],
+  window: { from: new Date(Date.parse(instant) + index * span).toISOString(), to: new Date(Date.parse(instant) + (index + 1) * span).toISOString() },
+  sample_count: 1, stats: { count: 1, min: { encoding: 'float64', value: 10 + index }, max: { encoding: 'float64', value: 10 + index }, avg: { encoding: 'float64', value: 10 + index } }, ...overrides,
+});
+const withBuckets = (buckets: unknown[], state = 'available') => {
+  const data = structuredClone(result);
+  (data.metrics[0] as any).state = state;
+  (data.metrics[0].series[0] as any).buckets = buckets;
+  if (buckets.length) data.window = { from: (buckets[0] as any).window.from, to: (buckets.at(-1) as any).window.to };
+  return data;
+};
+const chartOf = (el: SemanticMetrics) => el.shadowRoot!.querySelector('metric-chart') as any;
+const preset = (el: SemanticMetrics, value: string) => {
+  const select = el.shadowRoot!.querySelector<HTMLSelectElement>('select[aria-label="时间范围"]')!;
+  select.value = value; select.dispatchEvent(new Event('change'));
+};
+const customInput = (el: SemanticMetrics, label: string, value: string) => {
+  const input = el.shadowRoot!.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  input.value = value; input.dispatchEvent(new Event('input'));
+};
+const localInput = (ms: number) => {
+  const d = new Date(ms), pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+it('requests complete minute buckets for the 6h, 24h and 7d presets', async () => {
+  authFetch.mockResolvedValue(ok(result)); const el = await mount();
+  for (const [value, hours] of [['6', 6], ['24', 24], ['168', 168]] as const) {
+    preset(el, value); await settle();
+    const query = lastQuery();
+    expect(query.bucket_ms).toBe(60_000);
+    expect(Date.parse(query.to) - Date.parse(query.from)).toBe(hours * 3_600_000);
+    expect((Date.parse(query.to) - Date.parse(query.from)) % query.bucket_ms).toBe(0);
+  }
+});
+it('widens the bucket instead of truncating a custom window above the 10,080 bucket limit', () => {
+  expect(bucketMsFor(Date.parse('2026-10-01T00:00:00Z'), Date.parse('2026-10-08T00:00:00Z'))).toBe(60_000);
+  expect(bucketMsFor(Date.parse('2026-10-01T00:00:00Z'), Date.parse('2026-10-09T00:00:00Z'))).toBe(120_000);
+  expect(bucketMsFor(Date.parse('2026-09-01T00:00:00Z'), Date.parse('2026-10-02T00:00:00Z'))).toBe(300_000);
+});
+it('validates the custom window with Chinese feedback before querying, then keeps its exact window', async () => {
+  authFetch.mockResolvedValue(ok(result)); const el = await mount();
+  preset(el, 'custom'); await el.updateComplete;
+  const calls = authFetch.mock.calls.length;
+  customInput(el, '自定义开始时间', localInput(Date.now() - 3_600_000));
+  customInput(el, '自定义结束时间', localInput(Date.now() - 7_200_000));
+  el.shadowRoot!.querySelector<HTMLButtonElement>('button.btn')!.click(); await el.updateComplete;
+  expect(el.shadowRoot!.textContent).toContain('开始时间必须早于结束时间');
+  expect(authFetch.mock.calls.length).toBe(calls);
+  customInput(el, '自定义结束时间', localInput(Date.now() + 3_600_000));
+  el.shadowRoot!.querySelector<HTMLButtonElement>('button.btn')!.click(); await el.updateComplete;
+  expect(el.shadowRoot!.textContent).toContain('结束时间不能晚于当前时间');
+  customInput(el, '自定义开始时间', localInput(Date.now() - 32 * 86_400_000));
+  customInput(el, '自定义结束时间', localInput(Date.now() - 60_000));
+  el.shadowRoot!.querySelector<HTMLButtonElement>('button.btn')!.click(); await el.updateComplete;
+  expect(el.shadowRoot!.textContent).toContain('最长 31 天');
+  expect(authFetch.mock.calls.length).toBe(calls);
+  const from = localInput(Date.now() - 8 * 86_400_000 + 60_000), to = localInput(Date.now() - 60_000);
+  customInput(el, '自定义开始时间', from); customInput(el, '自定义结束时间', to);
+  el.shadowRoot!.querySelector<HTMLButtonElement>('button.btn')!.click(); await settle();
+  const query = lastQuery();
+  expect(Date.parse(query.from)).toBe(Date.parse(from));
+  expect(Date.parse(query.to)).toBe(Date.parse(to));
+  expect(query.bucket_ms).toBe(120_000);
+  // Leaving the applied custom range returns to the preset window and refetches.
+  preset(el, '24'); await settle();
+  const next = lastQuery();
+  expect(next.bucket_ms).toBe(60_000);
+  expect(Date.parse(next.to) - Date.parse(next.from)).toBe(24 * 3_600_000);
+});
+it('keeps historical good buckets when freshness is stale and current collection fails', async () => {
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0), bucketAt(1), bucketAt(2)], 'temporary_failure')));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11, 12]);
+  expect(chartOf(el).timeData).toHaveLength(3);
+  expect(el.shadowRoot!.textContent).toContain('当前状态不代表历史');
+  expect(el.shadowRoot!.textContent).toContain('最近时间桶');
+});
+it('keeps gaps as breaks and passes the bucket min/max envelope to the chart', async () => {
+  const gap = bucketAt(1, 60_000, { value: null, coverage: 0, quality: { status: 'unknown', reason: 'missing_input' }, stats: null, freshness: 'unknown' });
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0, 60_000, { stats: { count: 2, min: { encoding: 'float64', value: 1 }, max: { encoding: 'float64', value: 9 }, avg: { encoding: 'float64', value: 5 } } }), gap, bucketAt(2)])));
+  const el = await mount(); await el.updateComplete;
+  const series = chartOf(el).series[0];
+  expect(series.data).toEqual([10, null, 12]);
+  expect(series.min).toEqual([1, null, 12]);
+  expect(series.max).toEqual([9, null, 12]);
+  expect(el.shadowRoot!.textContent).toContain('不补 0');
+});
+it('does not plot a bucket whose unit does not match the metric definition, but keeps a valid rate unit', async () => {
+  const mismatch = withBuckets([bucketAt(0, 60_000, { unit: 'ms' }), bucketAt(1, 60_000, { unit: 'ms' })]);
+  (mismatch.metrics[0].definition as any).kind = 'gauge';
+  authFetch.mockResolvedValue(ok(mismatch));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([null, null]);
+  expect(el.shadowRoot!.textContent).toContain('单位不符');
+
+  const rate = withBuckets([bucketAt(0, 60_000, { unit: 'By/s' }), bucketAt(1, 60_000, { unit: 'By/s' })]);
+  const counter = rate.metrics[0].definition as any;
+  counter.kind = 'counter'; counter.unit = 'By'; counter.aggregation = { time: ['rate'], space: ['none'] };
+  authFetch.mockResolvedValue(ok(rate)); await el.load(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+});
+it('renders non-scalar buckets as records instead of forcing a line or a gap', async () => {
+  const record = bucketAt(0, 60_000, { value: { encoding: 'histogram', buckets: [{ upper_bound: 1, count: '2' }] } });
+  const scalar = bucketAt(1, 60_000);
+  authFetch.mockResolvedValue(ok(withBuckets([record, scalar])));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([null, 11]);
+  expect(el.shadowRoot!.textContent).toContain('非标量记录 1');
+});
+it('bounds the observation detail: no bucket rows by default and at most 200 after opening', async () => {
+  const buckets = Array.from({ length: 10_080 }, (_, i) => bucketAt(i));
+  authFetch.mockResolvedValue(ok(withBuckets(buckets)));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).timeData).toHaveLength(10_080);
+  expect(el.shadowRoot!.textContent).toContain('共 10080 个');
+  expect(el.shadowRoot!.querySelectorAll('.bucket-row')).toHaveLength(0);
+  const details = [...el.shadowRoot!.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent?.includes('时间桶明细'))!;
+  details.open = true; details.dispatchEvent(new Event('toggle')); await el.updateComplete; await settle();
+  expect(el.shadowRoot!.querySelectorAll('.bucket-row')).toHaveLength(200);
+  expect(el.shadowRoot!.textContent).toContain('仅渲染最近 200 个时间桶');
+}, 20_000);
+it('discards a late response from an earlier window after a fast switch', async () => {
+  let finish!: (value: unknown) => void;
+  authFetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(ok(withBuckets([bucketAt(0), bucketAt(1)])));
+  const el = await mount();
+  preset(el, '24'); await settle(); await el.updateComplete;
+  expect(chartOf(el).timeData).toHaveLength(2);
+  finish(ok(withBuckets([bucketAt(0)]))); await settle();
+  expect(chartOf(el).timeData).toHaveLength(2);
+});
+
+// ---- MAX240-HISTORY-UI correction regressions ----
+const stats = (min: number, max: number) => ({ count: 2, min: { encoding: 'float64', value: min },
+  max: { encoding: 'float64', value: max }, avg: { encoding: 'float64', value: (min + max) / 2 } });
+it('applies the same drawable condition to the min/max envelope as to the line', async () => {
+  const mismatch = bucketAt(0, 60_000, { unit: 'ms', stats: stats(1, 9) });
+  const invalid = bucketAt(1, 60_000, { quality: { status: 'invalid', reason: 'source_error' }, stats: stats(2, 8) });
+  const unsafe = bucketAt(2, 60_000, { value: { encoding: 'uint64', value: '9007199254740993' }, stats: stats(3, 7) });
+  const record = bucketAt(3, 60_000, { value: { encoding: 'histogram', buckets: [{ upper_bound: 1, count: '2' }] }, stats: stats(4, 6) });
+  const staleGood = bucketAt(4, 60_000, { freshness: 'stale', stats: stats(1, 9) });
+  const data = withBuckets([mismatch, invalid, unsafe, record, staleGood]);
+  (data.metrics[0].definition as any).kind = 'gauge';
+  authFetch.mockResolvedValue(ok(data));
+  const el = await mount(); await el.updateComplete;
+  const series = chartOf(el).series[0];
+  // Unit mismatch, invalid quality, unsafe precision and non-scalar records are breaks;
+  // their stats must not reappear as a dashed envelope.
+  expect(series.data).toEqual([null, null, null, null, 14]);
+  expect(series.min).toEqual([null, null, null, null, 1]);
+  expect(series.max).toEqual([null, null, null, null, 9]);
+});
+it('counts partial buckets separately and keeps their points on the curve', async () => {
+  const partial = bucketAt(1, 60_000, { quality: { status: 'partial', reason: 'gap' }, coverage: 0.5 });
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0), partial])));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  const text = el.shadowRoot!.textContent!;
+  expect(text).toContain('良好 1 · 部分覆盖 1');
+  expect(text).toContain('部分覆盖不代表当前健康');
+  expect(text).not.toContain('有效 2');
+});
+it('keeps stale good history drawn and describes only non-drawable buckets as breaks', async () => {
+  authFetch.mockResolvedValue(ok(withBuckets([bucketAt(0, 60_000, { freshness: 'stale' }),
+    bucketAt(1, 60_000, { freshness: 'stale' })], 'temporary_failure')));
+  const el = await mount(); await el.updateComplete;
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  const text = el.shadowRoot!.textContent!;
+  expect(text).toContain('过期但当时 good/partial 的值照常显示');
+  expect(text).not.toContain('缺失、过期');
+  expect(text).toContain('断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶');
+});
+
+// ---- MAX240-LATEST-DATA ----
+const statusPayload = (overrides: { collection?: Record<string, unknown>; formal_visibility?: Record<string, unknown>; blockers?: string[] } = {}) => ({
+  contract_version: '1.0.0', resource: { type: 'instance', id: 1 }, evaluated_at: instant, can_manage: false,
+  binding: { state: 'bound', package: { id: 'mysql', version: '2.0.0', digest: 'sha256:abc' }, published_revision: 2, applied_revision: 2, application: 'applied' },
+  effective_enabled: { enabled: true, global_enabled: true, asset_enabled: true, policy_enabled: true, source: 'package' },
+  collection: { state: 'succeeded', last_attempt_at: instant, last_success_at: instant, in_flight: false, ...overrides.collection },
+  formal_visibility: { state: 'available', source: 'formal', last_observed_at: instant, generation: 1, ...overrides.formal_visibility },
+  blockers: overrides.blockers ?? [], coverage: [],
+});
+const attemptAt = (overrides: Record<string, unknown> = {}) => ({ status: 'succeeded', started_at: instant, ended_at: instant, error: null, ...overrides });
+const serve = (query: unknown, status: unknown, attempts: unknown) => authFetch.mockImplementation(async (url: string) => {
+  if (url === '/api/metrics/query') return ok(query);
+  if (url.endsWith('/status')) return ok(status);
+  if (url.endsWith('/attempts')) return ok(attempts);
+  return { ok: false, status: 404 };
+});
+const cell = (el: SemanticMetrics, index: number) => el.shadowRoot!.querySelectorAll('.latest-cell')[index];
+it('shows collection state, the last attempt, both formal success times and the window value together', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  Object.assign(data.metrics[0].series[0].buckets[1], { freshness: 'fresh', observed_at: '2026-10-14T01:03:03.000Z',
+    sources: [{ source: { collector_id: 'mysql.status' }, versions: { package_id: 'mysql', package_version: '2.0.0' } }] });
+  serve(data, statusPayload({ blockers: ['COLLECTION_FAILED'], collection: { last_success_at: '2026-10-14T01:02:04.000Z' },
+    formal_visibility: { last_observed_at: '2026-10-14T01:02:05.000Z' } }), [attemptAt({ status: 'partial', evidence_code: 'PARTIAL_INPUT' })]);
+  const el = await mount(); await el.updateComplete;
+  const text = el.shadowRoot!.textContent!;
+  for (const heading of ['当前采集状态', '最近一次采集尝试', '正式采集成功时间', '窗口内最近可用值']) expect(text).toContain(heading);
+  expect(cell(el, 0).textContent).toContain('当前无进行中的采集');
+  expect(cell(el, 0).textContent).toContain('最近采集失败');
+  expect(cell(el, 1).textContent).toContain('部分完成 · 不是成功');
+  expect(cell(el, 1).textContent).toContain('PARTIAL_INPUT');
+  const times = [...cell(el, 2).querySelectorAll('time')].map(t => t.getAttribute('datetime'));
+  expect(times).toEqual(['2026-10-14T01:02:04.000Z', '2026-10-14T01:02:05.000Z']);
+  expect(cell(el, 2).textContent).toContain('两者不同，分别列示，不合并为同一个时间');
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('11 s · 窗口内最近可用值');
+  expect(value.textContent).toContain('质量 良好 · 精确 · 新鲜');
+  expect(value.querySelector('time')!.getAttribute('datetime')).toBe('2026-10-14T01:03:03.000Z');
+  expect(value.textContent).toContain('采集器 mysql.status');
+  expect(value.textContent).toContain('模板 mysql 2.0.0');
+  expect(value.querySelector('.old-value')).toBeNull();
+  expect(value.textContent).not.toContain('全局最近成功');
+});
+it('takes the window value from the newest drawable bucket and grays it when it is not the newest bucket', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1, 60_000, { value: null, quality: { status: 'unknown', reason: 'missing_input' } }),
+    bucketAt(2, 60_000, { unit: 'ms' }), bucketAt(3, 60_000, { value: { encoding: 'uint64', value: '9007199254740993' } })]);
+  (data.metrics[0].definition as any).kind = 'gauge';
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('10 s · 窗口内最近可用值');
+  expect(value.textContent).not.toContain('9007199254740993');
+  expect(value.querySelector('.old-value')).not.toBeNull();
+  expect(value.textContent).toContain('旧值，不代表当前健康');
+});
+it('grays the window value when the metric state or its own freshness is not current health', async () => {
+  serve(withBuckets([bucketAt(0), bucketAt(1, 60_000, { freshness: 'fresh' })], 'temporary_failure'), statusPayload(), []);
+  let el = await mount(); await el.updateComplete;
+  expect(el.shadowRoot!.querySelector('.latest-value .old-value')).not.toBeNull();
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  serve(withBuckets([bucketAt(0), bucketAt(1, 60_000, { freshness: 'stale' })], 'available'), statusPayload(), []);
+  el = await mount(); await el.updateComplete;
+  expect(el.shadowRoot!.querySelector('.latest-value .old-value')).not.toBeNull();
+  expect(el.shadowRoot!.textContent).toContain('旧值，不代表当前健康');
+});
+it('does not invent an attempt or a success time when the status reports none', async () => {
+  serve(withBuckets([bucketAt(0)]), statusPayload({ collection: { last_attempt_at: null, last_success_at: null },
+    formal_visibility: { last_observed_at: null } }), []);
+  const el = await mount(); await el.updateComplete;
+  expect(cell(el, 1).textContent).toContain('暂无采集尝试');
+  expect(cell(el, 2).textContent).toContain('最近成功采集：暂无');
+  expect(cell(el, 2).textContent).toContain('正式来源最近观测：暂无');
+});
+it('keeps history when the status strip fails temporarily and clears it only on a protected failure', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(503));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toEqual(data);
+  expect(el.shadowRoot!.textContent).toContain('采集状态读取失败；历史查询结果保留');
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(403));
+  await el.load(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('权限');
+});
+it('reads status and attempts read-only without recommendations', async () => {
+  serve(withBuckets([bucketAt(0)]), statusPayload(), [attemptAt()]);
+  const el = await mount(); await el.updateComplete;
+  const urls = authFetch.mock.calls.map(call => String(call[0]));
+  expect(urls).toContain('/api/metrics/config/resources/instance/1/status');
+  expect(urls).toContain('/api/metrics/config/resources/instance/1/attempts');
+  expect(urls.some(url => url.endsWith('/recommendations'))).toBe(false);
+  expect(authFetch.mock.calls.every(call => call[1]?.method ? call[0] === '/api/metrics/query'
+    : String(call[0]).endsWith('/status') || String(call[0]).endsWith('/attempts'))).toBe(true);
+});
+
+// ---- MAX240-LATEST-DATA correction regressions ----
+it('picks the window value by window time across series instead of by observation time', async () => {
+  const data = structuredClone(result);
+  const series = [
+    // Older window bucket, but observed later: observation time must not win.
+    { dimensions: { host: 'a' }, buckets: [bucketAt(0, 60_000, { freshness: 'fresh', observed_at: '2026-10-14T03:00:00.000Z' })] },
+    // Newer window bucket, observed earlier: this is the window-latest value.
+    { dimensions: { host: 'b' }, buckets: [bucketAt(1, 60_000, { freshness: 'fresh', observed_at: '2026-10-14T01:00:00.000Z' })] },
+  ];
+  (data.metrics[0] as any).series = series;
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('host=b');
+  expect(value.textContent).toContain('11 s · 窗口内最近可用值');
+  expect(value.textContent).not.toContain('host=a');
+  expect(value.querySelector('.old-value')).toBeNull();
+});
+it('grays the window value when the chosen bucket is not the newest bucket in the window', async () => {
+  const gap = bucketAt(2, 60_000, { value: null, coverage: 0, quality: { status: 'unknown', reason: 'missing_input' }, stats: null, freshness: 'fresh' });
+  const data = structuredClone(result);
+  // The chosen bucket is last in its own series but an older window; another series holds the
+  // newest bucket even though it is not drawable.
+  (data.metrics[0] as any).series = [
+    { dimensions: { host: 'a' }, buckets: [bucketAt(0, 60_000, { freshness: 'fresh' })] },
+    { dimensions: { host: 'b' }, buckets: [gap] },
+  ];
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('10 s · 窗口内最近可用值');
+  expect(value.querySelector('.old-value')).not.toBeNull();
+  expect(value.textContent).toContain('旧值，不代表当前健康');
+});
+it('clears protected results on a missing status resource without claiming history was retained', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(404));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('资源不存在或已不可读');
+  expect(el.error).toContain('受保护结果已清除');
+  expect(el.error).not.toContain('保留上次结果');
+  expect(el.shadowRoot!.textContent).not.toContain('保留上次结果');
+});
+it('clears protected results on an expired login from the status strip', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(401));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('登录已失效');
+});
+
+// ---- MAX240-RAW-PAGE ----
+const rawObservation = (id: string, value: number | null, overrides: Record<string, unknown> = {}) => ({
+  id, observed_at: `2026-10-14T01:0${id.slice(-1)}:00.000Z`,
+  value: value === null ? null : { encoding: 'float64', value }, unit: 's',
+  quality: { status: value === null ? 'unknown' : 'good', reason: value === null ? 'missing_input' : 'none' },
+  accuracy: value === null ? 'unknown' : 'exact', sources: [], ...overrides,
+});
+const rawPage = (overrides: Record<string, unknown> = {}) => ({ contract_version: '1.0.0', total: 2, has_more: false,
+  observations: [rawObservation('obs-1', 1), rawObservation('obs-2', 2)], ...overrides });
+const rawDetails = (el: SemanticMetrics) => [...el.shadowRoot!.querySelectorAll('details')]
+  .find(d => d.querySelector('summary')?.textContent?.includes('原始观测')) as HTMLDetailsElement | undefined;
+const openRaw = async (el: SemanticMetrics) => {
+  const details = rawDetails(el)!;
+  details.open = true; details.dispatchEvent(new Event('toggle'));
+  await settle(); await el.updateComplete;
+  return details;
+};
+const serveWithRaw = (data: unknown, raw: unknown | (() => unknown)) => authFetch.mockImplementation(async (url: string) => {
+  if (url === '/api/metrics/query') return ok(data);
+  if (url.endsWith('/status')) return ok(statusPayload());
+  if (url.endsWith('/attempts')) return ok([]);
+  if (url === '/api/metrics/observations') return typeof raw === 'function' ? (raw as () => unknown)() : ok(raw);
+  return { ok: false, status: 404 };
+});
+const rawCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/observations');
+it('pages formal raw observations with next_cursor and leaves the curve untouched', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  data.metrics[0].series[0].dimensions = { device: 'sda' };
+  const pages = [rawPage({ total: 3, has_more: true, next_cursor: 'cursor-2',
+    observations: [rawObservation('obs-1', 1), rawObservation('obs-2', 2)] }),
+    rawPage({ total: 3, observations: [rawObservation('obs-3', 3)] })];
+  let index = 0;
+  serveWithRaw(data, () => ok(pages[index++]));
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(rawCalls()).toHaveLength(1);
+  const body = JSON.parse(rawCalls()[0][1].body);
+  expect(body).toMatchObject({ resource: { type: 'instance', id: 1 },
+    metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: { device: 'sda' },
+    from: data.window.from, to: data.window.to, limit: 100 });
+  expect(body.cursor).toBeUndefined();
+  expect(details.textContent).toContain('本页 2 条 · 正式窗口内共 3 条 · 还有更多页');
+  expect(details.textContent).toContain('1 s');
+  const button = details.querySelector<HTMLButtonElement>('button')!;
+  expect(button.disabled).toBe(false);
+  button.click(); await settle(); await el.updateComplete;
+  expect(JSON.parse(rawCalls()[1][1].body).cursor).toBe('cursor-2');
+  expect(details.textContent).toContain('已到最后一页');
+  expect(details.textContent).toContain('3 s');
+  // The aggregate curve and window are unchanged by paging raw rows.
+  expect(el.result).toEqual(data);
+  expect(chartOf(el).timeData).toHaveLength(2);
+});
+it('writes 暂无 for an empty raw page instead of a zero-filled row', async () => {
+  const data = withBuckets([bucketAt(0)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  serveWithRaw(data, rawPage({ total: 0, observations: [] }));
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(details.textContent).toContain('暂无原始观测');
+  expect(details.querySelectorAll('app-data-table')).toHaveLength(0);
+});
+it('clears protected results on a missing raw resource without claiming history was retained', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  serveWithRaw(data, () => ({ ok: false, status: 404, json: async () => ({ error: 'POLICY_RESOURCE_NOT_FOUND' }) }));
+  const el = await mount(); await el.updateComplete;
+  await openRaw(el);
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('受保护结果已清除');
+  expect(el.error).not.toContain('保留上次结果');
+  expect(rawDetails(el)).toBeUndefined();
+});
+it('keeps the curve and the previous raw page when only this page fails', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  const first = rawPage({ total: 3, has_more: true, next_cursor: 'cursor-2' });
+  let index = 0;
+  serveWithRaw(data, () => index++ === 0 ? ok(first) : { ok: false, status: 503, json: async () => ({ error: 'METRIC_QUERY_UNAVAILABLE' }) });
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(details.textContent).toContain('1 s');
+  details.querySelector<HTMLButtonElement>('button')!.click(); await settle(); await el.updateComplete;
+  expect(el.result).toEqual(data);
+  expect(chartOf(el).timeData).toHaveLength(2);
+  expect(details.textContent).toContain('1 s');
+  expect(details.textContent).toContain('曲线与上一页原始观测保留');
+  expect(el.error).toBe('');
 });

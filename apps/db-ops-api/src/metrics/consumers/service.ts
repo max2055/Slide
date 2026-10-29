@@ -1,13 +1,15 @@
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { canReadResource } from '../../resources/resource-service.js';
-import type { CollectionAttempt, CoreProfile, MetricDefinition, NormalizedObservation } from '../../contracts/metrics/index.js';
+import { CONTRACT_VERSION, DimensionsSchema, MetricRefSchema, validateDimensions, type CollectionAttempt, type CoreProfile, type MetricDefinition, type NormalizedObservation } from '../../contracts/metrics/index.js';
 import type { PolicyService } from '../policy/service.js';
 import { PolicyError, RefSchema, metricKey, rule, type Ref } from '../policy/model.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
 import { aggregate, SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
 import { capacityDefinition } from '../database/catalog.js';
+import { OBSERVATION_PAGE_DEFAULT_LIMIT, OBSERVATION_PAGE_MAX_LIMIT, OBSERVATION_PAGE_ORDER,
+  decodeObservationCursor, encodeObservationCursor, observationCursorBinding, type ObservationPageResult } from '../observations/page.js';
 import type { Series } from '../storage.js';
 
 // Product-owned order. Package versions can supply values, never mutate these columns.
@@ -24,10 +26,19 @@ export const ConsumerQuerySchema = z.strictObject({
   latest_capacity: z.boolean().default(false),
 }).refine(q => Boolean(q.from) === Boolean(q.to), 'Both window endpoints are required');
 export type ConsumerQuery = z.input<typeof ConsumerQuerySchema>;
+/** One page of formal raw observations; the cursor never carries an offset. */
+export const ObservationPageQuerySchema = z.strictObject({
+  resource: RefSchema, metric: MetricRefSchema, dimensions: DimensionsSchema.default({}),
+  from: z.iso.datetime(), to: z.iso.datetime(),
+  limit: z.number().int().min(1).max(OBSERVATION_PAGE_MAX_LIMIT).default(OBSERVATION_PAGE_DEFAULT_LIMIT),
+  cursor: z.string().min(1).max(4096).optional(),
+});
 export interface ConsumerStore extends QueryStore {
   dimensions(ref: Ref, definition: MetricDefinition, from: string, to: string): Promise<Record<string, string>[]>;
   attempts(ref: Ref): Promise<CollectionAttempt[]>;
   latestCapacity?(ref: Ref, definition: MetricDefinition, to: string, revision: number): Promise<NormalizedObservation | null>;
+  readObservationPage?(series: Series, from: string, to: string,
+    options: { limit: number; after: { at: string; id: string } | null }): Promise<ObservationPageResult>;
 }
 export interface ConsumerMetric {
   definition: MetricDefinition;
@@ -128,5 +139,31 @@ export class MetricConsumerService {
     }
     return { contract_version: '1.0.0', resource: q.resource, window: { from, to }, evaluated_at: now,
       profile: catalog.profile, configuration_revision: catalog.effective?.published_revision ?? null, metrics };
+  }
+  /**
+   * One page of formal raw observations. Authorization and metric identity are re-read
+   * from this request on every page, so a cursor can neither widen access nor move to
+   * another resource, metric, version, dimensions or window.
+   */
+  async observations(actor: ActorContext, input: unknown) {
+    const q = ObservationPageQuerySchema.parse(input);
+    const from = new Date(q.from).toISOString(), to = new Date(q.to).toISOString();
+    rule(Date.parse(to) > Date.parse(from) && Date.parse(to) - Date.parse(from) <= 31 * 86400000, 'QUERY_WINDOW');
+    const catalog = await this.discover(actor, q.resource);
+    const definition = catalog.definitions.find(d => d.id === q.metric.id && d.semantic_version === q.metric.semantic_version);
+    rule(definition, 'UNKNOWN_METRIC');
+    try { validateDimensions(q.dimensions, definition); } catch { throw new PolicyError('QUERY_INPUT_INVALID', 400); }
+    const series: Series = { resource_type: q.resource.type, resource_id: String(q.resource.id),
+      metric: { id: definition.id, semantic_version: definition.semantic_version }, dimensions: q.dimensions };
+    const binding = observationCursorBinding(series, from, to);
+    const after = q.cursor ? decodeObservationCursor(q.cursor, binding) : null;
+    rule(this.store.readObservationPage, 'OBSERVATION_PAGE_UNAVAILABLE', 503);
+    const page = await this.store.readObservationPage(series, from, to, { limit: q.limit, after });
+    return { contract_version: CONTRACT_VERSION, resource: q.resource,
+      metric: { id: definition.id, semantic_version: definition.semantic_version }, dimensions: q.dimensions,
+      window: { from, to }, order: OBSERVATION_PAGE_ORDER, total: page.total, has_more: page.has_more,
+      ...(page.next ? { next_cursor: encodeObservationCursor(page.next, binding) } : {}),
+      observations: page.observations.map(o => ({ id: o.id, observed_at: o.observed_at, value: o.value, unit: o.unit,
+        quality: o.quality, accuracy: o.accuracy, sources: [{ id: o.id, source: o.source, versions: o.versions }] })) };
   }
 }
