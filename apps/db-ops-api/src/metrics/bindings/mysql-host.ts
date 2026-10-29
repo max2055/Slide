@@ -53,6 +53,9 @@ export const MYSQL_BINDING_HOST_SQL = {
     + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   bindingUpdate: 'UPDATE metric_policy_bindings SET payload = ?, group_id = ? WHERE resource_key = ? '
     + "AND JSON_EXTRACT(payload, '$.binding.revision') = ?",
+  // Only an unbound resource reaches this statement; the primary key is the CAS:
+  // two concurrent first bindings cannot both create the row.
+  bindingInsert: 'INSERT INTO metric_policy_bindings (resource_key, payload, group_id, capabilities) VALUES (?, ?, ?, ?)',
   auditInsert: 'INSERT INTO metric_policy_audit (target, payload) VALUES (?, ?)',
 } as const;
 
@@ -526,16 +529,17 @@ class MysqlTransactionHost implements BindingApplicationHost {
     const raw = await this.inputs.applicationContext(resource);
     if (!isPlainObject(raw)) return fail('HOST_INPUTS_UNAVAILABLE');
     const decoded = await this.readDecoded(resourceKeyOf(resource), false);
-    if (decoded === null) return fail('HOST_QUERY_UNAVAILABLE');
     // Exactly the six fields the guard's strict schema accepts; the stored
     // application state is read here, not supplied by the factory or the request.
+    // An unbound resource has no row and therefore no application state — null,
+    // never a fabricated pending revision.
     return {
       resource: raw.resource,
       group: raw.group,
       capabilities: raw.capabilities,
       at: raw.at,
       actor_id: raw.actor_id,
-      application: applicationStateOf(decoded),
+      application: decoded === null ? null : applicationStateOf(decoded),
     };
   }
 
@@ -565,15 +569,23 @@ class MysqlTransactionHost implements BindingApplicationHost {
 
     let decoded: DecodedBindingPayload | null;
     try { decoded = await this.readDecoded(valid.resource_key, true); } catch { return this.reject('UNAVAILABLE'); }
-    if (decoded === null) return this.reject('REVISION_CONFLICT');
-    // The row lock above is the CAS read; the SQL condition below is the authority.
-    if (decoded.binding.revision !== valid.base_revision) return this.reject('REVISION_CONFLICT');
-    // A previous applied revision with no provable effective plan is an existing
-    // storage gap; refuse instead of inventing history or promoting the pending plan.
-    if (decoded.effective_missing) return this.reject('UNAVAILABLE');
-    if (decoded.application.applied_revision !== valid.applied_revision
-      || (decoded.effective?.resolution_identity ?? null) !== valid.previous_resolution_identity) {
-      return this.reject('DEPENDENCY_CHANGED');
+    if (decoded === null) {
+      // The first binding of an unbound resource: base 0 creates revision 1.
+      // Anything else claims a history this storage does not have.
+      if (valid.base_revision !== 0 || valid.applied_revision !== null
+        || valid.previous_resolution_identity !== null) {
+        return this.reject('REVISION_CONFLICT');
+      }
+    } else {
+      // The row lock above is the CAS read; the SQL condition below is the authority.
+      if (decoded.binding.revision !== valid.base_revision) return this.reject('REVISION_CONFLICT');
+      // A previous applied revision with no provable effective plan is an existing
+      // storage gap; refuse instead of inventing history or promoting the pending plan.
+      if (decoded.effective_missing) return this.reject('UNAVAILABLE');
+      if (decoded.application.applied_revision !== valid.applied_revision
+        || (decoded.effective?.resolution_identity ?? null) !== valid.previous_resolution_identity) {
+        return this.reject('DEPENDENCY_CHANGED');
+      }
     }
 
     let payloadText: string;
@@ -587,9 +599,9 @@ class MysqlTransactionHost implements BindingApplicationHost {
         plan: valid.plan,
         decided_at: valid.decided_at,
         operation_key: valid.operation.key,
-        applied_revision: decoded.application.applied_revision,
+        applied_revision: decoded?.application.applied_revision ?? null,
         previous_resolution_identity: valid.previous_resolution_identity,
-        previous_effective: decoded.effective as EffectiveSnapshot | null,
+        previous_effective: (decoded?.effective as EffectiveSnapshot | null | undefined) ?? null,
         published_at: valid.decided_at,
       });
       auditText = auditPayloadOf(valid, valid.operation.key);
@@ -615,10 +627,19 @@ class MysqlTransactionHost implements BindingApplicationHost {
 
     let casResult: unknown;
     try {
-      casResult = await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdate, [
-        payloadText, valid.binding.group_id, bytes(valid.resource_key), valid.base_revision,
-      ]);
+      casResult = decoded === null
+        // The primary key is the CAS: a concurrent first binding conflicts here,
+        // exactly like a revision mismatch would on an existing row.
+        ? await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingInsert, [
+          bytes(valid.resource_key), payloadText, valid.binding.group_id, '[]',
+        ])
+        : await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdate, [
+          payloadText, valid.binding.group_id, bytes(valid.resource_key), valid.base_revision,
+        ]);
     } catch (error) {
+      // Another client created this resource's row between the lock read and the
+      // insert: that is a revision conflict, not an unknown write failure.
+      if (decoded === null && isDuplicateEntry(error)) return this.reject('REVISION_CONFLICT');
       return this.rejectedWrite(error, valid);
     }
     const affected = affectedRowsOf(casResult);

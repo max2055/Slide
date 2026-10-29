@@ -39,3 +39,23 @@ it('a failed binding read is an error, never an assumed unbound resource', async
   expect(element.renderRoot.querySelector('native-template-configuration')).toBeNull();
   expect(element.renderRoot.querySelector('legacy-metric-configuration')).toBeNull();
 });
+
+it('a legacy resource may enter the native flow explicitly and return without writing', async () => {
+  const calls: string[] = [];
+  authFetch.mockImplementation(async (url: string) => { calls.push(String(url)); return { ok: true, json: async () => ({
+    source: 'package', revision: 3, template_pins: [], application: null, pending: null,
+    configuration: { overrides: {}, group_id: null }, effective: null, published_at: null }) }; });
+  const element = await mount();
+  expect(element.mode).toBe('legacy');
+  const enter = element.renderRoot.querySelector('.switch button') as HTMLButtonElement;
+  expect(enter.textContent).toContain('改用固定版本模板配置');
+  enter.click();
+  await settle();
+  expect(element.mode).toBe('native');
+  expect(element.renderRoot.querySelector('native-template-configuration')).not.toBeNull();
+  // Switching editors is a client-side choice: no request beyond the source read.
+  const writes = calls.filter(url => !/template-bindings\/instance\/1$/.test(url));
+  expect(writes.filter(url => /\/apply$/.test(url))).toHaveLength(0);
+  const back = element.renderRoot.querySelector('.switch button') as HTMLButtonElement;
+  expect(back.textContent).toContain('返回旧版单包配置');
+});

@@ -537,7 +537,11 @@ export async function resolveTemplateBinding(
   const toggles = lastLayers!.toggles;
   const toggleOrigins = lastLayers!.metricSources;
   const policyId = group?.id ?? `resource:${refKey(candidate.binding.resource)}`;
-  const policyRevision = group ? group.policy_revision ?? group.revision : candidate.binding.revision;
+  // A pending plan is recorded at the revision it will become. An unbound
+  // resource names base 0, which is never a recorded configuration, so its first
+  // plan carries revision 1 (the target) instead of an impossible 0.
+  const recordedRevision = Math.max(candidate.binding.revision, 1);
+  const policyRevision = group ? group.policy_revision ?? group.revision : recordedRevision;
 
   const resolvedReleases: ResolvedTemplateRelease[] = [];
   const excluded: ResolvedTemplateExclusion[] = [];
@@ -547,7 +551,7 @@ export async function resolveTemplateBinding(
     const collection: CollectionBinding = {
       id: `${refKey(candidate.binding.resource)}:${releaseRef}`, resource_id: resource.id, resource_type: resource.type,
       package: { id: state.release.package.id, version: state.release.package.version, digest: state.release.package.digest },
-      policy_id: policyId, policy_revision: policyRevision, config_revision: candidate.binding.revision, enabled: settings.enabled,
+      policy_id: policyId, policy_revision: policyRevision, config_revision: recordedRevision, enabled: settings.enabled,
     };
     const { max_rows: _rows, ...policySettings } = settings;
     const policy: CollectionPolicy = { id: policyId, revision: policyRevision, ...policySettings };

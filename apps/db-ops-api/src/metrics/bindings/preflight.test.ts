@@ -463,14 +463,25 @@ describe('MAX-238 B1 fixed template pin preflight', () => {
       template_pins: [{ template_id: 'tpl-a', version: 0, content_hash: stored.content_hash }],
     }), port));
     const empty = await failure(preflightResourceBinding(binding({ template_pins: [], package: null }), port));
-    const zeroRevision = await failure(preflightResourceBinding(binding({
-      template_pins: [pin('tpl-a', 1, stored.content_hash)], revision: 0,
-    }), port));
 
-    for (const error of [duplicate, outOfOrder, zeroVersion, empty, zeroRevision]) {
+    for (const error of [duplicate, outOfOrder, zeroVersion, empty]) {
       expect(error.code).toBe('PREFLIGHT_INPUT_INVALID');
     }
     expect(getVersion).not.toHaveBeenCalled();
+  });
+
+  it('accepts base revision 0, the first binding of an unbound resource', async () => {
+    const stored = templateVersion({
+      template_id: 'tpl-a',
+      items: [item({ template_id: 'tpl-a', item_id: 'cpu', metric: metric('mysql.threads_running'), release: release('pkg-a') })],
+    });
+    const { port } = portOf([stored]);
+
+    const outcome = await preflightResourceBinding(binding({
+      template_pins: [pin('tpl-a', 1, stored.content_hash)], revision: 0,
+    }), port);
+
+    expect(outcome).toMatchObject({ kind: 'template_preflight', binding: { revision: 0 } });
   });
 
   it('keeps an explicit legacy binding without reading the template port', async () => {

@@ -26,7 +26,7 @@ import type { Pool, RowDataPacket } from 'mysql2/promise';
 import type { ActorContext } from '../../auth/actor-context.js';
 import type { Resource } from '../../contracts/metrics/index.js';
 import {
-  ResourceBindingCandidateSchema,
+  ResourceBindingCandidateInputSchema,
   type HashId, type ResourceBindingCandidate, type TemplateItemVersion, type TemplatePin, type TemplateVersion,
 } from '../../contracts/metrics/templates.js';
 import { checkApplicability, type ApplicabilityCheck } from '../packages/applicability.js';
@@ -163,6 +163,12 @@ export interface TemplateBindingStatus {
   application: { status: string; applied_revision: number | null; reported_at: string | null; error_code: string | null } | null;
   template_pins: TemplatePin[];
   pending: DecodedTemplateBindingPayload['pending'] | null;
+  /**
+   * The stored per-resource choice: the exact overrides and group the binding was
+   * published with. An editor round-trips from this, never from a resolved plan,
+   * so an unedited field cannot be silently reset.
+   */
+  configuration: { overrides: Record<string, unknown>; group_id: string | null } | null;
   effective: { revision: number; resolution_identity: string } | null;
   published_at: string | null;
 }
@@ -336,7 +342,9 @@ export class TemplateBindingService {
   private candidate(ref: Ref, body: unknown): ResourceBindingCandidate {
     const input = (body ?? {}) as { template_pins?: unknown; overrides?: unknown; group_id?: unknown; expected_revision?: unknown };
     if (typeof input !== 'object') fail('TEMPLATE_BINDING_INPUT_INVALID');
-    const parsed = ResourceBindingCandidateSchema.safeParse({
+    // The request candidate may name base revision 0 (an unbound resource's
+    // first binding); stored payloads stay strictly positive.
+    const parsed = ResourceBindingCandidateInputSchema.safeParse({
       resource: ref,
       package: null,
       group_id: input.group_id ?? null,
@@ -705,13 +713,14 @@ export class TemplateBindingService {
       'SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
     if (!rows[0]) {
       return { source: 'unbound', revision: null, application: null, template_pins: [], pending: null,
-        effective: null, published_at: null };
+        configuration: null, effective: null, published_at: null };
     }
     const decoded = decodeBindingPayload(rows[0].payload);
+    const configuration = { overrides: decoded.binding.overrides, group_id: decoded.binding.group_id };
     if (decoded.kind === 'legacy_published') {
       return {
         source: 'package', revision: decoded.binding.revision, application: decoded.application,
-        template_pins: decoded.binding.template_pins, pending: null,
+        template_pins: decoded.binding.template_pins, pending: null, configuration,
         effective: decoded.effective
           ? { revision: decoded.effective.revision, resolution_identity: String(decoded.effective.resolution_identity ?? '') }
           : null,
@@ -721,7 +730,7 @@ export class TemplateBindingService {
     }
     return {
       source: 'template', revision: decoded.pending.target_revision, application: decoded.application,
-      template_pins: decoded.binding.template_pins, pending: decoded.pending,
+      template_pins: decoded.binding.template_pins, pending: decoded.pending, configuration,
       effective: decoded.effective
         ? { revision: decoded.effective.revision, resolution_identity: decoded.effective.resolution_identity }
         : null,

@@ -119,22 +119,32 @@ it('searches and pages the whole catalog instead of truncating to one page', asy
   expect(String(call[0])).not.toContain('cursor=');
 });
 
-it('a draft template cannot be selected and no application is offered without a base revision', async () => {
+it('a draft template cannot be selected', async () => {
   authFetch.mockImplementation(routes());
   const element = await mount();
   element.toggleTemplate(element.templates[1], true);
   expect(element.selected).toHaveLength(1); // the binding pin survives, the draft is refused
   expect(element.error).toContain('没有已发布版本');
+});
+
+it('an unbound resource can check the first binding at base revision 0', async () => {
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/2': () => ({ ok: true, json: async () => binding({
+      source: 'unbound', revision: null, template_pins: [], configuration: null,
+      pending: null, application: null, effective: null, published_at: null }) }),
+    '/template-bindings/instance/2/preview': () => ({ ok: true, json: async () => ({ ...preview(), revision: 0 }) }),
+  }));
   const fresh = document.createElement('native-template-configuration') as any;
-  authFetch.mockImplementation(routes({ '/template-bindings/instance/2': () => ({ ok: true, json: async () => binding({
-    source: 'unbound', revision: 0, template_pins: [], pending: null, application: null, effective: null, published_at: null }) }) }));
   fresh.resourceId = 2; document.body.append(fresh);
   for (let i = 0; i < 40 && !fresh.loaded; i++) await settle();
   fresh.toggleTemplate(fresh.templates[0], true);
   await fresh.previewFlow();
-  expect(fresh.preview).toBeNull();
-  expect(fresh.error).toContain('尚无已发布的配置版本');
-  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/preview'))).toBe(false);
+  const call = authFetch.mock.calls.find((entry: unknown[]) => String(entry[0]).endsWith('/preview'));
+  expect(call).toBeTruthy();
+  const body = JSON.parse(String((call[1] as RequestInit).body));
+  expect(body.expected_revision).toBe(0);
+  expect(fresh.preview).not.toBeNull();
+  expect(fresh.shadowRoot.textContent).toContain('首次绑定并启用');
 });
 
 it('preview carries the exact fixed version, parameters and settings; a change invalidates the trial', async () => {
@@ -177,7 +187,7 @@ it('a failed or partial trial never authorizes applying', async () => {
   expect(authFetch.mock.calls).toHaveLength(before);
 });
 
-it('apply keeps one operation key for the same intent and queries an unknown outcome', async () => {
+it('apply keeps one operation key for the same intent and releases it only on an absent journal', async () => {
   let applyCall = 0;
   authFetch.mockImplementation(routes({
     '/apply': () => { applyCall += 1;
@@ -190,37 +200,69 @@ it('apply keeps one operation key for the same intent and queries an unknown out
   await element.previewFlow(); await element.runTrial();
   await element.applyFlow();
   expect(applyCall).toBe(1);
-  expect(element.applyPending).toBe(false);
-  // The absent lookup proves the intent was never recorded; the original
-  // failure is still reported, and the same key may be retried.
+  // The absent lookup proves the intent was never recorded: the key is released
+  // and the original failure is still reported.
+  expect(element.unresolved).toHaveLength(0);
   expect(element.error).toBeTruthy();
-  const firstKey = element.applyKey;
+  const bodies = () => authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/apply'))
+    .map((entry: unknown[]) => JSON.parse(String((entry[1] as RequestInit).body)));
   await element.applyFlow();
   expect(applyCall).toBe(2);
-  const bodies = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/apply'))
-    .map((entry: unknown[]) => JSON.parse(String((entry[1] as RequestInit).body)));
-  expect(bodies[0].caller_key).toBe(firstKey);
-  expect(bodies[1].caller_key).toBe(firstKey);
-  expect(bodies[1].receipt_id).toBe('trial-1');
+  // The same configuration is the same intent, so the re-trial receipt never
+  // turns it into a second write under a different key.
+  expect(bodies()[1].caller_key).toBe(bodies()[0].caller_key);
   expect(element.applyResult).toMatchObject({ revision: 6 });
 });
 
-it('a commit-unknown answer is only looked up, never resent blindly', async () => {
+it('a commit-unknown intent survives an edit, a reload and a switch, and is only looked up', async () => {
+  let applyCall = 0;
   authFetch.mockImplementation(routes({
-    '/apply': () => ({ ok: true, json: async () => ({ kind: 'commit_unknown', status: 'unknown', persisted: 'unknown',
-      committed: 'unknown', cause: 'connection', lookup: true, operation: { key: 'k', caller_key: 'c', status: 'unknown' } }) }),
+    '/apply': () => { applyCall += 1;
+      return { ok: true, json: async () => ({ kind: 'commit_unknown', status: 'unknown', persisted: 'unknown',
+        committed: 'unknown', cause: 'connection', lookup: true, operation: { key: 'k', caller_key: 'c', status: 'unknown' } }) }; },
     '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
   }));
   const element = await mount();
   await element.previewFlow(); await element.runTrial();
-  const appliesBefore = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/apply')).length;
   await element.applyFlow();
-  expect(element.applyPending).toBe(true);
-  const appliesAfter = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/apply')).length;
-  expect(appliesAfter).toBe(appliesBefore + 1);
-  await element.applyFlow();
-  expect(authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/apply')).length).toBe(appliesAfter);
-  expect(element.shadowRoot.textContent).toContain('查询发布结果');
+  expect(applyCall).toBe(1);
+  expect(element.unresolved).toHaveLength(1);
+  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.anon.instance:1')!);
+  expect(stored).toHaveLength(1);
+  const key = stored[0].key;
+  // An edit invalidates the trial but is not a draft: the unknown stays.
+  element.changeParameter('tpl-mysql', 'timeout', '9', 'number');
+  expect(element.unresolved).toHaveLength(1);
+  // "Reload" / "discard" must query the original key, never forget it.
+  element.discardChanges();
+  expect(element.unresolved).toHaveLength(1);
+  await element.reloadAll();
+  expect(element.unresolved).toHaveLength(1);
+  const lookups = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).includes('/operations/'));
+  expect(lookups.length).toBeGreaterThanOrEqual(2);
+  expect(String(lookups.at(-1)![0])).toContain(`/operations/${key}`);
+  expect(applyCall).toBe(1);
+  expect(element.shadowRoot.textContent).toContain('上次发布结果尚未确认');
+});
+
+it('a late apply answer for a resource the user already left is not projected onto the new one', async () => {
+  let release: (() => void) | null = null;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/apply')) { await gate;
+      return { ok: true, json: async () => ({ kind: 'committed', status: 'committed', persisted: true, committed: true,
+        revision: 6, resolution_identity: hash('d'), operation: { key: 'k', caller_key: 'c', receipt_id: 'trial-1', status: 'committed' } }) }; }
+    return routes()(url, init);
+  });
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  const pending = element.applyFlow();
+  element.resourceId = 2;
+  release!();
+  await pending;
+  for (let i = 0; i < 40 && !element.loaded; i++) await settle();
+  expect(element.applyResult).toBeNull();
+  expect(element.step).toBe(0);
 });
 
 it('published, pending, applied, first sample and formal collection stay separate facts', async () => {
@@ -267,4 +309,92 @@ it('a read-only user cannot select or write', async () => {
   const element = await mount();
   expect(element.canManage).toBe(false);
   expect(element.shadowRoot.textContent).toContain('只读');
+});
+
+it('seeds every stored override and sends an unedited setting back unchanged', async () => {
+  const configuration = { group_id: 'web', overrides: {
+    enabled: { mode: 'set', value: false },
+    interval_ms: { mode: 'set', value: 30000 },
+    metrics: { 'db.uptime_seconds@1.0.0': 'disable' },
+    template_parameters: { 'tpl-mysql': { timeout: 9 } } } };
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => binding({ configuration }) }),
+  }));
+  const element = await mount();
+  expect(element.settings).toEqual({ enabled: { mode: 'set', value: false }, interval_ms: { mode: 'set', value: 30000 } });
+  expect(element.metricToggles).toEqual({ 'db.uptime_seconds@1.0.0': 'disable' });
+  expect(element.parameters).toEqual({ 'tpl-mysql': { timeout: 9 } });
+  expect(element.groupId).toBe('web');
+
+  // "Discard" returns to the published configuration; it never blanks the overrides.
+  element.settings = {}; element.metricToggles = {}; element.parameters = {}; element.groupId = ''; element.dirty = true;
+  element.discardChanges();
+  expect(element.settings).toEqual({ enabled: { mode: 'set', value: false }, interval_ms: { mode: 'set', value: 30000 } });
+  expect(element.metricToggles).toEqual({ 'db.uptime_seconds@1.0.0': 'disable' });
+  expect(element.parameters).toEqual({ 'tpl-mysql': { timeout: 9 } });
+  expect(element.groupId).toBe('web');
+
+  // Editing exactly one parameter changes exactly that parameter.
+  await element.previewFlow();
+  element.changeParameter('tpl-mysql', 'timeout', '11', 'number');
+  await element.previewFlow();
+  const previews = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/preview'));
+  const body = JSON.parse(String((previews.at(-1)![1] as RequestInit).body));
+  expect(body.group_id).toBe('web');
+  expect(body.overrides).toEqual({
+    enabled: { mode: 'set', value: false }, interval_ms: { mode: 'set', value: 30000 },
+    metrics: { 'db.uptime_seconds@1.0.0': 'disable' },
+    template_parameters: { 'tpl-mysql': { timeout: 11 } },
+  });
+});
+
+it('a plain reload keeps the stored override set instead of clearing it', async () => {
+  const configuration = { group_id: 'web', overrides: {
+    metrics: { 'db.uptime_seconds@1.0.0': 'enable' }, template_parameters: { 'tpl-mysql': { timeout: 9 } } } };
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => binding({ configuration }) }),
+  }));
+  const element = await mount();
+  element.settings = { interval_ms: { mode: 'set', value: 5000 } };
+  await element.reloadAll();
+  expect(element.settings).toEqual({});
+  expect(element.metricToggles).toEqual({ 'db.uptime_seconds@1.0.0': 'enable' });
+  expect(element.parameters).toEqual({ 'tpl-mysql': { timeout: 9 } });
+  expect(element.groupId).toBe('web');
+  await element.previewFlow();
+  const previews = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).endsWith('/preview'));
+  expect(JSON.parse(String((previews.at(-1)![1] as RequestInit).body)).overrides).toEqual(configuration.overrides);
+});
+
+it('a delayed re-pin answer never lands on the resource the user switched to', async () => {
+  let release: (() => void) | null = null;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const nextPin = { template_id: 'tpl-mysql', version: 3, content_hash: hash('e') };
+  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/repin')) {
+      await gate;
+      return { ok: true, json: async () => ({ unchanged: false, template_id: 'tpl-mysql', from_version: 2, to_version: 3,
+        content_hash: hash('e'), changes: [], pin: nextPin }) };
+    }
+    return routes({
+      '/preview': () => ({ ok: true, json: async () => ({ ...preview(), executable: false }) }),
+      '/template-bindings/instance/2': () => ({ ok: true, json: async () => binding({ revision: 7,
+        template_pins: [{ template_id: 'tpl-mysql', version: 1, content_hash: hash('a') }], configuration: { overrides: {}, group_id: null } }) }),
+    })(url, init);
+  });
+  const element = await mount();
+  await element.previewFlow();
+  element.openRepin(element.templates[0]);
+  const pending = element.runRepin();
+  // The operator switches to instance 2 while the publication is still in flight.
+  element.resourceId = 2;
+  for (let i = 0; i < 40 && element.binding?.revision !== 7; i++) await settle();
+  expect(element.selected.map((pin: { version: number }) => pin.version)).toEqual([1]);
+  release!();
+  await pending;
+  for (let i = 0; i < 20; i++) await settle();
+  // The late publication answer belongs to instance 1: it changes nothing here.
+  expect(element.selected.map((pin: { version: number }) => pin.version)).toEqual([1]);
+  expect(element.repinResult).toBeNull();
+  expect(element.repinTarget).toBeNull();
 });

@@ -15,7 +15,7 @@
  * `docs/slide/development/MAX-238/b1-binding-preflight.md`).
  */
 import {
-  ResourceBindingCandidateSchema, TemplateVersionSchema,
+  ResourceBindingCandidateInputSchema, TemplateVersionSchema,
   type HashId, type PackageCompositionEntry, type PackagePin, type ResourceBindingCandidate,
   type SourceChain, type TemplateItemVersion, type TemplateParameters, type TemplatePin,
   type TemplateVersion, type VersionNumber,
@@ -203,7 +203,8 @@ async function readPinnedVersion(
 /**
  * Resolve one existing binding snapshot against its fixed template pins.
  *
- * - Input is validated by the accepted `ResourceBindingCandidateSchema`; invalid,
+ * - Input is validated by the accepted request candidate schema (base revision 0
+ *   is the first binding of an unbound resource); invalid,
  *   duplicate or out-of-order pins are rejected, never silently normalized.
  * - `template_pins: []` with a package is the explicit legacy branch and never
  *   calls the port.
@@ -218,7 +219,7 @@ export async function preflightResourceBinding(
   input: unknown,
   port: TemplateVersionReadPort,
 ): Promise<BindingPreflightOutcome> {
-  const parsed = ResourceBindingCandidateSchema.safeParse(input);
+  const parsed = ResourceBindingCandidateInputSchema.safeParse(input);
   if (!parsed.success) throw INPUT_INVALID();
   const binding = parsed.data;
 

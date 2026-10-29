@@ -146,7 +146,16 @@ export const TemplatePendingSchema = z.looseObject({
   operation_key: z.string(),
 });
 
-/** The binding state of one resource; independent facts are never collapsed. */
+/**
+ * The binding state of one resource; independent facts are never collapsed.
+ * `configuration` is the stored per-resource choice itself — the exact override
+ * set and group the binding was published with — so an editor can round-trip
+ * every setting without re-deriving overrides from a resolved plan.
+ */
+export const TemplateBindingConfigurationSchema = z.strictObject({
+  overrides: z.record(z.string(), z.unknown()),
+  group_id: z.string().nullable(),
+});
 export const TemplateBindingStatusSchema = z.looseObject({
   source: z.enum(['template', 'package', 'unbound']),
   revision: z.number().int().nonnegative().nullable(),
@@ -158,6 +167,8 @@ export const TemplateBindingStatusSchema = z.looseObject({
   }).nullable(),
   template_pins: z.array(TemplatePinSchema),
   pending: TemplatePendingSchema.nullable(),
+  /** The stored per-resource configuration; null when this resource has no row. */
+  configuration: TemplateBindingConfigurationSchema.nullable(),
   /** `resolution_identity` is null when the previous effective snapshot came from a package row. */
   effective: z.strictObject({ revision: z.number().int(), resolution_identity: z.string().nullable() }).nullable(),
   published_at: Timestamp.nullable(),
@@ -256,7 +267,8 @@ export const TemplateBindingApplyResponseSchema = z.union([
 
 /** Request bodies: the raw candidate plus the trial receipt / idempotency key. */
 export const TemplateBindingBodySchema = z.strictObject({
-  expected_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  /** The base the caller read; 0 is an unbound resource's first binding. */
+  expected_revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   template_pins: z.array(TemplatePinSchema).min(1),
   overrides: z.record(z.string(), z.unknown()).optional(),
   group_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable().optional(),

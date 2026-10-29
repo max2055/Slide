@@ -220,8 +220,8 @@ export interface PreparedBindingMutation {
   target_revision: number;
   candidate_digest: HashId;
   operation: { key: string; caller_key: string; receipt_id: string; status: 'pending' };
-  /** Exact trusted base read inside the view; never a caller snapshot. */
-  current: ResourceBindingCandidate;
+  /** Exact trusted base read inside the view; null only for an unbound resource's first binding. */
+  current: ResourceBindingCandidate | null;
   /** Exact binding to save in the same transaction; unresolved, not an execution plan. */
   next: ResourceBindingCandidate;
 }
@@ -1066,13 +1066,19 @@ export async function prepareTemplateBindingMutationV2(
     return { kind: 'legacy_delegate', binding: compiled.binding, package: compiled.package };
   }
 
-  const rawCurrent = await readCurrentBinding(transaction, resource);
-  if (rawCurrent === null || rawCurrent === undefined) {
-    throw new BindingTransactionError('TRANSACTION_BINDING_MISSING');
-  }
-  const current = parseCurrentBinding(rawCurrent, resource);
-
+  // The base revision comes from the candidate, so an absent row can be read as
+  // "unbound": only a candidate that names base 0 may create the first binding.
+  // Any other base with no stored row is a stale or wrong resource, not a create.
   const baseRevision = compiled.binding.revision;
+  const rawCurrent = await readCurrentBinding(transaction, resource);
+  let current: ResourceBindingCandidate | null;
+  if (rawCurrent === null || rawCurrent === undefined) {
+    if (baseRevision !== 0) throw new BindingTransactionError('TRANSACTION_BINDING_MISSING');
+    current = null;
+  } else {
+    current = parseCurrentBinding(rawCurrent, resource);
+  }
+
   const targetRevision = baseRevision + 1;
   if (!Number.isSafeInteger(targetRevision)) throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT');
   const digest = bindingCandidateDigest(compiled, targetRevision, before.dependency_digest);
@@ -1114,8 +1120,9 @@ export async function prepareTemplateBindingMutationV2(
     };
   }
 
-  // The trusted revision is the only CAS authority; an outside snapshot cannot prove it.
-  if (current.revision !== baseRevision) throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT');
+  // The trusted revision is the only CAS authority; an outside snapshot cannot
+  // prove it. A missing row proves base 0 (checked above) and nothing else.
+  if ((current?.revision ?? 0) !== baseRevision) throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT');
 
   const verified = await verifyTemplateResolution(
     compiled, baseRevision, resource, transaction, templates, registry,
