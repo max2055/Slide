@@ -13,11 +13,13 @@ import { renderCollectionStatus, collectionFactsStyles } from './metric-collecti
 import { collectionLayoutStyles } from './collection-layout-styles.js';
 import { showToast } from './app-toast-container.js';
 import {
-  applyTemplateBinding, getMetricTemplateVersion, listMetricTemplates, metricError, metricRequest,
-  probeTemplateBinding, previewTemplateBinding, readCollectionStatus, readTemplateBinding, readTemplateOperation,
+  applyTemplateBinding, collectTemplateBindingNow, getMetricTemplateVersion, listMetricTemplates, metricError, metricRequest,
+  probeTemplateBinding, previewTemplateBinding, readCollectionStatus, readTemplateBinding, readTemplateCollectTask,
+  readTemplateOperation,
   repinMetricTemplate, statusLabel, trialTemplateBinding, MetricRequestError,
   type CollectionStatus, type PolicyGroup, type TemplateApplyResult, type TemplateBindingStatus,
-  type TemplateCatalogPage, type TemplatePin, type TemplatePreview, type TemplateRepinResult, type TemplateSummary,
+  type TemplateCatalogPage, type TemplateCollectResult, type TemplatePin, type TemplatePreview, type TemplateRepinResult,
+  type TemplateSummary,
   type TemplateTrial, type TemplateTrialSample, type TemplateVersionDetail,
 } from './metric-api.js';
 import { type Overrides } from './metric-policy-fields.js';
@@ -70,6 +72,23 @@ const intentCorruptMessage = '已存储的发布意图记录损坏，无法安�
 const intentPrincipalMessage = '无法确认当前登录主体，已在发送前拒绝本次发布，未写入任何配置；修改仍保留在页面中。请重新登录后重试。';
 /** One browser tab owns this map; a suite that simulates many tabs resets it per case. */
 export function resetIntentMemory() { intentMemory.clear(); }
+
+/* --- immediate collection ------------------------------------------------- */
+
+export const collectStateLabels: Record<string, string> = {
+  accepted: '已受理，等待执行', running: '执行中', completed: '任务已完成',
+  failed: '任务失败', cancelled: '已取消', unknown: '结果未知', absent: '没有该请求的记录',
+};
+export const collectOutcomeLabels: Record<string, string> = {
+  sampled: '已写入本次正式样本', no_samples: '任务完成但本次没有样本',
+  failed: '未产生正式样本', cancelled: '已取消', unknown: '结果未知，不能当作成功',
+};
+const collectTerminal = (state: string) => ['completed', 'failed', 'cancelled', 'unknown', 'absent'].includes(state);
+/** The key is written before the request; without that record an unknown outcome is unrecoverable. */
+const collectStorageKey = (principal: string, refKey: string) => `slide.metric-collect.v1:${principal}:${refKey}`;
+const collectStorageRefusal = '无法把采集请求写入会话存储，已在发送前拒绝本次采集，未创建任何任务；请恢复浏览器存储或换用新标签页后重试。';
+const collectPrincipalMessage = '无法确认当前登录主体，已在发送前拒绝本次采集；请重新登录后重试。';
+const collectCorruptMessage = '已存储的采集请求记录损坏，无法安全判断上次请求的结果；已停止发送新的采集请求。请清理该资源的本地会话记录后重试。';
 
 /**
  * The principal of the signed session, from the access token the server issued.
@@ -240,9 +259,21 @@ export class NativeTemplateConfiguration extends LitElement {
   /** Stored intent records are unreadable: no write may be sent without safe tracking. */
   @state() private intentStorageError = '';
 
+  /** The last queryable manual-collection task for this resource. */
+  @state() private collectResult: TemplateCollectResult | null = null;
+  @state() private collectBusy = false;
+  @state() private collectError = '';
+  /** A request key whose outcome is not terminal yet; every query/retry uses exactly this key. */
+  @state() private collectPendingKey: string | null = null;
+  @state() private collectStorageError = '';
+  private collectTimer?: ReturnType<typeof setTimeout>;
+  private collectPolls = 0;
+  private collectGeneration = 0;
+
   private readonly accessChanged = () => {
     clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
     this.catalogGeneration++; this.groupVersion++; this.generation++; this.draftVersion++; this.stopPolling();
+    this.stopCollectPolling(); this.collectPendingKey = null; this.collectResult = null; this.collectBusy = false;
     this.binding = null; this.collection = null; this.canManage = false; this.busy = false;
     this.preview = null; this.trial = null; this.selected = [];
     // Intents are keyed by the current principal + resource: a session switch
@@ -266,7 +297,7 @@ export class NativeTemplateConfiguration extends LitElement {
     window.addEventListener('slide-session-expired', this.accessChanged);
   }
   override disconnectedCallback() {
-    this.stopPolling(); clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
+    this.stopPolling(); this.stopCollectPolling(); clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
     this.catalogGeneration++; this.groupVersion++; this.generation++;
     window.removeEventListener('beforeunload', this.beforeUnload);
     window.removeEventListener('slide-navigate', this.navigate, true);
@@ -323,6 +354,9 @@ export class NativeTemplateConfiguration extends LitElement {
     // A resource switch closes the re-pin dialog: its result belongs to the old resource.
     this.repinTarget = null; this.repinResult = null; this.repinBusy = false; this.details = {};
     this.applyResult = null; this.busy = false;
+    this.stopCollectPolling();
+    this.collectResult = null; this.collectBusy = false; this.collectError = '';
+    this.collectStorageError = ''; this.collectPendingKey = null; this.collectPolls = 0;
     this.unresolved = this.storedIntents();
     if (!Number.isSafeInteger(this.resourceId) || this.resourceId <= 0) return;
     this.busy = true;
@@ -344,6 +378,9 @@ export class NativeTemplateConfiguration extends LitElement {
       // while one is in flight must be possible and must survive its answer.
       this.busy = false;
       await this.restorePending(generation);
+      if (generation !== this.generation) return;
+      // A stored manual-collection key is queried, never re-sent.
+      await this.restoreCollect(generation);
       if (generation !== this.generation) return;
       if (binding.source === 'template' && !this.terminal(status)) this.startPolling();
     } catch (error) {
@@ -906,6 +943,109 @@ export class NativeTemplateConfiguration extends LitElement {
     }
   }
 
+  /* --- immediate collection --------------------------------------------- */
+
+  private storedCollect(principal: string): { key: string; revision: number } | null | 'corrupt' {
+    try {
+      const raw = sessionStorage.getItem(collectStorageKey(principal, this.refKey()));
+      if (raw === null) return null;
+      const parsed = JSON.parse(raw) as { key?: unknown; revision?: unknown };
+      if (typeof parsed?.key !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(parsed.key)
+        || typeof parsed.revision !== 'number' || !Number.isSafeInteger(parsed.revision)) return 'corrupt';
+      return { key: parsed.key, revision: parsed.revision };
+    } catch { return 'corrupt'; }
+  }
+  /** Written before the request: an unconfirmed outcome is only recoverable through this key. */
+  private persistCollect(principal: string, key: string, revision: number): boolean {
+    try {
+      sessionStorage.setItem(collectStorageKey(principal, this.refKey()), JSON.stringify({ key, revision }));
+      return true;
+    } catch { return false; }
+  }
+  private clearStoredCollect(principal: string) {
+    try { sessionStorage.removeItem(collectStorageKey(principal, this.refKey())); } catch { /* nothing to clear */ }
+  }
+  private stopCollectPolling() { clearTimeout(this.collectTimer); this.collectTimer = undefined; }
+  private collectTerminal(state?: string): boolean { return !!state && collectTerminal(state); }
+  private scheduleCollectPoll(generation: number, key: string, principal: string) {
+    this.stopCollectPolling();
+    if (this.collectPolls >= 20) return;
+    this.collectTimer = setTimeout(() => {
+      this.collectPolls++;
+      void this.queryCollect(generation, key, principal);
+    }, 1500);
+  }
+  /** Query the exact key; a refresh, remount or resource return uses this path, never a new request. */
+  private async queryCollect(generation: number, key: string, principal: string, schedule = true) {
+    try {
+      const result = await readTemplateCollectTask(this.resourceType, this.resourceId, key);
+      if (generation !== this.generation) return;
+      this.collectResult = result;
+      this.collectPendingKey = this.collectTerminal(result.state) ? null : key;
+      if (this.collectTerminal(result.state)) { this.clearStoredCollect(principal); this.stopCollectPolling(); }
+      else if (schedule) this.scheduleCollectPoll(generation, key, principal);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      if (error instanceof MetricRequestError && [401, 403, 404].includes(error.status)) { this.accessChanged(); return; }
+      this.collectError = nativeError(error);
+    }
+  }
+  private async restoreCollect(generation: number) {
+    this.stopCollectPolling();
+    this.collectStorageError = '';
+    this.collectPendingKey = null;
+    const principal = sessionPrincipal();
+    if (!principal) return;
+    const stored = this.storedCollect(principal);
+    if (stored === 'corrupt') { this.collectStorageError = collectCorruptMessage; return; }
+    if (!stored) return;
+    this.collectPendingKey = stored.key;
+    await this.queryCollect(generation, stored.key, principal, false);
+  }
+  /**
+   * Start one collection from the published plan. A stored key is reused verbatim
+   * (a retry of the same request), and a fresh action persists its key before the
+   * request is sent; without that record no request is sent.
+   */
+  private async collectNow() {
+    if (!this.canWrite() || this.dirty || this.binding?.source !== 'template' || this.collectBusy) return;
+    const revision = this.binding?.revision;
+    if (!revision) return;
+    const principal = sessionPrincipal();
+    if (!principal) { this.collectError = collectPrincipalMessage; return; }
+    const stored = this.storedCollect(principal);
+    if (stored === 'corrupt') { this.collectStorageError = collectCorruptMessage; return; }
+    const key = this.collectPendingKey ?? stored?.key
+      ?? `collect-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!stored && !this.collectPendingKey && !this.persistCollect(principal, key, revision)) {
+      this.collectError = collectStorageRefusal;
+      return;
+    }
+    const generation = this.generation;
+    this.collectPendingKey = key; this.collectBusy = true; this.collectError = ''; this.collectPolls = 0;
+    try {
+      const result = await collectTemplateBindingNow(this.resourceType, this.resourceId,
+        { caller_key: key, expected_revision: revision });
+      if (generation !== this.generation) return;
+      this.collectResult = result;
+      if (this.collectTerminal(result.state)) { this.collectPendingKey = null; this.clearStoredCollect(principal); }
+      else this.scheduleCollectPoll(generation, key, principal);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      this.collectError = nativeError(error);
+      // Never treat an API failure as "absent": query the original key first.
+      await this.queryCollect(generation, key, principal, false);
+      if (!this.collectResult || this.collectResult.state === 'absent') this.collectPendingKey = key;
+    } finally { if (generation === this.generation) this.collectBusy = false; }
+  }
+  private queryPendingCollect() {
+    const key = this.collectPendingKey;
+    const principal = sessionPrincipal();
+    if (!key || !principal) return;
+    this.collectBusy = true;
+    void this.queryCollect(this.generation, key, principal).finally(() => { this.collectBusy = false; });
+  }
+
   confirmDiscard(action: () => void) {
     if (!this.dirty) { action(); return; }
     this.afterDiscard = action; this.discardPending = true;
@@ -1098,8 +1238,51 @@ export class NativeTemplateConfiguration extends LitElement {
     </app-card>`;
   }
 
-  private renderStatus() {
-    const status = this.collection;
+  private renderCollect() {
+    const isTemplate = this.binding?.source === 'template';
+    const state = this.collectResult?.state;
+    const task = this.collectResult?.task;
+    const samples = this.collectResult?.samples ?? [];
+    const pending = this.collectPendingKey;
+    const sampled = state === 'completed' && task?.outcome === 'sampled';
+    return html`<app-card><div class="section-title"><h2>立即采集（本次任务与样本）</h2>
+      ${state ? html`<app-badge variant=${sampled ? 'ok' : state === 'failed' || state === 'unknown' ? 'warn' : 'muted'}>
+        ${collectStateLabels[state] ?? state}</app-badge>` : nothing}</div>
+      <p class="muted">立即采集只执行当前已发布的固定模板配置；任务受理、任务完成与样本成功分别显示。结果里的样本只属于这一次任务，不会用其他采集的最新值代替。</p>
+      ${!isTemplate ? html`<p class="muted">尚未建立原生模板配置，不能立即采集。</p>` : nothing}
+      ${isTemplate && this.dirty ? html`<p class="notice" role="status">有未发布的修改：立即采集不会执行这些草稿，只采集当前已发布配置。请先放弃或应用修改。</p>` : nothing}
+      ${this.collectStorageError ? html`<p class="notice error" role="alert">${this.collectStorageError}</p>` : nothing}
+      ${this.collectError ? html`<p class="notice error" role="alert">${this.collectError}</p>` : nothing}
+      <div class="actions">
+        <button class="btn-primary" .disabled=${this.busy || this.collectBusy || !this.canWrite() || this.dirty || !isTemplate || !!pending}
+          @click=${() => void this.collectNow()}>${this.collectBusy ? '采集中…' : '立即采集'}</button>
+        ${pending ? html`<button class="btn" .disabled=${this.collectBusy}
+          @click=${() => this.queryPendingCollect()}>查询本次任务</button>` : nothing}
+        ${pending ? html`<button class="btn" .disabled=${this.collectBusy}
+          @click=${() => void this.collectNow()}>重试同一请求</button>` : nothing}
+      </div>
+      ${task ? html`<dl class="facts">
+        <div><dt>任务</dt><dd>${task.id.slice(0, 8)} · ${collectStateLabels[task.state] ?? task.state}</dd></div>
+        <div><dt>目标版本</dt><dd>${task.revision}</dd></div>
+        <div><dt>受理时间</dt><dd>${new Date(task.created_at).toLocaleString('zh-CN')}</dd></div>
+        <div><dt>开始执行</dt><dd>${task.started_at ? new Date(task.started_at).toLocaleString('zh-CN') : '尚未开始'}</dd></div>
+        <div><dt>结束</dt><dd>${task.finished_at ? new Date(task.finished_at).toLocaleString('zh-CN') : '未结束'}</dd></div>
+        <div><dt>采集结果</dt><dd>${task.outcome ? collectOutcomeLabels[task.outcome] : '未产生结果'}${task.error_code ? ` · ${task.error_code}` : ''}</dd></div>
+      </dl>` : (state === 'absent' ? html`<p role="status">没有找到该采集请求的记录；可以用同一请求重试，服务端不会重复执行。</p>` : nothing)}
+      ${samples.length ? html`<h3>本次样本</h3><div class="scroll"><app-data-table .columns=${[
+        { key: 'metric', label: '指标' }, { key: 'value', label: '值' }, { key: 'observed_at', label: '观测时间' },
+        { key: 'quality', label: '质量' }]}
+        .rows=${samples.map(sample => ({ metric: metricName(sample.metric.id),
+          value: `${formatValue(sample.value)} ${sample.unit}`, observed_at: sample.observed_at,
+          quality: String((sample.quality as { status?: string } | null)?.status ?? '—') }))}></app-data-table></div>
+        <details><summary>样本身份（不可变 ID）</summary><pre>${JSON.stringify(samples, null, 2)}</pre></details>`
+        : (task ? html`<p role="status">本次任务没有写入任何正式样本，不能视为采集成功。</p>` : nothing)}
+      ${this.collectResult?.attempts.length ? html`<h3>尝试</h3><ul aria-label="采集尝试">${this.collectResult.attempts.map(attempt => html`<li>
+        ${attempt.collector_id ?? '采集器'} · ${attempt.status} · ${attempt.id}</li>`)}</ul>` : nothing}
+    </app-card>`;
+  }
+
+  private renderStatus() {    const status = this.collection;
     const binding = this.binding;
     const application = binding?.application;
     const pending = binding?.pending;
@@ -1152,7 +1335,8 @@ export class NativeTemplateConfiguration extends LitElement {
         <ol class="steps" aria-label="配置流程">${['选择固定版本', '检查兼容性', '试采', '应用并确认'].map((text, index) => html`<li class=${index < this.step ? 'done' : index === this.step ? 'current' : ''}>${text}</li>`)}</ol>
         ${this.renderPreview()}
         ${this.trial || this.preview ? this.renderTrial() : nothing}
-        ${this.renderStatus()}` : nothing}
+        ${this.renderStatus()}
+        ${this.renderCollect()}` : nothing}
       <app-dialog .open=${!!this.repinTarget} title="发布兼容模板版本？" @app-dialog-close=${(event: Event) => { event.stopPropagation(); this.closeRepin(); }}>
         <p>将为模板 ${this.repinTarget?.name ?? ''} 发布一个<strong>新的不可变版本</strong>，只把不适用于当前对象的项目重新固定到已安装且适用于此对象的采集实现。</p>
         <p class="muted">旧版本保留，不修改已发布版本；不会自动改变本资源或任何其他资源的当前配置。发布后需要重新检查和试采。</p>

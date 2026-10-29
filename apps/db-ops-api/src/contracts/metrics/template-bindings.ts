@@ -128,8 +128,7 @@ export const TemplateOperationStateSchema = z.strictObject({
  * configuration: `target_revision` becomes the published revision only when the
  * host transaction commits, and application is reported separately.
  */
-export const TemplatePendingSchema = z.looseObject({
-  base_revision: z.number().int().nonnegative(),
+export const TemplatePendingSchema = z.looseObject({  base_revision: z.number().int().nonnegative(),
   target_revision: z.number().int().positive(),
   resolution_identity: HashIdSchema,
   plan: z.looseObject({
@@ -153,7 +152,10 @@ export const TemplatePendingSchema = z.looseObject({
  * every setting without re-deriving overrides from a resolved plan.
  */
 export const TemplateBindingConfigurationSchema = z.strictObject({
-  overrides: z.record(z.string(), z.unknown()),
+  // An explicit loose object, not `z.record`: Fastify's response serializer
+  // rejects a `propertyNames` keyword in strict mode, so a record schema turns
+  // every status response into a 500. This one keeps arbitrary override keys.
+  overrides: z.looseObject({}),
   group_id: z.string().nullable(),
 });
 export const TemplateBindingStatusSchema = z.looseObject({
@@ -299,3 +301,38 @@ export const TemplateBindingBodySchema = z.strictObject({
 export const TemplateTrialBodySchema = TemplateBindingBodySchema.extend({ receipt_id: z.string() });
 export const TemplateBindingApplyBodySchema = TemplateTrialBodySchema.extend({ caller_key: z.string() });
 export const TemplateRepinBodySchema = z.strictObject({ resource: RefSchema });
+
+/* --- immediate collection ------------------------------------------------- */
+
+const CollectStateSchema = z.enum(['accepted', 'running', 'completed', 'failed', 'cancelled', 'unknown']);
+const CollectOutcomeSchema = z.enum(['sampled', 'no_samples', 'failed', 'cancelled', 'unknown']);
+const CallerKeySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+/** The client's idempotency key plus the exact published revision it saw. */
+export const TemplateCollectRequestSchema = z.strictObject({
+  caller_key: CallerKeySchema,
+  expected_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+/**
+ * One manual task. `state` is the task lifecycle and `samples` are only the
+ * samples this task's own job committed: a completed task may carry zero samples
+ * and never implies a successful collection on its own.
+ */
+export const TemplateCollectResponseSchema = z.strictObject({
+  collect: z.literal(true),
+  resource: RefSchema,
+  caller_key: z.string(),
+  state: z.union([CollectStateSchema, z.literal('absent')]),
+  task: z.strictObject({
+    id: z.string(), job_id: z.string(), state: CollectStateSchema,
+    revision: z.number().int().positive(), resolution_identity: HashIdSchema,
+    outcome: CollectOutcomeSchema.nullable(), error_code: z.string().nullable(),
+    created_at: Timestamp, started_at: Timestamp.nullable(), finished_at: Timestamp.nullable(),
+  }).nullable(),
+  samples: z.array(z.strictObject({
+    id: z.string(), metric: MetricRefOutSchema, unit: z.string(), value: z.unknown(),
+    observed_at: Timestamp, quality: z.unknown(), attempt_ids: z.array(z.string()),
+  })),
+  attempts: z.array(z.strictObject({
+    id: z.string(), collector_id: z.string().nullable(), status: z.string(),
+  })),
+});

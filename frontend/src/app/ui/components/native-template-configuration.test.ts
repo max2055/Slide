@@ -624,3 +624,118 @@ it('R4: a remount collision in the local edit counter cannot let an old committe
   expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).includes(`/operations/${key}`))).toBe(true);
 });
 
+
+/* --- immediate collection ------------------------------------------------ */
+
+const collectTask = (overrides: Record<string, unknown> = {}) => ({
+  id: 'task-0001', job_id: 'job-0001', state: 'accepted', revision: 5,
+  resolution_identity: hash('a'), outcome: null, error_code: null,
+  created_at: '2026-10-29T12:00:00.000Z', started_at: null, finished_at: null, ...overrides,
+});
+const collectAnswer = (state: string, overrides: Record<string, unknown> = {}) => ({
+  collect: true, resource: { type: 'instance', id: 1 }, caller_key: 'stored-key', state,
+  task: collectTask({ state, outcome: state === 'completed' ? 'sampled' : null }),
+  samples: state === 'completed' ? [{
+    id: 'sample-1', metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's',
+    value: 78602, observed_at: '2026-10-29T12:00:01.000Z', quality: { status: 'good' }, attempt_ids: ['a'],
+  }] : [],
+  attempts: state === 'completed' ? [{ id: 'a', collector_id: 'mysql-status', status: 'succeeded' }] : [],
+  ...overrides,
+});
+const collectButton = (element: any, text = '立即采集') =>
+  [...element.shadowRoot.querySelectorAll('button')].find((button: HTMLButtonElement) => button.textContent?.trim() === text) as HTMLButtonElement | undefined;
+
+it('manual collection sends the published revision and shows only this task\'s samples', async () => {
+  let polls = 0;
+  let key = '';
+  const base = routes();
+  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    if (url.endsWith('/collect') && method === 'POST') {
+      const body = JSON.parse(String(init?.body));
+      expect(body.expected_revision).toBe(5);
+      key = body.caller_key;
+      expect(key).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+      // The key is persisted before the request reaches the server.
+      expect(JSON.parse(window.sessionStorage.getItem('slide.metric-collect.v1:user-7:instance:1') ?? '{}').key).toBe(key);
+      return { ok: true, json: async () => collectAnswer('accepted', { caller_key: key }) };
+    }
+    if (key && url.endsWith(`/collect/${key}`)) {
+      polls += 1;
+      return { ok: true, json: async () => collectAnswer('completed', { caller_key: key }) };
+    }
+    return base(url, init);
+  });
+  const element = await mount();
+  await element.collectNow();
+  for (let i = 0; i < 30 && element.collectResult?.state !== 'completed'; i++) await new Promise(resolve => setTimeout(resolve, 100));
+  expect(polls).toBeGreaterThan(0);
+  expect(element.collectResult.state).toBe('completed');
+  const text = element.shadowRoot.textContent;
+  expect(text).toContain('任务已完成');
+  expect(text).toContain('已写入本次正式样本');
+  expect(text).toContain('78602');
+  // The key was cleared once the outcome settled.
+  expect(window.sessionStorage.getItem('slide.metric-collect.v1:user-7:instance:1')).toBeNull();
+});
+
+it('a fresh collection persists its key before the request is sent', async () => {
+  let persistedAtSend: string | null = null;
+  authFetch.mockImplementation(routes({
+    '/collect': (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      persistedAtSend = window.sessionStorage.getItem('slide.metric-collect.v1:user-7:instance:1');
+      expect(JSON.parse(persistedAtSend ?? '{}').key).toBe(body.caller_key);
+      return { ok: true, json: async () => collectAnswer('accepted', { caller_key: body.caller_key }) };
+    },
+  }));
+  const element = await mount();
+  await element.collectNow();
+  expect(persistedAtSend).not.toBeNull();
+  expect(element.collectResult.state).toBe('accepted');
+  // The request is not settled, so its key remains recoverable after a refresh.
+  expect(window.sessionStorage.length).toBe(1);
+  element.stopCollectPolling();
+});
+
+it('a refresh queries the stored key instead of starting a second collection', async () => {
+  window.sessionStorage.setItem(`slide.metric-collect.v1:user-7:instance:1`,
+    JSON.stringify({ key: 'stored-key', revision: 5 }));
+  authFetch.mockImplementation(routes({
+    '/collect/stored-key': () => ({ ok: true, json: async () => collectAnswer('completed') }),
+  }));
+  const element = await mount();
+  for (let i = 0; i < 40 && element.collectResult?.state !== 'completed'; i++) await settle();
+  expect(element.collectResult?.state).toBe('completed');
+  expect(authFetch.mock.calls.some(entry => String(entry[0]).endsWith('/collect') && entry[1]?.method === 'POST')).toBe(false);
+  expect(authFetch.mock.calls.some(entry => String(entry[0]).endsWith('/collect/stored-key'))).toBe(true);
+  expect(window.sessionStorage.length).toBe(0);
+});
+
+it('a failed storage write refuses the request before it is sent', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+  try {
+    await element.collectNow();
+    expect(authFetch.mock.calls.some(entry => String(entry[0]).endsWith('/collect') && entry[1]?.method === 'POST')).toBe(false);
+    expect(element.shadowRoot.textContent).toContain('会话存储');
+  } finally { setItem.mockRestore(); }
+});
+
+it('an unconfirmed collection response is resolved by querying the same key, never resent blindly', async () => {
+  let posts = 0;
+  const key = 'collect-recovered';
+  authFetch.mockImplementation(routes({
+    [`/collect/${key}`]: () => ({ ok: true, json: async () => collectAnswer('completed') }),
+    '/collect': () => { posts += 1; return { ok: false, status: 503, json: async () => ({ error: 'COLLECT_STORE_UNAVAILABLE' }) }; },
+  }));
+  const element = await mount();
+  // The same key is used by the recovery query and by any retry of this action.
+  window.sessionStorage.setItem(`slide.metric-collect.v1:user-7:instance:1`, JSON.stringify({ key, revision: 5 }));
+  element.collectPendingKey = key;
+  await element.collectNow();
+  expect(posts).toBe(1);
+  expect(element.collectResult?.state).toBe('completed');
+  expect(element.collectPendingKey).toBeNull();
+});

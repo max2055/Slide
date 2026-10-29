@@ -25,12 +25,14 @@ import { createConfigurationRegistry } from '../config/registry.js';
 import { createAssetCollectorAccess } from '../config/access.js';
 import { RefSchema, rule } from '../policy/model.js';
 import {
-  TemplateBindingApplyBodySchema, TemplateRepinBodySchema, TemplateTrialBodySchema, TemplateBindingBodySchema,
+  TemplateBindingApplyBodySchema, TemplateCollectRequestSchema, TemplateRepinBodySchema, TemplateTrialBodySchema,
+  TemplateBindingBodySchema,
 } from '../../contracts/metrics/template-bindings.js';
 import { metricJsonSchemas } from '../../contracts/metrics/public-api.js';
 import {
   TemplateBindingService, poolTemplatePort, templateBindingErrorStatus,
 } from './binding-service.js';
+import { CollectNowService } from './collect-now.js';
 import { templatePinOf, RepinError } from './repin.js';
 import { BindingCandidateError } from '../bindings/compile.js';
 import { BindingPreflightError } from '../bindings/preflight.js';
@@ -83,6 +85,13 @@ export const templateBindingService = new TemplateBindingService({
   reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId),
 });
 
+/** Manual collection: admission and queries re-read the same live session. */
+export const collectNowService = new CollectNowService({
+  pool: productionPool, registry,
+  reload: actor => actorContextService.revalidateActor(actor, actor.requestId),
+  reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId),
+});
+
 const ref = (params: unknown) => {
   const p = params as { type: string; id: string };
   rule(/^[1-9]\d*$/.test(p.id), 'POLICY_RESOURCE');
@@ -117,6 +126,7 @@ export async function registerMetricTemplateRoutes(
   app: FastifyInstance,
   verifyToken: preHandlerHookHandler,
   service: TemplateBindingService = templateBindingService,
+  collect: CollectNowService = collectNowService,
 ): Promise<void> {
   const actorOf = (request: unknown) => (request as { user?: ActorContext }).user;
 
@@ -275,6 +285,48 @@ export async function registerMetricTemplateRoutes(
         return await service.operation(actor, ref(params), params.key);
       } catch (error) {
         const mapped = refuse(error, 'TEMPLATE_OPERATION_FAILED');
+        return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
+      }
+    } });
+
+  // Immediate collection on the current published plan. Admission writes one
+  // durable task and one queued job in the same transaction; the response is the
+  // queryable task, never a claim that a sample already succeeded.
+  app.route({ method: 'POST', url: `${root}/:type/:id/collect`, preHandler: [verifyToken],
+    schema: { params: resourceParams, body: bodyOf(TemplateCollectRequestSchema),
+      response: { 200: json('TemplateCollectResponse'), ...refusals([400, 401, 403, 404, 409, 422, 500, 503]) } },
+    bodyLimit: 16384, handler: async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const actor = actorOf(request);
+      if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+      try { return await collect.collect(actor, ref(request.params), request.body); }
+      catch (error) {
+        const mapped = refuse(error, 'TEMPLATE_COLLECT_FAILED');
+        if (mapped.status >= 500) {
+          request.log.error({ template_flow: 'collect', code: mapped.code,
+            name: error instanceof Error ? error.name : typeof error },
+          error instanceof Error ? error.message.slice(0, 200) : 'unknown');
+        }
+        return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
+      }
+    } });
+
+  // The same key's task. `absent` proves no task with that key exists for this
+  // principal and resource; it never means "the API failed", so a client does
+  // not resend a request whose acceptance it has not yet proven.
+  app.route({ method: 'GET', url: `${root}/:type/:id/collect/:key`, preHandler: [verifyToken],
+    schema: { params: { type: 'object', additionalProperties: false, required: ['type', 'id', 'key'],
+      properties: { ...resourceParams.properties, key: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } } },
+      response: { 200: json('TemplateCollectResponse'), ...refusals([400, 401, 403, 404, 500, 503]) } },
+    handler: async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const actor = actorOf(request);
+      if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+      try {
+        const params = request.params as { type: string; id: string; key: string };
+        return await collect.task(actor, ref(params), params.key);
+      } catch (error) {
+        const mapped = refuse(error, 'TEMPLATE_COLLECT_FAILED');
         return reply.code(mapped.status).send({ error: mapped.code, ...mapped.extra });
       }
     } });

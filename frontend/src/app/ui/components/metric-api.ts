@@ -232,6 +232,25 @@ export interface TemplateBindingRequest {
   expected_revision: number; template_pins: TemplatePin[];
   overrides?: Record<string, unknown>; group_id?: string | null;
 }
+export type TemplateCollectState = 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+/** One sample this exact task committed; never the resource's latest periodic value. */
+export interface TemplateCollectSample {
+  id: string; metric: { id: string; semantic_version: string }; unit: string; value: unknown;
+  observed_at: string; quality: unknown; attempt_ids: string[];
+}
+export interface TemplateCollectTask {
+  id: string; job_id: string; state: TemplateCollectState; revision: number; resolution_identity: string;
+  outcome: 'sampled' | 'no_samples' | 'failed' | 'cancelled' | 'unknown' | null;
+  error_code: string | null; created_at: string; started_at: string | null; finished_at: string | null;
+}
+export interface TemplateCollectResult {
+  collect: true; resource: { type: string; id: number }; caller_key: string;
+  /** `absent` proves no task with that key exists for this principal. */
+  state: TemplateCollectState | 'absent';
+  task: TemplateCollectTask | null;
+  samples: TemplateCollectSample[];
+  attempts: Array<{ id: string; collector_id: string | null; status: string }>;
+}
 const queryString = (params: Record<string, string | number | undefined>) => {
   const query = Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join('&');
@@ -254,6 +273,11 @@ export const applyTemplateBinding = (type: string, id: number,
   metricRequest<TemplateApplyResult>(`template-bindings/${type}/${id}/apply`, body);
 export const readTemplateOperation = (type: string, id: number, key: string) =>
   metricRequest<TemplateOperationState>(`template-bindings/${type}/${id}/operations/${encodeURIComponent(key)}`);
+export const collectTemplateBindingNow = (type: string, id: number,
+  body: { caller_key: string; expected_revision: number }) =>
+  metricRequest<TemplateCollectResult>(`template-bindings/${type}/${id}/collect`, body);
+export const readTemplateCollectTask = (type: string, id: number, key: string) =>
+  metricRequest<TemplateCollectResult>(`template-bindings/${type}/${id}/collect/${encodeURIComponent(key)}`);
 export type TemplateRepinResult = { unchanged: true; template_id: string; version: number } | {
   unchanged: false; template_id: string; from_version: number; to_version: number; content_hash: string;
   changes: Array<{ item_id: string;

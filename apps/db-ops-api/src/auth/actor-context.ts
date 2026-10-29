@@ -233,6 +233,20 @@ export class ActorContextService {
     return this.loadActorFrom(executor, userId, expectedSessionVersion, requestId, kind, true);
   }
 
+  /** The same live session read on a connection the caller already holds. */
+  async loadActiveActorOn(
+    executor: QueryExecutor,
+    userId: number,
+    expectedSessionVersion?: number,
+    requestId: string = randomUUID(),
+  ): Promise<ActorContext> {
+    try {
+      return await this.loadActorFrom(executor, userId, expectedSessionVersion, requestId);
+    } catch (error) {
+      throw asAuthenticationError(error);
+    }
+  }
+
   async revalidateActor(actor: ActorContext, requestId: string = randomUUID()): Promise<ActorContext> {
     const resourceBoundary = frozenBoundaryOf(actor);
     const servicePool = actor.principalKind === 'service' ? this.poolProvider() : undefined;

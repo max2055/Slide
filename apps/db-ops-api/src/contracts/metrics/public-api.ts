@@ -6,6 +6,7 @@ import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/p
 import {
   TemplateBindingApplyBodySchema, TemplateBindingApplyResponseSchema, TemplateBindingBodySchema,
   TemplateBindingPreviewSchema, TemplateBindingStatusSchema, TemplateCatalogSchema,
+  TemplateCollectRequestSchema, TemplateCollectResponseSchema,
   TemplateOperationStateSchema, TemplateProbeResponseSchema, TemplateRepinBodySchema, TemplateRepinResponseSchema,
   TemplateTrialBodySchema, TemplateTrialResponseSchema, TemplateVersionDetailSchema,
 } from './template-bindings.js';
@@ -44,6 +45,8 @@ export const metricPublicSchemas = {
   TemplateOperationState: TemplateOperationStateSchema,
   TemplateBindingPreview: TemplateBindingPreviewSchema,
   TemplateProbeResponse: TemplateProbeResponseSchema,
+  TemplateCollectRequest: TemplateCollectRequestSchema,
+  TemplateCollectResponse: TemplateCollectResponseSchema,
   TemplateTrialResponse: TemplateTrialResponseSchema,
   TemplateBindingApplyResponse: TemplateBindingApplyResponseSchema,
   TemplateBindingRequest: TemplateBindingBodySchema,
@@ -138,4 +141,16 @@ export const metricPublicPaths = {
     requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateBindingApplyRequest') } } },
     responses: { '200': response('TemplateBindingApplyResponse'), ...errors,
       '409': { description: 'Revision or operation-key conflict; no implicit retry' }, '422': { description: 'Receipt invalid, expired or consumed' } } } },
+  '/api/metrics/template-bindings/{type}/{id}/collect': { post: { operationId: 'collectMetricTemplateBindingNow',
+    security: [{ bearerAuth: [] }], parameters,
+    description: 'Admits one immediate collection of the current published fixed plan. The signed principal, resource, revision, plan/pin/target/credential identity and caller key are recorded, and exactly one job is queued in the existing workflow queue, in the same transaction. Replaying the same key under the same principal and intent returns that task without a second job, revision, audit or sample; any other reuse is 409. The response is the queryable task, never a claim that a sample already succeeded. Requires live management permission on the resource, re-read on the admission connection after the policy lock.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateCollectRequest') } } },
+    responses: { '200': response('TemplateCollectResponse'), ...errors,
+      '409': { description: 'Not a template binding, disabled, revision conflict or caller-key conflict; no task was created' },
+      '422': { description: 'No executable plan for this resource' } } } },
+  '/api/metrics/template-bindings/{type}/{id}/collect/{key}': { get: { operationId: 'getMetricTemplateCollectionTask',
+    security: [{ bearerAuth: [] }],
+    parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],
+    description: 'Authoritative read of one immediate-collection task for this principal and resource. `samples` are only the samples that task\'s own job committed, with their immutable id/metric/unit/value/observed_at/quality, so a completed task with no samples never reads as a successful collection. `absent` proves no task with that key exists for this principal, so a client must query rather than resend. Requires live read access, re-read after the row.',
+    responses: { '200': response('TemplateCollectResponse'), ...errors } } },
 };

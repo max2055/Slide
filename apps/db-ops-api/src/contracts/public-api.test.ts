@@ -127,7 +127,11 @@ describe('generated public API contract', () => {
       '/api/metrics/policy/groups',
       '/api/metrics/template-bindings/{type}/{id}',
       '/api/metrics/template-bindings/{type}/{id}/apply',
+      '/api/metrics/template-bindings/{type}/{id}/collect',
+      '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
       '/api/metrics/template-bindings/{type}/{id}/preview',
+      '/api/metrics/template-bindings/{type}/{id}/probe',
       '/api/metrics/template-bindings/{type}/{id}/trial',
       '/api/metrics/templates',
       '/api/metrics/templates/{templateId}/repin',
@@ -231,7 +235,11 @@ describe('generated public API contract', () => {
     expect([...registered].sort()).toEqual([
       '/api/metrics/template-bindings/{type}/{id}',
       '/api/metrics/template-bindings/{type}/{id}/apply',
+      '/api/metrics/template-bindings/{type}/{id}/collect',
+      '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
       '/api/metrics/template-bindings/{type}/{id}/preview',
+      '/api/metrics/template-bindings/{type}/{id}/probe',
       '/api/metrics/template-bindings/{type}/{id}/trial',
       '/api/metrics/templates',
       '/api/metrics/templates/{templateId}/repin',
@@ -292,11 +300,24 @@ describe('generated public API contract', () => {
     expect(operation('/api/metrics/template-bindings/{type}/{id}/apply', 'post')
       .responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateBindingApplyResponse');
 
+    const collect = operation('/api/metrics/template-bindings/{type}/{id}/collect', 'post');
+    expect(collect.operationId).toBe('collectMetricTemplateBindingNow');
+    expect(collect.security).toEqual([{ bearerAuth: [] }]);
+    expect(collect.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectRequest');
+    expect(collect.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectResponse');
+    expect(collect.responses).toHaveProperty('409');
+    const collectTask = operation('/api/metrics/template-bindings/{type}/{id}/collect/{key}', 'get');
+    expect(collectTask.operationId).toBe('getMetricTemplateCollectionTask');
+    expect(collectTask.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual([['type', 'path', true], ['id', 'path', true], ['key', 'path', true]]);
+    expect(collectTask.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectResponse');
+
     // The generated client carries the same shapes a UI would import.
     const client = buildClientTypes();
     for (const name of ['TemplateCatalog', 'TemplateVersionDetail', 'TemplateRepinResponse', 'TemplateBindingStatus',
       'TemplateBindingPreview', 'TemplateTrialResponse', 'TemplateBindingApplyResponse',
-      'TemplateBindingRequest', 'TemplateTrialRequest', 'TemplateBindingApplyRequest']) {
+      'TemplateBindingRequest', 'TemplateTrialRequest', 'TemplateBindingApplyRequest',
+      'TemplateCollectRequest', 'TemplateCollectResponse']) {
       expect(client, name).toContain(`export type ${name} = `);
     }
   });
@@ -389,7 +410,13 @@ describe('generated public API contract', () => {
       source: 'template', revision: 5,
       application: { status: 'pending', applied_revision: 4, reported_at: '2026-10-29T15:00:00.000Z', error_code: null },
       template_pins: [{ template_id: 'tpl', version: 2, content_hash: `sha256:${'a'.repeat(64)}` }],
-      pending: { base_revision: 4, target_revision: 5, plan: { kind: 'template_collection_plan', releases: [{ nested: [1, 2] }] } },
+      pending: { base_revision: 4, target_revision: 5, resolution_identity: `sha256:${'d'.repeat(64)}`,
+        plan: { kind: 'template_collection_plan',
+          settings: { enabled: true, interval_ms: 300000, timeout_ms: 5000, stale_after_ms: 900000,
+            max_counter_gap_ms: 900000, max_rows: 1000, max_concurrency: 1, max_series_per_resource: 100 },
+          parameters: [], releases: [{ nested: [1, 2] }], excluded: [] },
+        decided_at: '2026-10-29T15:00:00.000Z', operation_key: 'contract-pending' },
+      configuration: { overrides: { interval_ms: { mode: 'set', value: 30000 }, metrics: { 'db.uptime_seconds@1.0.0': 'disable' } }, group_id: null },
       effective: { revision: 4, resolution_identity: `sha256:${'b'.repeat(64)}` },
       published_at: '2026-10-29T15:00:00.000Z',
     };

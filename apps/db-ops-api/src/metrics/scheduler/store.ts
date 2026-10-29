@@ -1,7 +1,7 @@
 import { validSourceSnapshot } from '../rollout/source-history.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { validateBindings, type Resource } from '../../contracts/metrics/index.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { dueMetricIds } from '../../collection-scheduler.js';
 import { MysqlWorkflowStore, type ClaimedJob, type JobExecutionContext } from '../../workflows/worker-runtime.js';
@@ -9,7 +9,7 @@ import { MysqlMetricStorage, seriesHash } from '../storage.js';
 import { RolloutControl, type Ticket } from '../rollout/control.js';
 import type { PackageRegistry } from '../packages/model.js';
 import type { CounterState } from '../state.js';
-import { type Published, type Ref, type Group, refKey, rule } from '../policy/model.js';
+import { type Published, type Ref, type Group, RefSchema, refKey, rule } from '../policy/model.js';
 import { resolvePolicy } from '../policy/resolver.js';
 import { bindingReadCode, readLegacyPublished, readStoredBinding, TEMPLATE_BINDING_UNSUPPORTED } from '../bindings/package-reader.js';
 import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
@@ -17,8 +17,12 @@ import type { TemplateCollectionPlan } from '../bindings/plan.js';
 import type { PackageResult } from '../packages/runner.js';
 import { compilePlan, hash, jitterFor, type CollectorPlan } from './compiler.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
+import { trustedTargetIdentity } from '../bindings/target-identity.js';
+import { stable } from '../packages/model.js';
 
 export const JOB_TYPE = 'metrics.collect';
+/** A manual collection is a distinct job type in the same queue and worker lanes. */
+export const COLLECT_NOW_JOB_TYPE = 'metrics.collect_now';
 export const GLOBAL_CONCURRENCY = 4;
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
 export interface ExecutionSnapshot { published: Published; plan: CollectorPlan; states: Map<string, CounterState>; tickets?: Map<string, Ticket> }
@@ -40,6 +44,48 @@ export interface TemplateExecutionSnapshot {
   /** Formal publication tickets captured before remote IO; empty until formalized. */
   tickets: Map<string, Ticket>;
 }
+
+/* --- manual collection tasks ---------------------------------------------- */
+
+export type CollectTaskState = 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+export type CollectOutcome = 'sampled' | 'no_samples' | 'failed' | 'cancelled' | 'unknown';
+/** The immutable sample identity a task's own job committed; never another run's latest value. */
+export interface CollectSample {
+  id: string;
+  metric: { id: string; semantic_version: string };
+  unit: string;
+  value: unknown;
+  observed_at: string;
+  quality: unknown;
+  attempt_ids: string[];
+}
+export interface CollectAttempt { id: string; collector_id: string | null; status: string }
+export interface CollectTask {
+  id: string;
+  resource: Ref;
+  caller_key: string;
+  revision: number;
+  resolution_identity: string;
+  job_id: string;
+  state: CollectTaskState;
+  outcome: CollectOutcome | null;
+  error_code: string | null;
+  samples: CollectSample[];
+  attempts: CollectAttempt[];
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  /** The live workflow queue state; a terminal journal state always wins. */
+  job_state: string | null;
+}
+export interface CollectAdmissionInput {
+  ref: Ref;
+  actorId: number;
+  sessionVersion: number;
+  callerKey: string;
+  expectedRevision: number;
+}
+export interface CollectAdmissionResult { created: boolean; task: CollectTask }
 
 /** Short transactions share the policy publication lock. Never hold a transaction during remote IO. */
 export class MysqlScheduleStore {
@@ -422,66 +468,94 @@ export class MysqlScheduleStore {
       if (!await this.validTemplate(c, ref, revision, job, ctx)) return false;
       const [rows] = await c.execute<RowDataPacket[]>('SELECT job_id FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       if (rows[0]?.job_id !== job.id) return false;
-      const storage = new MysqlMetricStorage(c as unknown as Pool, () => new Date(now));
-      const sampleIds: string[] = [];
-      for (const { release, result } of results) {
-        const catalog = this.registry.catalog({ ...release });
-        for (const { observation } of result.observations) {
-          rule(observation.versions.config_revision === revision && observation.resource_type === ref.type
-            && observation.resource_id === String(ref.id), 'SCHEDULE_OUTPUT_IDENTITY');
-          rule(observation.versions.package_id === release.id && observation.versions.package_version === release.version,
-            'SCHEDULE_OUTPUT_IDENTITY');
-          const definition = catalog.find(d => d.id === observation.metric.id
-            && d.semantic_version === observation.metric.semantic_version);
-          rule(definition, 'SCHEDULE_OUTPUT_SOURCE');
-          sampleIds.push(observation.id);
-          // A formalized series publishes through the accepted rollout control;
-          // until then the normalized write is still the formal observation store.
-          const ticket = snapshot.tickets.get(seriesHash(observation));
-          if (ticket) await new RolloutControl(this.pool, c, () => new Date(now)).publish(observation, definition!, ticket);
-          else await storage.write(observation, definition!);
-        }
-        // Raw evidence shares the same fences and transaction; it is never a
-        // formal publication but the normalized lineage must resolve to it.
-        for (const raw of result.raw ?? []) {
-          rule(raw.stage === 'raw' && raw.versions.config_revision === revision
-            && raw.resource_type === ref.type && raw.resource_id === String(ref.id), 'SCHEDULE_OUTPUT_IDENTITY');
-          const output = result.observations.find(entry =>
-            entry.observation.lineage.some(input => input.stage === 'raw' && input.id === raw.id));
-          rule(output, 'SCHEDULE_RAW_LINEAGE');
-          const definition = catalog.find(d => d.id === raw.metric.id
-            && d.semantic_version === raw.metric.semantic_version);
-          rule(definition, 'SCHEDULE_OUTPUT_SOURCE');
-          await storage.write(raw, definition!);
-        }
-        for (const attempt of result.attempts) {
-          await c.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
-            [attempt.id, JSON.stringify(attempt), new Date(now)]);
-        }
-      }
-      if (sampleIds.length) {
-        await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
-          ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
-        [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);
-      }
-      const states = new Map(snapshot.states);
-      for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
+      await this.writeTemplateResults(c, snapshot, results, now);
       // Re-checked after the last asynchronous work: anything written below is
       // rolled back if the lease, revision or switch changed during the call.
       rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
-      // A template run is capability evidence for the exact releases it read:
-      // without this, the next preview would see only expired/absent evidence
-      // and could never enable a freshly applied template. The legacy path
-      // refreshes the same column in the same transaction position.
-      const capabilities = results.flatMap(({ result }) => result.capabilities ?? []);
-      if (capabilities.length) {
-        await c.execute('UPDATE metric_policy_bindings SET capabilities = ? WHERE resource_key = ?',
-          [JSON.stringify(capabilities), refKey(ref)]);
-      }
+      await this.recordTemplateCapabilities(c, ref, results);
+      const states = new Map(snapshot.states);
+      for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
       await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ? WHERE resource_key = ?',
         [JSON.stringify(Object.fromEntries(states)), now, now + plan.settings.interval_ms, refKey(ref)]);
       return true;
     });
+  }
+
+  /**
+   * The one formal writer both cadences share: normalized observations, their raw
+   * lineage, attempts and the revision's sample-id snapshot. It returns the exact
+   * sample identities it wrote so a manual task can record its own samples in the
+   * same transaction instead of reading another run's latest value later.
+   */
+  private async writeTemplateResults(c: PoolConnection, snapshot: TemplateExecutionSnapshot,
+    results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>,
+    now: number): Promise<{ samples: CollectSample[]; attempts: CollectAttempt[] }> {
+    const { decoded } = snapshot;
+    const ref = decoded.binding.resource, revision = decoded.binding.revision;
+    const storage = new MysqlMetricStorage(c as unknown as Pool, () => new Date(now));
+    const sampleIds: string[] = [];
+    const samples: CollectSample[] = [];
+    const attempts: CollectAttempt[] = [];
+    for (const { release, result } of results) {
+      const catalog = this.registry.catalog({ ...release });
+      const releaseAttempts = result.attempts.map(attempt => ({
+        id: String(attempt.id), collector_id: attempt.collector_id, status: String(attempt.status),
+      }));
+      attempts.push(...releaseAttempts);
+      for (const { observation } of result.observations) {
+        rule(observation.versions.config_revision === revision && observation.resource_type === ref.type
+          && observation.resource_id === String(ref.id), 'SCHEDULE_OUTPUT_IDENTITY');
+        rule(observation.versions.package_id === release.id && observation.versions.package_version === release.version,
+          'SCHEDULE_OUTPUT_IDENTITY');
+        const definition = catalog.find(d => d.id === observation.metric.id
+          && d.semantic_version === observation.metric.semantic_version);
+        rule(definition, 'SCHEDULE_OUTPUT_SOURCE');
+        sampleIds.push(observation.id);
+        samples.push({
+          id: observation.id, metric: { ...observation.metric }, unit: observation.unit,
+          value: observation.value, observed_at: observation.observed_at, quality: observation.quality,
+          attempt_ids: releaseAttempts.map(attempt => attempt.id),
+        });
+        // A formalized series publishes through the accepted rollout control;
+        // until then the normalized write is still the formal observation store.
+        const ticket = snapshot.tickets.get(seriesHash(observation));
+        if (ticket) await new RolloutControl(this.pool, c, () => new Date(now)).publish(observation, definition!, ticket);
+        else await storage.write(observation, definition!);
+      }
+      // Raw evidence shares the same fences and transaction; it is never a
+      // formal publication but the normalized lineage must resolve to it.
+      for (const raw of result.raw ?? []) {
+        rule(raw.stage === 'raw' && raw.versions.config_revision === revision
+          && raw.resource_type === ref.type && raw.resource_id === String(ref.id), 'SCHEDULE_OUTPUT_IDENTITY');
+        const output = result.observations.find(entry =>
+          entry.observation.lineage.some(input => input.stage === 'raw' && input.id === raw.id));
+        rule(output, 'SCHEDULE_RAW_LINEAGE');
+        const definition = catalog.find(d => d.id === raw.metric.id
+          && d.semantic_version === raw.metric.semantic_version);
+        rule(definition, 'SCHEDULE_OUTPUT_SOURCE');
+        await storage.write(raw, definition!);
+      }
+      for (const attempt of result.attempts) {
+        await c.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
+          [attempt.id, JSON.stringify(attempt), new Date(now)]);
+      }
+    }
+    if (sampleIds.length) {
+      await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
+        ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
+      [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);
+    }
+    return { samples, attempts };
+  }
+
+  /** A template run is capability evidence for the exact releases it read. */
+  private async recordTemplateCapabilities(c: PoolConnection, ref: Ref,
+    results: Array<{ result: PackageResult }>): Promise<void> {
+    const capabilities = results.flatMap(({ result }) => result.capabilities ?? []);
+    if (capabilities.length) {
+      await c.execute('UPDATE metric_policy_bindings SET capabilities = ? WHERE resource_key = ?',
+        [JSON.stringify(capabilities), refKey(ref)]);
+    }
   }
 
   async recordTemplateFailure(snapshot: TemplateExecutionSnapshot,
@@ -504,5 +578,287 @@ export class MysqlScheduleStore {
   async event(ref: Ref, revision: number, jobId: string, code: string, uncertain: boolean, duration: number, reads: number): Promise<void> {
     await this.pool.execute(`INSERT INTO metric_schedule_events (resource_key, job_id, revision, code, uncertain, duration_ms, logical_reads)
       VALUES (?, ?, ?, ?, ?, ?, ?)`, [refKey(ref), jobId, revision, code, uncertain, Math.max(0, duration), reads]);
+  }
+
+  // -------------------------------------------------------- manual collect
+  //
+  // A manual collection is a distinct durable task in the same workflow queue.
+  // It executes the binding's exact pending plan and commits through the same
+  // formal writer, but its fence is this task's own row plus the job lease: it
+  // never borrows (and never overwrites) `metric_schedule.job_id`.
+
+  /** Read-committed: a grant or binding committed after the transaction opened must be seen. */
+  private async collectTransaction<T>(fn: (c: PoolConnection) => Promise<T>): Promise<T> {
+    const c = await this.pool.getConnection();
+    try {
+      await c.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await c.beginTransaction();
+      const [lock] = await c.query<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
+      rule(lock.length === 1, 'SCHEDULE_STORE_UNAVAILABLE');
+      const result = await fn(c); await c.commit(); return result;
+    } catch (e) { await c.rollback().catch(() => undefined); throw e; } finally { c.release(); }
+  }
+
+  private collectTask(row: RowDataPacket, jobState: string | null, jobExpired = false): CollectTask {
+    const stored = String(row.state) as CollectTaskState;
+    const terminal = stored === 'completed' || stored === 'failed' || stored === 'cancelled' || stored === 'unknown';
+    // A job that completed without a journal row proves nothing about samples;
+    // only the terminal journal state may claim a result.
+    const state: CollectTaskState = terminal ? stored
+      : jobState === null ? stored
+      : jobState === 'queued' || jobState === 'retry' ? 'accepted'
+      : jobState === 'running' ? (jobExpired ? 'unknown' : 'running')
+      : jobState === 'completed' ? 'unknown'
+      : jobState === 'dead_letter' ? 'failed'
+      : jobState === 'cancelled' ? 'cancelled' : stored;
+    const decodeJson = (value: unknown): unknown => typeof value === 'string' ? JSON.parse(value) : value;
+    const [type, id] = String(row.resource_key).split(':');
+    return {
+      id: String(row.id), resource: RefSchema.parse({ type, id: Number(id) }),
+      caller_key: String(row.caller_key), revision: Number(row.revision),
+      resolution_identity: String(row.resolution_identity), job_id: String(row.job_id), state,
+      outcome: row.outcome === null || row.outcome === undefined ? null : String(row.outcome) as CollectOutcome,
+      error_code: row.error_code === null || row.error_code === undefined ? null : String(row.error_code),
+      samples: Array.isArray(row.samples) ? row.samples as CollectSample[]
+        : row.samples ? decodeJson(row.samples) as CollectSample[] : [],
+      attempts: Array.isArray(row.attempts) ? row.attempts as CollectAttempt[]
+        : row.attempts ? decodeJson(row.attempts) as CollectAttempt[] : [],
+      created_at: new Date(row.created_at).toISOString(),
+      started_at: row.started_at === null ? null : new Date(row.started_at).toISOString(),
+      finished_at: row.finished_at === null ? null : new Date(row.finished_at).toISOString(),
+      job_state: jobState,
+    };
+  }
+
+  /** One task row + the workflow state that may still be in flight. */
+  private async readCollectTask(c: Pick<Pool, 'execute'> | PoolConnection, where: string, values: any[],
+    forUpdate = false): Promise<CollectTask | null> {
+    const [rows] = await c.execute<RowDataPacket[]>(
+      `SELECT r.*, j.state AS job_state, j.lease_expires_at AS job_lease_expires_at
+         FROM metric_collect_requests r LEFT JOIN workflow_jobs j ON BINARY j.id = BINARY r.job_id
+        WHERE ${where}${forUpdate ? ' FOR UPDATE' : ''}`, values);
+    const row = rows[0];
+    if (!row) return null;
+    const jobState = row.job_state === null || row.job_state === undefined ? null : String(row.job_state);
+    const lease = row.job_lease_expires_at === null || row.job_lease_expires_at === undefined
+      ? null : new Date(row.job_lease_expires_at).getTime();
+    const expired = lease !== null && lease <= Date.now();
+    return this.collectTask(row, jobState, Boolean(expired));
+  }
+
+  /**
+   * Persist one user intent and enqueue exactly one job in the same transaction.
+   * The same key from the same principal with the identical intent replays that
+   * task; any other reuse is a conflict, never a second job. `authorize` re-reads
+   * the live grant on the writer's own connection after the policy lock.
+   */
+  async admitCollectNow(input: CollectAdmissionInput,
+    authorize: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<CollectAdmissionResult> {
+    const now = Date.now();
+    return this.collectTransaction(async c => {
+      const decoded = await this.currentTemplate(c, input.ref);
+      rule(decoded !== null, 'COLLECT_BINDING_NOT_TEMPLATE', 409);
+      const plan = decoded!.pending.plan;
+      rule(plan.executable, 'COLLECT_PLAN_NOT_EXECUTABLE', 409);
+      rule(plan.settings.enabled, 'COLLECT_BINDING_DISABLED', 409);
+      const revision = decoded!.binding.revision;
+      rule(input.expectedRevision === revision, 'COLLECT_REVISION_CONFLICT', 409);
+      rule(Date.parse(decoded!.published_at) <= now, 'COLLECT_NOT_PUBLISHED', 409);
+      if (input.ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(input.ref.id);
+      rule(await assetCollectionEnabled(c, input.ref, true), 'ASSET_COLLECTION_DISABLED', 409);
+      const targetIdentity = await trustedTargetIdentity(c as never, input.ref);
+      rule(targetIdentity !== null, 'COLLECT_RESOURCE_NOT_FOUND', 404);
+      const digest = `sha256:${createHash('sha256').update(stable({
+        format: 'max238.collect-intent.v1', resource: refKey(input.ref), revision,
+        resolution_identity: decoded!.pending.resolution_identity, plan: plan.identity,
+        pins: decoded!.binding.template_pins, credential_ref: `credential:asset-${input.ref.type}-${input.ref.id}`,
+        target_identity: targetIdentity,
+      })).digest('hex')}`;
+
+      const existing = await this.readCollectTask(c, 'r.resource_key = ? AND r.caller_key = ?',
+        [refKey(input.ref), input.callerKey], true);
+      if (existing) {
+        const [rows] = await c.execute<RowDataPacket[]>(
+          'SELECT actor_id, intent_digest FROM metric_collect_requests WHERE resource_key = ? AND caller_key = ?',
+          [refKey(input.ref), input.callerKey]);
+        rule(rows[0] && Number(rows[0].actor_id) === input.actorId
+          && String(rows[0].intent_digest) === digest, 'COLLECT_INTENT_CONFLICT', 409);
+        await authorize(c);
+        return { created: false, task: existing };
+      }
+
+      await authorize(c);
+      const id = randomUUID(), jobId = randomUUID();
+      // The unique (resource_key, caller_key) insert is the admission fence: a
+      // concurrent same-key request blocks here and then replays, so exactly one
+      // job is ever enqueued for one key. No second job is created below.
+      const [insert] = await c.execute<any>(
+        `INSERT INTO metric_collect_requests
+        (id, resource_key, caller_key, actor_id, session_version, revision, resolution_identity, intent_digest, job_id, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted') ON DUPLICATE KEY UPDATE id = id`,
+      [id, refKey(input.ref), input.callerKey, input.actorId, input.sessionVersion, revision,
+        decoded!.pending.resolution_identity, digest, jobId]);
+      if (Number(insert.affectedRows) === 0) {
+        // Another request with this exact key committed while this one waited.
+        const [rows] = await c.execute<RowDataPacket[]>(
+          'SELECT actor_id, intent_digest FROM metric_collect_requests WHERE resource_key = ? AND caller_key = ?',
+          [refKey(input.ref), input.callerKey]);
+        rule(rows[0] && Number(rows[0].actor_id) === input.actorId
+          && String(rows[0].intent_digest) === digest, 'COLLECT_INTENT_CONFLICT', 409);
+        await authorize(c);
+        const replay = await this.readCollectTask(c, 'r.resource_key = ? AND r.caller_key = ?',
+          [refKey(input.ref), input.callerKey]);
+        rule(replay, 'COLLECT_TASK_UNAVAILABLE', 503);
+        return { created: false, task: replay! };
+      }
+      const queue = new MysqlWorkflowStore(() => c as never);
+      await queue.enqueue({ id: jobId, type: COLLECT_NOW_JOB_TYPE, schemaVersion: 1,
+        payload: { resource: input.ref, revision, request_id: id },
+        idempotencyKey: `metric-collect:${refKey(input.ref)}:${id}`, maxAttempts: 3, availableAt: new Date(now) });
+      const task = await this.readCollectTask(c, 'r.id = ?', [id]);
+      rule(task, 'COLLECT_TASK_UNAVAILABLE', 503);
+      return { created: true, task: task! };
+    });
+  }
+
+  /** The task for one caller key, scoped to the principal that asked for it. */
+  async collectTaskFor(ref: Ref, callerKey: string, actorId: number): Promise<CollectTask | null> {
+    const task = await this.readCollectTask(this.pool, 'r.resource_key = ? AND r.caller_key = ?', [refKey(ref), callerKey]);
+    if (!task) return null;
+    const [rows] = await this.pool.execute<RowDataPacket[]>(
+      'SELECT actor_id FROM metric_collect_requests WHERE resource_key = ? AND caller_key = ?', [refKey(ref), callerKey]);
+    return Number(rows[0]?.actor_id) === actorId ? task : null;
+  }
+
+  async collectTaskById(requestId: string): Promise<CollectTask | null> {
+    return this.readCollectTask(this.pool, 'r.id = ?', [requestId]);
+  }
+
+  /** The task plus the persisted principal the worker must re-read live. */
+  async collectExecutionContext(requestId: string): Promise<{ task: CollectTask; actorId: number; sessionVersion: number } | null> {
+    const task = await this.collectTaskById(requestId);
+    if (!task) return null;
+    const [rows] = await this.pool.execute<RowDataPacket[]>(
+      'SELECT actor_id, session_version FROM metric_collect_requests WHERE id = ?', [requestId]);
+    if (!rows[0]) return null;
+    return { task, actorId: Number(rows[0].actor_id), sessionVersion: Number(rows[0].session_version) };
+  }
+
+  /** Fenced begin for one manual task; never claims an applied binding or schedule row. */
+  async beginCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
+    ctx: JobExecutionContext, now: number): Promise<TemplateExecutionSnapshot | null> {
+    return this.collectTransaction(async c => {
+      ctx.signal.throwIfAborted();
+      const decoded = await this.currentTemplate(c, ref);
+      if (!decoded || decoded.binding.revision !== revision) return null;
+      if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
+      if (!await assetCollectionEnabled(c, ref, true)) return null;
+      const task = await this.readCollectTask(c, 'r.id = ?', [requestId], true);
+      if (!task || task.job_id !== job.id || !['accepted', 'running'].includes(task.state)) return null;
+      const [jobs] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+        AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
+      [job.id, ctx.workerId, ctx.fencingToken]);
+      if (jobs.length !== 1) return null;
+      rule(now >= Date.parse(decoded.published_at), 'SCHEDULE_APPLICATION_TIME');
+      await c.execute(`UPDATE metric_collect_requests SET state = 'running',
+        started_at = COALESCE(started_at, NOW(6)), updated_at = NOW(6) WHERE id = ?`, [requestId]);
+      const plan = decoded.pending.plan;
+      const pins = new Set(plan.releases.map(entry => `${entry.release.id}@${entry.release.version}#${entry.release.digest}`));
+      const [sources] = await c.execute<RowDataPacket[]>(`SELECT * FROM metric_rollout
+        WHERE resource_type = ? AND resource_id = ? ORDER BY series_hash FOR UPDATE`, [ref.type, String(ref.id)]);
+      const tickets = new Map<string, Ticket>();
+      for (const source of sources) {
+        const pin = decode<{ id: string; version: string; digest: string }>(source.package_pin);
+        if (source.source !== 'semantic' || source.read_mode !== 'semantic'
+          || Number(source.published_revision) !== revision
+          || !pins.has(`${pin.id}@${pin.version}#${pin.digest}`)) continue;
+        tickets.set(String(source.series_hash), { source: 'semantic', generation: Number(source.generation), revision });
+        await c.execute('UPDATE metric_rollout SET applied_revision = published_revision WHERE series_hash = ?', [source.series_hash]);
+      }
+      // Counter baselines are not schedule state ownership: read the current
+      // cadence's snapshot, never force it to this job.
+      const [schedule] = await c.execute<RowDataPacket[]>(
+        'SELECT states FROM metric_schedule WHERE resource_key = ? AND revision = ?', [refKey(ref), revision]);
+      return { decoded, plan, tickets,
+        states: new Map(Object.entries(decode<Record<string, CounterState>>(schedule[0]?.states ?? '{}'))) };
+    });
+  }
+
+  /** The live fence for a manual task: task/job identity plus the exact binding revision. */
+  private async validCollectNow(c: PoolConnection, ref: Ref, revision: number, requestId: string,
+    job: ClaimedJob, ctx: JobExecutionContext): Promise<boolean> {
+    ctx.signal.throwIfAborted();
+    if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
+    if (!await assetCollectionEnabled(c, ref, true)) return false;
+    const current = await this.currentTemplate(c, ref);
+    if (!current || current.binding.revision !== revision) return false;
+    const [jobs] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
+    [job.id, ctx.workerId, ctx.fencingToken]);
+    if (jobs.length !== 1) return false;
+    const [rows] = await c.execute<RowDataPacket[]>(
+      "SELECT id FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",
+      [requestId, job.id]);
+    return rows.length === 1;
+  }
+
+  async assertCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
+    ctx: JobExecutionContext): Promise<void> {
+    await this.collectTransaction(async c => {
+      const current = await this.currentTemplate(c, ref);
+      rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
+      rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+    });
+  }
+
+  /** Fenced commit: the shared formal writer plus this task's own sample identity row. */
+  async commitCollectNow(ref: Ref, revision: number, requestId: string, snapshot: TemplateExecutionSnapshot,
+    results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>,
+    job: ClaimedJob, ctx: JobExecutionContext, now: number,
+    authorizeOn?: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<boolean> {
+    return this.collectTransaction(async c => {
+      if (!await this.validCollectNow(c, ref, revision, requestId, job, ctx)) return false;
+      const written = await this.writeTemplateResults(c, snapshot, results, now);
+      // A grant revoked while the writer waited must not persist a result.
+      await authorizeOn?.(c);
+      rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      await this.recordTemplateCapabilities(c, ref, results);
+      const outcome: CollectOutcome = written.samples.length ? 'sampled' : 'no_samples';
+      await c.execute(`UPDATE metric_collect_requests SET state = 'completed', outcome = ?, error_code = NULL,
+        samples = ?, attempts = ?, finished_at = NOW(6), updated_at = NOW(6) WHERE id = ?`,
+      [outcome, JSON.stringify(written.samples), JSON.stringify(written.attempts), requestId]);
+      // Counter continuity only: never the schedule's job id, last end or cadence.
+      const states = new Map(snapshot.states);
+      for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
+      await c.execute('UPDATE metric_schedule SET states = ? WHERE resource_key = ? AND revision = ?',
+        [JSON.stringify(Object.fromEntries(states)), refKey(ref), revision]);
+      return true;
+    });
+  }
+
+  /**
+   * Record why a manual run ended without a committed result. Guarded on the
+   * task/job/state so a late worker cannot overwrite a terminal journal row.
+   * Attempt rows are persisted here so a failed task keeps its exact evidence.
+   */
+  async failCollectNow(requestId: string, job: ClaimedJob, state: Exclude<CollectTaskState, 'accepted' | 'running' | 'completed'>,
+    code: string, attempts: CollectAttempt[], now: number): Promise<void> {
+    await this.collectTransaction(async c => {
+      if (attempts.length) {
+        const [rows] = await c.execute<RowDataPacket[]>(
+          "SELECT id FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",
+          [requestId, job.id]);
+        if (rows.length !== 1) return;
+        for (const attempt of attempts) {
+          await c.execute('INSERT IGNORE INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
+            [attempt.id, JSON.stringify(attempt), new Date(now)]);
+        }
+      }
+      const outcome: CollectOutcome = state === 'failed' ? 'failed' : state === 'cancelled' ? 'cancelled' : 'unknown';
+      await c.execute(`UPDATE metric_collect_requests SET state = ?, outcome = ?, error_code = ?,
+        attempts = JSON_MERGE_PRESERVE(COALESCE(attempts, JSON_ARRAY()), ?), finished_at = NOW(6), updated_at = NOW(6)
+        WHERE id = ? AND job_id = ? AND state IN ('accepted','running')`,
+      [state, outcome, code.slice(0, 64), JSON.stringify(attempts), requestId, job.id]);
+    });
   }
 }

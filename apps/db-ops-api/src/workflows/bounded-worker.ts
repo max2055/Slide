@@ -3,7 +3,7 @@ import { platformLogs } from '../platform/structured-log-evidence-adapter.js';
 import { WorkerRuntime, type ClaimedJob, type ClaimFilter, type JobExecutionContext, type WorkflowStore } from './worker-runtime.js';
 
 const notificationTypes = ['notification.deliver', 'report.notify'];
-const collectionTypes = ['metrics.collect'];
+const collectionTypes = ['metrics.collect', 'metrics.collect_now'];
 export function workflowConcurrency(env: NodeJS.ProcessEnv = process.env): 1 | 3 {
   const value = env.WORKFLOW_CONCURRENCY ?? '3';
   if (value !== '1' && value !== '3') throw new Error('WORKFLOW_CONCURRENCY_INVALID');
