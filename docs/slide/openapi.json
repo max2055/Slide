@@ -26128,6 +26128,17 @@
                       }
                     ]
                   },
+                  "resolution_identity": {
+                    "anyOf": [
+                      {
+                        "pattern": "^sha256:[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "status": {
                     "type": "string"
                   }
@@ -26151,7 +26162,10 @@
                 "additionalProperties": false,
                 "properties": {
                   "resolution_identity": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "revision": {
                     "maximum": 9007199254740991,
@@ -26170,7 +26184,113 @@
               }
             ]
           },
-          "pending": {},
+          "pending": {
+            "anyOf": [
+              {
+                "additionalProperties": {},
+                "properties": {
+                  "base_revision": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "decided_at": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                    "type": "string"
+                  },
+                  "operation_key": {
+                    "type": "string"
+                  },
+                  "plan": {
+                    "additionalProperties": {},
+                    "properties": {
+                      "excluded": {
+                        "items": {},
+                        "type": "array"
+                      },
+                      "parameters": {
+                        "items": {},
+                        "type": "array"
+                      },
+                      "releases": {
+                        "items": {},
+                        "type": "array"
+                      },
+                      "settings": {
+                        "additionalProperties": {},
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "interval_ms": {
+                            "type": "number"
+                          },
+                          "max_concurrency": {
+                            "type": "number"
+                          },
+                          "max_counter_gap_ms": {
+                            "type": "number"
+                          },
+                          "max_rows": {
+                            "type": "number"
+                          },
+                          "max_series_per_resource": {
+                            "type": "number"
+                          },
+                          "stale_after_ms": {
+                            "type": "number"
+                          },
+                          "timeout_ms": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "enabled",
+                          "interval_ms",
+                          "timeout_ms",
+                          "stale_after_ms",
+                          "max_counter_gap_ms",
+                          "max_rows",
+                          "max_concurrency",
+                          "max_series_per_resource"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "settings",
+                      "parameters",
+                      "releases",
+                      "excluded"
+                    ],
+                    "type": "object"
+                  },
+                  "resolution_identity": {
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "target_revision": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "base_revision",
+                  "target_revision",
+                  "resolution_identity",
+                  "plan",
+                  "decided_at",
+                  "operation_key"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "published_at": {
             "anyOf": [
               {
@@ -26247,6 +26367,12 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": {},
         "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "templates": {
             "items": {
               "additionalProperties": {},
@@ -26317,7 +26443,92 @@
           }
         },
         "required": [
-          "templates"
+          "templates",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "TemplateOperationState": {
+        "$id": "TemplateOperationState",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "candidate_digest": {
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "resolution_identity": {
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "enum": [
+                      "committed",
+                      "unknown",
+                      "pending"
+                    ],
+                    "type": "string"
+                  },
+                  "target_revision": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "target_revision",
+                  "candidate_digest",
+                  "resolution_identity",
+                  "status"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "committed",
+              "pending",
+              "absent"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "operation"
         ],
         "type": "object"
       },
@@ -26939,7 +27150,61 @@
             },
             "type": "array"
           },
-          "parameters": {},
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "defaults": {
+                "additionalProperties": {
+                  "type": [
+                    "number",
+                    "string",
+                    "boolean"
+                  ]
+                },
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "schema": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "type": "number"
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "type": {
+                      "enum": [
+                        "number",
+                        "integer",
+                        "boolean",
+                        "string"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema",
+              "defaults"
+            ],
+            "type": "object"
+          },
           "published_at": {
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
@@ -30802,6 +31067,77 @@
         ]
       }
     },
+    "/api/metrics/template-bindings/{type}/{id}/operations/{key}": {
+      "get": {
+        "description": "Authoritative read of one native apply intent from the host operation journal written with that binding revision and audit. `committed` returns the exact recorded target revision and digests; `pending` is an unknown outcome that must not be resent; `absent` proves no operation with that key exists for this resource. A key recorded for another resource is reported absent, never disclosed. Requires live read access on the resource, re-read after the operation row is read.",
+        "operationId": "getMetricTemplateOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateOperationState"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/metrics/template-bindings/{type}/{id}/preview": {
       "post": {
         "description": "Walks preflight → compile → resolve → plan for the exact pinned versions and reports every item decision with its release and applicability to the live target. Requires live management permission on this resource. Nothing is persisted.",
@@ -30957,8 +31293,48 @@
     },
     "/api/metrics/templates": {
       "get": {
-        "description": "Persisted native template identities and their immutable versions. Requires metric:view; read-only, private/no-store.",
+        "description": "Persisted native template identities and their immutable versions, filtered by a name search and template status. `next_cursor` is the opaque forward cursor; a page never silently truncates the catalog. Requires metric:view; read-only, private/no-store.",
         "operationId": "listMetricTemplates",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "draft",
+                "active",
+                "deprecated",
+                "archived"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {

@@ -83,7 +83,15 @@ it('retains a failed edit, locks fields during saving, prevents duplicate writes
 it.each([false, true])('protects a real collection draft before save (configure=%s), and continues only after discard', async configure => {
   const page = await mount(true);
   const section = page.shadowRoot.querySelector('resource-collection-section'); await settle(section);
-  const editor = section.shadowRoot.querySelector('metric-configuration'); await settle(editor);
+  const dispatcher = section.shadowRoot.querySelector('metric-configuration') as any; await settle(dispatcher);
+  const editor = await (async () => {
+    for (let i = 0; i < 30; i++) {
+      const child = dispatcher.shadowRoot.querySelector('native-template-configuration, legacy-metric-configuration') as any;
+      if (child) return child;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error('configuration editor did not mount');
+  })();
   editor.dirty = true;
   authFetch.mockClear();
   await page._handleSubmit(true, configure); await settle(page); await settle(editor);

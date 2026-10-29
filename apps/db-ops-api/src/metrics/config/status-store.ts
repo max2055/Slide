@@ -4,10 +4,41 @@ import { refKey } from '../policy/model.js';
 import { assetCollectionEnabled } from './effective-state.js';
 import { configurationInventory } from './inventory.js';
 import { metricCollectionEnabled } from '../scheduler/lifecycle.js';
+import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 import type { ConfigurationReader } from './status.js';
 
 export function configurationReader(pool: () => Pool): ConfigurationReader {
-  return { migration: ref => legacyConfigurationMigration(pool(),ref), inventory: configurationInventory, async evidence(ref, revision) {
+  return { migration: ref => legacyConfigurationMigration(pool(),ref), inventory: configurationInventory,
+    async template(ref) {
+      const [rows] = await pool().execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
+      if (!rows[0]) return null;
+      const decoded = decodeBindingPayload(rows[0].payload);
+      if (decoded.kind !== 'template_pending') return null;
+      const plan = decoded.pending.plan;
+      const metrics: Array<{ metric: { id: string; semantic_version: string }; enabled: boolean;
+        decision: 'collect' | 'derive' | 'disabled' | 'unsupported' | 'capability_unknown';
+        capability: 'supported' | 'unsupported' | 'unknown' }> = [];
+      for (const release of plan.releases) for (const step of release.steps) for (const item of step.items) {
+        metrics.push({ metric: item.canonical_metric, enabled: true,
+          decision: item.capability.status === 'unsupported' ? 'unsupported'
+            : item.capability.status === 'unknown' ? 'capability_unknown' : 'collect',
+          capability: item.capability.status });
+      }
+      for (const excluded of plan.excluded) {
+        metrics.push({ metric: excluded.metric, enabled: false, decision: excluded.decision,
+          capability: excluded.decision === 'unsupported' ? 'unsupported'
+            : excluded.decision === 'capability_unknown' ? 'unknown' : 'supported' });
+      }
+      return {
+        revision: decoded.pending.target_revision,
+        published_at: decoded.published_at,
+        application: { status: decoded.application.status, applied_revision: decoded.application.applied_revision },
+        settings: plan.settings,
+        enabled_overridden: Object.hasOwn(decoded.binding.overrides, 'enabled'),
+        metrics,
+      };
+    },
+    async evidence(ref, revision) {
     const connection = pool();
     const asset_enabled = await assetCollectionEnabled(connection, ref);
     // Job IDs are opaque, exact identifiers. Existing tables can have different

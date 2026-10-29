@@ -87,6 +87,8 @@ const state = vi.hoisted(() => {
     issue: issueDefault as (request: { receipt_id: string }) => Promise<{
       receipt_id: string; payload: Record<string, unknown>;
     }>,
+    /** Native operation journal rows for the lookup test (VARBINARY columns are Buffers). */
+    operations: [] as Array<Record<string, unknown>>,
   };
 });
 
@@ -149,6 +151,10 @@ function fakeConnection() {
         pending.set(receiptId, payload);
         return [{ affectedRows: 1 }, []];
       }
+      if (key.startsWith('SELECT resource_key, target_revision, candidate_digest, resolution_identity, status')) {
+        // A key is globally unique; the fixture only holds what the test seeded.
+        return [state.operations, []];
+      }
       if (key === normalize(MYSQL_BINDING_HOST_SQL.receiptRead)) {
         const receiptId = params[0] as string;
         const stored = state.receipts.get(receiptId) ?? pending.get(receiptId);
@@ -199,6 +205,7 @@ async function appWith(requestActor: ActorContext, overrides: Partial<TemplateBi
 const reset = () => {
   state.statements = []; state.order = []; state.relationExists = true;
   state.receipts.clear(); state.beforeGetConnection = null; state.beforeInsert = null;
+  state.operations = [];
   state.issue = state.issueDefault;
   pool = newPool();
   state.liveActor = (async () => admin) as never;
@@ -730,5 +737,111 @@ describe('template trial — the receipt persistence boundary', () => {
       expect(collision.json()).toEqual({ error: 'TEMPLATE_BINDING_RECEIPT_INVALID' });
       expect(state.receipts.size).toBe(1);
     } finally { state.plan.releases = []; reserved.mockRestore(); await server.close(); }
+  });
+});
+
+describe('candidate and conflict rejections stay business answers', () => {
+  it('returns the exact pin/item and the conflict providers for the UI to resolve', async () => {
+    reset();
+    const { instance } = service();
+    const { BindingCandidateError } = await import('../bindings/compile.js');
+    const { BindingPreflightError } = await import('../bindings/preflight.js');
+    const { TemplateResolutionError } = await import('../bindings/resolve.js');
+    const server = Fastify();
+    await registerMetricTemplateRoutes(server, async request => {
+      (request as unknown as { user?: ActorContext }).user = admin;
+    }, instance);
+    try {
+      instance.preview = async () => { throw new BindingCandidateError('CANDIDATE_IMPLEMENTATION_UNAVAILABLE',
+        { pin: PIN, item: { item_id: 'uptime', version: 2 }, release: { id: 'mysql-basic', version: '9.9.9', digest: `sha256:${'e'.repeat(64)}` } }); };
+      const candidate = await server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/preview', payload: BODY });
+      expect(candidate.statusCode).toBe(422);
+      expect(candidate.json()).toEqual({ error: 'CANDIDATE_IMPLEMENTATION_UNAVAILABLE', template_id: PIN.template_id,
+        item_id: 'uptime', release: 'mysql-basic' });
+
+      instance.preview = async () => { throw new BindingPreflightError('PREFLIGHT_CANONICAL_CONFLICT', [{
+        code: 'PREFLIGHT_CANONICAL_CONFLICT', canonical_metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' },
+        providers: [{ template_id: 'tpl-a', item_id: 'uptime', pin_version: 1, release: 'mysql-basic@1.0.0', unit: 's', dimensions: {} }],
+      } as never]); };
+      const conflict = await server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/preview', payload: BODY });
+      expect(conflict.statusCode).toBe(422);
+      expect(conflict.json()).toMatchObject({ error: 'PREFLIGHT_CANONICAL_CONFLICT',
+        conflicts: [{ canonical_metric: { id: 'db.uptime_seconds' }, providers: [{ template_id: 'tpl-a' }] }] });
+
+      instance.preview = async () => { throw new TemplateResolutionError('RESOLVE_SETTING_CONFLICT',
+        { pin: null, template_id: null, parameter: null, field: 'interval_ms', releases: [] }, null,
+        [{ field: 'interval_ms', values: [{ release: { id: 'mysql-basic', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}` }, value: 60000 }] }]); };
+      const setting = await server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/preview', payload: BODY });
+      expect(setting.statusCode).toBe(422);
+      expect(setting.json()).toMatchObject({ error: 'RESOLVE_SETTING_CONFLICT', field: 'interval_ms',
+        conflicts: [{ field: 'interval_ms', values: [{ value: 60000 }] }] });
+
+      const { BindingTransactionError } = await import('../bindings/transaction-guard.js');
+      instance.apply = async () => { throw new BindingTransactionError('TRANSACTION_REVISION_CONFLICT'); };
+      const stale = await server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/apply',
+        payload: { ...BODY, receipt_id: 'receipt-r1', caller_key: 'caller-r1' } });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json()).toEqual({ error: 'TRANSACTION_REVISION_CONFLICT' });
+
+      instance.apply = async () => { throw new BindingTransactionError('TRANSACTION_RECEIPT_EXPIRED'); };
+      const expired = await server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/apply',
+        payload: { ...BODY, receipt_id: 'receipt-r1', caller_key: 'caller-r1' } });
+      expect(expired.statusCode).toBe(422);
+      expect(expired.json()).toEqual({ error: 'TRANSACTION_RECEIPT_EXPIRED' });
+    } finally { await server.close(); }
+  });
+});
+
+describe('template operation lookup — the host journal is the only authority', () => {
+  const digest = `sha256:${'c'.repeat(64)}`;
+  const row = (resourceKey: string, status = 'committed') => ({
+    resource_key: Buffer.from(resourceKey), target_revision: 5,
+    candidate_digest: Buffer.from(digest), resolution_identity: Buffer.from(`sha256:${'d'.repeat(64)}`),
+    status: Buffer.from(status),
+  });
+  const ask = async (key: string, actor: ActorContext = admin) => {
+    const { server } = await appWith(actor);
+    try { return await server.inject({ method: 'GET', url: `/api/metrics/template-bindings/instance/1/operations/${key}` }); }
+    finally { await server.close(); }
+  };
+
+  it('returns the committed host record for this resource and key', async () => {
+    reset();
+    state.operations = [row('instance:1')];
+    const response = await ask('apply-r1-key');
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ state: 'committed',
+      operation: { resource: { type: 'instance', id: 1 }, target_revision: 5, candidate_digest: digest, status: 'committed' } });
+  });
+
+  it('reports another resource key absent without disclosing its row', async () => {
+    reset();
+    state.operations = [row('instance:2')];
+    const response = await ask('apply-r1-key');
+    expect(response.json()).toEqual({ state: 'absent', operation: null });
+  });
+
+  it('reports unknown and absent outcomes without inventing a commit', async () => {
+    reset();
+    state.operations = [row('instance:1', 'unknown')];
+    expect((await ask('apply-r1-key')).json()).toMatchObject({ state: 'pending', operation: { status: 'unknown' } });
+    state.operations = [];
+    expect((await ask('apply-r1-key')).json()).toEqual({ state: 'absent', operation: null });
+  });
+
+  it('refuses a session revoked while the operation row is read instead of returning its facts', async () => {
+    reset();
+    state.operations = [row('instance:1')];
+    state.liveActor = (async () => { throw new ActorAuthenticationError(); }) as never;
+    const { instance } = service();
+    const server = Fastify();
+    await registerMetricTemplateRoutes(server, async request => {
+      (request as unknown as { user?: ActorContext }).user = admin;
+    }, instance);
+    try {
+      const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/apply-r1-key' });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toEqual({ error: 'POLICY_AUTH_REQUIRED' });
+    } finally { await server.close(); }
   });
 });

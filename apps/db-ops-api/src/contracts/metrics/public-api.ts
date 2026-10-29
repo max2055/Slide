@@ -6,8 +6,8 @@ import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/p
 import {
   TemplateBindingApplyBodySchema, TemplateBindingApplyResponseSchema, TemplateBindingBodySchema,
   TemplateBindingPreviewSchema, TemplateBindingStatusSchema, TemplateCatalogSchema,
-  TemplateRepinBodySchema, TemplateRepinResponseSchema, TemplateTrialBodySchema, TemplateTrialResponseSchema,
-  TemplateVersionDetailSchema,
+  TemplateOperationStateSchema, TemplateRepinBodySchema, TemplateRepinResponseSchema,
+  TemplateTrialBodySchema, TemplateTrialResponseSchema, TemplateVersionDetailSchema,
 } from './template-bindings.js';
 
 const metric = z.strictObject({ id: z.string(), semantic_version: z.string() });
@@ -41,6 +41,7 @@ export const metricPublicSchemas = {
   TemplateRepinResponse: TemplateRepinResponseSchema,
   TemplateRepinBody: TemplateRepinBodySchema,
   TemplateBindingStatus: TemplateBindingStatusSchema,
+  TemplateOperationState: TemplateOperationStateSchema,
   TemplateBindingPreview: TemplateBindingPreviewSchema,
   TemplateTrialResponse: TemplateTrialResponseSchema,
   TemplateBindingApplyResponse: TemplateBindingApplyResponseSchema,
@@ -83,7 +84,13 @@ export const metricPublicPaths = {
     description: 'At most 100 visible groups; every member must be readable. Empty groups require admin. Management permission is evaluated separately.',
     responses: { '200': response('MetricPolicyGroups'), ...errors } } },
   '/api/metrics/templates': { get: { operationId: 'listMetricTemplates', security: [{ bearerAuth: [] }],
-    description: 'Persisted native template identities and their immutable versions. Requires metric:view; read-only, private/no-store.',
+    parameters: [
+      { name: 'query', in: 'query', schema: { type: 'string', maxLength: 128 } },
+      { name: 'status', in: 'query', schema: { type: 'string', enum: ['draft', 'active', 'deprecated', 'archived'] } },
+      { name: 'cursor', in: 'query', schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } },
+      { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
+    ],
+    description: 'Persisted native template identities and their immutable versions, filtered by a name search and template status. `next_cursor` is the opaque forward cursor; a page never silently truncates the catalog. Requires metric:view; read-only, private/no-store.',
     responses: { '200': response('TemplateCatalog'), ...errors } } },
   '/api/metrics/templates/{templateId}/versions/{version}': { get: { operationId: 'getMetricTemplateVersion',
     security: [{ bearerAuth: [] }],
@@ -102,6 +109,11 @@ export const metricPublicPaths = {
     security: [{ bearerAuth: [] }], parameters,
     description: 'Binding source, pending template plan, application status, effective revision and pins as independent facts. Requires read access to the resource; a failure never becomes "unbound".',
     responses: { '200': response('TemplateBindingStatus'), ...errors } } },
+  '/api/metrics/template-bindings/{type}/{id}/operations/{key}': { get: { operationId: 'getMetricTemplateOperation',
+    security: [{ bearerAuth: [] }],
+    parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],
+    description: 'Authoritative read of one native apply intent from the host operation journal written with that binding revision and audit. `committed` returns the exact recorded target revision and digests; `pending` is an unknown outcome that must not be resent; `absent` proves no operation with that key exists for this resource. A key recorded for another resource is reported absent, never disclosed. Requires live read access on the resource, re-read after the operation row is read.',
+    responses: { '200': response('TemplateOperationState'), ...errors } } },
   '/api/metrics/template-bindings/{type}/{id}/preview': { post: { operationId: 'previewMetricTemplateBinding',
     security: [{ bearerAuth: [] }], parameters,
     description: 'Walks preflight → compile → resolve → plan for the exact pinned versions and reports every item decision with its release and applicability to the live target. Requires live management permission on this resource. Nothing is persisted.',

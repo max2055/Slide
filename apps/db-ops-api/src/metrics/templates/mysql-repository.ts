@@ -780,6 +780,11 @@ export class MySqlTemplateRepository implements TemplateRepository {
       conditions.push('status = ?');
       values.push(query.status);
     }
+    if (query.query !== undefined) {
+      // `%` and `_` are ordinary characters in a name search, not wildcards.
+      conditions.push("name LIKE ? ESCAPE '\\\\'");
+      values.push(`%${query.query.replace(/[\\%_]/g, character => `\\${character}`)}%`);
+    }
     if (query.cursor !== undefined) {
       conditions.push('template_id > ?');
       values.push(query.cursor);
