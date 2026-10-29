@@ -218,6 +218,36 @@ describe.skipIf(!port)('template execution fence on isolated MySQL', () => {
     });
   });
 
+  describe('the live fence outside a write transaction', () => {
+    it('passes while the lease, revision and switch still hold', async () => {
+      await expect(store.assertCurrentTemplate(RESOURCE, REVISION, claimed(), context())).resolves.toBeUndefined();
+    });
+
+    it('refuses the next request once the lease expired', async () => {
+      await pool.query('UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE id = ?', [JOB_ID]);
+      await expect(store.assertCurrentTemplate(RESOURCE, REVISION, claimed(), context()))
+        .rejects.toMatchObject({ code: 'SCHEDULE_STALE_EXECUTION' });
+    });
+
+    it('refuses the next request once the binding revision was superseded', async () => {
+      const moved = encodeTemplatePendingPayload({
+        binding: { ...snapshot.decoded.binding, revision: REVISION + 1 } as ResourceBindingCandidate,
+        base_revision: REVISION, target_revision: REVISION + 1, resolution_identity: HASH,
+        plan: plan(REVISION) as never, decided_at: AT, operation_key: 'op-238-fence-3',
+        applied_revision: null, previous_resolution_identity: null, previous_effective: null, published_at: AT,
+      });
+      await pool.query('UPDATE metric_policy_bindings SET payload = ? WHERE resource_key = ?', [moved, RESOURCE_KEY]);
+      await expect(store.assertCurrentTemplate(RESOURCE, REVISION, claimed(), context()))
+        .rejects.toMatchObject({ code: 'SCHEDULE_SUPERSEDED' });
+    });
+
+    it('refuses the next request once the schedule row points elsewhere', async () => {
+      await pool.query('UPDATE metric_schedule SET job_id = ? WHERE resource_key = ?', ['other-job', RESOURCE_KEY]);
+      await expect(store.assertCurrentTemplate(RESOURCE, REVISION, claimed(), context()))
+        .rejects.toMatchObject({ code: 'SCHEDULE_STALE_EXECUTION' });
+    });
+  });
+
   it('records failed attempts only under a live lease', async () => {
     await store.recordTemplateFailure(snapshot, failureResults, claimed(), context(), Date.now());
     const after = await counts();

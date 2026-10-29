@@ -123,12 +123,23 @@ export async function repinTemplateVersion(options: {
    * attributed to the accepted non-human maintenance identity.
    */
   actor?: ActorContext;
+  /**
+   * The live grant for a public caller. It is consulted after every read-only
+   * analysis and immediately before every write that publishes the version, and
+   * returns the actor whose identity the write is audited under. An offline
+   * maintenance run has no live grant and omits it.
+   */
+  authorize?: () => Promise<ActorContext>;
 }): Promise<RepinResult | { unchanged: true; template_id: string; version: number }> {
   const { repository, registry, templateId, resource } = options;
   const at = options.at ?? new Date().toISOString();
   const requestId = options.requestId ?? 'max238-template-repin';
   const service = new MetricTemplateService(repository, registry, { now: () => at });
-  const actor = options.actor ?? maintenanceActor(requestId);
+  let actor = options.actor ?? maintenanceActor(requestId);
+  /** Re-read the live grant; the write that follows is audited under that actor. */
+  const authorize = async (): Promise<void> => {
+    if (options.authorize) actor = await options.authorize();
+  };
 
   const template = await repository.getTemplate(templateId);
   if (!template) throw new RepinError('REPIN_TEMPLATE_NOT_FOUND');
@@ -137,7 +148,8 @@ export async function repinTemplateVersion(options: {
   const version = currentVersion ? await repository.getVersion(templateId, currentVersion) : null;
   if (!version) throw new RepinError('REPIN_VERSION_NOT_FOUND');
 
-  const changes: RepinChange[] = [];
+  // Read-only analysis first: nothing below the first authorize has written yet.
+  const planned: Array<{ item: TemplateItemVersion; replacement: PackageRelease }> = [];
   const items = [] as Array<{ item_id: string; version: number }>;
   for (const item of version.items) {
     const originalPin = parseRelease(item.collector_ref.package_release);
@@ -147,6 +159,16 @@ export async function repinTemplateVersion(options: {
 
     const replacement = chooseCompatibleRelease(registry, item, original, resource, at);
     if (!replacement) throw new RepinError('REPIN_NO_COMPATIBLE_RELEASE', item.item_id);
+    planned.push({ item, replacement });
+  }
+  if (planned.length === 0) return { unchanged: true, template_id: templateId, version: currentVersion };
+
+  // The analysis that decided this publication was read under the grant the
+  // request arrived with; the first write re-reads it.
+  await authorize();
+  const changes: RepinChange[] = [];
+  for (const { item, replacement } of planned) {
+    await authorize();
     const selected = await service.selectMetric(actor, templateId, {
       item_id: item.item_id,
       display_name: item.display_name,
@@ -162,7 +184,6 @@ export async function repinTemplateVersion(options: {
       reason: 'target_version_incompatible',
     });
   }
-  if (changes.length === 0) return { unchanged: true, template_id: templateId, version: currentVersion };
 
   const draft = await repository.getDraft(templateId);
   if (!draft) throw new RepinError('REPIN_PUBLISH_FAILED');
@@ -170,14 +191,17 @@ export async function repinTemplateVersion(options: {
     ...draft.aggregate,
     items: items.sort((left, right) => left.item_id.localeCompare(right.item_id)),
   };
+  await authorize();
   const updated = await service.updateDraft(actor, templateId, { expected_draft_revision: draft.revision, aggregate });
   const current = await repository.getTemplate(templateId);
   if (!current) throw new RepinError('REPIN_PUBLISH_FAILED');
+  await authorize();
   const published = await service.publish(actor, templateId, {
     expected_draft_revision: updated.revision, expected_revision: current.revision,
   });
   const after = await repository.getTemplate(templateId);
   if (!after) throw new RepinError('REPIN_PUBLISH_FAILED');
+  await authorize();
   await service.setCurrent(actor, templateId, { version: published.version, expected_revision: after.revision });
   const publishedVersion = await repository.getVersion(templateId, published.version);
   if (!publishedVersion) throw new RepinError('REPIN_PUBLISH_FAILED');
