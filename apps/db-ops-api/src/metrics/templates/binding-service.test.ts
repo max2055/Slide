@@ -25,6 +25,8 @@ import { TemplateBindingService, type TemplateBindingDeps } from './binding-serv
 import { registerMetricTemplateRoutes } from './routes.js';
 import { MysqlScheduleStore } from '../scheduler/store.js';
 import { MYSQL_BINDING_HOST_SQL } from '../bindings/mysql-host.js';
+import { encodeTemplatePendingPayload } from '../bindings/persistence-codec.js';
+import type { ResourceBindingCandidate } from '../../contracts/metrics/templates.js';
 import { TRIAL_RECEIPT_INSERT_SQL } from '../bindings/trial-receipt-writer.js';
 
 const AT = '2026-10-29T12:00:00.000Z';
@@ -89,6 +91,8 @@ const state = vi.hoisted(() => {
     }>,
     /** Native operation journal rows for the lookup test (VARBINARY columns are Buffers). */
     operations: [] as Array<Record<string, unknown>>,
+    /** One stored binding payload the status read returns; `null` is an unbound resource. */
+    bindingPayload: null as string | null,
   };
 });
 
@@ -155,6 +159,9 @@ function fakeConnection() {
         // A key is globally unique; the fixture only holds what the test seeded.
         return [state.operations, []];
       }
+      if (key === normalize(MYSQL_BINDING_HOST_SQL.bindingRead)) {
+        return state.bindingPayload === null ? [[], []] : [[{ payload: state.bindingPayload }], []];
+      }
       if (key === normalize(MYSQL_BINDING_HOST_SQL.receiptRead)) {
         const receiptId = params[0] as string;
         const stored = state.receipts.get(receiptId) ?? pending.get(receiptId);
@@ -205,11 +212,53 @@ async function appWith(requestActor: ActorContext, overrides: Partial<TemplateBi
 const reset = () => {
   state.statements = []; state.order = []; state.relationExists = true;
   state.receipts.clear(); state.beforeGetConnection = null; state.beforeInsert = null;
-  state.operations = [];
+  state.operations = []; state.bindingPayload = null;
   state.issue = state.issueDefault;
   pool = newPool();
   state.liveActor = (async () => admin) as never;
 };
+
+describe('template binding status — the stored configuration', () => {
+  const storedPayload = (overrides: Record<string, unknown>, groupId: string | null): string => {
+    const binding = {
+      resource: { type: 'instance', id: 1 }, package: null, group_id: groupId, overrides,
+      revision: 5, template_pins: [PIN],
+    } as ResourceBindingCandidate;
+    return encodeTemplatePendingPayload({
+      binding, base_revision: 4, target_revision: 5, resolution_identity: HASH,
+      plan: state.plan as never, decided_at: AT, operation_key: 'op-238-status',
+      applied_revision: null, previous_resolution_identity: null, previous_effective: null, published_at: AT,
+    });
+  };
+  const ask = async () => {
+    const { server } = await appWith(admin);
+    try { return await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1' }); }
+    finally { await server.close(); }
+  };
+
+  it('returns the exact stored overrides and group so an unedited field can never be reset', async () => {
+    reset();
+    // An explicit disabled interval, a disabled metric, one parameter override and a group.
+    const overrides = {
+      interval_ms: { mode: 'set', value: 30000 },
+      metrics: { 'db.uptime_seconds@1.0.0': 'disable' },
+      template_parameters: { 'tpl-238': { timeout: 9 } },
+    };
+    state.bindingPayload = storedPayload(overrides, 'web');
+    const response = await ask();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ source: 'template', revision: 5,
+      template_pins: [PIN], configuration: { overrides, group_id: 'web' } });
+  });
+
+  it('reports an unbound resource without inventing a configuration', async () => {
+    reset();
+    const response = await ask();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ source: 'unbound', revision: null, application: null,
+      template_pins: [], pending: null, configuration: null, effective: null, published_at: null });
+  });
+});
 
 describe('template binding public entry — live authorization', () => {
   it('refuses a trial whose grant was revoked while it waited for the resource lock', async () => {

@@ -24693,8 +24693,8 @@
             "type": "string"
           },
           "expected_revision": {
-            "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
+            "minimum": 0,
             "type": "integer"
           },
           "group_id": {
@@ -26031,8 +26031,8 @@
         "additionalProperties": false,
         "properties": {
           "expected_revision": {
-            "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
+            "minimum": 0,
             "type": "integer"
           },
           "group_id": {
@@ -26148,6 +26148,36 @@
                   "applied_revision",
                   "reported_at",
                   "error_code"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "group_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "overrides": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "overrides",
+                  "group_id"
                 ],
                 "type": "object"
               },
@@ -26357,6 +26387,7 @@
           "application",
           "template_pins",
           "pending",
+          "configuration",
           "effective",
           "published_at"
         ],
@@ -26729,8 +26760,8 @@
         "additionalProperties": false,
         "properties": {
           "expected_revision": {
-            "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
+            "minimum": 0,
             "type": "integer"
           },
           "group_id": {

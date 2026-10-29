@@ -152,6 +152,8 @@ export interface TemplateBindingStatus {
   source: 'template' | 'package' | 'unbound'; revision: number | null;
   application: { status: string; applied_revision: number | null; reported_at: string | null; error_code: string | null } | null;
   template_pins: TemplatePin[]; pending: TemplatePending | null;
+  /** The stored per-resource choice; an editor round-trips from this, never from a plan. */
+  configuration: { overrides: Record<string, unknown>; group_id: string | null } | null;
   effective: { revision: number; resolution_identity: string | null } | null; published_at: string | null;
 }
 export interface TemplatePreviewItem {

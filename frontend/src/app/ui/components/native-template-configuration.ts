@@ -46,6 +46,8 @@ const itemKey = (item: { template_id: string; item_id: string; item_version: num
 const samePin = (left: TemplatePin[], right: TemplatePin[]) => pinKeySort(left) === pinKeySort(right);
 const pinKeySort = (pins: TemplatePin[]) => pins.map(pinKey).sort().join('|');
 const overridesEmpty = (value: Record<string, unknown>) => Object.keys(value).length === 0;
+/** One apply intent per exact configuration; `pending` means its outcome is unconfirmed. */
+interface IntentRecord { key: string; intent: string; pending: boolean }
 
 /**
  * Per-rejection messages. The server answers with one stable code and, for a
@@ -165,7 +167,6 @@ export class NativeTemplateConfiguration extends LitElement {
   @state() private trial: TemplateTrial | null = null;
   @state() private step = 0;
   @state() private dirty = false;
-  @state() private applyPending = false;
   @state() private applyResult: { revision: number; replayed: boolean } | null = null;
   @state() private discardPending = false;
   @state() private repinTarget: { template_id: string; name: string } | null = null;
@@ -173,15 +174,20 @@ export class NativeTemplateConfiguration extends LitElement {
   @state() private repinBusy = false;
   private afterDiscard: (() => void) | null = null;
 
-  // One operation key per resource and exact intent; it survives a reload.
-  private applyKey = '';
-  private applyIntent = '';
+  /**
+   * Apply intents whose outcome was never confirmed. They are tracked per exact
+   * intent (never per button state), survive an edit, a reload or a resource
+   * switch, and are only released by a journal answer: committed, or absent
+   * (which proves nothing was recorded). A new edit is a new intent and leaves
+   * the old one pending under its own key.
+   */
+  @state() private unresolved: IntentRecord[] = [];
 
   private readonly accessChanged = () => {
     clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
     this.catalogGeneration++; this.groupVersion++; this.generation++; this.stopPolling();
     this.binding = null; this.collection = null; this.canManage = false; this.busy = false;
-    this.preview = null; this.trial = null; this.selected = []; this.clearIntent();
+    this.preview = null; this.trial = null; this.selected = [];
     this.loaded = false; this.dirty = false; this.error = '权限或登录状态已变更，请重新打开资源后读取配置';
   };
   private readonly navigate = (event: Event) => {
@@ -241,6 +247,9 @@ export class NativeTemplateConfiguration extends LitElement {
   private refKey() { return `${this.resourceType}:${this.resourceId}`; }
   private baseRevision() { return this.binding?.revision ?? 0; }
   private canWrite() { return this.canManage && !this.connectionPending; }
+  /** The exact intent the current draft would apply; 0 is an unbound resource. */
+  private firstBinding() { return this.binding?.source === 'unbound'; }
+  private currentPending() { return this.pendingFor(this.intentIdentity()); }
 
   private async load() {
     this.stopPolling();
@@ -250,8 +259,10 @@ export class NativeTemplateConfiguration extends LitElement {
     this.preview = null; this.previewStale = false; this.previewIssue = null; this.trial = null;
     this.selected = []; this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = '';
     this.detailError = ''; this.error = ''; this.statusError = ''; this.step = 0; this.dirty = false;
+    // A resource switch closes the re-pin dialog: its result belongs to the old resource.
+    this.repinTarget = null; this.repinResult = null; this.repinBusy = false; this.details = {};
     this.applyResult = null; this.busy = false;
-    this.clearIntent();
+    this.unresolved = this.storedIntents();
     if (!Number.isSafeInteger(this.resourceId) || this.resourceId <= 0) return;
     this.busy = true;
     try {
@@ -266,10 +277,7 @@ export class NativeTemplateConfiguration extends LitElement {
       this.groups = groups.groups;
       this.templates = page.templates; this.nextCursor = page.next_cursor;
       this.names = Object.fromEntries(page.templates.map(entry => [entry.template_id, entry.name]));
-      // The published pins are the current effective selection; nothing is
-      // preselected for an unbound resource.
-      this.selected = binding.template_pins.map(pin => ({ ...pin }));
-      this.seedFromPending(binding);
+      this.seedFromBinding(binding);
       this.loaded = true;
       await this.restorePending(generation);
       if (generation !== this.generation) return;
@@ -278,23 +286,24 @@ export class NativeTemplateConfiguration extends LitElement {
       if (generation === this.generation) this.error = nativeError(error);
     } finally { if (generation === this.generation) this.busy = false; }
   }
-  private seedFromPending(binding: TemplateBindingStatus) {
-    const pending = binding.pending;
-    if (!pending) return;
-    const parameters: Record<string, Record<string, number | string | boolean>> = {};
-    for (const entry of pending.plan.parameters) {
-      const values: Record<string, number | string | boolean> = {};
-      const resolved = (entry as { pin?: TemplatePin; parameters?: Array<{ name: string; override: unknown }> });
-      if (!resolved.pin || !Array.isArray(resolved.parameters)) continue;
-      for (const parameter of resolved.parameters) {
-        if (parameter.override !== null && parameter.override !== undefined
-          && (typeof parameter.override === 'string' || typeof parameter.override === 'number' || typeof parameter.override === 'boolean')) {
-          values[parameter.name] = parameter.override;
-        }
-      }
-      if (Object.keys(values).length) parameters[resolved.pin.template_id] = values;
-    }
-    this.parameters = parameters;
+  /**
+   * Seed the editor from the stored per-resource choice. It is the only
+   * lossless source: the resolved plan cannot say which value was inherited
+   * from a template and which the operator set on this resource, so seeding
+   * from it would silently drop explicit values on the next save.
+   */
+  private seedFromBinding(binding: TemplateBindingStatus) {
+    this.selected = binding.template_pins.map(pin => ({ ...pin }));
+    const overrides = binding.configuration?.overrides ?? {};
+    const { metrics, template_parameters: parameters, ...settings } = overrides as {
+      metrics?: unknown; template_parameters?: unknown; [key: string]: unknown;
+    };
+    this.settings = settings as Overrides;
+    this.metricToggles = (metrics && typeof metrics === 'object' ? structuredClone(metrics) : {}) as
+      Record<string, 'inherit' | 'enable' | 'disable'>;
+    this.parameters = (parameters && typeof parameters === 'object' ? structuredClone(parameters) : {}) as
+      Record<string, Record<string, number | string | boolean>>;
+    this.groupId = binding.configuration?.group_id ?? '';
   }
   private clearTimeoutSearch() {
     clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
@@ -385,10 +394,13 @@ export class NativeTemplateConfiguration extends LitElement {
   private async ensureDetail(pin: TemplatePin) {
     const key = pinKey(pin);
     if (this.details[key]) return;
+    const generation = this.generation;
     try {
       const detail = await getMetricTemplateVersion(pin.template_id, pin.version);
+      // A late answer for a resource the user already left never lands here.
+      if (generation !== this.generation) return;
       this.details = { ...this.details, [key]: detail };
-    } catch (error) { this.detailError = nativeError(error); }
+    } catch (error) { if (generation === this.generation) this.detailError = nativeError(error); }
   }
 
   /**
@@ -396,6 +408,10 @@ export class NativeTemplateConfiguration extends LitElement {
    * whose exact version cannot run on this target, and it never happens
    * implicitly: the user confirms a new immutable version that keeps the old
    * one. No other resource, pin or current pointer is touched.
+   *
+   * The request publishes a global template version, so its answer is projected
+   * only onto the resource and dialog that asked for it: a delayed response
+   * after a resource switch, a close or a second request is dropped.
    */
   private repinOffered(templateId: string) {
     if (!this.canWrite() || this.repinBusy || !this.selectedPin(templateId)) return false;
@@ -410,9 +426,14 @@ export class NativeTemplateConfiguration extends LitElement {
   private async runRepin() {
     const target = this.repinTarget;
     if (!target || this.repinBusy) return;
+    const generation = this.generation;
+    const resource = this.refKey();
+    const current = () => generation === this.generation && this.refKey() === resource
+      && this.repinTarget?.template_id === target.template_id;
     this.repinBusy = true; this.error = '';
     try {
       const result = await repinMetricTemplate(target.template_id, { type: this.resourceType, id: this.resourceId });
+      if (!current()) return;
       this.repinResult = result;
       if (!result.unchanged) {
         const changed = result as Extract<TemplateRepinResult, { unchanged: false }>;
@@ -421,14 +442,15 @@ export class NativeTemplateConfiguration extends LitElement {
         this.details = {};
         void this.ensureDetail(changed.pin);
         await this.loadCatalog(true);
+        if (!current()) return;
         // The new version must be checked again; the old trial/pin is invalid.
         this.invalidate(false);
         showToast(`已为该模板发布兼容版本 v${changed.to_version}，请重新检查`, 'success');
       } else {
         showToast('该模板当前版本已适用于此对象，无需发布新版本', 'info');
       }
-    } catch (error) { this.error = nativeError(error); }
-    finally { this.repinBusy = false; }
+    } catch (error) { if (current()) this.error = nativeError(error); }
+    finally { if (current()) this.repinBusy = false; }
   }
 
   /* --- overrides ---------------------------------------------------------- */
@@ -451,7 +473,8 @@ export class NativeTemplateConfiguration extends LitElement {
     this.trial = null; this.step = 0; this.applyResult = null; this.dirty = true; this.error = '';
     if (!keepPreview) { this.preview = null; this.previewStale = false; this.previewIssue = null; }
     else if (this.preview) this.previewStale = true;
-    if (this.applyPending) this.applyPending = false;
+    // An unconfirmed application is not a draft: editing, discarding or reloading
+    // never clears it. Only a journal answer does (see `lookup`).
   }
   private changeSettings(overrides: Overrides) {
     this.settings = overrides;
@@ -501,7 +524,6 @@ export class NativeTemplateConfiguration extends LitElement {
   }
   private async previewFlow() {
     if (this.busy || !this.canWrite() || !this.selected.length) return;
-    if (this.baseRevision() <= 0) { this.error = '此资源尚无已发布的配置版本，原生模板应用需要先建立资源绑定；未写入任何变更。'; return; }
     const generation = this.generation;
     this.busy = true; this.error = ''; this.previewIssue = null;
     try {
@@ -535,6 +557,8 @@ export class NativeTemplateConfiguration extends LitElement {
     } finally { if (generation === this.generation) this.busy = false; }
   }
 
+  /* --- unresolved apply intents ------------------------------------------- */
+
   private intentStorageKey(resource = this.refKey()) {
     let user = 'anon';
     try {
@@ -543,74 +567,108 @@ export class NativeTemplateConfiguration extends LitElement {
     } catch { /* tab and resource still isolate the intent */ }
     return `slide.metric.native.apply.${user}.${resource}`;
   }
-  private storedIntent(resource = this.refKey()) {
+  private storedIntents(resource = this.refKey()): IntentRecord[] {
     try {
-      const value = JSON.parse(sessionStorage.getItem(this.intentStorageKey(resource)) ?? 'null') as { key?: unknown; intent?: unknown } | null;
-      if (typeof value?.key === 'string' && typeof value.intent === 'string') return { key: value.key, intent: value.intent };
+      const value = JSON.parse(sessionStorage.getItem(this.intentStorageKey(resource)) ?? 'null') as unknown;
+      if (Array.isArray(value)) {
+        return value.filter((entry): entry is IntentRecord => !!entry
+          && typeof (entry as { key?: unknown }).key === 'string'
+          && typeof (entry as { intent?: unknown }).intent === 'string'
+          && typeof (entry as { pending?: unknown }).pending === 'boolean');
+      }
     } catch { /* an unusable record is not an absent intent */ }
-    return null;
+    return [];
   }
-  private storeIntent(resource: string, key: string, intent: string) {
-    try { sessionStorage.setItem(this.intentStorageKey(resource), JSON.stringify({ key, intent })); } catch { /* in-memory key still applies */ }
+  private persistIntents(next: IntentRecord[], resource = this.refKey()) {
+    this.unresolved = next.filter(entry => entry.pending);
+    try {
+      if (next.length) sessionStorage.setItem(this.intentStorageKey(resource), JSON.stringify(next));
+      else sessionStorage.removeItem(this.intentStorageKey(resource));
+    } catch { /* the in-memory list still applies */ }
   }
-  private forgetIntent(resource: string) {
-    try { sessionStorage.removeItem(this.intentStorageKey(resource)); } catch { /* nothing persisted */ }
+  private allIntents(resource = this.refKey()) { return this.storedIntents(resource); }
+  /**
+   * The identity of one user intent: the resource and the exact configuration
+   * to apply. The trial receipt is deliberately excluded — re-trialling for the
+   * same configuration is the same intent, so it keeps the same operation key
+   * instead of becoming a second write under a different key.
+   */
+  private intentIdentity() { return JSON.stringify({ resource: this.refKey(), body: this.requestBody() }); }
+  private pendingFor(intent: string) { return this.unresolved.find(entry => entry.intent === intent) ?? null; }
+  /** One key per intent for the whole session, whether or not it is still open. */
+  private intentKey(intent: string) {
+    const known = this.allIntents().find(entry => entry.intent === intent);
+    if (known) return known.key;
+    return `apply-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   }
-  private intentKey(body: unknown) {
-    const intent = JSON.stringify({ resource: this.refKey(), body });
-    if (this.applyKey && this.applyIntent === intent) return this.applyKey;
-    const stored = this.storedIntent();
-    if (stored && stored.intent === intent) { this.applyKey = stored.key; this.applyIntent = intent; return stored.key; }
-    this.applyKey = `apply-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    this.applyIntent = intent;
-    return this.applyKey;
+  private rememberIntent(key: string, intent: string) {
+    const rest = this.allIntents().filter(entry => entry.intent !== intent);
+    const next = [...rest, { key, intent, pending: true }];
+    // Keep the key map bounded; settled intents are the only ones ever dropped.
+    const settled = next.filter(entry => !entry.pending);
+    const bounded = next.length > 20
+      ? [...next.filter(entry => entry.pending), ...settled.slice(-Math.max(0, 20 - next.filter(entry => entry.pending).length))]
+      : next;
+    this.persistIntents(bounded);
   }
-  private clearIntent() { this.applyKey = ''; this.applyIntent = ''; this.applyPending = false; }
+  /** A journal answer settles the intent; its key is kept so the same intent can never wander. */
+  private settleIntent(key: string) {
+    const entries = this.allIntents();
+    if (!entries.some(entry => entry.key === key && entry.pending)) return;
+    this.persistIntents(entries.map(entry => entry.key === key ? { ...entry, pending: false } : entry));
+  }
   private async lookup(key: string, generation: number, failure: unknown | null, reload = true): Promise<void> {
     let state;
     try { state = await readTemplateOperation(this.resourceType, this.resourceId, key); }
     catch {
       if (generation !== this.generation) return;
-      this.applyPending = true;
       this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (generation !== this.generation) return;
     if (!state || !['committed', 'pending', 'absent'].includes(state.state)) {
-      this.applyPending = true;
       this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (state.state === 'committed') {
-      this.forgetIntent(this.refKey()); this.clearIntent(); this.dirty = false;
+      this.settleIntent(key);
+      this.dirty = false;
       this.trial = null; this.preview = null; this.previewStale = false;
       this.error = '';
       showToast('已确认上次发布已提交，正在读取应用与正式数据状态', 'success');
       if (reload) {
         const revision = state.operation?.target_revision ?? 0;
+        const resource = this.refKey();
         await this.load();
+        // Keep the projection only for the same resource: a switch during the
+        // reload owns its own state and must not receive this result.
+        if (this.refKey() !== resource || !this.loaded) return;
         this.applyResult = { revision, replayed: true }; this.step = 3;
       }
       return;
     }
-    if (state.state === 'pending') { this.applyPending = true; this.error = ''; return; }
-    // Absent proves the intent was never recorded; the same key may be retried.
-    this.applyPending = false;
+    if (state.state === 'pending') { this.error = ''; return; }
+    // Absent proves the intent was never recorded: it is settled, and a retry of
+    // the same configuration still keeps this key.
+    this.settleIntent(key);
     this.error = failure ? nativeError(failure) : '未发现此前的发布记录，可以重新应用。';
   }
   private async applyFlow() {
     if (this.busy || !this.canWrite()) return;
     const generation = this.generation;
-    if (this.applyPending) { await this.lookup(this.applyKey || this.storedIntent()?.key || '', generation, null); return; }
+    const intent = this.intentIdentity();
+    const pending = this.pendingFor(intent);
+    // The same intent is never resent: an unconfirmed outcome is looked up.
+    if (pending) { await this.lookup(pending.key, generation, null); return; }
     if (!this.applyReady() || !this.trial) return;
     const body = this.requestBody();
     const payload = { ...body, receipt_id: this.trial.receipt_id };
-    const key = this.intentKey(payload);
-    this.storeIntent(this.refKey(), key, this.applyIntent);
+    const key = this.intentKey(intent);
+    this.rememberIntent(key, intent);
     this.busy = true; this.error = '';
     try {
       const result = await applyTemplateBinding(this.resourceType, this.resourceId, { ...payload, caller_key: key });
-      if (generation !== this.generation) return;
+      if (generation !== this.generation) { this.restorePendingLater(); return; }
       await this.handleApplyResult(result, key, generation);
     } catch (error) {
       // Never resend a mutation whose outcome is unknown: query the same key first.
@@ -620,10 +678,13 @@ export class NativeTemplateConfiguration extends LitElement {
   private async handleApplyResult(result: TemplateApplyResult, key: string, generation: number) {
     if (result.kind === 'committed' || result.kind === 'replay') {
       const revision = result.kind === 'committed' ? result.revision : result.target_revision;
-      this.forgetIntent(this.refKey()); this.clearIntent(); this.dirty = false;
+      this.settleIntent(key);
+      this.dirty = false;
       this.trial = null; this.preview = null; this.previewStale = false;
       showToast(result.kind === 'committed' ? '配置已发布，正在确认应用与正式数据状态' : '上次发布已提交，未重复执行', 'success');
+      const resource = this.refKey();
       await this.load();
+      if (this.refKey() !== resource || !this.loaded) return;
       this.applyResult = { revision, replayed: result.kind === 'replay' }; this.step = 3;
       return;
     }
@@ -631,29 +692,42 @@ export class NativeTemplateConfiguration extends LitElement {
       await this.lookup(key, generation, null); return;
     }
     if (result.kind === 'rejected' || result.kind === 'rolled_back') {
+      // A rejection is a terminal answer: nothing was written under this key.
+      this.settleIntent(key);
       this.error = nativeError(new MetricRequestError(409, result.code));
-      this.trial = null; this.step = 1; this.applyPending = false;
+      this.trial = null; this.step = 1;
       return;
     }
+    this.settleIntent(key);
     this.error = '此资源使用旧版单包配置，原生模板流程未接管，未写入任何变更。';
   }
+  /** A response for a resource the user has already left is only restored by the next load. */
+  private restorePendingLater() { this.unresolved = this.storedIntents(); }
   private async restorePending(generation: number) {
-    const stored = this.storedIntent();
-    if (!stored) { this.clearIntent(); return; }
-    this.applyKey = stored.key; this.applyIntent = stored.intent; this.applyPending = true;
-    await this.lookup(stored.key, generation, null, false);
+    const stored = this.storedIntents();
+    this.unresolved = stored;
+    if (!stored.length) return;
+    for (const entry of stored) {
+      if (generation !== this.generation) return;
+      await this.lookup(entry.key, generation, null, false);
+    }
   }
 
   confirmDiscard(action: () => void) {
     if (!this.dirty) { action(); return; }
     this.afterDiscard = action; this.discardPending = true;
   }
+  /**
+   * Return to the published configuration. The editor is re-seeded from the
+   * stored binding (pins, overrides, group, parameters), never blanked — a
+   * discard must not turn an explicit setting into an empty override. An
+   * unconfirmed application is deliberately untouched: it is not a draft.
+   */
   private discardChanges() {
-    this.selected = (this.binding?.template_pins ?? []).map(pin => ({ ...pin }));
-    this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = '';
+    if (this.binding) this.seedFromBinding(this.binding);
+    else { this.selected = []; this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = ''; }
     this.preview = null; this.previewStale = false; this.previewIssue = null; this.trial = null;
     this.step = 0; this.dirty = false; this.error = ''; this.applyResult = null;
-    this.forgetIntent(this.refKey()); this.clearIntent();
   }
   private async reloadAll() { this.discardChanges(); await this.load(); }
 
@@ -850,7 +924,8 @@ export class NativeTemplateConfiguration extends LitElement {
       <p class="muted">已发布、等待应用、已应用、等待首样本与正式采集分别确认；配置发布成功或 API 返回 200 不代表健康。</p>
       ${status ? renderCollectionStatus(status) : html`<p>采集状态未知</p>`}
       ${this.applyResult ? html`<p role="status">${this.applyResult.replayed ? '已确认上次发布提交' : '配置已提交'}，目标版本 ${this.applyResult.revision}；应用与正式数据状态以左侧事实为准。</p>` : nothing}
-      ${this.applyPending ? html`<p class="notice" role="status">上次发布结果尚未确认：请求可能仍在处理或结果未知。请查询发布结果，确认前不要重复发布。</p>` : nothing}
+      ${this.unresolved.length ? html`<p class="notice" role="status">上次发布结果尚未确认：请求可能仍在处理或结果未知。请查询发布结果，确认前不要重复发布。
+        未确认的意图会保留，编辑、放弃或重新加载都不会清掉它。</p>` : nothing}
       <div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => void this.refreshStatus()}>刷新状态</button></div>
       ${this.statusError ? html`<p role="alert">${this.statusError}</p>` : nothing}
       ${this.polling ? html`<p role="status">正在确认：发布 → 应用 → 首样本 → 正式可见（最多刷新 15 次）</p>` : nothing}
@@ -870,11 +945,11 @@ export class NativeTemplateConfiguration extends LitElement {
         ${this.renderCatalog()}
         ${this.selected.length ? this.renderOverrides() : nothing}
         <div class="actions">
-          <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.selected.length || this.baseRevision() <= 0}
+          <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.selected.length}
             @click=${() => void this.previewFlow()}>检查配置</button>
           <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.trialReady()} @click=${() => void this.runTrial()}>试采</button>
-          <button class="btn-primary" .disabled=${this.busy || !this.canWrite() || (!this.applyPending && !this.applyReady())}
-            @click=${() => void this.applyFlow()}>${this.applyPending ? '查询发布结果' : '应用并启用'}</button>
+          <button class="btn-primary" .disabled=${this.busy || !this.canWrite() || (!this.currentPending() && !this.applyReady())}
+            @click=${() => void this.applyFlow()}>${this.currentPending() ? '查询发布结果' : this.firstBinding() ? '首次绑定并启用' : '应用并启用'}</button>
           <button class="btn" .disabled=${this.busy || !this.dirty} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>放弃修改</button>
           <button class="btn btn-refresh" .disabled=${this.busy} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>重新加载配置</button>
         </div>
