@@ -426,3 +426,94 @@ it('clears protected results on an expired login from the status strip', async (
   expect(el.result).toBeNull();
   expect(el.error).toContain('登录已失效');
 });
+
+// ---- MAX240-RAW-PAGE ----
+const rawObservation = (id: string, value: number | null, overrides: Record<string, unknown> = {}) => ({
+  id, observed_at: `2026-10-14T01:0${id.slice(-1)}:00.000Z`,
+  value: value === null ? null : { encoding: 'float64', value }, unit: 's',
+  quality: { status: value === null ? 'unknown' : 'good', reason: value === null ? 'missing_input' : 'none' },
+  accuracy: value === null ? 'unknown' : 'exact', sources: [], ...overrides,
+});
+const rawPage = (overrides: Record<string, unknown> = {}) => ({ contract_version: '1.0.0', total: 2, has_more: false,
+  observations: [rawObservation('obs-1', 1), rawObservation('obs-2', 2)], ...overrides });
+const rawDetails = (el: SemanticMetrics) => [...el.shadowRoot!.querySelectorAll('details')]
+  .find(d => d.querySelector('summary')?.textContent?.includes('原始观测')) as HTMLDetailsElement | undefined;
+const openRaw = async (el: SemanticMetrics) => {
+  const details = rawDetails(el)!;
+  details.open = true; details.dispatchEvent(new Event('toggle'));
+  await settle(); await el.updateComplete;
+  return details;
+};
+const serveWithRaw = (data: unknown, raw: unknown | (() => unknown)) => authFetch.mockImplementation(async (url: string) => {
+  if (url === '/api/metrics/query') return ok(data);
+  if (url.endsWith('/status')) return ok(statusPayload());
+  if (url.endsWith('/attempts')) return ok([]);
+  if (url === '/api/metrics/observations') return typeof raw === 'function' ? (raw as () => unknown)() : ok(raw);
+  return { ok: false, status: 404 };
+});
+const rawCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/observations');
+it('pages formal raw observations with next_cursor and leaves the curve untouched', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  data.metrics[0].series[0].dimensions = { device: 'sda' };
+  const pages = [rawPage({ total: 3, has_more: true, next_cursor: 'cursor-2',
+    observations: [rawObservation('obs-1', 1), rawObservation('obs-2', 2)] }),
+    rawPage({ total: 3, observations: [rawObservation('obs-3', 3)] })];
+  let index = 0;
+  serveWithRaw(data, () => ok(pages[index++]));
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(rawCalls()).toHaveLength(1);
+  const body = JSON.parse(rawCalls()[0][1].body);
+  expect(body).toMatchObject({ resource: { type: 'instance', id: 1 },
+    metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: { device: 'sda' },
+    from: data.window.from, to: data.window.to, limit: 100 });
+  expect(body.cursor).toBeUndefined();
+  expect(details.textContent).toContain('本页 2 条 · 正式窗口内共 3 条 · 还有更多页');
+  expect(details.textContent).toContain('1 s');
+  const button = details.querySelector<HTMLButtonElement>('button')!;
+  expect(button.disabled).toBe(false);
+  button.click(); await settle(); await el.updateComplete;
+  expect(JSON.parse(rawCalls()[1][1].body).cursor).toBe('cursor-2');
+  expect(details.textContent).toContain('已到最后一页');
+  expect(details.textContent).toContain('3 s');
+  // The aggregate curve and window are unchanged by paging raw rows.
+  expect(el.result).toEqual(data);
+  expect(chartOf(el).timeData).toHaveLength(2);
+});
+it('writes 暂无 for an empty raw page instead of a zero-filled row', async () => {
+  const data = withBuckets([bucketAt(0)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  serveWithRaw(data, rawPage({ total: 0, observations: [] }));
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(details.textContent).toContain('暂无原始观测');
+  expect(details.querySelectorAll('app-data-table')).toHaveLength(0);
+});
+it('clears protected results on a missing raw resource without claiming history was retained', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  serveWithRaw(data, () => ({ ok: false, status: 404, json: async () => ({ error: 'POLICY_RESOURCE_NOT_FOUND' }) }));
+  const el = await mount(); await el.updateComplete;
+  await openRaw(el);
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('受保护结果已清除');
+  expect(el.error).not.toContain('保留上次结果');
+  expect(rawDetails(el)).toBeUndefined();
+});
+it('keeps the curve and the previous raw page when only this page fails', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  (data.metrics[0].definition as any).semantic_version = '1.0.0';
+  const first = rawPage({ total: 3, has_more: true, next_cursor: 'cursor-2' });
+  let index = 0;
+  serveWithRaw(data, () => index++ === 0 ? ok(first) : { ok: false, status: 503, json: async () => ({ error: 'METRIC_QUERY_UNAVAILABLE' }) });
+  const el = await mount(); await el.updateComplete;
+  const details = await openRaw(el);
+  expect(details.textContent).toContain('1 s');
+  details.querySelector<HTMLButtonElement>('button')!.click(); await settle(); await el.updateComplete;
+  expect(el.result).toEqual(data);
+  expect(chartOf(el).timeData).toHaveLength(2);
+  expect(details.textContent).toContain('1 s');
+  expect(details.textContent).toContain('曲线与上一页原始观测保留');
+  expect(el.error).toBe('');
+});

@@ -10,7 +10,7 @@ import './app-badge.js';
 import './metric-chart.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
-import { MetricRequestError, collectionStatusLabels, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
+import { MetricRequestError, collectionStatusLabels, metricRequest, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
 import { showToast } from './app-toast-container.js';
 export type MetricValue = { encoding: string; value?: number | string; [key: string]: unknown };
 export interface MetricBucket {
@@ -20,10 +20,18 @@ export interface MetricBucket {
   stats?: { count: number; min: MetricValue; max: MetricValue; avg: MetricValue } | null;
 }
 export interface MetricResult {
-  definition: { id: string; category: string; meaning: string; unit: string; kind?: string; aggregation?: { time?: string[]; space?: string[] } };
+  definition: { id: string; semantic_version?: string; category: string; meaning: string; unit: string; kind?: string; aggregation?: { time?: string[]; space?: string[] } };
   state: string; capability: unknown;
   observed_at?: string;
   series: Array<{ dimensions: Record<string, string>; buckets: MetricBucket[] }>;
+}
+/** Formal raw observation page: one snapshot per request, keyset cursor for the next page. */
+interface RawObservation {
+  id: string; observed_at: string; value: MetricValue | null; unit: string;
+  quality: { status: string; reason: string }; accuracy: string; sources: unknown[];
+}
+interface RawObservationPage {
+  contract_version: string; total: number; has_more: boolean; next_cursor?: string; observations: RawObservation[];
 }
 export interface SemanticResult { profile: { columns: Array<{ key: string; label?: string; metric: { id: string } }> }; window: { from: string; to: string }; metrics: MetricResult[] }
 const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '当前模板未覆盖', not_covered: '当前模板未覆盖', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
@@ -112,9 +120,15 @@ export class SemanticMetrics extends LitElement {
   @state() private collection: CollectionStatus | null = null;
   @state() private attempts: CollectionAttempt[] = [];
   @state() private statusError = '';
+  @state() private rawKey = '';
+  @state() private raw: RawObservationPage | null = null;
+  @state() private rawError = '';
+  @state() private rawBusy = false;
+  private rawGeneration = 0;
   private onAccessChanged = () => {
     ++this.generation; this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = ''; this.busy = false;
     this.collection = null; this.attempts = []; this.statusError = '';
+    this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
     this.accessInvalidated = true; this.error = '权限或登录状态已变更，请重新打开资源后读取指标';
   };
   override connectedCallback() {
@@ -125,6 +139,7 @@ export class SemanticMetrics extends LitElement {
   private resetResult() {
     this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = '';
     this.collection = null; this.attempts = []; this.statusError = '';
+    this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
   }
   override willUpdate(changes: Map<string, unknown>) {
     if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) {
@@ -349,6 +364,65 @@ export class SemanticMetrics extends LitElement {
         ${this.renderCollectionState(this.collection)}${this.renderLastAttempt()}${this.renderSuccessTimes(this.collection)}${this.renderWindowLatest(metrics)}
       </div>`;
   }
+  /** Raw observations are a separate paginated read; they never replace or reshape the curve. */
+  private rawSeries(metrics: MetricResult[]) {
+    return metrics.flatMap(metric => metric.series.map(series => ({
+      key: `${metric.definition.id}|${metric.definition.semantic_version ?? ''}|${JSON.stringify(series.dimensions)}`,
+      metric, series })));
+  }
+  private async loadRaw(key: string, metrics: MetricResult[], cursor?: string) {
+    const choice = this.rawSeries(metrics).find(c => c.key === key);
+    if (!choice || !this.result) return;
+    const version = choice.metric.definition.semantic_version;
+    this.rawKey = key;
+    if (!version) { this.raw = null; this.rawError = '指标语义版本未知，无法读取原始观测。'; return; }
+    const generation = this.generation, rawGeneration = ++this.rawGeneration;
+    const current = () => generation === this.generation && rawGeneration === this.rawGeneration;
+    this.rawBusy = true; this.rawError = '';
+    try {
+      const page = await metricRequest<RawObservationPage>('observations', {
+        resource: { type: this.resourceType, id: this.resourceId },
+        metric: { id: choice.metric.definition.id, semantic_version: version },
+        dimensions: choice.series.dimensions,
+        from: this.result.window.from, to: this.result.window.to, limit: 100,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (current()) this.raw = page;
+    } catch (e) {
+      if (!current()) return;
+      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) {
+        // Same protected clear as the status strip: a revoked or missing resource must not keep showing data.
+        this.resetResult(); this.error = statusErrors(e.status);
+      } else if (e instanceof MetricRequestError && e.status === 400) {
+        this.rawError = '这一页原始观测读取失败：请求、游标或窗口无效；曲线与上一页原始观测保留。';
+      } else {
+        this.rawError = '这一页原始观测读取失败；曲线与上一页原始观测保留。';
+      }
+    } finally { if (current()) this.rawBusy = false; }
+  }
+  private renderRaw(metrics: MetricResult[]) {
+    if (!this.result) return nothing;
+    const choices = this.rawSeries(metrics);
+    if (!choices.length) return nothing;
+    const key = choices.some(c => c.key === this.rawKey) ? this.rawKey : choices[0].key;
+    const page = this.raw;
+    return html`<details class="raw-observations" @toggle=${(e: Event) => {
+      if ((e.target as HTMLDetailsElement).open && !this.raw && !this.rawBusy) void this.loadRaw(key, metrics);
+    }}><summary>原始观测（正式来源分页）</summary>
+      <label>指标与维度 <select aria-label="原始观测指标与维度" ?disabled=${this.rawBusy || this.accessInvalidated} @change=${(e: Event) => {
+        this.raw = null; this.rawError = '';
+        void this.loadRaw((e.target as HTMLSelectElement).value, metrics);
+      }}>${choices.map(c => html`<option value=${c.key} .selected=${c.key === key}>${metricName(c.metric.definition.id)} · ${Object.entries(c.series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ') || '整体'}</option>`)}</select></label>
+      ${this.rawError ? html`<p class="error" role="alert">${this.rawError}</p>` : nothing}
+      ${page ? (page.observations.length ? html`<p class="hint">本页 ${page.observations.length} 条 · 正式窗口内共 ${page.total} 条 · ${page.has_more ? '还有更多页' : '已到最后一页'} · 按观测时间升序</p>
+        <app-data-table .dense=${true} .columns=${[{ key: 'time', label: '观测时间' }, { key: 'value', label: '值' }, { key: 'quality', label: '质量与来源' }]}
+          .rows=${page.observations.map(o => ({ time: html`<time datetime=${o.observed_at}>${localTime(o.observed_at)}</time>`,
+            value: html`<strong>${o.value && 'value' in o.value ? o.value.value : o.value ? `${o.value.encoding} 记录` : '空值'}</strong> ${o.unit}`,
+            quality: html`<app-badge variant=${o.quality.status === 'good' ? 'muted' : 'warn'}>${qualityLabels[o.quality.status] ?? o.quality.status}</app-badge> ${qualityLabels[o.accuracy] ?? o.accuracy}` }))}></app-data-table>
+        <button class="btn" ?disabled=${this.rawBusy || !page.has_more} @click=${() => { if (page.next_cursor) void this.loadRaw(key, metrics, page.next_cursor); }}>下一页原始观测</button>`
+        : html`<p>暂无原始观测</p>`) : this.rawBusy ? html`<div class="skeleton" aria-label="正在读取原始观测"></div>` : nothing}
+    </details>`;
+  }
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
     const baselineSeries = metrics.flatMap(metric => metric.series.map(series => ({metric,series})));
@@ -397,7 +471,7 @@ export class SemanticMetrics extends LitElement {
       ${this.custom ? html`<label>开始时间（本地时区 ${timezone()}）<input type="datetime-local" aria-label="自定义开始时间" .value=${this.customFrom} @input=${(e: Event) => this.customFrom = (e.target as HTMLInputElement).value}></label>
         <label>结束时间<input type="datetime-local" aria-label="自定义结束时间" .value=${this.customTo} @input=${(e: Event) => this.customTo = (e.target as HTMLInputElement).value}></label>
         <button class="btn" @click=${this.applyCustom} ?disabled=${this.accessInvalidated}>应用自定义窗口</button>` : nothing}
-      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
+      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; this.rawKey = ''; this.raw = null; this.rawError = ''; }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
       <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.customError ? html`<p class="error" role="alert">${this.customError}</p>` : nothing}
       ${this.result ? html`<p class="window">查询窗口：${localTime(this.result.window.from)} — ${localTime(this.result.window.to)} · ${this.windowNote()}</p>` : nothing}
@@ -415,6 +489,7 @@ export class SemanticMetrics extends LitElement {
         return html`<div>${Object.values(series.dimensions).join(' / ')}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
           ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
       })}</div>`)}</div>` : nothing}
+    ${this.renderRaw(metrics)}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
       <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}
     <details><summary>行为基线与资格</summary>

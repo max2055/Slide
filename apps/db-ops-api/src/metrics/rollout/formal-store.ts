@@ -1,6 +1,7 @@
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import type { MetricDefinition, NormalizedObservation } from '../../contracts/metrics/index.js';
 import { RefSchema, type Ref } from '../policy/model.js';
+import { OBSERVATION_PAGE_MAX_LIMIT, type ObservationPageOptions, type ObservationPageResult } from '../observations/page.js';
 import { MysqlMetricStorage, seriesHash, type Series } from '../storage.js';
 
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
@@ -141,6 +142,53 @@ export class MysqlFormalMetricStore {
         ORDER BY p.observed_at, p.observation_id DESC LIMIT 1`, [key, sqlTime(to)]);
       await c.commit();
       return [...prior.map(r => decode<NormalizedObservation>(r.payload)), ...rows, ...next.map(r => decode<NormalizedObservation>(r.payload))];
+    } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
+  }
+
+  /**
+   * One authorized page of formal raw observations in the half-open [from, to).
+   * The total, page and has_more share one REPEATABLE READ snapshot; the cursor is a
+   * strict keyset (observed_at, observation_id), so a page boundary can neither repeat
+   * nor skip rows that share a timestamp. There is no aggregate predecessor/successor,
+   * no zero fill, and a window above max_rows fails closed instead of reporting a
+   * truncated total.
+   */
+  async readObservationPage(series: Series, from: string, to: string, options: ObservationPageOptions): Promise<ObservationPageResult> {
+    const { limit, after } = options;
+    const { max_rows: maxRows } = this.limits;
+    if (!Number.isInteger(limit) || limit < 1 || limit > OBSERVATION_PAGE_MAX_LIMIT || !Number.isSafeInteger(maxRows) || maxRows < 1
+      || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
+      || Date.parse(to) - Date.parse(from) > 31 * 86400000) throw new Error('ROLLOUT_QUERY_RANGE');
+    const key = seriesHash(series);
+    const c = await this.pool.getConnection();
+    try {
+      await c.beginTransaction();
+      const [control] = await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
+      if (!control.length || control[0].read_mode !== 'semantic' || control[0].published_revision !== control[0].applied_revision) {
+        await c.commit();
+        return { observations: [], total: 0, has_more: false, next: null };
+      }
+      const [counted] = await c.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${formal}
+        AND p.series_hash = ? AND p.observed_at >= ? AND p.observed_at < ?`, [key, sqlTime(from), sqlTime(to)]);
+      const total = Number(counted[0]?.total);
+      if (!Number.isSafeInteger(total) || total < 0) throw new Error('ROLLOUT_QUERY_COUNT');
+      if (total > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
+      const base = `SELECT o.payload, p.observation_id AS publication_id ${formal} AND p.series_hash = ?
+        AND p.observed_at >= ? AND p.observed_at < ?`;
+      const [page] = after
+        ? await c.execute<RowDataPacket[]>(`${base}
+            AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))
+            ORDER BY p.observed_at, p.observation_id LIMIT ${limit + 1}`,
+          [key, sqlTime(from), sqlTime(to), after.at, after.at, after.id])
+        : await c.execute<RowDataPacket[]>(`${base}
+            ORDER BY p.observed_at, p.observation_id LIMIT ${limit + 1}`, [key, sqlTime(from), sqlTime(to)]);
+      const rows = page.slice(0, limit), hasMore = page.length > limit;
+      const observations = rows.map(r => decode<NormalizedObservation>(r.payload));
+      const last = observations.at(-1);
+      const result: ObservationPageResult = { observations, total, has_more: hasMore,
+        next: hasMore && last ? { at: sqlTime(last.observed_at), id: String(rows[rows.length - 1].publication_id) } : null };
+      await c.commit();
+      return result;
     } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
   }
 
