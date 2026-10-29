@@ -7,31 +7,34 @@
  * it to the accepted pure transition, and writes back the record for that same
  * identity — no more.
  *
- * The store is an in-memory map keyed by the identity hash
- * `(resource, rule_id/version, body_hash, scope)`. Within one process a repeated
- * problem keeps the same episode id, a recovery closes once, and a later problem
- * reads the closed record back and opens the next occurrence. It is *not* a
- * publisher: nothing is persisted, an empty catalog is the honest state after a
- * process restart (a new problem starts at occurrence 0 again), and this module
- * is not mounted on any runtime path.
+ * Records are keyed by the identity hash `(resource, rule_id/version, body_hash,
+ * scope)` and live in the injected storage port, which defaults to the in-memory
+ * map. Within one process a repeated problem keeps the same episode id, a
+ * recovery closes once, and a later problem reads the closed record back and
+ * opens the next occurrence. It is *not* a publisher: the in-memory default
+ * persists nothing, an empty store is the honest state after a process restart
+ * (a new problem starts at occurrence 0 again), and this module is not mounted on
+ * any runtime path. A caller-supplied `TriggerEpisodeJournal` makes the read-back
+ * cross a catalog instance; see `journal.ts`.
  *
- * No I/O, no clock, no id generation, no event/outbox/notification and no
+ * No I/O of its own (the injected port owns any storage), no clock, no id
+ * generation, no event/outbox/notification and no
  * acknowledgement input: an acknowledgement can neither close an episode nor
  * prevent a close, because no such input exists here or in the transition.
  */
-import type { HashId } from '../../contracts/metrics/templates.js';
 import {
   nextTriggerEpisode, triggerEpisodeIdentityHash,
   type TriggerEpisodeIdentity, type TriggerEpisodeRecord,
 } from './episode.js';
 import type { TriggerEvaluationResult } from './evaluate.js';
+import { InMemoryTriggerEpisodeStore, type TriggerEpisodeStore } from './journal.js';
 
 export class TriggerEpisodeCatalog {
-  private readonly records = new Map<HashId, TriggerEpisodeRecord>();
+  constructor(private readonly store: TriggerEpisodeStore = new InMemoryTriggerEpisodeStore()) {}
 
   /** The last record stored for this exact identity, or `null` when it has none. */
   get(identity: TriggerEpisodeIdentity): TriggerEpisodeRecord | null {
-    return this.records.get(triggerEpisodeIdentityHash(identity)) ?? null;
+    return this.store.read(triggerEpisodeIdentityHash(identity));
   }
 
   /**
@@ -48,12 +51,12 @@ export class TriggerEpisodeCatalog {
     const previous = this.get(identity);
     const next = nextTriggerEpisode({ identity, previous, evaluation });
     if (next === null) return null;
-    if (next !== previous) this.records.set(triggerEpisodeIdentityHash(identity), next);
+    if (next !== previous) this.store.write(next);
     return next;
   }
 
   /** How many identities currently have a stored record. */
   get size(): number {
-    return this.records.size;
+    return this.store.size;
   }
 }
