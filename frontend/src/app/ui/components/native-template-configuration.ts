@@ -14,8 +14,8 @@ import { collectionLayoutStyles } from './collection-layout-styles.js';
 import { showToast } from './app-toast-container.js';
 import {
   applyTemplateBinding, getMetricTemplateVersion, listMetricTemplates, metricError, metricRequest,
-  previewTemplateBinding, readCollectionStatus, readTemplateBinding, readTemplateOperation, repinMetricTemplate,
-  statusLabel, trialTemplateBinding, MetricRequestError,
+  probeTemplateBinding, previewTemplateBinding, readCollectionStatus, readTemplateBinding, readTemplateOperation,
+  repinMetricTemplate, statusLabel, trialTemplateBinding, MetricRequestError,
   type CollectionStatus, type PolicyGroup, type TemplateApplyResult, type TemplateBindingStatus,
   type TemplateCatalogPage, type TemplatePin, type TemplatePreview, type TemplateRepinResult, type TemplateSummary,
   type TemplateTrial, type TemplateTrialSample, type TemplateVersionDetail,
@@ -47,7 +47,18 @@ const samePin = (left: TemplatePin[], right: TemplatePin[]) => pinKeySort(left) 
 const pinKeySort = (pins: TemplatePin[]) => pins.map(pinKey).sort().join('|');
 const overridesEmpty = (value: Record<string, unknown>) => Object.keys(value).length === 0;
 /** One apply intent per exact configuration; `pending` means its outcome is unconfirmed. */
-interface IntentRecord { key: string; intent: string; pending: boolean }
+interface IntentRecord { key: string; intent: string; pending: boolean; draft?: number }
+
+/**
+ * Apply intents written during this page load. `sessionStorage` may reject a
+ * write (quota, privacy mode); the exact key must still be queryable in this
+ * tab, so memory is the fallback. It does not survive a browser restart, which
+ * is an explicit recoverable boundary rather than a silent forget.
+ */
+const intentMemory = new Map<string, IntentRecord[]>();
+const intentStorageMessage = '发布意图无法写入会话存储，只能在当前标签页内查询；刷新浏览器页面后无法恢复，请勿重复发布。';
+/** One browser tab owns this map; a suite that simulates many tabs resets it per case. */
+export function resetIntentMemory() { intentMemory.clear(); }
 
 /**
  * Per-rejection messages. The server answers with one stable code and, for a
@@ -73,6 +84,11 @@ export function nativeError(error: unknown): string {
       RESOLVE_PARAMETER_UNKNOWN: '参数不属于所选模板，请重新选择模板。',
       TEMPLATE_BINDING_NOT_EXECUTABLE: '当前固定版本不适用于此对象，不能试采或应用。',
       TEMPLATE_BINDING_BUSY: '此资源正在试采，请稍后再试。',
+      TEMPLATE_BINDING_ALREADY_BOUND: '此对象已建立配置绑定，请重新加载后继续。',
+      TEMPLATE_BINDING_PROBE_FAILED: '无法从当前对象取得采集能力证据，未写入任何配置；请检查连接与权限后重试。',
+      CAPABILITY_EVIDENCE_EXPIRED: '对象的采集能力证据已过期，请重新检查配置。',
+      CAPABILITY_EVIDENCE_INVALID: '已存储的采集能力证据无效，不能用于启用；请重新检查配置。',
+      CAPABILITY_EVIDENCE_UNAVAILABLE: '暂时无法读取采集能力证据，请稍后重新检查。',
       TEMPLATE_BINDING_RECEIPT_INVALID: '试采凭证已失效或已被使用，请重新检查并试采。',
       TEMPLATE_BINDING_LEGACY_CANDIDATE: '当前配置是旧版单包绑定，原生模板流程不接管；请在旧版配置中操作。',
       TEMPLATE_BINDING_RESOURCE_NOT_FOUND: '资源不存在或已被删除。',
@@ -133,6 +149,13 @@ export class NativeTemplateConfiguration extends LitElement {
   private pollTimer?: ReturnType<typeof setTimeout>;
   private pollCount = 0;
   private generation = 0;
+  /**
+   * Changes with every edit, discard, repin, resource load and access event. A
+   * response is projected only onto the exact draft version that asked for it;
+   * an edit during an in-flight preview/trial/apply makes that answer stale,
+   * including `previewStale=false` and `trialReady=true` transitions.
+   */
+  private draftVersion = 0;
 
   // Catalog: the full authorized catalog is paged, never truncated to one page.
   @state() private templates: TemplateSummary[] = [];
@@ -182,12 +205,19 @@ export class NativeTemplateConfiguration extends LitElement {
    * the old one pending under its own key.
    */
   @state() private unresolved: IntentRecord[] = [];
+  /** A storage write failed: the key is tracked in this tab only (never silently forgotten). */
+  @state() private intentStorageLimited = false;
+  /** Stored intent records are unreadable: no write may be sent without safe tracking. */
+  @state() private intentStorageError = '';
 
   private readonly accessChanged = () => {
     clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
-    this.catalogGeneration++; this.groupVersion++; this.generation++; this.stopPolling();
+    this.catalogGeneration++; this.groupVersion++; this.generation++; this.draftVersion++; this.stopPolling();
     this.binding = null; this.collection = null; this.canManage = false; this.busy = false;
     this.preview = null; this.trial = null; this.selected = [];
+    // Intents are keyed by the current principal + resource: a session switch
+    // reads the new principal's records and never projects the old one's.
+    this.unresolved = this.storedIntents();
     this.loaded = false; this.dirty = false; this.error = '权限或登录状态已变更，请重新打开资源后读取配置';
   };
   private readonly navigate = (event: Event) => {
@@ -255,6 +285,7 @@ export class NativeTemplateConfiguration extends LitElement {
     this.stopPolling();
     this.clearTimeoutSearch();
     const generation = ++this.generation;
+    this.draftVersion++;
     this.binding = null; this.collection = null; this.canManage = false; this.loaded = false;
     this.preview = null; this.previewStale = false; this.previewIssue = null; this.trial = null;
     this.selected = []; this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = '';
@@ -470,6 +501,7 @@ export class NativeTemplateConfiguration extends LitElement {
       overrides: this.overrides(), group_id: this.groupId || null };
   }
   private invalidate(keepPreview: boolean) {
+    this.draftVersion++;
     this.trial = null; this.step = 0; this.applyResult = null; this.dirty = true; this.error = '';
     if (!keepPreview) { this.preview = null; this.previewStale = false; this.previewIssue = null; }
     else if (this.preview) this.previewStale = true;
@@ -525,15 +557,36 @@ export class NativeTemplateConfiguration extends LitElement {
   private async previewFlow() {
     if (this.busy || !this.canWrite() || !this.selected.length) return;
     const generation = this.generation;
+    const draft = this.draftVersion;
+    // Every answer belongs to the exact draft that asked for it. A late response
+    // for an older edit must not clear the stale marker or re-enable the trial.
+    const current = () => generation === this.generation && draft === this.draftVersion;
     this.busy = true; this.error = ''; this.previewIssue = null;
+    let probeFailure: unknown = null;
     try {
+      // An unbound resource has no capability facts yet; acquire them through a
+      // real bounded read-only probe before asking for the preview. Save-only
+      // (explicitly disabled) needs no capability evidence.
+      if (this.firstBinding() && this.settings.enabled !== 'disable') {
+        try {
+          await probeTemplateBinding(this.resourceType, this.resourceId, this.requestBody());
+        } catch (error) {
+          // Losing the bootstrap race is not a failure: the preview reads the
+          // now-published binding capabilities instead. Any other probe failure
+          // is reported when the preview itself cannot become executable.
+          if (!(error instanceof MetricRequestError && error.code === 'TEMPLATE_BINDING_ALREADY_BOUND')) probeFailure = error;
+        }
+        if (!current()) return;
+      }
       const preview = await previewTemplateBinding(this.resourceType, this.resourceId, this.requestBody());
-      if (generation !== this.generation) return;
+      if (!current()) return;
       this.preview = preview; this.previewStale = false; this.trial = null; this.step = 1;
       this.dirty = true;
-      if (!preview.executable) this.error = '当前固定版本对此外对象的采集不可执行；请解决下方标记的不兼容项。';
+      if (!preview.executable) this.error = probeFailure
+        ? nativeError(probeFailure)
+        : '当前固定版本对此外对象的采集不可执行；请解决下方标记的不兼容项。';
     } catch (error) {
-      if (generation === this.generation) this.flowError(error);
+      if (current()) this.flowError(error);
     } finally { if (generation === this.generation) this.busy = false; }
   }
   private trialReady() { return !!this.preview && this.preview.executable && !this.previewStale && !this.busy; }
@@ -543,17 +596,18 @@ export class NativeTemplateConfiguration extends LitElement {
   private async runTrial() {
     if (!this.trialReady()) return;
     const generation = this.generation;
+    const draft = this.draftVersion;
     this.busy = true; this.error = '';
     try {
       // The trial is read-only; a lost response never changed the configuration,
       // so a new attempt reads fresh evidence rather than resuming an old one.
       const receiptId = `trial-${this.resourceType}-${this.resourceId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       const trial = await trialTemplateBinding(this.resourceType, this.resourceId, { ...this.requestBody(), receipt_id: receiptId });
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || draft !== this.draftVersion) return;
       this.trial = trial; this.step = this.applyReady() ? 2 : 1;
       this.dirty = true;
     } catch (error) {
-      if (generation === this.generation) { this.error = nativeError(error); this.trial = null; this.step = 1; }
+      if (generation === this.generation && draft === this.draftVersion) { this.error = nativeError(error); this.trial = null; this.step = 1; }
     } finally { if (generation === this.generation) this.busy = false; }
   }
 
@@ -567,24 +621,56 @@ export class NativeTemplateConfiguration extends LitElement {
     } catch { /* tab and resource still isolate the intent */ }
     return `slide.metric.native.apply.${user}.${resource}`;
   }
+  private validIntents(value: unknown): IntentRecord[] | null {
+    if (!Array.isArray(value)) return null;
+    // Only entries with the complete identity are usable; a partially written
+    // record is corruption, not an empty set.
+    return value.filter((entry): entry is IntentRecord => !!entry
+      && typeof (entry as { key?: unknown }).key === 'string'
+      && typeof (entry as { intent?: unknown }).intent === 'string'
+      && typeof (entry as { pending?: unknown }).pending === 'boolean');
+  }
+  /**
+   * The exact intents known for this principal + resource. Session storage is the
+   * durable copy; the in-memory map is the same-tab copy and wins for an entry it
+   * already holds (including a `pending` flag a failed write could not persist).
+   * An unreadable record is an explicit error, never "absent".
+   */
   private storedIntents(resource = this.refKey()): IntentRecord[] {
+    const storageKey = this.intentStorageKey(resource);
+    const memory = intentMemory.get(storageKey);
+    let stored: IntentRecord[] | null;
     try {
-      const value = JSON.parse(sessionStorage.getItem(this.intentStorageKey(resource)) ?? 'null') as unknown;
-      if (Array.isArray(value)) {
-        return value.filter((entry): entry is IntentRecord => !!entry
-          && typeof (entry as { key?: unknown }).key === 'string'
-          && typeof (entry as { intent?: unknown }).intent === 'string'
-          && typeof (entry as { pending?: unknown }).pending === 'boolean');
-      }
-    } catch { /* an unusable record is not an absent intent */ }
-    return [];
+      const raw = sessionStorage.getItem(storageKey);
+      stored = raw === null ? [] : this.validIntents(JSON.parse(raw) as unknown);
+    } catch {
+      stored = null;
+    }
+    if (stored === null) {
+      this.intentStorageError = '无法读取此前的发布意图记录；为避免重复发布，本次未发送任何写请求。请刷新页面后重试。';
+      return memory ? memory.map(entry => ({ ...entry })) : [];
+    }
+    this.intentStorageError = '';
+    const merged = new Map<string, IntentRecord>();
+    for (const entry of stored) merged.set(entry.key, entry);
+    for (const entry of memory ?? []) merged.set(entry.key, entry);
+    const result = [...merged.values()];
+    intentMemory.set(storageKey, result.map(entry => ({ ...entry })));
+    return result.map(entry => ({ ...entry }));
   }
   private persistIntents(next: IntentRecord[], resource = this.refKey()) {
+    const storageKey = this.intentStorageKey(resource);
     this.unresolved = next.filter(entry => entry.pending);
+    intentMemory.set(storageKey, next.map(entry => ({ ...entry })));
     try {
-      if (next.length) sessionStorage.setItem(this.intentStorageKey(resource), JSON.stringify(next));
-      else sessionStorage.removeItem(this.intentStorageKey(resource));
-    } catch { /* the in-memory list still applies */ }
+      if (next.length) sessionStorage.setItem(storageKey, JSON.stringify(next));
+      else sessionStorage.removeItem(storageKey);
+      this.intentStorageLimited = false;
+    } catch {
+      // The exact key stays in memory and is still queryable in this tab; a
+      // browser restart cannot recover it, so say so instead of pretending.
+      this.intentStorageLimited = true;
+    }
   }
   private allIntents(resource = this.refKey()) { return this.storedIntents(resource); }
   /**
@@ -603,7 +689,9 @@ export class NativeTemplateConfiguration extends LitElement {
   }
   private rememberIntent(key: string, intent: string) {
     const rest = this.allIntents().filter(entry => entry.intent !== intent);
-    const next = [...rest, { key, intent, pending: true }];
+    // The draft version records which edit set this intent came from, so a later
+    // committed answer never discards edits the user made after that point.
+    const next = [...rest, { key, intent, pending: true, draft: this.draftVersion }];
     // Keep the key map bounded; settled intents are the only ones ever dropped.
     const settled = next.filter(entry => !entry.pending);
     const bounded = next.length > 20
@@ -618,24 +706,33 @@ export class NativeTemplateConfiguration extends LitElement {
     this.persistIntents(entries.map(entry => entry.key === key ? { ...entry, pending: false } : entry));
   }
   private async lookup(key: string, generation: number, failure: unknown | null, reload = true): Promise<void> {
+    // The journal answer belongs to the intent, not to whatever draft is open
+    // now: recording it must never discard edits made after that intent.
+    const draft = this.draftVersion;
     let state;
     try { state = await readTemplateOperation(this.resourceType, this.resourceId, key); }
     catch {
       if (generation !== this.generation) return;
-      this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      if (draft === this.draftVersion) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (generation !== this.generation) return;
     if (!state || !['committed', 'pending', 'absent'].includes(state.state)) {
-      this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      if (draft === this.draftVersion) this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
       return;
     }
     if (state.state === 'committed') {
       this.settleIntent(key);
+      this.error = '';
+      showToast('已确认上次发布已提交', 'success');
+      if (draft !== this.draftVersion) {
+        // Recovery stays separate from the current edit: the old intent is
+        // settled, the newer draft and its preview are left untouched.
+        this.applyResult = { revision: state.operation?.target_revision ?? 0, replayed: true };
+        return;
+      }
       this.dirty = false;
       this.trial = null; this.preview = null; this.previewStale = false;
-      this.error = '';
-      showToast('已确认上次发布已提交，正在读取应用与正式数据状态', 'success');
       if (reload) {
         const revision = state.operation?.target_revision ?? 0;
         const resource = this.refKey();
@@ -655,7 +752,11 @@ export class NativeTemplateConfiguration extends LitElement {
   }
   private async applyFlow() {
     if (this.busy || !this.canWrite()) return;
+    // Without readable intent tracking a mutation could become untrackable:
+    // refuse instead of sending a write whose key cannot be recovered.
+    if (this.intentStorageError) { this.error = this.intentStorageError; return; }
     const generation = this.generation;
+    const draft = this.draftVersion;
     const intent = this.intentIdentity();
     const pending = this.pendingFor(intent);
     // The same intent is never resent: an unconfirmed outcome is looked up.
@@ -668,7 +769,7 @@ export class NativeTemplateConfiguration extends LitElement {
     this.busy = true; this.error = '';
     try {
       const result = await applyTemplateBinding(this.resourceType, this.resourceId, { ...payload, caller_key: key });
-      if (generation !== this.generation) { this.restorePendingLater(); return; }
+      if (generation !== this.generation || draft !== this.draftVersion) { this.restorePendingLater(); return; }
       await this.handleApplyResult(result, key, generation);
     } catch (error) {
       // Never resend a mutation whose outcome is unknown: query the same key first.
@@ -724,6 +825,7 @@ export class NativeTemplateConfiguration extends LitElement {
    * unconfirmed application is deliberately untouched: it is not a draft.
    */
   private discardChanges() {
+    this.draftVersion++;
     if (this.binding) this.seedFromBinding(this.binding);
     else { this.selected = []; this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = ''; }
     this.preview = null; this.previewStale = false; this.previewIssue = null; this.trial = null;
@@ -926,6 +1028,8 @@ export class NativeTemplateConfiguration extends LitElement {
       ${this.applyResult ? html`<p role="status">${this.applyResult.replayed ? '已确认上次发布提交' : '配置已提交'}，目标版本 ${this.applyResult.revision}；应用与正式数据状态以左侧事实为准。</p>` : nothing}
       ${this.unresolved.length ? html`<p class="notice" role="status">上次发布结果尚未确认：请求可能仍在处理或结果未知。请查询发布结果，确认前不要重复发布。
         未确认的意图会保留，编辑、放弃或重新加载都不会清掉它。</p>` : nothing}
+      ${this.intentStorageError ? html`<p class="notice error" role="alert">${this.intentStorageError}</p>` : nothing}
+      ${this.intentStorageLimited ? html`<p class="notice" role="status">${intentStorageMessage}</p>` : nothing}
       <div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => void this.refreshStatus()}>刷新状态</button></div>
       ${this.statusError ? html`<p role="alert">${this.statusError}</p>` : nothing}
       ${this.polling ? html`<p role="status">正在确认：发布 → 应用 → 首样本 → 正式可见（最多刷新 15 次）</p>` : nothing}

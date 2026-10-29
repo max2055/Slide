@@ -201,6 +201,29 @@ export const TemplateBindingPreviewSchema = z.looseObject({
   }),
 });
 
+/**
+ * Bootstrap probe: the capability facts one bounded read-only probe observed for
+ * an unbound resource and one exact candidate intent. It is not a trial, an
+ * application or a binding; the same activation predicate still decides
+ * enablement, and unknown/unsupported facts keep blocking it.
+ */
+export const TemplateProbeResponseSchema = z.looseObject({
+  template: z.literal(true),
+  resource: RefSchema,
+  revision: z.number().int().nonnegative(),
+  probed_at: Timestamp,
+  expires_at: Timestamp,
+  capabilities: z.array(z.strictObject({
+    resource_id: z.string(), metric: MetricRefOutSchema,
+    status: z.enum(['supported', 'unsupported', 'unknown']),
+    method: z.enum(['sql', 'ssh', 'snmp', 'derived']),
+    basis: z.array(z.strictObject({
+      kind: z.enum(['resource', 'version', 'permission', 'method']), evidence: z.string().min(1),
+    })).min(1),
+    evaluated_at: Timestamp, valid_until: Timestamp,
+  })).min(1),
+});
+
 /** Trial: real read-only evidence, never a formal observation and never persisted. */
 export const TemplateTrialResponseSchema = z.looseObject({
   trial: z.literal(true),

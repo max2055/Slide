@@ -705,7 +705,10 @@ describe('MySQL binding host', () => {
     const insertedBinding = db.log.find(entry => entry.at === 'bindingInsert')!.params;
     expect((insertedBinding[0] as Buffer).toString('utf8')).toBe(RESOURCE_KEY);
     expect(insertedBinding[2]).toBe('web');
-    expect(insertedBinding[3]).toBe('[]');
+    // The first binding stores the trusted capability facts the enable decision
+    // used, not an empty placeholder: later reads resolve from the same facts.
+    expect((JSON.parse(String(insertedBinding[3])) as Array<{ metric: { id: string } }>)
+      .map(capability => capability.metric.id)).toEqual(['fixture.alpha', 'fixture.beta']);
     expect(db.writes).toEqual({ binding: 1, operation: 1, audit: 1 });
     expect(db.operations).toHaveLength(1);
     expect(db.audits).toHaveLength(1);

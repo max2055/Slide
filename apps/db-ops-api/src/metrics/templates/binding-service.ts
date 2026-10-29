@@ -27,8 +27,9 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import type { Resource } from '../../contracts/metrics/index.js';
 import {
   ResourceBindingCandidateInputSchema,
-  type HashId, type ResourceBindingCandidate, type TemplateItemVersion, type TemplatePin, type TemplateVersion,
+  type HashId, type ResourceBindingCandidate, type TemplatePin,
 } from '../../contracts/metrics/templates.js';
+import type { Capability } from '../../contracts/metrics/index.js';
 import { checkApplicability, type ApplicabilityCheck } from '../packages/applicability.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
 import {
@@ -37,7 +38,11 @@ import {
 import { configurationInventory } from '../config/inventory.js';
 import type { CollectorAccess } from '../scheduler/service.js';
 import { MysqlScheduleStore } from '../scheduler/store.js';
-import { PolicyError, RefSchema, refKey, rule, type Ref } from '../policy/model.js';
+import { PolicyError, RefSchema, metricKey, refKey, rule, type Ref } from '../policy/model.js';
+import {
+  CAPABILITY_EVIDENCE_TTL_MS, CapabilityEvidenceError, probeIntentDigest,
+  readCapabilityEvidence, writeCapabilityEvidence, type CapabilityEvidenceExecutor,
+} from '../bindings/capability-evidence.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import type { TemplateVersionReadPort } from '../bindings/preflight.js';
 import {
@@ -64,6 +69,8 @@ export type TemplateBindingErrorCode =
   | 'TEMPLATE_BINDING_TRIAL_FAILED'
   | 'TEMPLATE_BINDING_BUSY'
   | 'TEMPLATE_BINDING_RECEIPT_INVALID'
+  | 'TEMPLATE_BINDING_ALREADY_BOUND'
+  | 'TEMPLATE_BINDING_PROBE_FAILED'
   | 'TEMPLATE_BINDING_STORE_UNAVAILABLE';
 
 export class TemplateBindingError extends Error {
@@ -116,6 +123,23 @@ export interface TemplateBindingPreview {
   excluded: ResolvedTemplateBinding['excluded'];
   budget: TemplateCollectionPlan['budget'];
   plan: TemplateCollectionPlan;
+}
+
+/** One real read-only capability fact from the bootstrap probe. */
+export type TemplateProbeCapability = Capability;
+
+/**
+ * The bootstrap probe answer. It is not a review, a trial, an application or a
+ * binding: it is exactly the capability facts one bounded read-only probe
+ * observed for this resource and exact candidate intent.
+ */
+export interface TemplateProbeResult {
+  template: true;
+  resource: Ref;
+  revision: number;
+  probed_at: string;
+  expires_at: string;
+  capabilities: TemplateProbeCapability[];
 }
 
 export interface TemplateTrialSample {
@@ -357,26 +381,59 @@ export class TemplateBindingService {
   }
 
   /** Trusted B2C context read once per operation; nothing here comes from the request. */
-  private async context(ref: Ref, groupId: string | null): Promise<TrustedContext> {
+  private async context(ref: Ref, candidate: ResourceBindingCandidate): Promise<TrustedContext> {
     const pool = this.pool();
-    return this.contextOn({ execute: (sql, values) => pool.execute(sql, values as any[]) as Promise<[unknown, unknown]> }, ref, groupId);
+    return this.contextOn({ execute: (sql, values) => pool.execute(sql, values as any[]) as Promise<[unknown, unknown]> }, ref, candidate);
   }
 
-  private async contextOn(connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, groupId: string | null): Promise<TrustedContext> {
+  private async contextOn(
+    connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, candidate: ResourceBindingCandidate,
+  ): Promise<TrustedContext> {
     const resource = await this.inventory(ref);
     if (!resource) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
     let group: unknown = null;
-    if (groupId) {
-      const [rows] = await connection.execute('SELECT payload FROM metric_policy_groups WHERE id = ?', [groupId]) as unknown as [RowDataPacket[], unknown];
+    if (candidate.group_id) {
+      const [rows] = await connection.execute('SELECT payload FROM metric_policy_groups WHERE id = ?', [candidate.group_id]) as unknown as [RowDataPacket[], unknown];
       group = rows[0] ? decode(rows[0].payload) : null;
     }
     const [caps] = await connection.execute('SELECT capabilities FROM metric_policy_bindings WHERE resource_key = ?',
       [refKey(ref)]) as unknown as [RowDataPacket[], unknown];
-    return { resource: resource!, group, capabilities: caps[0] ? decode(caps[0].capabilities) : [], at: this.now().toISOString() };
+    // A stored binding is the only capability authority for a bound resource.
+    // An unbound resource has no row at all; its bootstrap context comes from the
+    // exact, unexpired read-only probe evidence for this candidate intent.
+    const capabilities = caps[0]
+      ? decode(caps[0].capabilities)
+      : await this.bootstrapCapabilities(connection, ref, candidate);
+    return { resource: resource!, group, capabilities, at: this.now().toISOString() };
+  }
+
+  /** The exact evidence identity a bootstrap probe wrote for this candidate. */
+  private evidenceIdentity(ref: Ref, candidate: ResourceBindingCandidate) {
+    return {
+      resource: ref, revision: candidate.revision,
+      template_pins: candidate.template_pins,
+      credential_ref: credentialReference(ref),
+      intent_digest: probeIntentDigest(candidate),
+    };
+  }
+
+  /**
+   * Read bootstrap evidence for an unbound resource. A missing row is the only
+   * "nothing was probed" answer; expired/corrupted evidence is a refusal, never
+   * an implicit absence that would let a later step pretend it was verified.
+   */
+  private async bootstrapCapabilities(
+    connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, candidate: ResourceBindingCandidate,
+  ): Promise<Capability[]> {
+    const record = await readCapabilityEvidence(
+      connection as { execute: CapabilityEvidenceExecutor['execute'] },
+      this.evidenceIdentity(ref, candidate), this.now().getTime(),
+    );
+    return record === null ? [] : record.capabilities;
   }
 
   private async resolve(ref: Ref, candidate: ResourceBindingCandidate) {
-    const context = await this.context(ref, candidate.group_id);
+    const context = await this.context(ref, candidate);
     const outcome = await resolveTemplateBinding(candidate, context, poolTemplatePort(this.pool()), this.deps.registry);
     if (outcome.kind !== 'template_resolution') fail('TEMPLATE_BINDING_LEGACY_CANDIDATE');
     const resolution = outcome as ResolvedTemplateBinding;
@@ -434,9 +491,175 @@ export class TemplateBindingService {
     };
   }
 
+  /**
+   * Bootstrap capability acquisition for an unbound resource.
+   *
+   * This is deliberately not the formal trial: it only runs bounded read-only
+   * requests through already registered implementations, pinned versions and a
+   * trusted applicable target, and it persists the capability facts it actually
+   * observed. It never writes a binding, revision, receipt, audit or applied
+   * marker, and it never accepts a client-reported capability. The original
+   * activation predicate still decides whether the resulting preview/trial may
+   * enable anything.
+   */
+  async probe(actor: ActorContext, ref: Ref, body: unknown): Promise<TemplateProbeResult> {
+    await this.assertAccess(actor, ref, true);
+    const candidate = this.candidate(ref, body);
+    // A bound resource already has a capability authority; bootstrap evidence
+    // must never be substituted for its published facts.
+    const [bound] = await this.pool().execute(
+      'SELECT 1 FROM metric_policy_bindings WHERE resource_key = ? LIMIT 1', [refKey(ref)],
+    ) as unknown as [RowDataPacket[], unknown];
+    if (bound[0]) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
+
+    // Parameters/settings come from the exact pins; capabilities still come only
+    // from the real probe below. The request cannot report support.
+    const { resolution } = await this.resolve(ref, candidate);
+    const selection = this.probeSelection(resolution);
+    if (selection.length === 0) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
+
+    const reservation = await new MysqlScheduleStore(this.pool(), this.deps.registry).reserve(ref);
+    if (!reservation) fail('TEMPLATE_BINDING_BUSY', 409);
+    const authorize = async () => { await this.assertAccess(await this.live(actor), ref, true); };
+    // Evidence persistence runs on the writer's own connection; the live grant is
+    // re-read there after every wait (admission, pool, row lock, commit).
+    const authorizeOn = async (executor?: Pick<BindingSqlConnection, 'execute'>) => {
+      const current = executor ? await this.liveOn(actor, executor) : await this.live(actor);
+      await this.assertAccess(current, ref, true, executor);
+    };
+    let executed: Array<{ release_ref: string; result: PackageResult }>;
+    try {
+      await authorize();
+      executed = await this.probeExecute(ref, resolution, selection, authorize);
+    } finally {
+      await reservation.release();
+    }
+    await authorize();
+
+    const capabilities = this.probeCapabilities(ref, resolution, executed);
+    // Nothing observed, or every observed fact is unknown, proves no support: a
+    // connection/parse failure is never stored as if something had been probed.
+    if (capabilities.length === 0 || capabilities.every(capability => capability.status === 'unknown')) {
+      fail('TEMPLATE_BINDING_PROBE_FAILED', 422);
+    }
+    const probedAt = this.now().toISOString();
+    const expires = Math.min(
+      Date.parse(probedAt) + CAPABILITY_EVIDENCE_TTL_MS,
+      ...capabilities.map(capability => Date.parse(capability.valid_until)),
+    );
+    // An already-expired result enables nothing; it is never stored as evidence.
+    if (!(expires > Date.parse(probedAt))) fail('TEMPLATE_BINDING_PROBE_FAILED', 422);
+
+    const written = await writeCapabilityEvidence({
+      ...this.evidenceIdentity(ref, candidate),
+      capabilities, actor_id: actor.userId, probed_at: probedAt,
+      expires_at: new Date(expires).toISOString(),
+    }, { pool: this.deps.pool, authorize: authorizeOn });
+
+    return {
+      template: true, resource: ref, revision: candidate.revision,
+      probed_at: written.record.probed_at, expires_at: written.record.expires_at,
+      capabilities: written.record.capabilities,
+    };
+  }
+
+  /** One bounded read per release; only items the resolution did not disable/reject. */
+  private probeSelection(resolution: ResolvedTemplateBinding): Array<{
+    release: ResolvedTemplateBinding['releases'][number]['release'];
+    release_ref: string;
+    collector_ids: string[];
+    metric_keys: string[];
+  }> {
+    const selection: Array<{
+      release: ResolvedTemplateBinding['releases'][number]['release'];
+      release_ref: string;
+      collector_ids: string[];
+      metric_keys: string[];
+    }> = [];
+    for (const release of resolution.releases) {
+      const items = release.collectors.flatMap(collector => collector.items)
+        .filter(item => item.decision !== 'disabled' && item.decision !== 'unsupported');
+      if (items.length === 0) continue;
+      selection.push({
+        release: { ...release.release }, release_ref: release.release_ref,
+        collector_ids: [...new Set(items.map(item => item.collector_id))].sort(),
+        metric_keys: [...new Set(items.map(item => metricKey(item.canonical_metric)))].sort(),
+      });
+    }
+    return selection;
+  }
+
+  /**
+   * The real read-only requests, one exact release at a time through the accepted
+   * runner. The live grant is re-read before every actual request and after each
+   * release returns, so a revocation cannot leave a read or its evidence behind.
+   */
+  private async probeExecute(
+    ref: Ref,
+    resolution: ResolvedTemplateBinding,
+    selection: ReturnType<TemplateBindingService['probeSelection']>,
+    authorize: () => Promise<void>,
+  ): Promise<Array<{ release_ref: string; result: PackageResult }>> {
+    const access = await this.deps.access.resolve(ref);
+    if (access.resource.type !== ref.type || access.resource.id !== String(ref.id)) {
+      fail('TEMPLATE_BINDING_PROBE_FAILED', 422);
+    }
+    await authorize();
+    const settings = resolution.settings;
+    const results: Array<{ release_ref: string; result: PackageResult }> = [];
+    for (const entry of selection) {
+      const result = await runPackage(this.deps.registry, {
+        package: { ...entry.release }, credential_ref: access.credential_ref,
+        overrides: {
+          enabled: settings.enabled, interval_ms: settings.interval_ms, timeout_ms: settings.timeout_ms,
+          stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms,
+          max_rows: settings.max_rows,
+        },
+      }, {
+        ...access, binding_id: refKey(ref),
+        attempt_id: `template-probe:${refKey(ref)}:${resolution.revision}:${entry.release_ref}`,
+        config_revision: Math.max(resolution.revision, 1), observed_at: this.now().toISOString(),
+        clock: () => this.now().toISOString(), collector_ids: entry.collector_ids, metric_keys: entry.metric_keys,
+        before_request: async () => { await authorize(); await access.assertCurrent?.(); },
+      });
+      // After the IO, before another release can reach the target.
+      await authorize();
+      results.push({ release_ref: entry.release_ref, result });
+    }
+    return results;
+  }
+
+  /** Exactly the probed item metrics/methods for this resource; nothing invented. */
+  private probeCapabilities(
+    ref: Ref,
+    resolution: ResolvedTemplateBinding,
+    executed: Array<{ release_ref: string; result: PackageResult }>,
+  ): Capability[] {
+    const wanted = new Map<string, true>();
+    for (const release of resolution.releases) {
+      for (const collector of release.collectors) {
+        for (const item of collector.items) {
+          if (item.decision === 'disabled' || item.decision === 'unsupported') continue;
+          wanted.set(`${metricKey(item.canonical_metric)}|${item.method}`, true);
+        }
+      }
+    }
+    const seen = new Map<string, Capability>();
+    for (const { result } of executed) {
+      for (const capability of result.capabilities) {
+        if (capability.resource_id !== String(ref.id)) continue;
+        const key = `${metricKey(capability.metric)}|${capability.method}`;
+        if (!wanted.has(key)) continue;
+        seen.set(key, capability);
+      }
+    }
+    return [...seen.values()].sort((left, right) =>
+      (metricKey(left.metric) < metricKey(right.metric) ? -1 : metricKey(left.metric) > metricKey(right.metric) ? 1 : 0)
+      || (left.method < right.method ? -1 : left.method > right.method ? 1 : 0));
+  }
+
   /** Unit pairs declared by the mapping that produced each item's metric. */
-  private unitChecks(plan: TemplateCollectionPlan): Map<string, { input_unit: string; output_unit: string }> {
-    const checks = new Map<string, { input_unit: string; output_unit: string }>();
+  private unitChecks(plan: TemplateCollectionPlan): Map<string, { input_unit: string; output_unit: string }> {    const checks = new Map<string, { input_unit: string; output_unit: string }>();
     for (const entry of plan.releases) {
       const release = this.deps.registry.get({ ...entry.release });
       for (const collector of release.package.collectors) for (const mapping of collector.mappings) {
@@ -469,7 +692,9 @@ export class TemplateBindingService {
           stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms, max_rows: settings.max_rows },
       }, {
         ...access, binding_id: refKey(ref), attempt_id: `template-trial:${refKey(ref)}:${revision}:${release.release_ref}`,
-        config_revision: revision, observed_at: this.now().toISOString(),
+        // The candidate names base 0 for a first binding, but no observation is
+        // ever recorded at revision 0: the trial belongs to target revision 1.
+        config_revision: Math.max(revision, 1), observed_at: this.now().toISOString(),
         clock: () => this.now().toISOString(), collector_ids: release.collector_ids, metric_keys: release.metric_keys,
         // Every actual read (including an adapter's additional reads and retries)
         // runs on a freshly re-read grant, never on the one that started the trial.
@@ -626,30 +851,40 @@ export class TemplateBindingService {
         let current: ActorContext;
         try { current = await this.live(actor); }
         catch (error) { onAuthError?.(error); throw error; }
-        const live = await this.contextOn(connection, target, candidate.group_id);
+        const live = await this.contextOn(connection, target, candidate);
+        const dep = this.dependencyDigest(live, credentialReference(target));
         return {
           allowed: canManageResource(current, target),
           cancelled: false,
-          dependency_digest: this.dependencyDigest(live, credentialReference(target)),
+          dependency_digest: dep,
         };
       },
       applicationContext: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const context = await this.contextOn(connection, target, candidate.group_id);
+        const context = await this.contextOn(connection, target, candidate);
         return { resource: context.resource, group: context.group, capabilities: context.capabilities, at: context.at,
           actor_id: actor.userId };
       },
-      mandatoryItems: async () => {
+      /**
+       * Every item this exact configuration must prove. An explicitly disabled
+       * setting or metric is not a required item: it never enters the plan, so
+       * demanding trial evidence for it would make an honest disable impossible.
+       * The set is derived from the trusted resolution (same pins, group and
+       * capabilities as the enable decision), never from the request body.
+       */
+      mandatoryItems: async resource => {
+        const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
+        const live = await this.contextOn(connection, target, candidate);
+        const outcome = await resolveTemplateBinding(candidate, live, versions, this.deps.registry);
+        if (outcome.kind !== 'template_resolution') throw new Error('TEMPLATE_BINDING_LEGACY_CANDIDATE');
         const items: Array<{ template_id: string; item_id: string; item_version: number }> = [];
-        for (const pin of candidate.template_pins) {
-          let version: TemplateVersion | null;
-          try { version = await versions.getVersion(pin.template_id, pin.version); }
-          catch { throw new Error('TEMPLATE_BINDING_STORE_UNAVAILABLE'); }
-          if (version === null) throw new Error('TEMPLATE_BINDING_STORE_UNAVAILABLE');
-          for (const item of version.items as TemplateItemVersion[]) {
-            items.push({ template_id: item.template_id, item_id: item.item_id, item_version: item.version });
+        for (const release of outcome.releases) for (const collector of release.collectors) {
+          for (const item of collector.items) {
+            if (item.decision === 'disabled') continue;
+            items.push({ template_id: item.template_id, item_id: item.item_id, item_version: item.item_version });
           }
         }
+        if (items.length === 0) throw new Error('TEMPLATE_BINDING_NOT_EXECUTABLE');
         return items;
       },
       templateVersions: () => versions,
@@ -742,6 +977,11 @@ export class TemplateBindingService {
 /** Stable mapping for the route layer; never a driver message. */
 export const templateBindingErrorStatus = (error: unknown): { status: number; code: string } | null => {
   if (error instanceof TemplateBindingError) return { status: error.status, code: error.code };
+  if (error instanceof CapabilityEvidenceError) {
+    // Corrupt/expired evidence is a refusal, never a silent "absent": the caller
+    // must re-probe or fix the store instead of enabling from stale facts.
+    return { status: 503, code: error.code };
+  }
   if (error instanceof PolicyError) return { status: error.status, code: error.code };
   // The accepted guard's refusals are business answers: a permission refusal,
   // a stale revision/operation key, a changed dependency or an expired/consumed

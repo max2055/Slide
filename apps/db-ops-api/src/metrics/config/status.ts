@@ -154,8 +154,9 @@ export class MetricConfigurationReader {
       if (e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND') { /* unbound */ }
       // The legacy reader refuses a templates-v1 row on purpose. Its own facts
       // are read through the shared codec instead; a read failure stays an error.
+      // A reader without that codec can only repeat the fence — never "unbound".
       else if (e instanceof PolicyError && e.code === 'TEMPLATE_BINDING_UNSUPPORTED') {
-        if (!this.reader.template) throw new PolicyError('POLICY_STORE_UNAVAILABLE', 503);
+        if (!this.reader.template) throw e;
         template = await this.reader.template(ref);
         // The row was just refused as a template binding; an empty re-read is a
         // read failure, never an unbound resource.

@@ -227,6 +227,8 @@ export async function registerMetricTemplateRoutes(
     run: (actor: ActorContext, params: unknown, body: unknown) => Promise<unknown> }> = [
     { method: 'GET', suffix: '', response: 'TemplateBindingStatus',
       run: (actor, params) => service.status(actor, ref(params)) },
+    { method: 'POST', suffix: '/probe', response: 'TemplateProbeResponse', body: TemplateBindingBodySchema,
+      run: (actor, params, body) => service.probe(actor, ref(params), body) },
     { method: 'POST', suffix: '/preview', response: 'TemplateBindingPreview', body: TemplateBindingBodySchema,
       run: (actor, params, body) => service.preview(actor, ref(params), body) },
     { method: 'POST', suffix: '/trial', response: 'TemplateTrialResponse', body: TemplateTrialBodySchema,

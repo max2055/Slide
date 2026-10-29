@@ -61,12 +61,13 @@
 
 | 检查 | 结果 |
 |---|---|
+| 后端 `src/metrics`（全量） | 887 passed / 207 skipped |
 | 后端 `src/metrics/{bindings,templates,config}` | 505 passed / 89 skipped |
 | 前端全量 | 1346 passed / 150 files |
 | `pnpm --filter slide-api typecheck` / `slide-frontend typecheck` | 通过 |
 | `pnpm contracts:check` | 通过（openapi.json 与生成客户端已更新：`TemplateBindingStatus.configuration`、`expected_revision` 允许 0） |
 | 前端 build + CSP | 通过 |
-| 预存在失败 | `src/metrics/policy/template-gateway.test.ts`「fences config trial/status…」在基点 `9aea87a17` 即失败（`POLICY_STORE_UNAVAILABLE`），本包未改动该路径，未修复 |
+| 共享围栏回归（已修） | 首次交付报告把 `policy/template-gateway.test.ts`「fences config trial/status…」当成“基点即失败”；实际是 `7beba8852` 引入：`MetricConfigurationReader.status` 在 reader 无共享 codec 时抛出 `POLICY_STORE_UNAVAILABLE`，覆盖了既有 `TEMPLATE_BINDING_UNSUPPORTED` 围栏。现改为无 codec 时重复该围栏（不猜 unbound），两个测试都按其原意通过 |
 
 ## 6. 清理
 

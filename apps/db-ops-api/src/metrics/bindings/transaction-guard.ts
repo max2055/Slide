@@ -26,6 +26,7 @@ import {
   type HashId, type PackagePin, type ResourceBindingCandidate,
 } from '../../contracts/metrics/templates.js';
 import { TimestampSchema } from '../../contracts/metrics/definitions.js';
+import type { Capability } from '../../contracts/metrics/index.js';
 import { stable, type PackageRegistry } from '../packages/model.js';
 import {
   compileBindingCandidate, type BindingTemplateCandidate,
@@ -238,6 +239,12 @@ export interface PreparedTemplateBindingMutation extends PreparedBindingMutation
   resolution_identity: HashId;
   resolution: ResolvedTemplateBinding;
   plan: TemplateCollectionPlan;
+  /**
+   * The trusted capability facts the enable decision used. A first binding has
+   * no stored capability column yet, so the host persists exactly these facts
+   * with the row; later reads then resolve from the same evidence.
+   */
+  capabilities: Capability[];
   /** Preserved as-is; a new pending revision never replaces the effective plan. */
   previous_application: TrustedApplicationState | null;
   /** Trusted audit actor; the request never supplies it. */
@@ -995,7 +1002,6 @@ async function verifyTemplateResolution(
     || stable(resolution.binding) !== stable(compiled.binding)) {
     throw new BindingTransactionError('TRANSACTION_RESOLUTION_INVALID');
   }
-
   const plan = buildTemplateCollectionPlan(resolution);
   const identity = templateResolutionIdentity(resolution);
   // The plan's own identity must be the resolution identity; a drift is a defect.
@@ -1157,6 +1163,7 @@ export async function prepareTemplateBindingMutationV2(
     resource: copyResource(resource), base_revision: baseRevision, target_revision: targetRevision,
     candidate_digest: digest, dependency_digest: before.dependency_digest,
     resolution_identity: verified.identity, resolution: verified.resolution, plan: verified.plan,
+    capabilities: verified.application.capabilities as Capability[],
     previous_application: verified.application.application, actor_id: verified.application.actor_id,
     decided_at: now.at, receipt_expires_at: receipt.expires_at,
     operation: { key, caller_key: callerKey, receipt_id: receiptId, status: 'pending' },

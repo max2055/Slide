@@ -24,6 +24,16 @@ const {
 if (!MAX238_DBPORT || !MAX238_DBPW || !MAX238_DB || !MAX238_ADMIN_PASSWORD || !MAX238_TARGET_PASSWORD) {
   throw new Error('MAX238_* environment is required');
 }
+// Isolation guard: this script DROPs the platform schema it is given. It may only
+// run against a disposable server that is not the shared 3306 and a schema this
+// run owns by name; an environment variable alone is never proof of ownership.
+{
+  const port = Number(MAX238_DBPORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 3306) {
+    throw new Error(`refusing non-isolated MySQL port ${MAX238_DBPORT}`);
+  }
+  if (!/^max238_[A-Za-z0-9_]+$/.test(MAX238_DB)) throw new Error(`refusing schema not owned by this run: ${MAX238_DB}`);
+}
 
 const { MigrationRunner } = await import('../../../../../apps/db-ops-api/src/migrations/runner.js');
 const { encryptData } = await import('../../../../../apps/db-ops-api/src/db-connection.js');

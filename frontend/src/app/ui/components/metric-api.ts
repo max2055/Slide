@@ -183,6 +183,17 @@ export interface TemplatePreview {
   budget: { estimated_series_upper_bound: number; max_series_per_resource: number; requests_per_hour_estimate: number };
   plan: unknown;
 }
+export interface TemplateProbeCapability {
+  resource_id: string; metric: { id: string; semantic_version: string };
+  status: 'supported' | 'unsupported' | 'unknown'; method: 'sql' | 'ssh' | 'snmp' | 'derived';
+  basis: Array<{ kind: 'resource' | 'version' | 'permission' | 'method'; evidence: string }>;
+  evaluated_at: string; valid_until: string;
+}
+/** Bootstrap capability facts from one real read-only probe; not a trial or a binding. */
+export interface TemplateProbe {
+  template: true; resource: { type: string; id: number }; revision: number;
+  probed_at: string; expires_at: string; capabilities: TemplateProbeCapability[];
+}
 export interface TemplateTrialSample {
   template_id: string; item_id: string; item_version: number;
   metric: { id: string; semantic_version: string }; value: unknown; unit: string; observed_at: string;
@@ -232,6 +243,8 @@ export const getMetricTemplateVersion = (templateId: string, version: number) =>
   metricRequest<TemplateVersionDetail>(`templates/${encodeURIComponent(templateId)}/versions/${version}`);
 export const readTemplateBinding = (type: string, id: number) =>
   metricRequest<TemplateBindingStatus>(`template-bindings/${type}/${id}`);
+export const probeTemplateBinding = (type: string, id: number, body: TemplateBindingRequest) =>
+  metricRequest<TemplateProbe>(`template-bindings/${type}/${id}/probe`, body);
 export const previewTemplateBinding = (type: string, id: number, body: TemplateBindingRequest) =>
   metricRequest<TemplatePreview>(`template-bindings/${type}/${id}/preview`, body);
 export const trialTemplateBinding = (type: string, id: number, body: TemplateBindingRequest & { receipt_id: string }) =>

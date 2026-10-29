@@ -283,6 +283,13 @@ test('preview, failed and empty trials, invalidation, publish and application', 
     if (p.endsWith('/catalog')) return route.fulfill({ json: { packages: [{ package: pack, recommendations: {}, documentation: [] }], metrics: [] } });
     if (p.endsWith('/recommendations')) return route.fulfill({ json: { packages: [{ release: { package: pack }, compatibility: 'compatible', recommended: true, checks: [], coverage: [], missing_core_metrics: [] }] } });
     if (p.endsWith('/groups')) return route.fulfill({ json: { groups: [] } });
+    // The entry component reads the stored binding source before choosing its
+    // editor. This scenario drives the legacy single-package editor, so the
+    // resource keeps a package binding while the legacy editor's own status
+    // stays unbound until the simulated activation publishes it.
+    if (/\/api\/metrics\/template-bindings\/instance\/\d+$/.test(p)) return route.fulfill({ json: {
+      source: 'package', revision: 1, application: null, template_pins: [], pending: null,
+      configuration: { overrides: {}, group_id: null }, effective: null, published_at: null } });
     if (p === '/api/metrics/config/bulk') return route.fulfill({ json: { jobs: [] } });
     if (p.endsWith('/status')) {
       const status = collectionStatus(published ? 'bound' : 'unbound');

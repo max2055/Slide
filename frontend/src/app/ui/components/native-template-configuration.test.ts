@@ -2,11 +2,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './native-template-configuration.js';
-import { nativeTrialPassed } from './native-template-configuration.js';
+import { nativeTrialPassed, resetIntentMemory } from './native-template-configuration.js';
 import { collectionStatus } from './metric-test-fixtures.js';
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 15));
-afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); sessionStorage.clear(); localStorage.clear(); vi.useRealTimers(); });
+afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); sessionStorage.clear(); localStorage.clear(); resetIntentMemory(); vi.useRealTimers(); });
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 const binding = (overrides: Record<string, unknown> = {}) => ({
@@ -397,4 +397,43 @@ it('a delayed re-pin answer never lands on the resource the user switched to', a
   expect(element.selected.map((pin: { version: number }) => pin.version)).toEqual([1]);
   expect(element.repinResult).toBeNull();
   expect(element.repinTarget).toBeNull();
+});
+
+/* --- R2 counterexamples: storage loss and late preview -------------------- */
+
+it('R2: an unavailable session storage keeps the unknown intent for this tab', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies++; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
+    '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
+  }));
+  const element = await mount();
+  const fail = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('quota', 'QuotaExceededError');
+  });
+  try {
+    await element.previewFlow(); await element.runTrial(); await element.applyFlow();
+    expect(element.unresolved).toHaveLength(1);
+    await element.reloadAll();
+    // Same tab, same exact key: the intent is still queryable and was not resent.
+    expect(element.unresolved).toHaveLength(1);
+    expect(applies).toBe(1);
+    expect(element.intentStorageLimited).toBe(true);
+    expect(element.shadowRoot.textContent).toContain('只能在当前标签页内查询');
+  } finally { fail.mockRestore(); }
+});
+
+it('R2: a late preview for an edited draft can never enable the trial', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  authFetch.mockImplementation(routes({
+    '/preview': async () => { await gate; return { ok: true, json: async () => preview() }; },
+  }));
+  const element = await mount();
+  const pending = element.previewFlow();
+  element.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
+  release(); await pending;
+  expect(element.trialReady()).toBe(false);
+  expect(element.preview).toBeNull();
+  expect(element.previewStale).toBe(false);
 });
