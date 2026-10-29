@@ -10,6 +10,7 @@ import './app-badge.js';
 import './metric-chart.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
+import { MetricRequestError, collectionStatusLabels, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
 import { showToast } from './app-toast-container.js';
 export type MetricValue = { encoding: string; value?: number | string; [key: string]: unknown };
 export interface MetricBucket {
@@ -27,6 +28,19 @@ export interface MetricResult {
 export interface SemanticResult { profile: { columns: Array<{ key: string; label?: string; metric: { id: string } }> }; window: { from: string; to: string }; metrics: MetricResult[] }
 const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '当前模板未覆盖', not_covered: '当前模板未覆盖', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
 const qualityLabels: Record<string, string> = { good: '良好', partial: '部分', unknown: '未知', invalid: '无效', fresh: '新鲜', stale: '过期', exact: '精确', estimated: '估算' };
+const attemptLabels: Record<string, string> = { running: '进行中', succeeded: '成功', partial: '部分完成', failed: '失败', cancelled: '已取消' };
+/** The sources of a bucket already name the collector and the package that produced it. */
+type BucketSource = { source?: { collector_id?: unknown }; versions?: { package_id?: unknown; package_version?: unknown } };
+const sourceSummary = (b: MetricBucket) => {
+  const items = (Array.isArray(b.sources) ? b.sources : []) as BucketSource[];
+  const collectors = [...new Set(items.map(s => s?.source?.collector_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  const packages = [...new Set(items.map(s => {
+    const id = s?.versions?.package_id, version = s?.versions?.package_version;
+    if (typeof id !== 'string' || id === '') return null;
+    return typeof version === 'string' && version !== '' ? `${id} ${version}` : id;
+  }).filter((v): v is string => v !== null))];
+  return { collectors, packages };
+};
 /** Mirrors the formal query contract: 60s default and a 7-day window at that resolution. */
 const MAX_BUCKETS = 10_080, MIN_BUCKET_MS = 60_000, MAX_WINDOW_MS = 31 * 86_400_000;
 const DETAIL_BUCKET_LIMIT = 200;
@@ -92,8 +106,12 @@ export class SemanticMetrics extends LitElement {
   @state() busy = false;
   private generation = 0;
   @state() private accessInvalidated = false;
+  @state() private collection: CollectionStatus | null = null;
+  @state() private attempts: CollectionAttempt[] = [];
+  @state() private statusError = '';
   private onAccessChanged = () => {
     ++this.generation; this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = ''; this.busy = false;
+    this.collection = null; this.attempts = []; this.statusError = '';
     this.accessInvalidated = true; this.error = '权限或登录状态已变更，请重新打开资源后读取指标';
   };
   override connectedCallback() {
@@ -103,6 +121,7 @@ export class SemanticMetrics extends LitElement {
   }
   private resetResult() {
     this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = '';
+    this.collection = null; this.attempts = []; this.statusError = '';
   }
   override willUpdate(changes: Map<string, unknown>) {
     if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) {
@@ -143,7 +162,7 @@ export class SemanticMetrics extends LitElement {
     if (this.custom && !this.range && !(this.from && this.to)) { this.error = '请选择并应用自定义时间范围'; return; }
     const generation = ++this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
     const current = () => generation === this.generation && resourceId === this.resourceId && resourceType === this.resourceType;
-    this.busy = true; this.error = ''; this.baselineKey = '';
+    this.busy = true; this.error = ''; this.baselineKey = ''; this.statusError = '';
     try {
       const now = Date.now();
       let from: string, to: string;
@@ -158,6 +177,23 @@ export class SemanticMetrics extends LitElement {
       if (current()) this.result = result;
     } catch (e) { if (current()) this.error = e instanceof Error ? e.message : errors(503); }
     finally { if (current()) this.busy = false; }
+    if (current()) await this.loadCollection(generation, current);
+  }
+  /** The status strip is read separately: neither recommendations nor collector health may hide history. */
+  private async loadCollection(generation: number, current: () => boolean) {
+    try {
+      const [collection, attempts] = await Promise.all([
+        readCollectionSummary(this.resourceType, this.resourceId),
+        readCollectionAttempts(this.resourceType, this.resourceId),
+      ]);
+      if (!current()) return;
+      this.collection = collection; this.attempts = attempts; this.statusError = '';
+    } catch (e) {
+      if (!current()) return;
+      this.collection = null; this.attempts = [];
+      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.resetResult(); this.error = errors(e.status); }
+      else this.statusError = '采集状态读取失败；历史查询结果保留，不能据此判断当前采集状态。';
+    }
   }
   private applyCustom() {
     this.customError = '';
@@ -241,6 +277,73 @@ export class SemanticMetrics extends LitElement {
     const coarse = bucket > MIN_BUCKET_MS ? `。窗口超过 ${MAX_BUCKETS} 个时间桶，已按较粗粒度聚合，未静默截断` : '';
     return `时间桶：每桶 ${bucketLabel(bucket)}，共 ${count} 个（数值与曲线同窗口）· 本地时区 ${timezone()}${coarse}`;
   }
+  /** Newest-to-oldest first bucket that the curve could draw; nothing else may become this value. */
+  private windowLatest(metric: MetricResult) {
+    let best: { series: MetricResult['series'][number]; bucket: MetricBucket; index: number; at: number } | null = null;
+    for (const series of metric.series) {
+      for (let index = series.buckets.length - 1; index >= 0; index--) {
+        const bucket = series.buckets[index];
+        if (this.chartValue(metric, bucket) === null) continue;
+        const at = Date.parse(bucket.observed_at ?? bucket.window.to);
+        if (!best || (Number.isFinite(at) && at > best.at)) best = { series, bucket, index, at: Number.isFinite(at) ? at : -Infinity };
+        break;
+      }
+    }
+    return best;
+  }
+  private renderCollectionState(collection: CollectionStatus) {
+    const state = collection.collection;
+    return html`<div class="latest-cell"><h3>当前采集状态</h3>
+      <p><strong>${collectionStatusLabels[state.state] ?? state.state}</strong> · ${state.in_flight ? '有采集正在进行' : '当前无进行中的采集'}</p>
+      ${collection.blockers.length ? html`<p>阻塞：${collection.blockers.map(b => collectionStatusLabels[b] ?? b).join('、')}</p>` : html`<p class="hint">无阻塞项</p>`}
+      <p class="hint">这是资源采集状态，不是某个时间桶的质量。</p>
+    </div>`;
+  }
+  private renderLastAttempt() {
+    const attempt = this.attempts[0];
+    return html`<div class="latest-cell"><h3>最近一次采集尝试</h3>
+      ${attempt ? html`<p><strong>${attemptLabels[attempt.status] ?? attempt.status}</strong>${['partial', 'failed'].includes(attempt.status) ? ' · 不是成功' : ''}</p>
+        <p>开始：${localTime(attempt.started_at)}${attempt.ended_at ? ` · 结束：${localTime(attempt.ended_at)}` : ''}</p>
+        <p>错误：${attempt.error ?? (attempt.status === 'succeeded' ? '无' : '未提供')}${attempt.evidence_code ? ` · ${attempt.evidence_code}` : ''}</p>`
+        : html`<p>暂无采集尝试</p>`}
+    </div>`;
+  }
+  private renderSuccessTimes(collection: CollectionStatus) {
+    const last = collection.collection.last_success_at, observed = collection.formal_visibility.last_observed_at;
+    const differ = Boolean(last && observed && Date.parse(last) !== Date.parse(observed));
+    return html`<div class="latest-cell"><h3>正式采集成功时间</h3>
+      <div>最近成功采集：${last ? html`<time datetime=${last}>${localTime(last)}</time>` : '暂无'}</div>
+      <div>正式来源最近观测：${observed ? html`<time datetime=${observed}>${localTime(observed)}</time>` : '暂无'}</div>
+      ${differ ? html`<p class="hint">两者不同，分别列示，不合并为同一个时间。</p>` : nothing}
+    </div>`;
+  }
+  private renderWindowLatest(metrics: MetricResult[]) {
+    return html`<div class="latest-cell"><h3>窗口内最近可用值</h3>${metrics.length ? metrics.map(metric => {
+      const found = this.windowLatest(metric);
+      if (!found) return html`<p>${metricName(metric.definition.id)}：暂无可用值</p>`;
+      const { series, bucket, index } = found, dimensions = Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ');
+      // Never present a historical value as current health: it is old when the metric, its
+      // freshness or its position in the window says so.
+      const old = metric.state !== 'available' || bucket.freshness !== 'fresh' || index !== series.buckets.length - 1;
+      const { collectors, packages } = sourceSummary(bucket);
+      return html`<div class="latest-value">
+        <div>${metricName(metric.definition.id)}${dimensions ? ` · ${dimensions}` : ''}</div>
+        <div class=${old ? 'old-value' : ''}><strong>${bucketNumber(bucket)}</strong> ${bucket.unit} · 窗口内最近可用值</div>
+        <div class=${old ? 'old-value' : ''}>质量 ${qualityLabels[bucket.quality.status] ?? bucket.quality.status} · ${qualityLabels[bucket.accuracy] ?? bucket.accuracy} · ${qualityLabels[bucket.freshness] ?? bucket.freshness}</div>
+        ${observedTime(bucket)}
+        ${collectors.length ? html`<div>采集器 ${collectors.join('、')}</div>` : nothing}
+        ${packages.length ? html`<div>模板 ${packages.join('、')}</div>` : nothing}
+        ${old ? html`<p class="hint">旧值，不代表当前健康。</p>` : nothing}
+      </div>`;
+    }) : html`<p>暂无指标</p>`}</div>`;
+  }
+  private renderLatest(metrics: MetricResult[]) {
+    if (!this.collection) return this.statusError ? html`<p class="error" role="alert">${this.statusError}</p>` : nothing;
+    return html`<h2>最新数据</h2>
+      <div class="latest-grid" aria-label="最新数据">
+        ${this.renderCollectionState(this.collection)}${this.renderLastAttempt()}${this.renderSuccessTimes(this.collection)}${this.renderWindowLatest(metrics)}
+      </div>`;
+  }
   override render() {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
     const baselineSeries = metrics.flatMap(metric => metric.series.map(series => ({metric,series})));
@@ -258,6 +361,10 @@ export class SemanticMetrics extends LitElement {
       .quality-badges { display:flex; flex-wrap:wrap; gap:var(--space-xs); }
       app-data-table { display:block; max-width:100%; overflow-x:auto; }
       .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:var(--space-md); border-bottom:1px solid var(--border); padding-block:var(--space-md); }
+      .latest-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:var(--space-md); border-bottom:1px solid var(--border); padding-block:var(--space-md); }
+      .latest-cell { min-width:0; overflow-wrap:anywhere; } .latest-cell h3 { margin:0 0 var(--space-sm); font-size:13px; color:var(--muted); }
+      .latest-cell p { margin:0 0 var(--space-xs); } .latest-value { margin-block:var(--space-sm); }
+      .old-value { color:var(--muted); }
       .metric-name { margin:0 0 var(--space-sm); font-size:14px; color:var(--text-strong); }
       .metric-id { color:var(--muted); font-size:12px; user-select:text; }
       .current strong { font-size:24px; color:var(--text-strong); }
@@ -292,6 +399,7 @@ export class SemanticMetrics extends LitElement {
     </div>
     ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
     ${this.busy && !this.result ? html`<div class="skeleton" aria-label="正在读取指标"></div>` : nothing}
+    ${this.result ? this.renderLatest(metrics) : nothing}
     ${this.result && this.selectedMetric && !metrics.length ? html`<p role="status">当前窗口未返回所选指标；可刷新或选择全部指标。</p>` : nothing}
     ${metrics.length ? html`<div class="summary-grid" aria-label="当前指标比较">${metrics.map(m => html`<div class="current"><h3 class="metric-name">${metricName(m.definition.id)}</h3>
       <details class="metric-id"><summary>指标标识</summary><code>${m.definition.id}</code><button class="btn btn-sm btn-ghost" aria-label=${`复制 ${m.definition.id}`} @click=${() => void this.copyMetric(m.definition.id)}>复制标识</button></details>

@@ -112,6 +112,18 @@ test.beforeAll(async () => {
   }
   await seed(rows);
 
+  // MAX240-LATEST-DATA: the current collection is failed while an older formal success and
+  // its history stay readable. The status route derives state/blockers from these attempts.
+  const attempt = (id: string, status: string, startedMs: number, endedMs: number, error: string | null, evidence?: string) => ({
+    id, resource_id: String(RESOURCE_ID), binding_id: `instance:${RESOURCE_ID}`, collector_id: 'mysql.status',
+    config_revision: 1, started_at: iso(startedMs), ended_at: iso(endedMs), status, error,
+    ...(evidence ? { evidence_code: evidence } : {}), observation_ids: [] });
+  const succeededAttempt = attempt('max240-attempt-success', 'succeeded', to - 2 * HOUR, to - 2 * HOUR + MINUTE, null);
+  const failedAttempt = attempt('max240-attempt-failed', 'failed', to - 10 * MINUTE, to - 9 * MINUTE, 'connection_error', 'CONNECTION_REFUSED');
+  for (const row of [succeededAttempt, failedAttempt]) {
+    await pool.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?,?,?)', [row.id, JSON.stringify(row), sqlTime(row.ended_at)]);
+  }
+
   const apiPort = Number(process.env.MAX240_TEST_API_PORT);
   const wsPort = Number(process.env.MAX240_TEST_WS_PORT);
   backend = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
@@ -120,6 +132,9 @@ test.beforeAll(async () => {
       DB_PASSWORD: options.password, DB_NAME: schema, PORT: String(apiPort),
       AGENT_WS_HOST: '127.0.0.1', AGENT_WS_PORT: String(wsPort), AGENT_WORKSPACE: workspace,
       JWT_SECRET_KEY: randomBytes(32).toString('hex'), ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+      // Collection must be enabled for the status route to report the seeded failed attempt,
+      // not "disabled". The fixture never runs a collector process.
+      METRICS_COLLECTION_ENABLED: 'true',
       SLIDE_MEMORY_PIPELINE_ENABLED: 'false', PROMPT_HOT_RELOAD: 'false' },
   });
   backend.stdout!.on('data', data => { backendLog += data; }); backend.stderr!.on('data', data => { backendLog += data; });
@@ -272,6 +287,46 @@ test('the numeric and chart views stay on the same selected resource, metric, di
   await expect(metrics).toContainText('共 1440 个');
   await expect(metrics.locator('metric-chart').first()).toBeVisible();
   expect(await metrics.locator('.metric-name').count()).toBe(1);
+});
+
+test('failed collection keeps the old usable value beside the real status, last attempt and both success times', async ({ page }) => {
+  await login(page);
+  const metrics = page.locator('semantic-metrics');
+  const day = queryResponse(page, windowSpan(DAY)); await chooseWindow(page, '24'); await day;
+  const statusResponse = page.waitForResponse(r => r.url().endsWith(`/config/resources/instance/${RESOURCE_ID}/status`) && r.status() === 200);
+  const attemptsResponse = page.waitForResponse(r => r.url().endsWith(`/config/resources/instance/${RESOURCE_ID}/attempts`) && r.status() === 200);
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  const status = await (await statusResponse).json() as any;
+  const attempts = await (await attemptsResponse).json() as any[];
+  // Real HTTP data: the latest attempt is a failure, the older success still supplies last_success_at.
+  expect(status.collection.state).toBe('failed');
+  expect(status.blockers).toContain('COLLECTION_FAILED');
+  expect(status.collection.last_success_at).toBe(new Date(to - 2 * HOUR + MINUTE).toISOString());
+  expect(status.collection.last_attempt_at).toBe(new Date(to - 10 * MINUTE).toISOString());
+  expect(typeof status.formal_visibility.last_observed_at).toBe('string');
+  expect(attempts[0]).toMatchObject({ status: 'failed', error: 'connection_error', evidence_code: 'CONNECTION_REFUSED' });
+
+  await expect(metrics).toContainText('当前采集状态');
+  await expect(metrics).toContainText('最近一次采集尝试');
+  await expect(metrics).toContainText('正式采集成功时间');
+  await expect(metrics).toContainText('窗口内最近可用值');
+  await expect(metrics).toContainText('失败 · 不是成功');
+  await expect(metrics).toContainText('最近采集失败');
+  await expect(metrics).toContainText('connection_error · CONNECTION_REFUSED');
+  await expect(metrics).toContainText('最近成功采集');
+  await expect(metrics).toContainText('正式来源最近观测');
+  await expect(metrics).toContainText('两者不同，分别列示，不合并为同一个时间');
+  // Current collection is failed, so the retained value is greyed and never called current health.
+  const value = metrics.locator('.latest-value').first();
+  await expect(value.locator('.old-value')).not.toHaveCount(0);
+  await expect(value).toContainText('旧值，不代表当前健康');
+  await expect(value).toContainText('窗口内最近可用值');
+  await expect(metrics).not.toContainText('全局最近成功值');
+  // The historical curve and its exact bucket count survive the current failure.
+  const chartData = await metrics.locator('metric-chart').first().evaluate((element: any) => ({ time: element.timeData, series: element.series }));
+  expect(chartData.time).toHaveLength(1440);
+  expect(chartData.series[0].data.filter((v: number | null) => v !== null).length).toBeGreaterThan(1_000);
+  await page.screenshot({ path: `${output}/latest-data-failed.png`, fullPage: true, animations: 'disabled' });
 });
 
 test('revoking resource permission clears protected history immediately and rejects stale responses', async ({ page }) => {

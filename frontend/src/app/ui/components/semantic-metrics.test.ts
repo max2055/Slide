@@ -8,6 +8,9 @@ vi.mock('./metric-chart.js', () => {
 });
 import { SemanticMetrics, bucketMsFor } from './semantic-metrics.js';
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+// The status strip adds its own read-only requests; window assertions always target the query call.
+const queryCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/query');
+const lastQuery = () => JSON.parse(queryCalls().at(-1)![1].body);
 const result = { profile: { columns: [{ key: 'uptime', metric: { id: 'db.uptime_seconds' }, label: '运行时长' }] }, window: { from: 'start', to: 'end' }, metrics: [
   { definition: { id: 'db.uptime_seconds', category: 'canonical', meaning: 'Database uptime', unit: 's' }, state: 'available', series: [{ dimensions: {}, buckets: [{ value: { encoding: 'uint64', value: '9007199254740993' }, unit: 's', coverage: 1, quality: { status: 'good', reason: 'none' }, freshness: 'fresh', accuracy: 'exact', sources: [{ id: 'source' }], window: { from: 'start', to: 'end' } }] }] },
 ] };
@@ -29,7 +32,7 @@ it('keeps a relative query window exactly divisible by its bucket when the clock
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
   vi.spyOn(Date, 'now').mockImplementation(() => { const captured = now; vi.setSystemTime(++now); return captured; });
   await el.load();
-  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  const query = lastQuery();
   expect(Date.parse(query.to) - Date.parse(query.from)).toBe(3_600_000);
   expect((Date.parse(query.to) - Date.parse(query.from)) % query.bucket_ms).toBe(0);
 });
@@ -86,7 +89,7 @@ it('keeps the selected metric through window loading, refresh, empty series and 
   finish({ ok: true, json: async () => data }); await settle();
   expect(select.value).toBe('mysql.key_cache.used_percent');
   expect(el.shadowRoot!.querySelectorAll('.metric-name')).toHaveLength(1);
-  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  const query = lastQuery();
   expect(query.view).toBe('all'); // Selection filters the all-metric response locally.
   expect(Date.parse(query.to) - Date.parse(query.from)).toBe(6 * 3600000);
   await el.load(); await el.updateComplete; expect(select.value).toBe('mysql.key_cache.used_percent');
@@ -131,7 +134,7 @@ it('requests complete minute buckets for the 6h, 24h and 7d presets', async () =
   authFetch.mockResolvedValue(ok(result)); const el = await mount();
   for (const [value, hours] of [['6', 6], ['24', 24], ['168', 168]] as const) {
     preset(el, value); await settle();
-    const query = JSON.parse(authFetch.mock.lastCall![1].body);
+    const query = lastQuery();
     expect(query.bucket_ms).toBe(60_000);
     expect(Date.parse(query.to) - Date.parse(query.from)).toBe(hours * 3_600_000);
     expect((Date.parse(query.to) - Date.parse(query.from)) % query.bucket_ms).toBe(0);
@@ -162,13 +165,13 @@ it('validates the custom window with Chinese feedback before querying, then keep
   const from = localInput(Date.now() - 8 * 86_400_000 + 60_000), to = localInput(Date.now() - 60_000);
   customInput(el, '自定义开始时间', from); customInput(el, '自定义结束时间', to);
   el.shadowRoot!.querySelector<HTMLButtonElement>('button.btn')!.click(); await settle();
-  const query = JSON.parse(authFetch.mock.lastCall![1].body);
+  const query = lastQuery();
   expect(Date.parse(query.from)).toBe(Date.parse(from));
   expect(Date.parse(query.to)).toBe(Date.parse(to));
   expect(query.bucket_ms).toBe(120_000);
   // Leaving the applied custom range returns to the preset window and refetches.
   preset(el, '24'); await settle();
-  const next = JSON.parse(authFetch.mock.lastCall![1].body);
+  const next = lastQuery();
   expect(next.bucket_ms).toBe(60_000);
   expect(Date.parse(next.to) - Date.parse(next.from)).toBe(24 * 3_600_000);
 });
@@ -273,4 +276,99 @@ it('keeps stale good history drawn and describes only non-drawable buckets as br
   expect(text).toContain('过期但当时 good/partial 的值照常显示');
   expect(text).not.toContain('缺失、过期');
   expect(text).toContain('断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶');
+});
+
+// ---- MAX240-LATEST-DATA ----
+const statusPayload = (overrides: { collection?: Record<string, unknown>; formal_visibility?: Record<string, unknown>; blockers?: string[] } = {}) => ({
+  contract_version: '1.0.0', resource: { type: 'instance', id: 1 }, evaluated_at: instant, can_manage: false,
+  binding: { state: 'bound', package: { id: 'mysql', version: '2.0.0', digest: 'sha256:abc' }, published_revision: 2, applied_revision: 2, application: 'applied' },
+  effective_enabled: { enabled: true, global_enabled: true, asset_enabled: true, policy_enabled: true, source: 'package' },
+  collection: { state: 'succeeded', last_attempt_at: instant, last_success_at: instant, in_flight: false, ...overrides.collection },
+  formal_visibility: { state: 'available', source: 'formal', last_observed_at: instant, generation: 1, ...overrides.formal_visibility },
+  blockers: overrides.blockers ?? [], coverage: [],
+});
+const attemptAt = (overrides: Record<string, unknown> = {}) => ({ status: 'succeeded', started_at: instant, ended_at: instant, error: null, ...overrides });
+const serve = (query: unknown, status: unknown, attempts: unknown) => authFetch.mockImplementation(async (url: string) => {
+  if (url === '/api/metrics/query') return ok(query);
+  if (url.endsWith('/status')) return ok(status);
+  if (url.endsWith('/attempts')) return ok(attempts);
+  return { ok: false, status: 404 };
+});
+const cell = (el: SemanticMetrics, index: number) => el.shadowRoot!.querySelectorAll('.latest-cell')[index];
+it('shows collection state, the last attempt, both formal success times and the window value together', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  Object.assign(data.metrics[0].series[0].buckets[1], { freshness: 'fresh', observed_at: '2026-10-14T01:03:03.000Z',
+    sources: [{ source: { collector_id: 'mysql.status' }, versions: { package_id: 'mysql', package_version: '2.0.0' } }] });
+  serve(data, statusPayload({ blockers: ['COLLECTION_FAILED'], collection: { last_success_at: '2026-10-14T01:02:04.000Z' },
+    formal_visibility: { last_observed_at: '2026-10-14T01:02:05.000Z' } }), [attemptAt({ status: 'partial', evidence_code: 'PARTIAL_INPUT' })]);
+  const el = await mount(); await el.updateComplete;
+  const text = el.shadowRoot!.textContent!;
+  for (const heading of ['当前采集状态', '最近一次采集尝试', '正式采集成功时间', '窗口内最近可用值']) expect(text).toContain(heading);
+  expect(cell(el, 0).textContent).toContain('当前无进行中的采集');
+  expect(cell(el, 0).textContent).toContain('最近采集失败');
+  expect(cell(el, 1).textContent).toContain('部分完成 · 不是成功');
+  expect(cell(el, 1).textContent).toContain('PARTIAL_INPUT');
+  const times = [...cell(el, 2).querySelectorAll('time')].map(t => t.getAttribute('datetime'));
+  expect(times).toEqual(['2026-10-14T01:02:04.000Z', '2026-10-14T01:02:05.000Z']);
+  expect(cell(el, 2).textContent).toContain('两者不同，分别列示，不合并为同一个时间');
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('11 s · 窗口内最近可用值');
+  expect(value.textContent).toContain('质量 良好 · 精确 · 新鲜');
+  expect(value.querySelector('time')!.getAttribute('datetime')).toBe('2026-10-14T01:03:03.000Z');
+  expect(value.textContent).toContain('采集器 mysql.status');
+  expect(value.textContent).toContain('模板 mysql 2.0.0');
+  expect(value.querySelector('.old-value')).toBeNull();
+  expect(value.textContent).not.toContain('全局最近成功');
+});
+it('takes the window value from the newest drawable bucket and grays it when it is not the newest bucket', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1, 60_000, { value: null, quality: { status: 'unknown', reason: 'missing_input' } }),
+    bucketAt(2, 60_000, { unit: 'ms' }), bucketAt(3, 60_000, { value: { encoding: 'uint64', value: '9007199254740993' } })]);
+  (data.metrics[0].definition as any).kind = 'gauge';
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('10 s · 窗口内最近可用值');
+  expect(value.textContent).not.toContain('9007199254740993');
+  expect(value.querySelector('.old-value')).not.toBeNull();
+  expect(value.textContent).toContain('旧值，不代表当前健康');
+});
+it('grays the window value when the metric state or its own freshness is not current health', async () => {
+  serve(withBuckets([bucketAt(0), bucketAt(1, 60_000, { freshness: 'fresh' })], 'temporary_failure'), statusPayload(), []);
+  let el = await mount(); await el.updateComplete;
+  expect(el.shadowRoot!.querySelector('.latest-value .old-value')).not.toBeNull();
+  expect(chartOf(el).series[0].data).toEqual([10, 11]);
+  serve(withBuckets([bucketAt(0), bucketAt(1, 60_000, { freshness: 'stale' })], 'available'), statusPayload(), []);
+  el = await mount(); await el.updateComplete;
+  expect(el.shadowRoot!.querySelector('.latest-value .old-value')).not.toBeNull();
+  expect(el.shadowRoot!.textContent).toContain('旧值，不代表当前健康');
+});
+it('does not invent an attempt or a success time when the status reports none', async () => {
+  serve(withBuckets([bucketAt(0)]), statusPayload({ collection: { last_attempt_at: null, last_success_at: null },
+    formal_visibility: { last_observed_at: null } }), []);
+  const el = await mount(); await el.updateComplete;
+  expect(cell(el, 1).textContent).toContain('暂无采集尝试');
+  expect(cell(el, 2).textContent).toContain('最近成功采集：暂无');
+  expect(cell(el, 2).textContent).toContain('正式来源最近观测：暂无');
+});
+it('keeps history when the status strip fails temporarily and clears it only on a protected failure', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(503));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toEqual(data);
+  expect(el.shadowRoot!.textContent).toContain('采集状态读取失败；历史查询结果保留');
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(403));
+  await el.load(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('权限');
+});
+it('reads status and attempts read-only without recommendations', async () => {
+  serve(withBuckets([bucketAt(0)]), statusPayload(), [attemptAt()]);
+  const el = await mount(); await el.updateComplete;
+  const urls = authFetch.mock.calls.map(call => String(call[0]));
+  expect(urls).toContain('/api/metrics/config/resources/instance/1/status');
+  expect(urls).toContain('/api/metrics/config/resources/instance/1/attempts');
+  expect(urls.some(url => url.endsWith('/recommendations'))).toBe(false);
+  expect(authFetch.mock.calls.every(call => call[1]?.method ? call[0] === '/api/metrics/query'
+    : String(call[0]).endsWith('/status') || String(call[0]).endsWith('/attempts'))).toBe(true);
 });
