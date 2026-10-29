@@ -1,0 +1,134 @@
+{
+  "started_at": "2026-10-29T22:56:11.806Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "resources": {
+    "A": 1,
+    "B": 2
+  },
+  "signed_user": {
+    "id": 3,
+    "username": "life-admin"
+  },
+  "counts": {
+    "before": {
+      "bindings": 2,
+      "operations": 0,
+      "audits": 0
+    }
+  },
+  "caseA": {
+    "opened": true,
+    "checked": true,
+    "previewShown": true,
+    "trialClicked": true,
+    "trialPassed": true,
+    "clicked": true,
+    "applies": 1,
+    "corrupt_profile": "{corrupt-profile",
+    "stored_intent": {
+      "key": "apply-mvu571ob-zxd7u9eh",
+      "pending": true
+    },
+    "state_before_reload": {
+      "dirty": true,
+      "unresolved": 1
+    },
+    "after_refresh": {
+      "opened_again": true,
+      "operation_timeline": [
+        {
+          "at_ms": 620,
+          "url": "http://127.0.0.1:15173/api/metrics/template-bindings/instance/1/operations/apply-mvu571ob-zxd7u9eh"
+        },
+        {
+          "at_ms": 15622,
+          "continued": "http://127.0.0.1:15173/api/metrics/template-bindings/instance/1/operations/apply-mvu571ob-zxd7u9eh"
+        }
+      ],
+      "edit_applied": true,
+      "state_before_edit": {
+        "dirty": false,
+        "unresolved": 1,
+        "interval": null
+      },
+      "state_during_lookup": {
+        "dirty": true,
+        "interval": {
+          "mode": "set",
+          "value": 70000
+        },
+        "unresolved": 1
+      },
+      "committed_toast": true,
+      "settings_after": {
+        "interval_ms": {
+          "mode": "set",
+          "value": 70000
+        }
+      },
+      "dirty_after": true,
+      "apply_result_after": null,
+      "unresolved_after": 0,
+      "intent_keys": [
+        "slide.metric.native.apply.user-3.instance:1"
+      ],
+      "intents": [
+        {
+          "key": "apply-mvu571ob-zxd7u9eh",
+          "pending": false
+        }
+      ],
+      "binding": {
+        "source": "template",
+        "revision": 1
+      },
+      "counts": {
+        "bindings": 3,
+        "operations": 1,
+        "audits": 1
+      }
+    }
+  },
+  "caseB": {
+    "opened": true,
+    "checked": true,
+    "previewShown": true,
+    "trialClicked": true,
+    "trialPassed": true,
+    "clicked": true,
+    "applies": 0,
+    "refused_text": true,
+    "storage_limited": true,
+    "dirty": true,
+    "interval": null,
+    "counts": {
+      "bindings": 3,
+      "operations": 1,
+      "audits": 1
+    }
+  },
+  "caseC": {
+    "opened": true,
+    "checked": true,
+    "previewShown": true,
+    "trialClicked": true,
+    "trialPassed": true,
+    "clicked": true,
+    "applies": 0,
+    "identity_refused": true,
+    "dirty_before": true,
+    "interval": {
+      "mode": "set",
+      "value": 65000
+    },
+    "dirty_after": true,
+    "counts": {
+      "bindings": 3,
+      "operations": 1,
+      "audits": 1
+    }
+  }
+}

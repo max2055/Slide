@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './native-template-configuration.js';
@@ -6,6 +6,13 @@ import { nativeTrialPassed, resetIntentMemory } from './native-template-configur
 import { collectionStatus } from './metric-test-fixtures.js';
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 15));
+/** A signed session token: only its `userId` claim scopes the recovery key. */
+const signedIn = (userId = 7) => {
+  const payload = btoa(JSON.stringify({ userId, sessionVersion: 1 })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  localStorage.setItem('token', `header.${payload}.signature`);
+  return `user-${userId}`;
+};
+beforeEach(() => { signedIn(); });
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); sessionStorage.clear(); localStorage.clear(); resetIntentMemory(); vi.useRealTimers(); });
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
@@ -227,7 +234,7 @@ it('a commit-unknown intent survives an edit, a reload and a switch, and is only
   await element.applyFlow();
   expect(applyCall).toBe(1);
   expect(element.unresolved).toHaveLength(1);
-  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.anon.instance:1')!);
+  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.user-7.instance:1')!);
   expect(stored).toHaveLength(1);
   const key = stored[0].key;
   // An edit invalidates the trial but is not a draft: the unknown stays.
@@ -438,7 +445,7 @@ it('R3: a same-tab reload keeps the queryable intent when it was durably recorde
   await element.applyFlow();
   expect(applies).toBe(1);
   expect(element.unresolved).toHaveLength(1);
-  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.anon.instance:1')!);
+  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.user-7.instance:1')!);
   expect(stored).toHaveLength(1);
   await element.reloadAll();
   // Same tab: the exact key is still known and is looked up, never resent.
@@ -456,7 +463,7 @@ it('R3: a corrupt stored intent array blocks writes instead of silently dropping
   }));
   const element = await mount();
   await element.previewFlow(); await element.runTrial();
-  sessionStorage.setItem('slide.metric.native.apply.anon.instance:1', JSON.stringify([
+  sessionStorage.setItem('slide.metric.native.apply.user-7.instance:1', JSON.stringify([
     { key: 'k1', intent: '{"resource":"instance:1"}', pending: true },
     { key: 'k2', pending: 'not-a-boolean' },
   ]));
@@ -490,7 +497,7 @@ it('R3: a committed answer for an old intent never clears edits made before the 
   expect(element.dirty).toBe(true);
   // "Query the publication result" for the old key.
   const record = JSON.parse(JSON.stringify(element.unresolved[0]));
-  await element.lookup(record.key, element.generation, null, true, record.draft);
+  await element.lookup(record.key, element.generation, null, true);
   // The old committed row only settles the old intent: the newer draft survives.
   expect(element.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
   expect(element.parameters).toEqual({ 'tpl-mysql': { timeout: 9 } });
@@ -516,7 +523,7 @@ it('R3: an edit made while the recovery query is in flight is preserved too', as
   await element.previewFlow(); await element.runTrial();
   await element.applyFlow();
   const record = JSON.parse(JSON.stringify(element.unresolved[0]));
-  const pending = element.lookup(record.key, element.generation, null, true, record.draft);
+  const pending = element.lookup(record.key, element.generation, null, true);
   element.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
   releaseLookup();
   await pending;
@@ -538,3 +545,82 @@ it('R2: a late preview for an edited draft can never enable the trial', async ()
   expect(element.preview).toBeNull();
   expect(element.previewStale).toBe(false);
 });
+
+/* --- R4 counterexamples: unreadable principal, remount draft collision ----- */
+
+it('R4: a corrupt cached profile does not change the signed principal, so a remount recovers the same key', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies += 1; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
+    '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
+  }));
+  // `localStorage.user` is a cache, not the session: unreadable is not "no principal".
+  localStorage.setItem('user', '{not json');
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  expect(applies).toBe(1);
+  expect(element.unresolved).toHaveLength(1);
+  const key = element.unresolved[0].key;
+  // A full remount of the component (same tab, same signed session) must find it.
+  document.body.replaceChildren();
+  const rebuilt = await mount();
+  for (let i = 0; i < 40 && !rebuilt.loaded; i++) await settle();
+  const lookups = authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).includes('/operations/'));
+  expect(lookups.some((entry: unknown[]) => String(entry[0]).includes(`/operations/${key}`))).toBe(true);
+  expect(rebuilt.unresolved).toHaveLength(1);
+  expect(applies).toBe(1);
+});
+
+it('R4: without a signed session no apply is sent, and the draft is kept with a readable reason', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies += 1; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
+  }));
+  localStorage.clear();
+  localStorage.setItem('user', '{not json');
+  const element = await mount();
+  element.settings = { interval_ms: { mode: 'set', value: 70000 } };
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  expect(applies).toBe(0);
+  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
+  expect(element.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
+  expect(element.shadowRoot.textContent).toContain('无法确认当前登录主体');
+});
+
+it('R4: a remount collision in the local edit counter cannot let an old committed row clear a new draft', async () => {
+  let lookups = 0;
+  let releaseLookup!: () => void;
+  const gate = new Promise<void>(resolve => { releaseLookup = resolve; });
+  authFetch.mockImplementation(routes({
+    '/apply': () => ({ ok: true, json: async () => ({ kind: 'commit_unknown' }) }),
+    '/operations/': async () => {
+      lookups += 1;
+      if (lookups === 1) return { ok: true, json: async () => ({ state: 'pending', operation: null }) };
+      await gate;
+      return { ok: true, json: async () => ({ state: 'committed', operation: { target_revision: 6 } }) };
+    },
+  }));
+  const first = await mount();
+  first.changeSettings({ interval_ms: { mode: 'set', value: 60000 } });
+  await first.previewFlow(); await first.runTrial();
+  await first.applyFlow();
+  expect(first.unresolved).toHaveLength(1);
+  const key = first.unresolved[0].key;
+  // Rebuild: the new instance's edit counter starts from zero again.
+  document.body.replaceChildren();
+  const rebuilt = document.createElement('native-template-configuration') as any;
+  rebuilt.resourceId = 1; document.body.append(rebuilt);
+  for (let i = 0; i < 40 && lookups < 2; i++) await settle();
+  expect(lookups).toBeGreaterThanOrEqual(2);
+  // Edit to a different configuration while the recovery query is in flight.
+  rebuilt.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
+  releaseLookup();
+  for (let i = 0; i < 20; i++) await settle();
+  expect(rebuilt.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
+  expect(rebuilt.dirty).toBe(true);
+  expect(rebuilt.applyResult).toBeNull();
+  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).includes(`/operations/${key}`))).toBe(true);
+});
+
