@@ -105,3 +105,5 @@ producer-inputs.json 的 10 个文件在集成后逐 blob 与 clean release 一�
 5. **UI 与权限/脱敏**：模板触发器编辑、历史快照跳转、事件中心四标签。
 
 以上需要真实输入与证据，owner 为 MAX-239 + MAX-238 + 既有 alerts/通知 owner；本包不把这些写成需成员补字段的外部阻塞。
+
+纯 episode 迁移已作为 `MAX239-EPISODE-TRANSITION` 在同一分支追加（见 `episode-transition.md`）；它不持久化、不写事件/outbox，本节第 3–5 项挂载缺口不因此关闭。
