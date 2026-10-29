@@ -10,6 +10,7 @@ import { type Ref, RefSchema, refKey, rule } from '../policy/model.js';
 import { bindingReadCode, isTemplateBindingUnsupported } from '../bindings/package-reader.js';
 import { compilePlan } from './compiler.js';
 import { JOB_TYPE, MysqlScheduleStore } from './store.js';
+import type { ClaimedJob, JobExecutionContext } from '../../workflows/worker-runtime.js';
 
 const Payload = z.strictObject({ resource: RefSchema, revision: z.number().int().positive() });
 export interface CollectorAccess {
@@ -33,6 +34,17 @@ export class MetricScheduler {
       platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
         errorCode: rejected.code, correlationId: rejected.resource_key });
     }
+    for (const template of scan.templates) {
+      try {
+        await this.formalization?.reconcile(template.decoded.binding.resource, template.decoded.binding.revision);
+        if (await this.store.enqueueTemplate(template, this.clock())) count++;
+      } catch (error) {
+        const code = bindingReadCode(error);
+        if (code === null) throw error;
+        platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
+          errorCode: code, correlationId: template.resource_key });
+      }
+    }
     for (const published of scan.published) {
       try {
         await this.formalization?.reconcile(published.binding.resource, published.binding.revision);
@@ -47,10 +59,112 @@ export class MetricScheduler {
     }
     return count;
   }
+  /**
+   * Execute one template revision: the plan's own releases, collectors and
+   * metrics, read-only through the same access object, committed as formal
+   * normalized observations once the job's fences still hold.
+   */
+  private async runTemplate(ref: Ref, revision: number, job: ClaimedJob, context: JobExecutionContext): Promise<void> {
+    const reservation = await this.store.reserve(ref);
+    if (!reservation) throw new Error('SCHEDULE_CAPACITY');
+    const started = this.clock();
+    let reads = 0, inFlight = false, cancelled = false, uncertain = false;
+    const controller = new AbortController();
+    const signal = ref.type === 'instance'
+      ? AbortSignal.any([controller.signal, instanceAccessLifecycle.signal(ref.id)]) : controller.signal;
+    const executionContext = { ...context, signal };
+    let cancellationRecord: Promise<void> | undefined;
+    const cancel = (reason: unknown) => {
+      if (cancelled) return;
+      cancelled = true; uncertain = inFlight; controller.abort(reason);
+      cancellationRecord = this.store.event(ref, revision, job.id, 'cancellation_requested', inFlight, this.clock() - started, reads);
+      void cancellationRecord.catch(() => undefined);
+    };
+    const abort = () => cancel(context.signal.reason);
+    context.signal.addEventListener('abort', abort, { once: true });
+    if (context.signal.aborted) abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const current = await this.store.currentTemplate(this.store.pool, ref);
+      if (!current || current.binding.revision !== revision) return;
+      const plan = current.pending.plan;
+      timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), plan.settings.timeout_ms);
+      const settings = plan.settings;
+      const access: Awaited<ReturnType<CollectorAccess['resolve']>> = settings.enabled ? await this.access.resolve(ref) : {
+        resource: { type: ref.type, id: String(ref.id), attributes: {} }, credential_ref: 'credential:disabled', evidence: {},
+        resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
+      };
+      rule(access.resource.type === ref.type && access.resource.id === String(ref.id), 'SCHEDULE_ACCESS_IDENTITY');
+      signal.throwIfAborted();
+      const snapshot = await this.store.beginTemplate(ref, revision, job, executionContext, this.clock());
+      if (!snapshot) return;
+      const check = async () => {
+        signal.throwIfAborted();
+        await reservation.connection.ping();
+        await access.assertCurrent?.();
+        signal.throwIfAborted();
+      };
+      await check();
+      const results: Array<{ release: { id: string; version: string; digest: string }; result: import('../packages/runner.js').PackageResult }> = [];
+      for (const release of plan.releases) {
+        if (release.steps.length === 0) continue;
+        const result = await runPackage(this.packages, {
+          package: { ...release.release }, credential_ref: access.credential_ref,
+          overrides: { enabled: settings.enabled, interval_ms: settings.interval_ms, timeout_ms: settings.timeout_ms,
+            stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms, max_rows: settings.max_rows },
+        }, {
+          ...access, binding_id: refKey(ref), attempt_id: `${job.id}:${job.fencingToken}:${release.release_ref}`,
+          config_revision: revision, observed_at: new Date(this.clock()).toISOString(),
+          clock: () => new Date(this.clock()).toISOString(), signal,
+          collector_ids: release.collector_ids, metric_keys: release.metric_keys, states: snapshot.states,
+          previous_capabilities: release.steps.flatMap(step => step.items.map(item => item.capability)),
+          before_request: check,
+          collect: async (...args) => {
+            await check(); inFlight = true;
+            reads += args[1].method === 'ssh' ? 2 : 1;
+            try {
+              const collector = this.collect ?? (await import('../packages/adapters.js')).collectFixed;
+              return await collector(args[0], args[1], ...args.slice(2) as [typeof args[2], typeof args[3], typeof args[4]]);
+            } finally { inFlight = false; }
+          },
+        });
+        results.push({ release: { ...release.release }, result });
+      }
+      signal.throwIfAborted();
+      await check();
+      if (results.some(entry => entry.result.attempts.length)
+        && results.every(entry => entry.result.attempts.every(attempt => attempt.status === 'failed'))) {
+        await this.store.recordTemplateFailure(snapshot, results, job, executionContext, this.clock());
+        throw new Error('SCHEDULE_COLLECTION_FAILED');
+      }
+      const committed = await this.store.commitTemplate(snapshot, results, job, executionContext, this.clock());
+      platformLogs.record({ component: 'metrics', eventType: 'collection.committed', status: committed ? 'ok' : 'unknown',
+        correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
+      await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false,
+        this.clock() - started, reads);
+    } catch (error) {
+      const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
+      const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';
+      const code = cancelled ? 'cancelled_result_uncertain' : superseded || stale ? 'late_result_discarded' : 'collection_failed';
+      await this.store.event(ref, revision, job.id, code, uncertain || inFlight, this.clock() - started, reads);
+      if (superseded) return;
+      throw new Error(code);
+    } finally {
+      if (timer) clearTimeout(timer);
+      context.signal.removeEventListener('abort', abort);
+      try { await cancellationRecord; } finally { await reservation.release(); }
+    }
+  }
+
   register(registry: JobRegistry): void {
     registry.register(JOB_TYPE, async (payload, job, context) => {
       const { resource: ref, revision } = Payload.parse(payload);
       context.signal.throwIfAborted();
+      // A template row runs the exact pending plan; the legacy single-package
+      // path below never sees a `templates-v1` payload.
+      if (await this.store.currentTemplate(this.store.pool, ref) !== null) {
+        return this.runTemplate(ref, revision, job, context);
+      }
       const reservation = await this.store.reserve(ref);
       if (!reservation) throw new Error('SCHEDULE_CAPACITY');
       const started = this.clock();

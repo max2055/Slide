@@ -194,6 +194,7 @@ import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.j
 import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
+import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -482,6 +483,7 @@ async function start() {
     await registerMetricConfigurationRoutes(app, verifyToken);
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
+    await registerMetricTemplateRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());

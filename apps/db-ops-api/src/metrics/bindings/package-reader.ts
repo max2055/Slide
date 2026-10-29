@@ -9,7 +9,7 @@
  * error: a template row, an unknown envelope, an ambiguous source and a corrupt
  * snapshot all fail closed, never as "unbound", "not found" or healthy.
  */
-import { BindingPersistenceError, decodeBindingPayload, type DecodedLegacyBindingPayload } from './persistence-codec.js';
+import { BindingPersistenceError, decodeBindingPayload, type DecodedLegacyBindingPayload, type DecodedTemplateBindingPayload } from './persistence-codec.js';
 import type { Published } from '../policy/model.js';
 
 /** Stable code the single-package path uses when a template row is encountered. */
@@ -25,7 +25,7 @@ export class TemplateBindingUnsupportedError extends Error {
 
 export type StoredBindingRead =
   | { source: 'package'; published: Published }
-  | { source: 'template' };
+  | { source: 'template'; template: DecodedTemplateBindingPayload };
 
 /**
  * The exact stored value of a validated legacy row. The codec has already proved
@@ -39,7 +39,10 @@ const publishedOf = (decoded: DecodedLegacyBindingPayload): Published =>
 /** Which form a row is; a template row is reported, never decoded as Published. */
 export function readStoredBinding(raw: string | unknown): StoredBindingRead {
   const decoded = decodeBindingPayload(raw);
-  if (decoded.source === 'template') return { source: 'template' };
+  // A template row is handed back as its decoded envelope so the template
+  // runtime can execute the exact pending plan; the legacy single-package
+  // readers still see only the `source` discriminant and keep refusing it.
+  if (decoded.kind === 'template_pending') return { source: 'template', template: decoded };
   return { source: 'package', published: publishedOf(decoded) };
 }
 
