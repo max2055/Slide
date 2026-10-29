@@ -333,7 +333,11 @@ export function evaluateTriggerRule(
     return describe(rule, at, unresolved('series_budget_exceeded', carryProblem));
   }
 
-  const series = [...groups.values()];
+  // Deterministic dimension-key order: the reported series must not depend on
+  // the arrival order of the samples.
+  const series = [...groups.entries()]
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([, samples]) => samples);
   const problems: Verdict[] = [];
   const recoveries: Verdict[] = [];
   const qualities: TriggerEvidenceQuality[] = [];
@@ -360,13 +364,20 @@ export function evaluateTriggerRule(
   // problem.
   const recoveryEvidence = recoveries.every(verdict => verdict.kind === 'value' && verdict.value) && !problem;
   const evidenceQuality: TriggerEvidenceQuality = qualities.every(entry => entry === 'good') ? 'good' : 'partial';
+  // Report the first series in sorted dimension-key order that actually makes the
+  // problem condition true; an earlier healthy sibling must not supply the value.
+  // When no series fires, the first series is the deterministic fallback.
+  const reportedIndex = problem
+    ? problems.findIndex(verdict => verdict.kind === 'value' && verdict.value)
+    : 0;
+  const reportedSeries = series[Math.max(reportedIndex, 0)];
   const reported = selectValue({ aggregation: 'last' }, {
-    now, quality: rule.quality, clock: rule.clock, series: series[0], cache: new Map(),
+    now, quality: rule.quality, clock: rule.clock, series: reportedSeries, cache: new Map(),
   });
   const shared = {
     quality: evidenceQuality,
     value: reported.kind === 'value' ? toNumber(reported.value) : null,
-    dimensions: series[0][0].dimensions,
+    dimensions: reportedSeries[0].dimensions,
     series_count: groups.size,
   };
 

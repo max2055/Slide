@@ -39,20 +39,22 @@ producer-inputs.json 的 10 个文件在集成后逐 blob 与 clean release 一�
 | `apps/db-ops-api/src/metrics/triggers/compile.ts` | 候选 → 不可变快照、`verifyTriggerSnapshot`、`checkTriggerSnapshotFence` |
 | `apps/db-ops-api/src/metrics/triggers/evaluate.ts` | 纯判定：业务状态与证据质量分离、nodata、unknown 不恢复 |
 | `apps/db-ops-api/src/metrics/triggers/test-support.ts` | 真实 B2A/B2B/B2C fixture（sealed release + registry + 固定模板版本），非手写 plan |
-| `src/metrics/triggers/{resolve,compile,evaluate}.test.ts`、`src/contracts/metrics/triggers.test.ts` | 39 个用例 |
+| `src/metrics/triggers/{resolve,compile,evaluate}.test.ts`、`src/contracts/metrics/triggers.test.ts` | 41 个用例 |
 
 ## 3. 契约要点
 
 - **受限 AST**：`compare`（`last` / `avg` / `min` / `max` + `window_ms`）、`all`(AND) / `any`(OR)、`> >= < <= = !=`、常量或参数阈值。没有函数调用、`eval`、`new Function`、SQL/脚本文本、宏、Zabbix 语法。组节点至少 2 个子节点，没有隐式取反——recovery 必须独立书写。
 - **硬上限**（`TRIGGER_LIMITS`，规则不可上调）：深度 5、节点 32、窗口 ≤ 1 天、序列 32、参数 16、单快照规则 64。超预算稳定码拒绝，不截断。
-- **规则版本**：`{rule_id, version, scope:'item:<id>', metric, unit, parameters, problem, recovery, quality, clock, content_hash}`；`content_hash` 覆盖除自身外全部字段。
+- **规则版本**：`{rule_id, version, scope:'item:<id>', metric, unit, parameters, problem, recovery, quality, clock, content_hash}`；`content_hash` 覆盖除自身外全部字段。目录返回的 body 的 `scope` 必须与模板引用 `(rule_id, version, scope)` 完全一致，否则 `TRIGGER_RULE_SCOPE`；候选的 `scope` 与 `item.item_id` 因此始终指向同一 item。
 - **快照**：资源 type/id、config revision、B2C plan identity、模板 pin + content hash、rule id/version/body hash、item 身份、canonical metric + semantic_version/unit/dimensions、已解参数、独立 problem/recovery、质量/覆盖/时钟策略、canonical snapshot hash。`applied/effective` 恒为 `false`，`status:'candidate'`；没有把候选变成已生效的 setter。
 
 ## 4. 稳定拒绝码（节选）
 
-解析：`TRIGGER_RULE_MISSING / INVALID / IDENTITY / HASH_MISMATCH / CONFLICT / READ_FAILED`、`TRIGGER_TEMPLATE_*`（来自 B1 复验）、`TRIGGER_RESOLUTION_MISMATCH`、`TRIGGER_ITEM_UNKNOWN / AMBIGUOUS / MISMATCH`、`TRIGGER_METRIC_MISMATCH`、`TRIGGER_SEMANTIC_VERSION_MISMATCH`、`TRIGGER_UNIT_MISMATCH`、`TRIGGER_PARAMETER_UNKNOWN / UNRESOLVED / TYPE / RANGE`、`TRIGGER_EXPRESSION_BUDGET`、`TRIGGER_RULE_BUDGET`。
+解析：`TRIGGER_RULE_MISSING / INVALID / IDENTITY / SCOPE / HASH_MISMATCH / CONFLICT / READ_FAILED`、`TRIGGER_TEMPLATE_*`（来自 B1 复验）、`TRIGGER_RESOLUTION_MISMATCH`、`TRIGGER_ITEM_UNKNOWN / AMBIGUOUS / MISMATCH`、`TRIGGER_METRIC_MISMATCH`、`TRIGGER_SEMANTIC_VERSION_MISMATCH`、`TRIGGER_UNIT_MISMATCH`、`TRIGGER_PARAMETER_UNKNOWN / UNRESOLVED / TYPE / RANGE`、`TRIGGER_EXPRESSION_BUDGET`、`TRIGGER_RULE_BUDGET`。
 编译：`TRIGGER_CANDIDATE_INVALID`、`TRIGGER_SNAPSHOT_INVALID`、`TRIGGER_SNAPSHOT_HASH_MISMATCH`。
 围栏：`TRIGGER_FENCE_EVIDENCE_INVALID / NOT_APPLIED / RESOURCE_MISMATCH / REVISION_MISMATCH / PLAN_MISMATCH`。
+
+参数默认值与显式覆盖使用同一套校验：类型不符返回 `TRIGGER_PARAMETER_TYPE`，类型正确但越界返回 `TRIGGER_PARAMETER_RANGE`。
 
 不 fallback `latest`、不按 metric/display 名称猜规则、不把 pending 当 applied。
 
@@ -64,6 +66,7 @@ producer-inputs.json 的 10 个文件在集成后逐 blob 与 clean release 一�
 - 缺测、过期、不连续窗口、低覆盖、单位/语义版本不符、时钟偏斜、超序列预算、未 applied：均为 `unknown`，`recovery:false`，已开问题保持 `problem_open:true`。
 - 显式 nodata 由 `now` + `last_seen_at` 按时钟判定，无需新样本；独立触发（`nodata:true`），问题期间不恢复。
 - 恢复需要“恢复表达式成立且问题表达式已不成立”；两个表达式重叠也不会关闭在线问题。
+- 多维度序列按维度键排序评估：报告值与维度取第一个问题表达式成立的序列；更早的健康序列不会顶替。没有序列成立时取排序后的第一个序列；业务未知时 `value` 恒为 `null`。
 - 旧样本不会冒充恢复：`last` 受 `stale_after_ms` 约束，窗口聚合只取窗口内样本。
 - 输入没有 ack 字段，任何确认信息都无法传入，因此确认不可能改变判定或触发操作。
 - 数值比较复用 `metrics/arithmetic.ts` 的 rational 工具；质量/覆盖/精度门控沿用 `metrics/consumers/evaluation.ts` 语义。
@@ -88,10 +91,10 @@ producer-inputs.json 的 10 个文件在集成后逐 blob 与 clean release 一�
 ./node_modules/.bin/tsx src/contracts/generate-public-api.ts --check   # exit 0（= contracts:check）
 ./node_modules/.bin/vitest run src/metrics/triggers src/contracts/metrics \
   src/metrics/bindings src/metrics/consumers/service.test.ts src/alerts \
-  --maxWorkers=1                                       # 19 files, 444 tests passed
+  --maxWorkers=1                                       # 19 files, 446 tests passed
 ```
 
-新增用例 39（resolve 10、compile 7、evaluate 14、contract 8）。单测/内存目录不冒充真实采集、episode、UI 或正式通知。
+新增用例 41（resolve 11、compile 7、evaluate 15、contract 8）。单测/内存目录不冒充真实采集、episode、UI 或正式通知。
 
 ## 8. 明确的挂载缺口（不属于本包）
 

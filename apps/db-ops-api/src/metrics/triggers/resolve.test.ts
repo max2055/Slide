@@ -127,9 +127,10 @@ describe('fixed-version trigger resolution', () => {
     expect(JSON.stringify(unreadable)).not.toContain('driver detail');
   });
 
-  it('rejects two different bodies for the same rule identity', async () => {
-    // Two scopes of one template name the same rule identity, so the catalog is
-    // read twice; a body that changes between reads is a conflict.
+  it('rejects one rule identity shared by two item scopes', async () => {
+    // A single catalog body has exactly one scope, so it cannot serve two item
+    // references of one template. The second reference is a scope mismatch, never
+    // a second resolution of the same body.
     const release = fixtureRelease();
     const version = templateVersion({
       template_id: 'tpl-monitoring',
@@ -148,9 +149,10 @@ describe('fixed-version trigger resolution', () => {
     const first = thresholdRule();
     const revised = thresholdRule({ clock: { stale_after_ms: 60000, nodata: { enabled: false } } });
     let call = 0;
+    // The catalog changing between reads cannot hide the scope mismatch.
     const catalog = catalogOf(() => (call++ === 0 ? first : revised));
     const error = await failure(resolveTriggerRules(resolution, catalog, portOf([version]).port));
-    expect(error.code).toBe('TRIGGER_RULE_CONFLICT');
+    expect(error.code).toBe('TRIGGER_RULE_SCOPE');
   });
 
   it('rejects a rule whose metric, semantic version or unit disagrees with the fixed item', async () => {
@@ -163,6 +165,17 @@ describe('fixed-version trigger resolution', () => {
 
     const wrongUnit = await failure(resolveWith(base, [thresholdRule({ unit: 'count' })]));
     expect(wrongUnit.code).toBe('TRIGGER_UNIT_MISMATCH');
+  });
+
+  it('rejects a catalog body that resolves another item scope', async () => {
+    const base = await baseline(single);
+    // The reference pins item:alpha; a body whose own scope is item:beta is not
+    // that rule even when its metric and unit still match item:alpha.
+    const otherScope = thresholdRule({ scope: 'item:beta' });
+    const error = await failure(resolveWith(base, [otherScope]));
+    expect(error.code).toBe('TRIGGER_RULE_SCOPE');
+    expect(error.location.rule_id).toBe('alpha-threshold');
+    expect(error.location.item_id).toBe('alpha');
   });
 
   it('rejects an item the fixed template does not select', async () => {
@@ -205,6 +218,16 @@ describe('fixed-version trigger resolution', () => {
       parameter_overrides: { 'alpha-threshold': { problem_threshold: 'high' } },
     }));
     expect(wrongType.code).toBe('TRIGGER_PARAMETER_TYPE');
+
+    // A declared default is validated the same way: a non-numeric default for a
+    // numeric parameter is a type failure, not a range failure.
+    const mistypedDefault = thresholdRule({
+      parameters: {
+        schema: { problem_threshold: { type: 'number', min: 0, max: 1000 }, recovery_threshold: { type: 'number', min: 0, max: 1000 } },
+        defaults: { problem_threshold: 'high', recovery_threshold: 70 },
+      },
+    });
+    expect((await failure(resolveWith(base, [mistypedDefault]))).code).toBe('TRIGGER_PARAMETER_TYPE');
 
     const unknownOverride = await failure(resolveWith(base, [thresholdRule()], {
       parameter_overrides: { 'alpha-threshold': { ghost: 1 } },

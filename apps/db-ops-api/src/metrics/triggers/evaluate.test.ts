@@ -280,6 +280,37 @@ describe('pure trigger evaluation', () => {
     expect(allRecover).toMatchObject({ business: 'healthy', recovery: true });
   });
 
+  it('reports the first firing series in dimension-key order, not a healthy sibling', async () => {
+    const snapshot = await snapshotOf({
+      rules: [thresholdRule()],
+      triggers: [{ rule_id: 'alpha-threshold', scope: 'item:alpha', version: 1 }],
+    });
+
+    // A healthy series arriving first must not supply the reported value.
+    const mixed = evaluate(snapshot, {
+      samples: [
+        near(10, { dimensions: { mount: '/healthy' } }),
+        near(95, { dimensions: { mount: '/breach' } }),
+      ],
+    });
+    expect(mixed).toMatchObject({
+      business: 'problem', reason: 'problem', value: 95,
+      dimensions: { mount: '/breach' }, series_count: 2,
+    });
+
+    // Several firing series: the first in sorted dimension-key order wins, not
+    // the first in arrival order and not the highest value.
+    const several = evaluate(snapshot, {
+      samples: [
+        near(95, { dimensions: { mount: '/z-breach' } }),
+        near(96, { dimensions: { mount: '/a-breach' } }),
+      ],
+    });
+    expect(several).toMatchObject({
+      business: 'problem', value: 96, dimensions: { mount: '/a-breach' },
+    });
+  });
+
   it('keeps the small recovery rule wired to the same snapshot cleanly', async () => {
     const snapshot = await snapshotOf({ rules: [averageRule({ rule_id: 'alpha-average' }), thresholdRule()] });
     expect(snapshot.rules.map(rule => rule.rule_id).sort()).toEqual(['alpha-average', 'alpha-threshold']);

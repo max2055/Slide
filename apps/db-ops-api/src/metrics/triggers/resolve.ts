@@ -51,6 +51,7 @@ export type TriggerResolutionErrorCode =
   | 'TRIGGER_RULE_MISSING'
   | 'TRIGGER_RULE_INVALID'
   | 'TRIGGER_RULE_IDENTITY'
+  | 'TRIGGER_RULE_SCOPE'
   | 'TRIGGER_RULE_HASH_MISMATCH'
   | 'TRIGGER_RULE_CONFLICT'
   | 'TRIGGER_RULE_BUDGET'
@@ -278,8 +279,9 @@ function resolveParameters(
     const spec = rule.parameters.schema[name];
     const hasDefault = Object.hasOwn(rule.parameters.defaults, name);
     const defaultValue = hasDefault ? rule.parameters.defaults[name] : null;
-    if (defaultValue !== null && parameterProblem(spec, defaultValue) !== null) {
-      fail('TRIGGER_PARAMETER_RANGE', { ...location, parameter: name });
+    if (defaultValue !== null) {
+      const problem = parameterProblem(spec, defaultValue);
+      if (problem !== null) fail(problem === 'type' ? 'TRIGGER_PARAMETER_TYPE' : 'TRIGGER_PARAMETER_RANGE', { ...location, parameter: name });
     }
     const hasOverride = overrides !== undefined && Object.hasOwn(overrides, name);
     const overrideValue = hasOverride ? overrides![name] : null;
@@ -353,6 +355,9 @@ async function readRule(
   if (!parsed.success) fail('TRIGGER_RULE_INVALID', location);
   const rule = parsed.data;
   if (rule.rule_id !== ref.rule_id || rule.version !== ref.version) fail('TRIGGER_RULE_IDENTITY', location);
+  // The scope is part of the reference identity: a body for another item is a
+  // different rule, never the rule this template version pinned.
+  if (rule.scope !== ref.scope) fail('TRIGGER_RULE_SCOPE', location);
   const { content_hash: declared, ...body } = rule;
   const recomputed = triggerRuleContentHash(body);
   if (declared !== recomputed) fail('TRIGGER_RULE_HASH_MISMATCH', location);
