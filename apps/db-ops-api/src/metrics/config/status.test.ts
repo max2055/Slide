@@ -71,8 +71,9 @@ describe('independent resource configuration facts',()=>{
     const missing=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence,
       template:async()=>null},async()=>[],()=>at);
     await expect(missing.status(admin,ref)).rejects.toThrow('POLICY_BINDING_INVALID');
+    // A reader without the shared codec repeats the fence; it never guesses unbound.
     const noPort=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence},async()=>[],()=>at);
-    await expect(noPort.status(admin,ref)).rejects.toThrow('POLICY_STORE_UNAVAILABLE');
+    await expect(noPort.status(admin,ref)).rejects.toThrow('TEMPLATE_BINDING_UNSUPPORTED');
   });
   it('reports an exact applied custom binding without repeating activation, while retaining formal gaps',async()=>{
     const s=setup();
