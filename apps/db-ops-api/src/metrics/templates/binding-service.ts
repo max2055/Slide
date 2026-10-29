@@ -191,19 +191,33 @@ export function poolTemplatePort(pool: Pool): MySqlTemplateRepository {
  * draft, the version, the current pointer and their audit chain together.
  */
 export interface TemplatePublication {
-  transaction<T>(run: (repository: TemplateRepository) => Promise<T>): Promise<T>;
+  transaction<T>(
+    run: (repository: TemplateRepository) => Promise<T>,
+    /** The last live-grant read, immediately before the commit that publishes. */
+    beforeCommit?: (connection: TemplateSqlConnection) => Promise<void>,
+  ): Promise<T>;
 }
 
 export function mysqlTemplatePublication(pool: Pool): TemplatePublication {
   return {
-    async transaction<T>(run: (repository: TemplateRepository) => Promise<T>): Promise<T> {
+    async transaction<T>(
+      run: (repository: TemplateRepository) => Promise<T>,
+      beforeCommit?: (connection: TemplateSqlConnection) => Promise<void>,
+    ): Promise<T> {
       const connection = await (pool as unknown as TemplateSqlPool).getConnection();
       // Only a confirmed commit or rollback makes the connection reusable.
       let reusable = false;
       try {
+        // A plain current read for the pre-commit grant check; see
+        // `ActorContextService.revalidateActorOn`.
+        await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
         await connection.beginTransaction();
         try {
           const result = await run(new MySqlTemplateRepository(connectionTemplatePool(connection)));
+          // The repository writes above can wait on locks; the final grant is
+          // read on this same connection, after them, so the commit itself is
+          // the last persistence step rather than an unchecked one.
+          await beforeCommit?.(connection);
           await connection.commit();
           reusable = true;
           return result;
@@ -231,6 +245,12 @@ export interface TemplateBindingDeps {
    * of re-checking the snapshot. Without it the service fails closed.
    */
   readonly reload?: (actor: ActorContext) => Promise<ActorContext>;
+  /**
+   * The same live actor re-read on a connection the caller already holds. Used
+   * at persistence boundaries so the check does not take a second connection
+   * from the pool while a transaction is open. Falls back to `reload`.
+   */
+  readonly reloadOn?: (actor: ActorContext, executor: Pick<BindingSqlConnection, 'execute'>) => Promise<ActorContext>;
   /** The accepted resource relation store; tests inject a controlled boundary. */
   readonly relations?: ResourceRelationStore;
   /** Where a re-pin publishes; defaults to one MySQL transaction on `pool`. */
@@ -266,10 +286,16 @@ export class TemplateBindingService {
   }
 
   /** Read authorization uses the accepted resource relation; write needs manage. */
-  async assertAccess(actor: ActorContext, ref: Ref, write: boolean): Promise<void> {
+  async assertAccess(
+    actor: ActorContext, ref: Ref, write: boolean,
+    executor?: Pick<BindingSqlConnection, 'execute'>,
+  ): Promise<void> {
     RefSchema.parse(ref);
     if (!(write ? canManageResource(actor, ref) : canReadResource(actor, ref))) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
-    if (!await this.relations.exists(ref)) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
+    const exists = executor && this.relations.existsOn
+      ? await this.relations.existsOn(executor, ref)
+      : await this.relations.exists(ref);
+    if (!exists) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
   }
 
   /**
@@ -281,6 +307,18 @@ export class TemplateBindingService {
     const reload = this.deps.reload;
     if (!reload) fail('TEMPLATE_BINDING_STORE_UNAVAILABLE', 503);
     return reload(actor);
+  }
+
+  /**
+   * The live grant at a persistence boundary: when the caller already holds the
+   * connection, both the session re-read and the relation check run on it, so no
+   * second connection is taken from the pool while a transaction is open.
+   */
+  private async liveOn(
+    actor: ActorContext, executor: Pick<BindingSqlConnection, 'execute'>,
+  ): Promise<ActorContext> {
+    const reloadOn = this.deps.reloadOn;
+    return reloadOn ? reloadOn(actor, executor) : this.live(actor);
   }
 
   /** The exact candidate a request names; `revision` is the base, never the target. */
@@ -438,6 +476,12 @@ export class TemplateBindingService {
     // Taking a lock, waiting on a resolution or issuing a read can all span a
     // revocation; every one of them re-reads the trusted session and boundary.
     const authorize = async () => { await this.assertAccess(await this.live(actor), ref, true); };
+    // The persistence boundary runs on the writer's own connection (no second
+    // pool connection while its transaction is open).
+    const authorizeOn = async (executor?: Pick<BindingSqlConnection, 'execute'>) => {
+      const current = executor ? await this.liveOn(actor, executor) : await this.live(actor);
+      await this.assertAccess(current, ref, true, executor);
+    };
     let executed: Awaited<ReturnType<TemplateBindingService['execute']>>;
     try {
       await authorize();
@@ -500,7 +544,7 @@ export class TemplateBindingService {
     });
     const written = await writeTrialReceipt(
       { receipt_id: issued.receipt_id, payload: issued.payload as unknown as Record<string, unknown> },
-      { pool: this.deps.pool });
+      { pool: this.deps.pool, authorize: authorizeOn });
     if (written.kind === 'collision') fail('TEMPLATE_BINDING_RECEIPT_INVALID', 409);
 
     const decisions = executed.results.map(entry => entry.result.decision);
@@ -601,9 +645,9 @@ export class TemplateBindingService {
    */
   async repin(actor: ActorContext, ref: Ref, templateId: string): Promise<TemplateRepinResult> {
     await this.assertAccess(actor, ref, true);
-    const authorize = async (): Promise<ActorContext> => {
-      const current = await this.live(actor);
-      await this.assertAccess(current, ref, true);
+    const authorize = async (executor?: Pick<BindingSqlConnection, 'execute'>): Promise<ActorContext> => {
+      const current = executor ? await this.liveOn(actor, executor) : await this.live(actor);
+      await this.assertAccess(current, ref, true, executor);
       return current;
     };
     const resource = await this.inventory(ref);
@@ -612,7 +656,7 @@ export class TemplateBindingService {
     return publication.transaction(repository => repinTemplateVersion({
       repository, registry: this.deps.registry, templateId, resource,
       at: this.now().toISOString(), requestId: actor.requestId, actor, authorize,
-    }));
+    }), async connection => { await authorize(connection); });
   }
 
   /** Read one binding row through the shared codec; a template row keeps its own shape. */
