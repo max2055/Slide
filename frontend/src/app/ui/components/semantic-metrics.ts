@@ -85,6 +85,9 @@ export function renderMetricValue(m: MetricResult) {
   })}`;
 }
 const errors = (status: number) => status === 403 ? '没有此资源的查看权限' : status === 401 ? '登录已失效' : '查询暂时失败；保留上次结果，不能据此判断健康';
+/** The status strip clears protected history on 401/403/404, so it must not borrow the query
+ *  path's copy about retaining the previous result. */
+const statusErrors = (status: number) => status === 403 ? '没有此资源的查看权限' : status === 401 ? '登录已失效' : '资源不存在或已不可读；受保护结果已清除。';
 @customElement('semantic-metrics')
 export class SemanticMetrics extends LitElement {
   @property() resourceType = 'instance';
@@ -191,7 +194,7 @@ export class SemanticMetrics extends LitElement {
     } catch (e) {
       if (!current()) return;
       this.collection = null; this.attempts = [];
-      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.resetResult(); this.error = errors(e.status); }
+      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.resetResult(); this.error = statusErrors(e.status); }
       else this.statusError = '采集状态读取失败；历史查询结果保留，不能据此判断当前采集状态。';
     }
   }
@@ -277,19 +280,21 @@ export class SemanticMetrics extends LitElement {
     const coarse = bucket > MIN_BUCKET_MS ? `。窗口超过 ${MAX_BUCKETS} 个时间桶，已按较粗粒度聚合，未静默截断` : '';
     return `时间桶：每桶 ${bucketLabel(bucket)}，共 ${count} 个（数值与曲线同窗口）· 本地时区 ${timezone()}${coarse}`;
   }
-  /** Newest-to-oldest first bucket that the curve could draw; nothing else may become this value. */
+  /** Newest-to-oldest first bucket that the curve could draw; nothing else may become this value.
+   *  The window position decides recency — a bucket observed later is still older history. */
   private windowLatest(metric: MetricResult) {
-    let best: { series: MetricResult['series'][number]; bucket: MetricBucket; index: number; at: number } | null = null;
-    for (const series of metric.series) {
-      for (let index = series.buckets.length - 1; index >= 0; index--) {
-        const bucket = series.buckets[index];
-        if (this.chartValue(metric, bucket) === null) continue;
-        const at = Date.parse(bucket.observed_at ?? bucket.window.to);
-        if (!best || (Number.isFinite(at) && at > best.at)) best = { series, bucket, index, at: Number.isFinite(at) ? at : -Infinity };
-        break;
-      }
+    let newest = -Infinity;
+    for (const series of metric.series) for (const bucket of series.buckets) {
+      const at = Date.parse(bucket.window.to);
+      if (Number.isFinite(at) && at > newest) newest = at;
     }
-    return best;
+    let best: { series: MetricResult['series'][number]; bucket: MetricBucket; at: number } | null = null;
+    for (const series of metric.series) for (const bucket of series.buckets) {
+      const at = Date.parse(bucket.window.to);
+      if (!Number.isFinite(at) || this.chartValue(metric, bucket) === null) continue;
+      if (!best || at > best.at) best = { series, bucket, at };
+    }
+    return best ? { ...best, latest: best.at === newest } : null;
   }
   private renderCollectionState(collection: CollectionStatus) {
     const state = collection.collection;
@@ -321,10 +326,10 @@ export class SemanticMetrics extends LitElement {
     return html`<div class="latest-cell"><h3>窗口内最近可用值</h3>${metrics.length ? metrics.map(metric => {
       const found = this.windowLatest(metric);
       if (!found) return html`<p>${metricName(metric.definition.id)}：暂无可用值</p>`;
-      const { series, bucket, index } = found, dimensions = Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ');
+      const { series, bucket, latest } = found, dimensions = Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ');
       // Never present a historical value as current health: it is old when the metric, its
       // freshness or its position in the window says so.
-      const old = metric.state !== 'available' || bucket.freshness !== 'fresh' || index !== series.buckets.length - 1;
+      const old = metric.state !== 'available' || bucket.freshness !== 'fresh' || !latest;
       const { collectors, packages } = sourceSummary(bucket);
       return html`<div class="latest-value">
         <div>${metricName(metric.definition.id)}${dimensions ? ` · ${dimensions}` : ''}</div>

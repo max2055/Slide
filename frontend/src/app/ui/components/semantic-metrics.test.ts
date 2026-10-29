@@ -372,3 +372,57 @@ it('reads status and attempts read-only without recommendations', async () => {
   expect(authFetch.mock.calls.every(call => call[1]?.method ? call[0] === '/api/metrics/query'
     : String(call[0]).endsWith('/status') || String(call[0]).endsWith('/attempts'))).toBe(true);
 });
+
+// ---- MAX240-LATEST-DATA correction regressions ----
+it('picks the window value by window time across series instead of by observation time', async () => {
+  const data = structuredClone(result);
+  const series = [
+    // Older window bucket, but observed later: observation time must not win.
+    { dimensions: { host: 'a' }, buckets: [bucketAt(0, 60_000, { freshness: 'fresh', observed_at: '2026-10-14T03:00:00.000Z' })] },
+    // Newer window bucket, observed earlier: this is the window-latest value.
+    { dimensions: { host: 'b' }, buckets: [bucketAt(1, 60_000, { freshness: 'fresh', observed_at: '2026-10-14T01:00:00.000Z' })] },
+  ];
+  (data.metrics[0] as any).series = series;
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('host=b');
+  expect(value.textContent).toContain('11 s · 窗口内最近可用值');
+  expect(value.textContent).not.toContain('host=a');
+  expect(value.querySelector('.old-value')).toBeNull();
+});
+it('grays the window value when the chosen bucket is not the newest bucket in the window', async () => {
+  const gap = bucketAt(2, 60_000, { value: null, coverage: 0, quality: { status: 'unknown', reason: 'missing_input' }, stats: null, freshness: 'fresh' });
+  const data = structuredClone(result);
+  // The chosen bucket is last in its own series but an older window; another series holds the
+  // newest bucket even though it is not drawable.
+  (data.metrics[0] as any).series = [
+    { dimensions: { host: 'a' }, buckets: [bucketAt(0, 60_000, { freshness: 'fresh' })] },
+    { dimensions: { host: 'b' }, buckets: [gap] },
+  ];
+  serve(data, statusPayload(), []);
+  const el = await mount(); await el.updateComplete;
+  const value = el.shadowRoot!.querySelector('.latest-value')!;
+  expect(value.textContent).toContain('10 s · 窗口内最近可用值');
+  expect(value.querySelector('.old-value')).not.toBeNull();
+  expect(value.textContent).toContain('旧值，不代表当前健康');
+});
+it('clears protected results on a missing status resource without claiming history was retained', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(404));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('资源不存在或已不可读');
+  expect(el.error).toContain('受保护结果已清除');
+  expect(el.error).not.toContain('保留上次结果');
+  expect(el.shadowRoot!.textContent).not.toContain('保留上次结果');
+});
+it('clears protected results on an expired login from the status strip', async () => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const failure = (status: number) => ({ ok: false, status, json: async () => ({ error: 'READ_FAILED' }) });
+  authFetch.mockImplementation(async (url: string) => url === '/api/metrics/query' ? ok(data) : failure(401));
+  const el = await mount(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(el.error).toContain('登录已失效');
+});
