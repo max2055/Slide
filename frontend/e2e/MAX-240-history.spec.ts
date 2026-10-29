@@ -92,7 +92,6 @@ test.beforeAll(async () => {
   await policy.changeBinding(admin as any, { type: 'instance', id: RESOURCE_ID }, { expected_revision: 0,
     package: { id: pin.id, version: pin.version, digest: pin.digest },
     overrides: { interval_ms: { mode: 'set', value: MINUTE }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
-  const bindingRevision = (await policy.binding(admin as any, { type: 'instance', id: RESOURCE_ID }))!.binding.revision;
   const series = { resource_type: 'instance' as const, resource_id: String(RESOURCE_ID),
     metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: {} };
   const control = new RolloutControl(pool);
@@ -112,15 +111,6 @@ test.beforeAll(async () => {
     rows.push(point(minute + 45_000, base + 2, `m${i}c`));
   }
   await seed(rows);
-  // Collection evidence for the latest-data view: one accepted success followed by a
-  // newer explicit failure. History itself stays intact and is not rewritten.
-  const attemptRow = (id: string, startedAt: number, endedAt: number, status: string, error: string | null, evidence?: string) => ({ id,
-    resource_id: String(RESOURCE_ID), binding_id: `instance:${RESOURCE_ID}`, collector_id: 'mysql.basic', config_revision: bindingRevision,
-    started_at: iso(startedAt), ended_at: iso(endedAt), status, error, ...(evidence ? { evidence_code: evidence } : {}), observation_ids: [] });
-  for (const attempt of [attemptRow('max240-ui-success', to - 90_000, to - 85_000, 'succeeded', null),
-    attemptRow('max240-ui-failure', to - 30_000, to - 25_000, 'failed', 'permission_denied', 'MYSQL_ACCESS_DENIED')]) {
-    await pool.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)', [attempt.id, JSON.stringify(attempt), sqlTime(iso(to))]);
-  }
 
   const apiPort = Number(process.env.MAX240_TEST_API_PORT);
   const wsPort = Number(process.env.MAX240_TEST_WS_PORT);
@@ -282,48 +272,6 @@ test('the numeric and chart views stay on the same selected resource, metric, di
   await expect(metrics).toContainText('共 1440 个');
   await expect(metrics.locator('metric-chart').first()).toBeVisible();
   expect(await metrics.locator('.metric-name').count()).toBe(1);
-});
-
-test('latest data keeps the current failure beside the last success, its time, unit, quality and template source', async ({ page }) => {
-  const statusResponse = page.waitForResponse(r => r.url().endsWith(`/api/metrics/config/resources/instance/${RESOURCE_ID}/status`) && r.status() === 200);
-  const attemptsResponse = page.waitForResponse(r => r.url().endsWith(`/api/metrics/config/resources/instance/${RESOURCE_ID}/attempts`) && r.status() === 200);
-  await login(page);
-  const statusBody = await (await statusResponse).json() as any;
-  // The harness keeps global collection switched off; the failure evidence still comes
-  // from the real attempts store and is shown beside the last accepted success.
-  expect(statusBody.collection.state).toBe('disabled');
-  expect(statusBody.collection.last_attempt_at).toBe(iso(to - 30_000));
-  expect(statusBody.collection.last_success_at).toBe(iso(to - 85_000));
-  expect(statusBody.blockers).toContain('GLOBAL_COLLECTION_DISABLED');
-  expect(statusBody.binding.package).toMatchObject({ id: 'mysql-basic' });
-  expect(await (await attemptsResponse).json()).toEqual(expect.arrayContaining([
-    expect.objectContaining({ status: 'failed', error: 'permission_denied', evidence_code: 'MYSQL_ACCESS_DENIED' })]));
-
-  const metrics = page.locator('semantic-metrics');
-  const latest = metrics.locator('section.latest');
-  await expect(latest).toBeVisible();
-  await expect(latest).toContainText('当前采集状态');
-  await expect(latest).toContainText('已停用');
-  await expect(latest).toContainText('全局采集已关闭');
-  await expect(latest).toContainText('最后尝试');
-  await expect(latest).toContainText('失败');
-  await expect(latest).toContainText('采集权限不足');
-  await expect(latest).toContainText('MYSQL_ACCESS_DENIED');
-  await expect(latest).toContainText('最近成功采集');
-  await expect(latest).toContainText('绑定模板');
-  await expect(latest).toContainText('MySQL 基础采集');
-  await expect(latest).toContainText('当前错误与最近成功值并列显示');
-  const card = metrics.locator('.current').first();
-  // The accepted value is paired with its own unit, value time, quality and template evidence.
-  await expect(card.locator('.old-value')).toContainText(/\d+ s/);
-  await expect(card).toContainText('观测时间');
-  await expect(card).toContainText('良好');
-  await expect(card).toContainText('模板来源：模板 fixture 1.0.0 · 采集器 fixture');
-  // The current state is not available, so the value keeps the non-live treatment
-  // even though its own bucket is recent; it must not be presented as live health.
-  await expect(card).toContainText('非实时');
-  await expect(card).toContainText('最近成功值来自较早或已过期的时间桶');
-  await page.screenshot({ path: `${output}/latest-data-failure.png`, fullPage: true, animations: 'disabled' });
 });
 
 test('revoking resource permission clears protected history immediately and rejects stale responses', async ({ page }) => {

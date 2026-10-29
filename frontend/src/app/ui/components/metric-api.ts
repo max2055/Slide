@@ -58,26 +58,8 @@ export function coverageAvailability(status: CollectionStatus, data: Recommendat
       ? { ...c, state: 'unsupported', reason: 'VERSION_UNSUPPORTED' } : c;
   }) };
 }
-/** Wire contract: collection-attempt read model; the latest attempt explains a current failure. */
-export interface CollectionAttempt {
-  id: string; resource_id: string; binding_id: string; collector_id: string; config_revision: number;
-  started_at: string; ended_at?: string;
-  status: 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
-  error: 'timeout' | 'permission_denied' | 'connection_error' | 'parse_error' | 'cancelled' | null;
-  evidence_code?: string; observation_ids: string[];
-}
-/** Current collection state only; views that show latest values do not need the recommendation read. */
-export function readCollectionState(type: string, id: number): Promise<CollectionStatus> {
-  return metricRequest<CollectionStatus>(`${collectionRoot(type, id)}/status`);
-}
-export async function readCollectionAttempts(type: string, id: number): Promise<CollectionAttempt[]> {
-  const attempts = await metricRequest<CollectionAttempt[]>(`${collectionRoot(type, id)}/attempts`);
-  if (!Array.isArray(attempts) || !attempts.every(a => a && typeof a.id === 'string' && typeof a.started_at === 'string'
-    && ['running', 'succeeded', 'partial', 'failed', 'cancelled'].includes(a.status))) throw new Error('METRIC_ATTEMPTS_CONTRACT');
-  return attempts;
-}
 export async function readCollectionStatus(type: string, id: number): Promise<CollectionStatus> {
-  const status = await readCollectionState(type, id);
+  const status = await metricRequest<CollectionStatus>(`${collectionRoot(type, id)}/status`);
   // Capacity is a separate product column. Preserve verified binding state when
   // supplementary recommendation metadata cannot be read; do not invent support.
   if (type !== 'instance') return status;
@@ -121,7 +103,6 @@ export const collectionStatusLabels: Record<string, string> = {
   ASSET_COLLECTION_DISABLED: '资产采集已停用，模板启用不能覆盖资产停用', POLICY_COLLECTION_DISABLED: '策略采集已停用',
   APPLICATION_PENDING: '等待调度应用', APPLICATION_FAILED: '调度应用失败，请检查服务日志并重新检查配置',
   PACKAGE_INCOMPATIBLE: '模板与资源不兼容', CAPABILITY_UNKNOWN: '资源能力待验证', COLLECTION_FAILED: '最近采集失败',
-  STALE_SAMPLE: '观测已陈旧', LEGACY_CONFIGURATION_REVIEW_REQUIRED: '旧配置待复核',
   SOURCE_VALIDATION_PENDING: '正式来源验证中', SOURCE_VALIDATION_FAILED: '正式来源验证失败', AWAITING_SAMPLE: '等待正式样本', UNBOUND: '尚未绑定采集模板',
   global: '全局开关', validating: '来源验证中', running: '采集中', succeeded: '最近采集成功',
   bound: '已绑定', unbound: '未绑定', unknown: '未知', enabled: '启用', disabled: '已停用',
