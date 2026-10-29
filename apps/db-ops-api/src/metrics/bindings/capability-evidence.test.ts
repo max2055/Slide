@@ -30,6 +30,7 @@ const candidate = (overrides: Record<string, unknown> = {}): ResourceBindingCand
 const identity = (overrides: Partial<CapabilityEvidenceIdentity> = {}): CapabilityEvidenceIdentity => ({
   resource: { type: 'instance', id: 11 }, revision: 0, template_pins: [pin()],
   credential_ref: 'credential:asset-instance-11',
+  target_identity: hash('e'), actor_id: 7,
   intent_digest: probeIntentDigest(candidate()), ...overrides,
 });
 const capability = (overrides: Partial<Capability> = {}): Capability => ({
@@ -40,18 +41,23 @@ const capability = (overrides: Partial<Capability> = {}): Capability => ({
 });
 const record = (id: CapabilityEvidenceIdentity, overrides: Record<string, unknown> = {}) => ({
   format: CAPABILITY_EVIDENCE_FORMAT, evidence_key: capabilityEvidenceKey(id),
-  ...id, capabilities: [capability()], source: 'read_only_probe', actor_id: 7,
+  ...id, capabilities: [capability()], source: 'read_only_probe',
   probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(), ...overrides,
 });
 
 /** One exact row map plus a connection that records the statements it saw. */
-function fakePool(initial: Record<string, unknown> = {}, options: { queryFails?: boolean; existingWins?: boolean } = {}) {
+function fakePool(initial: Record<string, unknown> = {},
+  options: { queryFails?: boolean; existingWins?: boolean; commitFails?: boolean } = {}) {
   const rows = new Map<string, unknown>(Object.entries(initial));
   const statements: string[] = [];
   let committed = 0;
   const connection = {
     async beginTransaction() { statements.push('BEGIN'); },
-    async commit() { committed++; statements.push('COMMIT'); },
+    async commit() {
+      statements.push('COMMIT');
+      if (options.commitFails) throw new Error('connection reset during commit');
+      committed++;
+    },
     async rollback() { statements.push('ROLLBACK'); },
     async release() { statements.push('RELEASE'); },
     async destroy() { statements.push('DESTROY'); },
@@ -81,6 +87,10 @@ describe('capability evidence identity', () => {
     const base = capabilityEvidenceKey(identity());
     expect(capabilityEvidenceKey(identity({ resource: { type: 'instance', id: 12 } }))).not.toBe(base);
     expect(capabilityEvidenceKey(identity({ credential_ref: 'credential:asset-instance-12' }))).not.toBe(base);
+    // The same resource with a rewritten target or a rotated credential version.
+    expect(capabilityEvidenceKey(identity({ target_identity: hash('f') }))).not.toBe(base);
+    // The same resource probed by another principal.
+    expect(capabilityEvidenceKey(identity({ actor_id: 8 }))).not.toBe(base);
     expect(capabilityEvidenceKey(identity({ template_pins: [pin(2, 'c')] }))).not.toBe(base);
     expect(capabilityEvidenceKey(identity({ template_pins: [pin(3, 'b')] }))).not.toBe(base);
     expect(capabilityEvidenceKey(identity({ revision: 1 }))).not.toBe(base);
@@ -120,6 +130,12 @@ describe('stored evidence parsing', () => {
       .toThrow(CapabilityEvidenceError);
     expect(() => parseCapabilityEvidence(record(id), identity({ template_pins: [pin(3)] }), NOW))
       .toThrow(CapabilityEvidenceError);
+    // A rewritten target/credential version or another principal is not the
+    // identity that wrote the row, even under the same resource and pins.
+    expect(() => parseCapabilityEvidence(record(id), identity({ target_identity: hash('f') }), NOW))
+      .toThrow(CapabilityEvidenceError);
+    expect(() => parseCapabilityEvidence(record(id), identity({ actor_id: 8 }), NOW))
+      .toThrow(CapabilityEvidenceError);
   });
   it('rejects expired, unparsable and foreign-resource facts', () => {
     const id = identity();
@@ -150,21 +166,51 @@ describe('evidence writer', () => {
     const { pool, rows, committed } = fakePool();
     const authorize = vi.fn(async () => undefined);
     const written = await writeCapabilityEvidence({
-      ...identity(), capabilities: [capability()], actor_id: 7,
+      ...identity(), capabilities: [capability()],
       probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
     }, { pool: () => pool, authorize });
     expect(written.record.capabilities).toHaveLength(1);
     expect(rows.size).toBe(1);
     expect(committed()).toBe(1);
-    // After the admission wait, after the connection/transaction began, and
-    // once more after the upsert's possible row-lock wait.
-    expect(authorize).toHaveBeenCalledTimes(3);
+    // After the admission wait, after the connection/transaction began, after
+    // the upsert's row-lock wait, and once more after the read-back wait
+    // immediately before the commit that publishes the evidence.
+    expect(authorize).toHaveBeenCalledTimes(4);
+  });
+
+  it('a grant revoked after the read-back rolls the row back instead of committing it', async () => {
+    const { pool, committed, statements } = fakePool();
+    const authorize = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('revoked-after-read'));
+    await expect(writeCapabilityEvidence({
+      ...identity(), capabilities: [capability()],
+      probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
+    }, { pool: () => pool, authorize })).rejects.toThrow('revoked-after-read');
+    // The row was written inside the transaction and the refusal rolled it back:
+    // the read-back wait is no longer an unprotected path to a published fact.
+    // (The fake applies writes eagerly, so the assertions are the absence of a
+    // commit plus the ROLLBACK; the real MySQL chain proves the row itself.)
+    expect(committed()).toBe(0);
+    expect(statements).toContain('ROLLBACK');
+  });
+
+  it('an ambiguous commit is reported as unknown, never as written', async () => {
+    const { pool, statements } = fakePool({}, { commitFails: true });
+    await expect(writeCapabilityEvidence({
+      ...identity(), capabilities: [capability()],
+      probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
+    }, { pool: () => pool })).rejects.toMatchObject({ code: 'CAPABILITY_EVIDENCE_COMMIT_UNKNOWN' });
+    expect(statements).toContain('ROLLBACK');
+    expect(statements).toContain('COMMIT');
   });
 
   it('an identical repeat is the same row, not a second publication', async () => {
     const { pool, rows, statements } = fakePool();
     const input = {
-      ...identity(), capabilities: [capability()], actor_id: 7,
+      ...identity(), capabilities: [capability()],
       probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
     };
     await writeCapabilityEvidence(input, { pool: () => pool });
@@ -179,7 +225,7 @@ describe('evidence writer', () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('revoked'));
     await expect(writeCapabilityEvidence({
-      ...identity(), capabilities: [capability()], actor_id: 7,
+      ...identity(), capabilities: [capability()],
       probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
     }, { pool: () => pool, authorize })).rejects.toThrow('revoked');
     expect(committed()).toBe(0);
@@ -188,7 +234,7 @@ describe('evidence writer', () => {
 
   it('an unavailable pool fails closed before any connection', async () => {
     await expect(writeCapabilityEvidence({
-      ...identity(), capabilities: [capability()], actor_id: 7,
+      ...identity(), capabilities: [capability()],
       probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
     }, { pool: () => null })).rejects.toMatchObject({ code: 'CAPABILITY_EVIDENCE_UNAVAILABLE' });
   });
@@ -200,7 +246,7 @@ describe('evidence writer', () => {
     });
     const { pool } = fakePool({ [capabilityEvidenceKey(id)]: other }, { existingWins: true });
     const written = await writeCapabilityEvidence({
-      ...id, capabilities: [capability()], actor_id: 7,
+      ...id, capabilities: [capability()],
       probed_at: AT, expires_at: new Date(NOW + CAPABILITY_EVIDENCE_TTL_MS).toISOString(),
     }, { pool: () => pool });
     expect(written.record.capabilities[0].basis[0].evidence).toBe('other_probe');

@@ -401,26 +401,127 @@ it('a delayed re-pin answer never lands on the resource the user switched to', a
 
 /* --- R2 counterexamples: storage loss and late preview -------------------- */
 
-it('R2: an unavailable session storage keeps the unknown intent for this tab', async () => {
+it('R3: an intent that cannot be made durable is never sent, and the draft is kept', async () => {
   let applies = 0;
   authFetch.mockImplementation(routes({
     '/apply': () => { applies++; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
     '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
   }));
   const element = await mount();
+  element.settings = { interval_ms: { mode: 'set', value: 70000 } };
+  await element.previewFlow(); await element.runTrial();
+  const dirty = element.dirty;
   const fail = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new DOMException('quota', 'QuotaExceededError');
   });
   try {
-    await element.previewFlow(); await element.runTrial(); await element.applyFlow();
-    expect(element.unresolved).toHaveLength(1);
-    await element.reloadAll();
-    // Same tab, same exact key: the intent is still queryable and was not resent.
-    expect(element.unresolved).toHaveLength(1);
-    expect(applies).toBe(1);
+    await element.applyFlow();
+    // No durable record means no recoverable request: nothing may be sent.
+    expect(applies).toBe(0);
+    expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
+    expect(element.unresolved).toHaveLength(0);
     expect(element.intentStorageLimited).toBe(true);
-    expect(element.shadowRoot.textContent).toContain('只能在当前标签页内查询');
+    expect(element.dirty).toBe(dirty);
+    expect(element.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
+    expect(element.shadowRoot.textContent).toContain('拒绝本次发布');
   } finally { fail.mockRestore(); }
+});
+
+it('R3: a same-tab reload keeps the queryable intent when it was durably recorded', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies++; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
+    '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
+  }));
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  expect(applies).toBe(1);
+  expect(element.unresolved).toHaveLength(1);
+  const stored = JSON.parse(sessionStorage.getItem('slide.metric.native.apply.anon.instance:1')!);
+  expect(stored).toHaveLength(1);
+  await element.reloadAll();
+  // Same tab: the exact key is still known and is looked up, never resent.
+  expect(element.unresolved).toHaveLength(1);
+  expect(applies).toBe(1);
+  expect(authFetch.mock.calls.filter((entry: unknown[]) => String(entry[0]).includes('/operations/')).at(-1)![0])
+    .toContain(`/operations/${stored[0].key}`);
+});
+
+it('R3: a corrupt stored intent array blocks writes instead of silently dropping the bad entry', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies++; return { ok: true, json: async () => ({ kind: 'committed', revision: 6,
+      resolution_identity: hash('d') }) }; },
+  }));
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  sessionStorage.setItem('slide.metric.native.apply.anon.instance:1', JSON.stringify([
+    { key: 'k1', intent: '{"resource":"instance:1"}', pending: true },
+    { key: 'k2', pending: 'not-a-boolean' },
+  ]));
+  resetIntentMemory();
+  await element.reloadAll();
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  expect(applies).toBe(0);
+  expect(element.intentStorageError).toContain('损坏');
+  expect(element.shadowRoot.textContent).toContain('损坏');
+});
+
+it('R3: a committed answer for an old intent never clears edits made before the query', async () => {
+  let lookups = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => ({ ok: true, json: async () => ({ kind: 'commit_unknown' }) }),
+    '/operations/': () => {
+      lookups += 1;
+      return { ok: true, json: async () => lookups === 1
+        ? { state: 'pending', operation: null }
+        : { state: 'committed', operation: { target_revision: 6 } } };
+    },
+  }));
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  expect(element.unresolved).toHaveLength(1);
+  // A new edit that exists *before* the recovery query starts.
+  element.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
+  element.changeParameter('tpl-mysql', 'timeout', '9', 'number');
+  expect(element.dirty).toBe(true);
+  // "Query the publication result" for the old key.
+  const record = JSON.parse(JSON.stringify(element.unresolved[0]));
+  await element.lookup(record.key, element.generation, null, true, record.draft);
+  // The old committed row only settles the old intent: the newer draft survives.
+  expect(element.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
+  expect(element.parameters).toEqual({ 'tpl-mysql': { timeout: 9 } });
+  expect(element.dirty).toBe(true);
+  expect(element.unresolved).toHaveLength(0);
+  expect(element.applyResult).toBeNull();
+});
+
+it('R3: an edit made while the recovery query is in flight is preserved too', async () => {
+  let releaseLookup!: () => void;
+  const lookupGate = new Promise<void>(resolve => { releaseLookup = resolve; });
+  let lookups = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => ({ ok: true, json: async () => ({ kind: 'commit_unknown' }) }),
+    '/operations/': async () => {
+      lookups += 1;
+      if (lookups === 1) return { ok: true, json: async () => ({ state: 'pending', operation: null }) };
+      await lookupGate;
+      return { ok: true, json: async () => ({ state: 'committed', operation: { target_revision: 6 } }) };
+    },
+  }));
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  await element.applyFlow();
+  const record = JSON.parse(JSON.stringify(element.unresolved[0]));
+  const pending = element.lookup(record.key, element.generation, null, true, record.draft);
+  element.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
+  releaseLookup();
+  await pending;
+  expect(element.settings).toEqual({ interval_ms: { mode: 'set', value: 70000 } });
+  expect(element.dirty).toBe(true);
 });
 
 it('R2: a late preview for an edited draft can never enable the trial', async () => {

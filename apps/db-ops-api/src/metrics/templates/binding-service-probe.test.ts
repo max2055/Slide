@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   bound: false,
   evidenceWrites: [] as Array<{ sql: string; params: unknown[] }>,
   evidenceRows: new Map<string, unknown>(),
+  evidenceQueryFails: false,
+  credentialVersion: 'fixture-ciphertext-v1',
   liveCalls: 0,
   liveRevokedAfter: Number.POSITIVE_INFINITY,
   resolved: null as unknown,
@@ -114,7 +116,12 @@ function fakePool() {
         return [{ affectedRows: 1 }, []];
       }
       if (/^SELECT payload FROM metric_capability_evidence/.test(key)) {
+        if (state.evidenceQueryFails) throw new Error('driver detail');
         return [state.evidenceRows.has(String(params[0])) ? [{ payload: JSON.stringify(state.evidenceRows.get(String(params[0]))) }] : [], []];
+      }
+      if (/^SELECT host, port, username, db_type, database_name, password_encrypted FROM database_instances/.test(key)) {
+        return [[{ host: '127.0.0.1', port: 13421, username: 'target_ro', db_type: 'mysql',
+          database_name: 'slide_target', password_encrypted: state.credentialVersion }], []];
       }
       if (/^SELECT 1 FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ 1: 1 }] : [], []];
       throw new Error(`unexpected ${key}`);
@@ -123,9 +130,14 @@ function fakePool() {
   return {
     async execute(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
       const key = sql.replace(/\s+/g, ' ').trim();
+      if (/^SELECT host, port, username, db_type, database_name, password_encrypted FROM database_instances/.test(key)) {
+        return [[{ host: '127.0.0.1', port: 13421, username: 'target_ro', db_type: 'mysql',
+          database_name: 'slide_target', password_encrypted: state.credentialVersion }], []];
+      }
       if (/^SELECT 1 FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ 1: 1 }] : [], []];
       if (/^SELECT capabilities FROM metric_policy_bindings/.test(key)) return [[], []];
       if (/^SELECT payload FROM metric_capability_evidence/.test(key)) {
+        if (state.evidenceQueryFails) throw new Error('driver detail');
         return [state.evidenceRows.has(String(params[0])) ? [{ payload: JSON.stringify(state.evidenceRows.get(String(params[0]))) }] : [], []];
       }
       throw new Error(`unexpected ${key}`);
@@ -157,6 +169,7 @@ const body = () => ({ expected_revision: 0, template_pins: [PIN], overrides: {},
 describe('bootstrap probe wiring', () => {
   const reset = () => {
     state.runs = []; state.bound = false; state.evidenceWrites = []; state.evidenceRows.clear();
+    state.credentialVersion = 'fixture-ciphertext-v1'; state.evidenceQueryFails = false;
     state.liveCalls = 0; state.liveRevokedAfter = Number.POSITIVE_INFINITY;
     state.resolved = resolution();
     state.runResult = () => ({ decision: 'attempted', observations: [], attempts: [], capabilities: [capability()] });
@@ -218,5 +231,68 @@ describe('bootstrap probe wiring', () => {
     await expect(service().probe(admin, { type: 'instance', id: 11 }, body()))
       .rejects.toMatchObject({ code: 'TEMPLATE_BINDING_PROBE_FAILED' });
     expect(state.evidenceWrites).toHaveLength(0);
+  });
+
+  /* --- R3: an explicit probe re-acquires instead of consuming old evidence --- */
+
+  it('R3: an expired evidence row does not block the explicit re-probe that replaces it', async () => {
+    reset();
+    const first = await service().probe(admin, { type: 'instance', id: 11 }, body());
+    expect(first.capabilities).toHaveLength(1);
+    expect(state.evidenceRows.size).toBe(1);
+    const stored = [...state.evidenceRows.values()][0] as { expires_at: string };
+    stored.expires_at = '2026-10-30T01:00:00.000Z';
+
+    // The old code resolved the context first, read the expired row and answered
+    // 503 before any remote read. The explicit probe must re-acquire for real.
+    const again = await service().probe(admin, { type: 'instance', id: 11 }, body());
+    expect(again.capabilities).toHaveLength(1);
+    expect(state.runs).toHaveLength(2);
+    expect(state.evidenceWrites).toHaveLength(2);
+    const replaced = [...state.evidenceRows.values()][0] as { expires_at: string; probed_at: string };
+    expect(Date.parse(replaced.expires_at)).toBeGreaterThan(Date.parse(replaced.probed_at));
+  });
+
+  it('R3: a corrupt evidence row is recoverable by a real re-probe', async () => {
+    reset();
+    await service().probe(admin, { type: 'instance', id: 11 }, body());
+    for (const key of state.evidenceRows.keys()) state.evidenceRows.set(key, { format: 'broken' });
+    const again = await service().probe(admin, { type: 'instance', id: 11 }, body());
+    expect(again.capabilities).toHaveLength(1);
+    expect(state.evidenceWrites).toHaveLength(2);
+  });
+
+  it('R3: an unreadable evidence store is still a failure, not an implicit absence', async () => {
+    reset();
+    state.evidenceQueryFails = true;
+    await expect(service().probe(admin, { type: 'instance', id: 11 }, body()))
+      .rejects.toMatchObject({ code: 'CAPABILITY_EVIDENCE_UNAVAILABLE' });
+    expect(state.runs).toHaveLength(0);
+    expect(state.evidenceWrites).toHaveLength(0);
+  });
+
+  it('R3: a rotated credential version can never reuse the old probe evidence', async () => {
+    reset();
+    await service().probe(admin, { type: 'instance', id: 11 }, body());
+    expect(state.evidenceRows.size).toBe(1);
+    state.credentialVersion = 'fixture-ciphertext-v2';
+    await service().probe(admin, { type: 'instance', id: 11 }, body());
+    // A different target/credential version is a different evidence key, so the
+    // old facts cannot answer for it and a real re-probe stores its own row.
+    expect(state.runs).toHaveLength(2);
+    expect(state.evidenceWrites).toHaveLength(2);
+    expect(state.evidenceRows.size).toBe(2);
+  });
+
+  it('R3: another principal cannot consume evidence probed by this one', async () => {
+    reset();
+    await service().probe(admin, { type: 'instance', id: 11 }, body());
+    expect(state.evidenceRows.size).toBe(1);
+    const other = { ...admin, userId: 9, username: 'other' };
+    // The row is keyed by the principal that probed it, so this principal has no
+    // usable evidence and must acquire its own instead of inheriting support.
+    await service().probe(other, { type: 'instance', id: 11 }, body());
+    expect(state.runs).toHaveLength(2);
+    expect(state.evidenceRows.size).toBe(2);
   });
 });

@@ -42,7 +42,9 @@ import { PolicyError, RefSchema, metricKey, refKey, rule, type Ref } from '../po
 import {
   CAPABILITY_EVIDENCE_TTL_MS, CapabilityEvidenceError, probeIntentDigest,
   readCapabilityEvidence, writeCapabilityEvidence, type CapabilityEvidenceExecutor,
+  type CapabilityEvidenceIdentity,
 } from '../bindings/capability-evidence.js';
+import { trustedTargetIdentity } from '../bindings/target-identity.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import type { TemplateVersionReadPort } from '../bindings/preflight.js';
 import {
@@ -304,6 +306,8 @@ interface TrustedContext {
   resource: Resource;
   group: unknown;
   capabilities: unknown;
+  /** The exact target + credential version these facts belong to. */
+  targetIdentity: string;
   at: string;
 }
 
@@ -381,13 +385,16 @@ export class TemplateBindingService {
   }
 
   /** Trusted B2C context read once per operation; nothing here comes from the request. */
-  private async context(ref: Ref, candidate: ResourceBindingCandidate): Promise<TrustedContext> {
+  private async context(ref: Ref, candidate: ResourceBindingCandidate, actorId: number,
+    recover = false): Promise<TrustedContext> {
     const pool = this.pool();
-    return this.contextOn({ execute: (sql, values) => pool.execute(sql, values as any[]) as Promise<[unknown, unknown]> }, ref, candidate);
+    return this.contextOn({ execute: (sql, values) => pool.execute(sql, values as any[]) as Promise<[unknown, unknown]> },
+      ref, candidate, actorId, recover);
   }
 
   private async contextOn(
     connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, candidate: ResourceBindingCandidate,
+    actorId: number, recover = false,
   ): Promise<TrustedContext> {
     const resource = await this.inventory(ref);
     if (!resource) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
@@ -396,6 +403,12 @@ export class TemplateBindingService {
       const [rows] = await connection.execute('SELECT payload FROM metric_policy_groups WHERE id = ?', [candidate.group_id]) as unknown as [RowDataPacket[], unknown];
       group = rows[0] ? decode(rows[0].payload) : null;
     }
+    // The exact target/credential version these facts belong to; a rewritten
+    // target or a rotated credential is a different identity, never the same facts.
+    let targetIdentity: string | null;
+    try { targetIdentity = await trustedTargetIdentity(connection, ref); }
+    catch { throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_UNAVAILABLE'); }
+    if (targetIdentity === null) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
     const [caps] = await connection.execute('SELECT capabilities FROM metric_policy_bindings WHERE resource_key = ?',
       [refKey(ref)]) as unknown as [RowDataPacket[], unknown];
     // A stored binding is the only capability authority for a bound resource.
@@ -403,16 +416,20 @@ export class TemplateBindingService {
     // exact, unexpired read-only probe evidence for this candidate intent.
     const capabilities = caps[0]
       ? decode(caps[0].capabilities)
-      : await this.bootstrapCapabilities(connection, ref, candidate);
-    return { resource: resource!, group, capabilities, at: this.now().toISOString() };
+      : await this.bootstrapCapabilities(connection, ref, candidate, actorId, targetIdentity, recover);
+    return { resource: resource!, group, capabilities, targetIdentity, at: this.now().toISOString() };
   }
 
-  /** The exact evidence identity a bootstrap probe wrote for this candidate. */
-  private evidenceIdentity(ref: Ref, candidate: ResourceBindingCandidate) {
+  /** The exact evidence identity a bootstrap probe writes for this candidate. */
+  private evidenceIdentity(
+    ref: Ref, candidate: ResourceBindingCandidate, actorId: number, targetIdentity: string,
+  ): CapabilityEvidenceIdentity {
     return {
       resource: ref, revision: candidate.revision,
       template_pins: candidate.template_pins,
       credential_ref: credentialReference(ref),
+      target_identity: targetIdentity,
+      actor_id: actorId,
       intent_digest: probeIntentDigest(candidate),
     };
   }
@@ -421,19 +438,34 @@ export class TemplateBindingService {
    * Read bootstrap evidence for an unbound resource. A missing row is the only
    * "nothing was probed" answer; expired/corrupted evidence is a refusal, never
    * an implicit absence that would let a later step pretend it was verified.
+   *
+   * `recover` is used by the explicit probe only: it must be able to re-acquire
+   * real facts when the stored row expired or is unparsable, so those two are
+   * treated as "probe again" rather than a refusal. A storage error is not: an
+   * unreadable store is still a failure, and an old row is never re-dated or
+   * promoted to support.
    */
   private async bootstrapCapabilities(
     connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, candidate: ResourceBindingCandidate,
+    actorId: number, targetIdentity: string, recover: boolean,
   ): Promise<Capability[]> {
-    const record = await readCapabilityEvidence(
-      connection as { execute: CapabilityEvidenceExecutor['execute'] },
-      this.evidenceIdentity(ref, candidate), this.now().getTime(),
-    );
-    return record === null ? [] : record.capabilities;
+    try {
+      const record = await readCapabilityEvidence(
+        connection as { execute: CapabilityEvidenceExecutor['execute'] },
+        this.evidenceIdentity(ref, candidate, actorId, targetIdentity), this.now().getTime(),
+      );
+      return record === null ? [] : record.capabilities;
+    } catch (error) {
+      if (recover && error instanceof CapabilityEvidenceError
+        && (error.code === 'CAPABILITY_EVIDENCE_EXPIRED' || error.code === 'CAPABILITY_EVIDENCE_INVALID')) {
+        return [];
+      }
+      throw error;
+    }
   }
 
-  private async resolve(ref: Ref, candidate: ResourceBindingCandidate) {
-    const context = await this.context(ref, candidate);
+  private async resolve(ref: Ref, candidate: ResourceBindingCandidate, actorId: number, recover = false) {
+    const context = await this.context(ref, candidate, actorId, recover);
     const outcome = await resolveTemplateBinding(candidate, context, poolTemplatePort(this.pool()), this.deps.registry);
     if (outcome.kind !== 'template_resolution') fail('TEMPLATE_BINDING_LEGACY_CANDIDATE');
     const resolution = outcome as ResolvedTemplateBinding;
@@ -450,6 +482,9 @@ export class TemplateBindingService {
     return hash({
       resource: { type: context.resource.type, id: context.resource.id, attributes },
       group: context.group, capabilities: context.capabilities, credential_ref: credentialRef,
+      // A target rewrite or credential rotation between trial and apply makes the
+      // receipt's dependency identity differ, so the host refuses the stale trial.
+      target_identity: context.targetIdentity,
     });
   }
 
@@ -469,7 +504,7 @@ export class TemplateBindingService {
   async preview(actor: ActorContext, ref: Ref, body: unknown): Promise<TemplateBindingPreview> {
     await this.assertAccess(actor, ref, true);
     const candidate = this.candidate(ref, body);
-    const { context, resolution, plan } = await this.resolve(ref, candidate);
+    const { context, resolution, plan } = await this.resolve(ref, candidate, actor.userId);
     // The same trusted inventory the resolution saw; a fresh read would stamp
     // observed_at after `at` and make every applicability check look unknown.
     const at = context.at;
@@ -513,8 +548,10 @@ export class TemplateBindingService {
     if (bound[0]) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
 
     // Parameters/settings come from the exact pins; capabilities still come only
-    // from the real probe below. The request cannot report support.
-    const { resolution } = await this.resolve(ref, candidate);
+    // from the real probe below. The request cannot report support. Stored
+    // evidence is read for the storage-error distinction only: an expired or
+    // corrupt row must never stop the explicit re-probe that replaces it.
+    const { context, resolution } = await this.resolve(ref, candidate, actor.userId, true);
     const selection = this.probeSelection(resolution);
     if (selection.length === 0) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
 
@@ -551,8 +588,8 @@ export class TemplateBindingService {
     if (!(expires > Date.parse(probedAt))) fail('TEMPLATE_BINDING_PROBE_FAILED', 422);
 
     const written = await writeCapabilityEvidence({
-      ...this.evidenceIdentity(ref, candidate),
-      capabilities, actor_id: actor.userId, probed_at: probedAt,
+      ...this.evidenceIdentity(ref, candidate, actor.userId, context.targetIdentity),
+      capabilities, probed_at: probedAt,
       expires_at: new Date(expires).toISOString(),
     }, { pool: this.deps.pool, authorize: authorizeOn });
 
@@ -712,7 +749,7 @@ export class TemplateBindingService {
     const candidate = this.candidate(ref, body);
     const receiptId = (body as { receipt_id?: unknown }).receipt_id;
     if (typeof receiptId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(receiptId)) fail('TEMPLATE_BINDING_INPUT_INVALID');
-    const { context, resolution, plan } = await this.resolve(ref, candidate);
+    const { context, resolution, plan } = await this.resolve(ref, candidate, actor.userId);
     if (!plan.executable) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
 
     const reservation = await new MysqlScheduleStore(this.pool(), this.deps.registry).reserve(ref);
@@ -851,7 +888,7 @@ export class TemplateBindingService {
         let current: ActorContext;
         try { current = await this.live(actor); }
         catch (error) { onAuthError?.(error); throw error; }
-        const live = await this.contextOn(connection, target, candidate);
+        const live = await this.contextOn(connection, target, candidate, actor.userId);
         const dep = this.dependencyDigest(live, credentialReference(target));
         return {
           allowed: canManageResource(current, target),
@@ -861,7 +898,7 @@ export class TemplateBindingService {
       },
       applicationContext: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const context = await this.contextOn(connection, target, candidate);
+        const context = await this.contextOn(connection, target, candidate, actor.userId);
         return { resource: context.resource, group: context.group, capabilities: context.capabilities, at: context.at,
           actor_id: actor.userId };
       },
@@ -874,7 +911,7 @@ export class TemplateBindingService {
        */
       mandatoryItems: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const live = await this.contextOn(connection, target, candidate);
+        const live = await this.contextOn(connection, target, candidate, actor.userId);
         const outcome = await resolveTemplateBinding(candidate, live, versions, this.deps.registry);
         if (outcome.kind !== 'template_resolution') throw new Error('TEMPLATE_BINDING_LEGACY_CANDIDATE');
         const items: Array<{ template_id: string; item_id: string; item_version: number }> = [];
