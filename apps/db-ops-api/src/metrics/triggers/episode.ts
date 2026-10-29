@@ -25,6 +25,15 @@
  * cannot rewrite the history of the old one. Closing a superseded identity is a
  * separate lifecycle decision, out of scope here.
  *
+ * Late and out-of-order evaluations are bounded by a watermark on the record's
+ * own `last.at`: an evaluation whose `evaluated_at` is strictly earlier than the
+ * time the stored record already carries is a historical judgement. It still
+ * exists upstream, but here it returns the stored record unchanged — an older
+ * recovery cannot close an open episode, an older problem cannot open the next
+ * occurrence, and `last` never moves backwards. Unparsable times are rejected
+ * rather than guessed at. No historical notification is produced or suppressed:
+ * there is no notification here at all.
+ *
  * There is no acknowledgement input at all, so an acknowledgement can neither
  * close an episode nor prevent a close.
  */
@@ -79,7 +88,7 @@ export interface TriggerEpisodeRecord {
   last: TriggerEpisodeEvidence;
 }
 
-export type TriggerEpisodeErrorCode = 'TRIGGER_EPISODE_IDENTITY';
+export type TriggerEpisodeErrorCode = 'TRIGGER_EPISODE_IDENTITY' | 'TRIGGER_EPISODE_TIME';
 
 export class TriggerEpisodeError extends Error {
   constructor(public readonly code: TriggerEpisodeErrorCode) {
@@ -117,6 +126,13 @@ const evidenceOf = (evaluation: TriggerEvaluationResult): TriggerEpisodeEvidence
   at: evaluation.evaluated_at,
 });
 
+/** A comparable instant, or a stable error instead of a guessed ordering. */
+const instantOf = (value: string): number => {
+  const instant = Date.parse(value);
+  if (Number.isNaN(instant)) throw new TriggerEpisodeError('TRIGGER_EPISODE_TIME');
+  return instant;
+};
+
 /**
  * Apply one evaluation to the last episode record of one incident identity.
  * Returns `null` when the identity has no episode and this evaluation does not
@@ -141,6 +157,18 @@ export function nextTriggerEpisode(transition: TriggerEpisodeTransition): Trigge
     || evaluation.rule.version !== identity.version
     || evaluation.scope !== identity.scope) {
     throw new TriggerEpisodeError('TRIGGER_EPISODE_IDENTITY');
+  }
+
+  // Watermark over this identity's own record only: an evaluation from before
+  // the time the record already holds is a historical judgement. The stored
+  // record is returned as the very same object, so a caller that writes only
+  // when `next !== previous` leaves the stored bytes unchanged — an older
+  // recovery does not close the open episode, an older problem does not open the
+  // next occurrence, and `last` does not move backwards. Equal and later times
+  // keep the accepted transition below.
+  if (owned !== null
+    && instantOf(evaluation.evaluated_at) < instantOf(owned.last.at)) {
+    return owned;
   }
 
   const evidence = evidenceOf(evaluation);

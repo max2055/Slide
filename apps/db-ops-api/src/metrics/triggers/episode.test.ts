@@ -194,3 +194,131 @@ describe('pure episode transition', () => {
     expect(closed.last).not.toHaveProperty('acknowledged_at');
   });
 });
+
+describe('late and out-of-order watermark', () => {
+  // An evaluation one minute before NOW, with its own fresh sample. The evidence
+  // is usable on its own terms; only its evaluated_at is older than the record.
+  const EARLIER = '2026-10-29T11:59:00.000Z';
+  const EARLIER_SEEN = '2026-10-29T11:58:55.000Z';
+  // An evaluation after NOW, likewise with a fresh sample.
+  const LATER = '2026-10-29T12:00:30.000Z';
+  const LATER_SEEN = '2026-10-29T12:00:25.000Z';
+
+  it('returns the open record untouched for an older recovery', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    expect(opened).toMatchObject({ state: 'open', recovery_count: 0, last: { at: NOW } });
+
+    const olderRecovery = evaluate(snapshot, {
+      now: EARLIER,
+      last_seen_at: EARLIER_SEEN,
+      previous: 'problem',
+      samples: [near(60, { observed_at: EARLIER_SEEN })],
+    });
+    // It is a real recovery verdict; only its time is behind the stored record.
+    expect(olderRecovery).toMatchObject({ business: 'healthy', recovery: true, reason: 'recovered' });
+    expect(olderRecovery.evaluated_at).toBe(EARLIER);
+    expect(Date.parse(olderRecovery.evaluated_at)).toBeLessThan(Date.parse(opened.last.at));
+
+    const kept = nextTriggerEpisode({ identity, previous: opened, evaluation: olderRecovery });
+    // The same object, so a caller writing only `next !== previous` writes nothing.
+    expect(kept).toBe(opened);
+    expect(kept).toMatchObject({
+      state: 'open', closed_at: null, recovery_count: 0, last: { reason: 'problem', at: NOW },
+    });
+  });
+
+  it('returns the closed record untouched for an older problem', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const closed = nextTriggerEpisode({
+      identity,
+      previous: opened,
+      evaluation: evaluate(snapshot, { previous: 'problem', samples: [near(60)] }),
+    })!;
+    expect(closed).toMatchObject({ state: 'closed', closed_at: NOW, recovery_count: 1 });
+
+    const olderProblem = evaluate(snapshot, {
+      now: EARLIER,
+      last_seen_at: EARLIER_SEEN,
+      previous: 'healthy',
+      samples: [near(95, { observed_at: EARLIER_SEEN })],
+    });
+    // A definite problem in its own right, but from before the close.
+    expect(olderProblem).toMatchObject({ business: 'problem', reason: 'problem' });
+
+    const kept = nextTriggerEpisode({ identity, previous: closed, evaluation: olderProblem });
+    expect(kept).toBe(closed);
+    expect(kept).toMatchObject({ state: 'closed', occurrence: 0, closed_at: NOW, recovery_count: 1 });
+  });
+
+  it('still transitions on a later evaluation', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+
+    const laterRecovery = evaluate(snapshot, {
+      now: LATER,
+      last_seen_at: LATER_SEEN,
+      previous: 'problem',
+      samples: [near(60, { observed_at: LATER_SEEN })],
+    });
+    expect(Date.parse(laterRecovery.evaluated_at)).toBeGreaterThan(Date.parse(opened.last.at));
+    const closedLater = nextTriggerEpisode({ identity, previous: opened, evaluation: laterRecovery })!;
+    expect(closedLater).toMatchObject({ state: 'closed', closed_at: LATER, recovery_count: 1 });
+
+    const laterProblem = evaluate(snapshot, {
+      now: '2026-10-29T12:01:00.000Z',
+      last_seen_at: '2026-10-29T12:00:55.000Z',
+      previous: 'healthy',
+      samples: [near(95, { observed_at: '2026-10-29T12:00:55.000Z' })],
+    });
+    const reopened = nextTriggerEpisode({ identity, previous: closedLater, evaluation: laterProblem })!;
+    expect(reopened).toMatchObject({ state: 'open', occurrence: 1, recovery_count: 0 });
+    expect(reopened.episode_id).not.toBe(opened.episode_id);
+  });
+
+  it('rejects unparsable times instead of ordering them', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+
+    const unparsable = evaluate(snapshot, { now: 'not-a-time' });
+    expect(unparsable.evaluated_at).toBe('not-a-time');
+    expect(() => nextTriggerEpisode({ identity, previous: opened, evaluation: unparsable }))
+      .toThrowError('TRIGGER_EPISODE_TIME');
+
+    const brokenRecord = { ...opened, last: { ...opened.last, at: 'not-a-time' } };
+    expect(() => nextTriggerEpisode({
+      identity,
+      previous: brokenRecord,
+      evaluation: evaluate(snapshot, { previous: 'problem', samples: [near(60)] }),
+    })).toThrowError('TRIGGER_EPISODE_TIME');
+
+    // Without a previous record the watermark does not apply, so this evaluation
+    // still opens nothing rather than starting an occurrence from a guessed time.
+    expect(nextTriggerEpisode({ identity, previous: null, evaluation: unparsable })).toBeNull();
+  });
+
+  it('never uses another identity record as the watermark', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+
+    const otherIdentity: TriggerEpisodeIdentity = { ...identity, resource: { type: 'instance', id: '8' } };
+    const olderProblem = evaluate(snapshot, {
+      now: EARLIER,
+      last_seen_at: EARLIER_SEEN,
+      samples: [near(95, { observed_at: EARLIER_SEEN })],
+    });
+    expect(Date.parse(olderProblem.evaluated_at)).toBeLessThan(Date.parse(opened.last.at));
+
+    const openedOther = nextTriggerEpisode({
+      identity: otherIdentity, previous: opened, evaluation: olderProblem,
+    })!;
+    expect(openedOther.identity_hash).toBe(triggerEpisodeIdentityHash(otherIdentity));
+    expect(openedOther).toMatchObject({ state: 'open', occurrence: 0, opened_at: EARLIER });
+  });
+});
