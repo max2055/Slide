@@ -1,0 +1,34 @@
+fix(max238): re-probe past stale evidence, authorize the last read-back, refuse unsendable writes
+
+R2 was not accepted. This closes the five defects the review reproduced, each
+with a failure-first regression and a real MySQL/Fastify/Chromium proof.
+
+- probe: the explicit probe no longer consumes the stored evidence it is meant
+  to replace. Expired/corrupt rows are "probe again"; storage errors still fail.
+  The real reads run again and atomically upsert the same identity.
+- evidence writer: the live grant and resource relation are re-read on the same
+  connection after admission, after the transaction opened, after the upsert's
+  row-lock wait and after the read-back, immediately before COMMIT. A refusal
+  rolls back with zero rows changed; a failed COMMIT is an explicit unknown, not
+  success.
+- evidence identity: the exact target + encrypted-credential version and the
+  probing principal are part of the key, so a rewritten target, rotated
+  credential or another actor can never reuse old facts. The receipt dependency
+  digest includes the target identity too.
+- UI intents: the exact principal + resource + intent + key must be durable
+  before /apply is sent. A failed sessionStorage write refuses the request and
+  keeps the draft; a single corrupt entry invalidates the whole record instead of
+  being silently filtered; page-load scoping avoids projecting another
+  principal's intent in an unreadable session.
+- UI recovery: a committed journal answer settles only the original intent by
+  comparing the intent's own draft version, so edits made before or during the
+  query survive. No settings, dirty flag or preview is cleared.
+- fixtures: owned disposable databases use a run-random nonce, a handle written
+  before CREATE (server uuid/port/schema/owner) and a verified DROP; the
+  first-binding real test and the lifecycle seed stop dropping fixed/PID names.
+
+Evidence: 495 API module tests, 22 affected frontend tests, 6 real MySQL tests
+and two real-browser cases (lost apply response + refresh; storage refusal).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+

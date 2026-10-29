@@ -1,0 +1,30 @@
+
+
+it('Chief R1: unavailable session storage retains unknown intent in memory', async () => {
+  let applies = 0;
+  authFetch.mockImplementation(routes({
+    '/apply': () => { applies++; return { ok: true, json: async () => ({ kind: 'commit_unknown' }) }; },
+    '/operations/': () => ({ ok: true, json: async () => ({ state: 'pending', operation: null }) }),
+  }));
+  const element = await mount();
+  const fail = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+  try {
+    await element.previewFlow(); await element.runTrial(); await element.applyFlow();
+    expect(element.unresolved).toHaveLength(1);
+    await element.reloadAll();
+    console.log('CHIEF storage', JSON.stringify({ unresolved: element.unresolved.length, applies }));
+    expect(element.unresolved).toHaveLength(1);
+  } finally { fail.mockRestore(); }
+});
+
+it('Chief R1: late preview cannot validate an edited configuration', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  authFetch.mockImplementation(routes({ '/preview': async () => { await gate; return { ok: true, json: async () => preview() }; } }));
+  const element = await mount();
+  const pending = element.previewFlow();
+  element.changeSettings({ interval_ms: { mode: 'set', value: 70000 } });
+  release(); await pending;
+  console.log('CHIEF latepreview', JSON.stringify({ draft: element.settings.interval_ms, preview_interval: element.preview?.settings.interval_ms, stale: element.previewStale, trialReady: element.trialReady() }));
+  expect(element.trialReady()).toBe(false);
+});

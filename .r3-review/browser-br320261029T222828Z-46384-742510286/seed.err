@@ -1,0 +1,16 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+Error: String 'target_ro_br320261029T222828Z-46384-742510286' is too long for user name (should be no longer than 32)
+    at main (/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-238-c8c3dd216f2a/worktree/docs/slide/development/MAX-238/config-lifecycle-20261030/seed.ts:68:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-238-c8c3dd216f2a/worktree/docs/slide/development/MAX-238/config-lifecycle-20261030/seed.ts:234:1) {
+  code: 'ER_WRONG_STRING_LENGTH',
+  errno: 1470,
+  sqlState: 'HY000',
+  sqlMessage: "String 'target_ro_br320261029T222828Z-46384-742510286' is too long for user name (should be no longer than 32)",
+  sql: "DROP USER IF EXISTS 'target_ro_br320261029T222828Z-46384-742510286'@'%'"
+}
+
+Node.js v24.18.0

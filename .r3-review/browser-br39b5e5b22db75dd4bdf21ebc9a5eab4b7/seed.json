@@ -1,0 +1,27 @@
+{
+ "database": "max238_flow_br39b5e5b22db75dd4bdf21ebc9a5eab4b7",
+ "target_database": "max238_target_br39b5e5b22db75dd4bdf21ebc9a5eab4b7",
+ "nonce": "br39b5e5b22db75dd4bdf21ebc9a5eab4b7",
+ "handle_dir": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-238-c8c3dd216f2a/worktree/apps/db-ops-api/.max238-handles",
+ "target_user": "max238_ro_d3666bcd7b660bef",
+ "admin_user_id": 3,
+ "unbound_instance": 1,
+ "unbound_storage_instance": 2,
+ "legacy_instance": 3,
+ "legacy_ui_instance": 4,
+ "template": {
+  "template_id": "tpl-b854587bf1a24f05",
+  "version": 1,
+  "content_hash": "sha256:6e1421e61242a74abe51e29c5200d5bf6357abbc0207c99266f732421d5ca878",
+  "current": 1,
+  "items": [
+   {
+    "item_id": "itm-70ca1d61e7db474a",
+    "metric": "mysql.processlist.count",
+    "release": "mysql-representative@1.0.0#sha256:c785f27645ad4dd658b7212a8edbdfc719f6a69135e5fec799f625714bb45460",
+    "implementation": "builtin:database.mysql.connections.v1"
+   }
+  ]
+ },
+ "capabilities_known": 1
+}
