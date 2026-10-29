@@ -19,6 +19,14 @@
  * episode never reopens: replaying its recovery is a no-op, and a later problem
  * opens the next occurrence under a new id.
  *
+ * What fired the problem is frozen on the record: a new occurrence copies the
+ * item identity, the metric identity, the hit value, the reason and the time of
+ * the evaluation that opened it into `opened`. Later evaluations keep moving
+ * `last` — a repeated problem overwrites its value, a recovery overwrites its
+ * reason — but `opened` stays the evidence of the opening evaluation for the
+ * whole episode, including after the close. The next occurrence takes its own
+ * `opened` from its own opening evaluation; nothing is inherited.
+ *
  * An interruption is recorded, not just tolerated: evidence whose quality is
  * unknown on an already open episode opens an unknown interval on the record,
  * anchored at the first such evidence's time and reason, and the interval closes
@@ -47,11 +55,14 @@
  * close an episode nor prevent a close.
  */
 import { z } from 'zod';
-import { TriggerResourceSchema, type TriggerResource } from '../../contracts/metrics/triggers.js';
+import {
+  TriggerResourceSchema, type TriggerItemIdentity, type TriggerResource,
+} from '../../contracts/metrics/triggers.js';
 import {
   HashIdSchema, RuleIdSchema, TemplateTriggerScopeSchema, VersionNumberSchema,
 } from '../../contracts/metrics/templates.js';
 import type { HashId } from '../../contracts/metrics/templates.js';
+import type { MetricRef } from '../templates/model.js';
 import type {
   TriggerBusinessState, TriggerEvaluationReason, TriggerEvaluationResult, TriggerEvidenceQuality,
 } from './evaluate.js';
@@ -90,6 +101,19 @@ export interface TriggerEpisodeUnknownSegment {
   reason: TriggerEvaluationReason;
 }
 
+/**
+ * The evidence the episode opened with, copied from the evaluation that opened
+ * it and never rewritten afterwards. It is the same evidence `last` carries at
+ * that instant, frozen before the next evaluation can overwrite it.
+ */
+export interface TriggerEpisodeOpening {
+  item: TriggerItemIdentity;
+  metric: MetricRef;
+  value: number | null;
+  reason: TriggerEvaluationReason;
+  at: string;
+}
+
 export interface TriggerEpisodeRecord {
   episode_id: HashId;
   /** The identity hash this episode belongs to. */
@@ -107,6 +131,11 @@ export interface TriggerEpisodeRecord {
   /** 0 or 1 by construction: a recovery closes an episode at most once. */
   recovery_count: 0 | 1;
   last: TriggerEpisodeEvidence;
+  /**
+   * The evidence this occurrence opened with; `at` is this record's `opened_at`.
+   * Later evaluations update `last` only, so this survives the whole episode.
+   */
+  opened: TriggerEpisodeOpening;
   /**
    * Intervals observed on this episode while the evidence was unknown. The last
    * one is still open while its `to` is `null`, which `unknown_open_from` marks.
@@ -151,6 +180,15 @@ const evidenceOf = (evaluation: TriggerEvaluationResult): TriggerEpisodeEvidence
   nodata: evaluation.nodata,
   value: evaluation.value,
   dimensions: evaluation.dimensions,
+  at: evaluation.evaluated_at,
+});
+
+/** The same evidence `last` carries at opening, frozen as it was at that instant. */
+const openingOf = (evaluation: TriggerEvaluationResult): TriggerEpisodeOpening => ({
+  item: evaluation.item,
+  metric: evaluation.metric,
+  value: evaluation.value,
+  reason: evaluation.reason,
   at: evaluation.evaluated_at,
 });
 
@@ -270,6 +308,8 @@ export function nextTriggerEpisode(transition: TriggerEpisodeTransition): Trigge
     closed_at: null,
     recovery_count: 0,
     last: evidence,
+    // The opening evidence is this evaluation's, not the closed record's.
+    opened: openingOf(evaluation),
     // Opening is a definite problem with usable evidence; a new occurrence does
     // not inherit the unknown intervals of the previous one.
     unknown_segments: [],

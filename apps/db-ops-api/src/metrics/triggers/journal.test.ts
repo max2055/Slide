@@ -162,6 +162,102 @@ describe('file episode journal', () => {
     expect(readBack.unknown_segments).toEqual(closed.unknown_segments);
   });
 
+  it('reads a closed record back with the evidence that opened it', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+
+    const writer = journalOf(directory);
+    const opening = evaluate(snapshot);
+    const opened = writer.apply(identity, opening)!;
+    expect(opened.opened).toMatchObject({ value: 95, reason: 'problem', at: NOW });
+    const closed = writer.apply(identity, evaluate(snapshot, { previous: 'problem', samples: [near(60)] }))!;
+    expect(closed.last).toMatchObject({ value: 60, reason: 'recovered' });
+
+    const readBack = journalOf(directory).get(identity)!;
+    expect(readBack).toEqual(closed);
+    expect(readBack).toMatchObject({
+      episode_id: opened.episode_id, state: 'closed', occurrence: 0, recovery_count: 1,
+    });
+    expect(readBack.opened).toEqual({
+      item: opening.item,
+      metric: opening.metric,
+      value: 95,
+      reason: 'problem',
+      at: NOW,
+    });
+    expect(readBack.opened.at).toBe(readBack.opened_at);
+  });
+
+  it('refuses a record that has lost the opening evidence instead of starting over', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+    const path = join(directory, TRIGGER_EPISODE_JOURNAL_FILE);
+
+    journalOf(directory).apply(identity, evaluate(snapshot));
+    const complete = await textOf(directory);
+    const damagedBy = (drop: (record: Record<string, unknown>) => void): string => {
+      const file = JSON.parse(complete);
+      for (const stored of Object.values(file.records) as Array<Record<string, unknown>>) drop(stored);
+      return JSON.stringify(file);
+    };
+
+    const variants: Array<[string, string]> = [
+      ['no opened', damagedBy(record => { delete record.opened; })],
+      ...(['item', 'metric', 'value', 'reason', 'at'] as const).map((field): [string, string] => [
+        `opened without ${field}`,
+        damagedBy(record => { delete (record.opened as Record<string, unknown>)[field]; }),
+      ]),
+    ];
+
+    for (const [name, damaged] of variants) {
+      await writeFile(path, damaged, 'utf8');
+
+      // The opening evidence is part of the record now: a record without it is a
+      // record error, not an empty journal from occurrence 0, and the file stays.
+      await expectJournalError(() => journalOf(directory).get(identity), 'TRIGGER_EPISODE_JOURNAL_RECORD');
+      await expectJournalError(
+        () => journalOf(directory).apply(identity, evaluate(snapshot)),
+        'TRIGGER_EPISODE_JOURNAL_RECORD',
+      );
+      expect(await textOf(directory), name).toBe(damaged);
+    }
+  });
+
+  it('refuses opening evidence that carries a field it does not have', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+    const path = join(directory, TRIGGER_EPISODE_JOURNAL_FILE);
+
+    journalOf(directory).apply(identity, evaluate(snapshot));
+    const complete = await textOf(directory);
+    const withExtraField = (place: (opened: Record<string, unknown>) => void): string => {
+      const file = JSON.parse(complete);
+      for (const stored of Object.values(file.records) as Array<Record<string, unknown>>) {
+        place(stored.opened as Record<string, unknown>);
+      }
+      return JSON.stringify(file);
+    };
+
+    for (const [name, damaged] of [
+      ['opened', withExtraField(opened => { opened.acknowledged_by = 42; })],
+      ['opened.item', withExtraField(opened => {
+        (opened.item as Record<string, unknown>).acknowledged_by = 42;
+      })],
+    ] as const) {
+      await writeFile(path, damaged, 'utf8');
+
+      await expectJournalError(() => journalOf(directory).get(identity), 'TRIGGER_EPISODE_JOURNAL_RECORD');
+      await expectJournalError(
+        () => journalOf(directory).apply(identity, evaluate(snapshot)),
+        'TRIGGER_EPISODE_JOURNAL_RECORD',
+      );
+      expect(await textOf(directory), name).toBe(damaged);
+    }
+  });
+
   it('refuses a record that has lost the unknown interval fields instead of starting over', async () => {
     const snapshot = await snapshotOf();
     const identity = identityOf(snapshot);

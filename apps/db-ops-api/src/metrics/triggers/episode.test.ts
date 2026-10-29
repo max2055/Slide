@@ -352,6 +352,144 @@ describe('unknown intervals on the episode record', () => {
   });
 });
 
+describe('opening evidence on the episode record', () => {
+  const INTERRUPTED = '2026-10-29T12:01:00Z';
+  const RECOVERED_AT = '2026-10-29T12:03:00Z';
+  const REOPENED_AT = '2026-10-29T12:04:00Z';
+
+  it('freezes the opening evaluation’s item, metric, value, reason and time', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opening = evaluate(snapshot);
+    expect(opening).toMatchObject({ business: 'problem', reason: 'problem', value: 95 });
+
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: opening })!;
+    expect(opened.opened).toEqual({
+      item: { template_id: 'tpl-monitoring', item_id: 'alpha', item_version: 1 },
+      metric: { id: 'fixture.alpha', semantic_version: '1.0.0' },
+      value: 95,
+      reason: 'problem',
+      at: NOW,
+    });
+    expect(opened.opened.item).toEqual(opening.item);
+    expect(opened.opened.metric).toEqual(opening.metric);
+    expect(opened.opened.at).toBe(opened.opened_at);
+    expect(opened.identity_hash).toBe(triggerEpisodeIdentityHash(identity));
+
+    // Every later verdict of the same episode moves `last` and leaves `opened`.
+    const retained = nextTriggerEpisode({
+      identity, previous: opened, evaluation: evaluate(snapshot, { previous: 'problem', samples: [near(85)] }),
+    })!;
+    expect(retained.last).toMatchObject({ value: 85, reason: 'problem_retained' });
+    expect(retained.opened).toEqual(opened.opened);
+
+    const nodata = nextTriggerEpisode({
+      identity,
+      previous: retained,
+      evaluation: evaluate(snapshot, { previous: 'problem', last_seen_at: null, samples: [] }),
+    })!;
+    expect(nodata.last).toMatchObject({ reason: 'nodata', value: null });
+    expect(nodata.opened).toEqual(opened.opened);
+
+    const stale = nextTriggerEpisode({
+      identity,
+      previous: nodata,
+      evaluation: evaluate(snapshot, {
+        previous: 'problem', samples: [near(10, { observed_at: '2026-10-29T11:56:40.000Z' })],
+      }),
+    })!;
+    expect(stale.last).toMatchObject({ reason: 'stale', quality: 'unknown' });
+    expect(stale.opened).toEqual(opened.opened);
+
+    const recovered = evaluate(snapshot, { previous: 'problem', samples: [near(60)] });
+    const closed = nextTriggerEpisode({ identity, previous: stale, evaluation: recovered })!;
+    expect(closed).toMatchObject({ state: 'closed', recovery_count: 1 });
+    expect(closed.last).toMatchObject({ value: 60, reason: 'recovered' });
+    // The closed record still says what opened it.
+    expect(closed.opened).toEqual(opened.opened);
+    expect(closed.opened.at).toBe(closed.opened_at);
+    // Replaying the recovery returns the very same record, `opened` included.
+    expect(nextTriggerEpisode({ identity, previous: closed, evaluation: recovered })).toBe(closed);
+  });
+
+  it('gives the next occurrence its own opening evidence instead of copying the closed one', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const interrupted = nextTriggerEpisode({
+      identity,
+      previous: opened,
+      evaluation: evaluate(snapshot, {
+        now: INTERRUPTED, previous: 'problem', samples: [near(10, { observed_at: '2026-10-29T11:56:40.000Z' })],
+      }),
+    })!;
+    const seenRecovery = '2026-10-29T12:02:55.000Z';
+    const closed = nextTriggerEpisode({
+      identity,
+      previous: interrupted,
+      evaluation: evaluate(snapshot, {
+        now: RECOVERED_AT, last_seen_at: seenRecovery, previous: 'problem',
+        samples: [near(60, { observed_at: seenRecovery })],
+      }),
+    })!;
+    expect(closed).toMatchObject({ state: 'closed', recovery_count: 1 });
+
+    const seenReopen = '2026-10-29T12:03:55.000Z';
+    const reopening = evaluate(snapshot, {
+      now: REOPENED_AT, last_seen_at: seenReopen, previous: 'healthy',
+      samples: [near(97, { observed_at: seenReopen })],
+    });
+    expect(reopening).toMatchObject({ business: 'problem', reason: 'problem', value: 97 });
+    const reopened = nextTriggerEpisode({ identity, previous: closed, evaluation: reopening })!;
+
+    expect(reopened).toMatchObject({
+      state: 'open', occurrence: 1, opened_at: REOPENED_AT, closed_at: null, recovery_count: 0,
+      unknown_segments: [], unknown_open_from: null,
+    });
+    expect(reopened.opened).toEqual({
+      item: reopening.item,
+      metric: reopening.metric,
+      value: 97,
+      reason: 'problem',
+      at: REOPENED_AT,
+    });
+    expect(reopened.opened).not.toEqual(closed.opened);
+    expect(reopened.episode_id).not.toBe(closed.episode_id);
+    // The closed record kept its own opening evidence.
+    expect(closed.opened).toMatchObject({ value: 95, reason: 'problem', at: NOW });
+  });
+
+  it('creates no opening evidence when the evaluation opens nothing', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+
+    // A late judgement returns the stored record object itself: no new `opened`,
+    // nothing a caller could mistake for a rewritten opening.
+    const late = evaluate(snapshot, {
+      now: '2026-10-29T11:58:00.000Z',
+      last_seen_at: '2026-10-29T11:57:55.000Z',
+      previous: 'problem',
+      samples: [near(60, { observed_at: '2026-10-29T11:57:55.000Z' })],
+    });
+    expect(nextTriggerEpisode({ identity, previous: opened, evaluation: late })).toBe(opened);
+    expect(opened.opened).toEqual({
+      item: expect.objectContaining({ item_id: 'alpha' }),
+      metric: expect.objectContaining({ id: 'fixture.alpha' }),
+      value: 95,
+      reason: 'problem',
+      at: NOW,
+    });
+
+    // Without a previous record, healthy and unknown evidence still record nothing.
+    expect(nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot, { samples: [near(60)] }) }))
+      .toBeNull();
+    expect(nextTriggerEpisode({
+      identity, previous: null, evaluation: evaluate(snapshot, { samples: [], last_seen_at: null }),
+    })).toBeNull();
+  });
+});
+
 describe('late and out-of-order watermark', () => {
   // An evaluation one minute before NOW, with its own fresh sample. The evidence
   // is usable on its own terms; only its evaluated_at is older than the record.

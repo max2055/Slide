@@ -21,6 +21,9 @@
  * - a corrupt file, truncated JSON, a record whose identity hash disagrees with
  *   its key, or a record carrying a field the record type does not have is a
  *   `TriggerEpisodeJournalError`, never an empty journal.
+ * - the opening evidence is part of the record: a record without `opened`, or an
+ *   `opened` missing one of its fields, is that same record error — not a record
+ *   that happens to predate the field.
  *
  * There is no acknowledgement, no clock, no notification attempt, no event,
  * outbox or worker here: the journal stores episode records and nothing else, and
@@ -29,12 +32,12 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { TimestampSchema } from '../../contracts/metrics/index.js';
-import { TriggerResourceSchema } from '../../contracts/metrics/triggers.js';
+import { MetricRefSchema, TimestampSchema } from '../../contracts/metrics/index.js';
+import { TriggerItemIdentitySchema, TriggerResourceSchema } from '../../contracts/metrics/triggers.js';
 import { HashIdSchema } from '../../contracts/metrics/templates.js';
 import type { HashId } from '../../contracts/metrics/templates.js';
 import type {
-  TriggerEpisodeEvidence, TriggerEpisodeRecord, TriggerEpisodeUnknownSegment,
+  TriggerEpisodeEvidence, TriggerEpisodeOpening, TriggerEpisodeRecord, TriggerEpisodeUnknownSegment,
 } from './episode.js';
 
 /** The only file an exclusive journal directory holds. */
@@ -59,6 +62,15 @@ const TriggerEpisodeEvidenceSchema = z.strictObject({
   at: TimestampSchema,
 });
 
+/** Exactly the accepted `TriggerEpisodeOpening`; a field it does not have is an error. */
+const TriggerEpisodeOpeningSchema = z.strictObject({
+  item: TriggerItemIdentitySchema,
+  metric: MetricRefSchema,
+  value: z.number().nullable(),
+  reason: TriggerEvaluationReasonSchema,
+  at: TimestampSchema,
+});
+
 const TriggerEpisodeUnknownSegmentSchema = z.strictObject({
   from: TimestampSchema,
   to: TimestampSchema.nullable(),
@@ -79,12 +91,14 @@ const TriggerEpisodeRecordSchema = z.strictObject({
   closed_at: TimestampSchema.nullable(),
   recovery_count: z.union([z.literal(0), z.literal(1)]),
   last: TriggerEpisodeEvidenceSchema,
+  opened: TriggerEpisodeOpeningSchema,
   unknown_segments: z.array(TriggerEpisodeUnknownSegmentSchema),
   unknown_open_from: TimestampSchema.nullable(),
 });
 
 type JournalRecord = z.infer<typeof TriggerEpisodeRecordSchema>;
 type JournalEvidence = z.infer<typeof TriggerEpisodeEvidenceSchema>;
+type JournalOpening = z.infer<typeof TriggerEpisodeOpeningSchema>;
 type JournalSegment = z.infer<typeof TriggerEpisodeUnknownSegmentSchema>;
 /**
  * Compile-time proof that the schema and the accepted record carry the same
@@ -95,10 +109,12 @@ type JournalSegment = z.infer<typeof TriggerEpisodeUnknownSegmentSchema>;
 const schemaCoversRecord: Exclude<keyof TriggerEpisodeRecord, keyof JournalRecord> extends never ? true : false = true;
 const recordCoversSchema: Exclude<keyof JournalRecord, keyof TriggerEpisodeRecord> extends never ? true : false = true;
 const evidenceCoversEvaluations: TriggerEpisodeEvidence extends JournalEvidence ? true : false = true;
+const openingCoversRecord: TriggerEpisodeOpening extends JournalOpening ? true : false = true;
 const segmentCoversRecord: TriggerEpisodeUnknownSegment extends JournalSegment ? true : false = true;
 void schemaCoversRecord;
 void recordCoversSchema;
 void evidenceCoversEvaluations;
+void openingCoversRecord;
 void segmentCoversRecord;
 
 const JournalFileSchema = z.strictObject({
