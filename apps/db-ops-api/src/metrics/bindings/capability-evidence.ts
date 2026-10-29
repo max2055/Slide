@@ -11,9 +11,10 @@
  *   accepted `CollectorAccess` and `runPackage`) writes the capability facts it
  *   actually observed;
  * - the facts are stored under one exact identity — resource, pinned template
- *   versions and content hashes, credential reference, base revision and the
- *   caller's exact candidate intent — so they can never be reused for another
- *   resource, credential, pin, revision or edited draft;
+ *   versions and content hashes, credential reference, the exact target +
+ *   credential version, the probing principal, base revision and the caller's
+ *   exact candidate intent — so they can never be reused for another resource,
+ *   credential, target version, principal, pin, revision or edited draft;
  * - a row that is expired, unparsable or inconsistent is a refusal, never an
  *   implicit "absent" (an absent row is the only proof that nothing was probed).
  *
@@ -35,7 +36,9 @@ import { withPolicyAdmission } from '../policy/store.js';
 export type CapabilityEvidenceErrorCode =
   | 'CAPABILITY_EVIDENCE_UNAVAILABLE'
   | 'CAPABILITY_EVIDENCE_INVALID'
-  | 'CAPABILITY_EVIDENCE_EXPIRED';
+  | 'CAPABILITY_EVIDENCE_EXPIRED'
+  /** The commit may or may not have landed; it is never reported as written. */
+  | 'CAPABILITY_EVIDENCE_COMMIT_UNKNOWN';
 
 export class CapabilityEvidenceError extends Error {
   constructor(public readonly code: CapabilityEvidenceErrorCode) {
@@ -58,6 +61,14 @@ const IdentitySchema = z.strictObject({
   /** Exact fixed pins, canonical order (template id, version). */
   template_pins: z.array(TemplatePinSchema).min(1),
   credential_ref: z.string().regex(/^credential:[A-Za-z0-9_-]{1,128}$/),
+  /**
+   * The exact target + credential version the probe read (see target-identity.ts).
+   * A rewritten target or a rotated credential produces another identity, so old
+   * facts can never answer for it.
+   */
+  target_identity: HashTextSchema,
+  /** The principal that performed the probe; another principal cannot reuse it. */
+  actor_id: z.number().int().positive(),
   /** Digest of the exact candidate intent the probe was authorized for. */
   intent_digest: HashTextSchema,
 });
@@ -70,10 +81,11 @@ const RecordSchema = z.strictObject({
   revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
   template_pins: z.array(TemplatePinSchema).min(1),
   credential_ref: z.string().regex(/^credential:[A-Za-z0-9_-]{1,128}$/),
+  target_identity: HashTextSchema,
+  actor_id: z.number().int().positive(),
   intent_digest: HashTextSchema,
   capabilities: z.array(CapabilitySchema).min(1),
   source: z.literal('read_only_probe'),
-  actor_id: z.number().int().positive().nullable(),
   probed_at: TimestampTextSchema,
   expires_at: TimestampTextSchema,
 });
@@ -104,6 +116,8 @@ export function capabilityEvidenceKey(input: CapabilityEvidenceIdentity): string
     revision: identity.revision,
     template_pins: sortedPins(identity.template_pins),
     credential_ref: identity.credential_ref,
+    target_identity: identity.target_identity,
+    actor_id: identity.actor_id,
     intent_digest: identity.intent_digest,
   })).digest('hex')}`;
 }
@@ -135,6 +149,8 @@ export function parseCapabilityEvidence(
   if (record.evidence_key !== expected) throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_INVALID');
   if (record.revision !== identity.revision
     || record.credential_ref !== identity.credential_ref
+    || record.target_identity !== identity.target_identity
+    || record.actor_id !== identity.actor_id
     || record.intent_digest !== identity.intent_digest
     || refKey(record.resource) !== refKey(identity.resource)
     || stable(sortedPins(record.template_pins)) !== stable(sortedPins(identity.template_pins))) {
@@ -191,7 +207,6 @@ export interface CapabilityEvidenceWriterDeps {
 
 export interface CapabilityEvidenceWriteInput extends CapabilityEvidenceIdentity {
   capabilities: Capability[];
-  actor_id: number | null;
   probed_at: string;
   expires_at: string;
 }
@@ -219,13 +234,14 @@ export async function writeCapabilityEvidence(
 ): Promise<CapabilityEvidenceWriteOutcome> {
   const identity = IdentitySchema.parse({
     resource: input.resource, revision: input.revision, template_pins: input.template_pins,
-    credential_ref: input.credential_ref, intent_digest: input.intent_digest,
+    credential_ref: input.credential_ref, target_identity: input.target_identity,
+    actor_id: input.actor_id, intent_digest: input.intent_digest,
   });
   const key = capabilityEvidenceKey(identity);
   const record = RecordSchema.parse({
     format: CAPABILITY_EVIDENCE_FORMAT, evidence_key: key,
     ...identity, capabilities: input.capabilities, source: 'read_only_probe',
-    actor_id: input.actor_id, probed_at: input.probed_at, expires_at: input.expires_at,
+    probed_at: input.probed_at, expires_at: input.expires_at,
   });
   const text = JSON.stringify(record);
 
@@ -256,7 +272,7 @@ export async function writeCapabilityEvidence(
         // 1 insert, 2 update, 0 unchanged: all leave exactly one row.
         if (affected === null || affected > 2) throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_UNAVAILABLE');
         // The upsert can wait on a row lock; the grant that held after that wait
-        // is the one that may commit.
+        // is the one that may have written the row.
         await authorize?.(connection);
         let rows: unknown;
         try {
@@ -276,7 +292,17 @@ export async function writeCapabilityEvidence(
           rows[0].payload, identity,
           Math.max(Date.parse(record.probed_at), Number.isFinite(storedInstant) ? storedInstant : 0),
         );
-        try { await connection.commit(); } catch { throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_UNAVAILABLE'); }
+        // The read-back can wait too. The last live-grant read happens on this
+        // same connection *after* it and immediately before the commit that
+        // publishes the evidence, so no wait after the last authorization can
+        // turn a revoked grant into a persisted fact.
+        await authorize?.(connection);
+        try { await connection.commit(); }
+        catch {
+          // Commit is the one boundary nothing can re-read afterwards: whether
+          // the row landed is unknown, and an unknown outcome is never success.
+          throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_COMMIT_UNKNOWN');
+        }
         settled = true;
         return { evidence_key: key, record: stored };
       } catch (error) {

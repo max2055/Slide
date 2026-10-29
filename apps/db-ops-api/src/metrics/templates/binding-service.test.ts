@@ -144,6 +144,11 @@ function fakeConnection() {
       // Bootstrap evidence is a separate store; these fixtures never seed it, so
       // an unbound resource has no probed capability facts here.
       if (key.startsWith('SELECT payload FROM metric_capability_evidence')) return [[], []];
+      // The exact target + credential version bootstrap evidence belongs to.
+      if (key.startsWith('SELECT host, port, username, db_type, database_name, password_encrypted FROM database_instances')) {
+        return [[{ host: '127.0.0.1', port: 3306, username: 'operator', db_type: 'mysql',
+          database_name: 'metrics', password_encrypted: 'fixture-ciphertext' }], []];
+      }
       if (key.startsWith('SELECT 1 FROM metric_policy_bindings')) return [[], []];
       if (key === normalize(TRIAL_RECEIPT_INSERT_SQL)) {
         await state.beforeInsert?.();

@@ -13,7 +13,8 @@
  *   MAX238_TARGET_PASSWORD=… pnpm --filter slide-api exec vitest run \
  *   src/metrics/templates/first-binding.real.test.ts
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import Fastify from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -29,13 +30,26 @@ import { MetricTemplateService } from './service.js';
 import { TemplateBindingService } from './binding-service.js';
 import { registerMetricTemplateRoutes } from './routes.js';
 import type { ResourceBindingCandidate } from '../../contracts/metrics/templates.js';
+import type { Capability } from '../../contracts/metrics/index.js';
+import {
+  CAPABILITY_EVIDENCE_TTL_MS, capabilityEvidenceKey, probeIntentDigest, writeCapabilityEvidence,
+} from '../bindings/capability-evidence.js';
+import { trustedTargetIdentity } from '../bindings/target-identity.js';
+import { PolicyError } from '../policy/model.js';
+import {
+  createOwnedDatabase, dropOwnedDatabase, generateRunNonce, type OwnedDatabase,
+} from '../../testing/owned-fixture.js';
 
 const enabled = process.env.MAX238_FIRST_BINDING === '1';
 const PORT = Number(process.env.MAX238_TEST_MYSQL_PORT);
 const PASSWORD = process.env.MAX238_TEST_MYSQL_PASSWORD ?? '';
 const TARGET_PASSWORD = process.env.MAX238_TARGET_PASSWORD ?? '';
-const TARGET_SCHEMA = `max238_target_${process.pid}`;
-const TARGET_USER = `max238_ro_${process.pid}`;
+// A run-random nonce, recorded in a handle before anything is created. Nothing
+// here trusts the port, the PID or a `max238_` prefix as proof of ownership.
+const NONCE = process.env.MAX238_RUN_NONCE ?? generateRunNonce();
+// MySQL caps user names at 32 characters; the nonce is folded into a short digest.
+const TARGET_USER = `max238_ro_${createHash('sha256').update(NONCE).digest('hex').slice(0, 16)}`;
+const HANDLE_DIR = process.env.MAX238_HANDLE_DIR ?? join(process.cwd(), '.max238-handles');
 const AT = () => new Date().toISOString();
 
 const admin = {
@@ -49,6 +63,9 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
   let instanceId = 0;
   let failingInstanceId = 0;
   let secondInstanceId = 0;
+  let reProbeInstanceId = 0;
+  let rotatedInstanceId = 0;
+  let evidenceInstanceId = 0;
   let templateId = '';
   let templateVersion = 0;
   let contentHash = '';
@@ -78,24 +95,28 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
     'SELECT COUNT(*) c FROM metric_capability_evidence WHERE JSON_UNQUOTE(JSON_EXTRACT(payload, \'$.resource.id\')) = ?',
     [String(id)]))[0][0].c);
 
+  let platform: OwnedDatabase;
+  let target: OwnedDatabase;
+
   beforeAll(async () => {
     process.env.ENCRYPTION_KEY = randomBytes(32).toString('hex');
     const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
-    const database = `max238_first_${process.pid}`;
-    await root.query(`DROP DATABASE IF EXISTS \`${database}\``);
-    await root.query(`CREATE DATABASE \`${database}\` DEFAULT CHARACTER SET utf8mb4`);
-    await root.query(`DROP DATABASE IF EXISTS \`${TARGET_SCHEMA}\``);
-    await root.query(`CREATE DATABASE \`${TARGET_SCHEMA}\` DEFAULT CHARACTER SET utf8mb4`);
-    await root.query(`CREATE TABLE \`${TARGET_SCHEMA}\`.probe (id INT PRIMARY KEY, label VARCHAR(64))`);
-    await root.query(`INSERT INTO \`${TARGET_SCHEMA}\`.probe VALUES (1, 'max238-first-binding')`);
-    await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`);
-    await root.query(`CREATE USER '${TARGET_USER}'@'%' IDENTIFIED BY ?`, [TARGET_PASSWORD]);
-    await root.query(`GRANT SELECT ON \`${TARGET_SCHEMA}\`.* TO '${TARGET_USER}'@'%'`);
-    await root.query(`GRANT PROCESS ON *.* TO '${TARGET_USER}'@'%'`);
+    try {
+      platform = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'first', handleDir: HANDLE_DIR });
+      target = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'target', handleDir: HANDLE_DIR });
+    } catch (error) { await root.end(); throw error; }
+    try {
+      await root.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY, label VARCHAR(64))`);
+      await root.query(`INSERT INTO \`${target.database}\`.probe VALUES (1, 'max238-first-binding')`);
+      // A nonce-named user; an existing one is a neighbour, not ours to reuse.
+      await root.query(`CREATE USER '${TARGET_USER}'@'%' IDENTIFIED BY ?`, [TARGET_PASSWORD]);
+      await root.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
+      await root.query(`GRANT PROCESS ON *.* TO '${TARGET_USER}'@'%'`);
+    } catch (error) { await root.end(); throw error; }
     await root.end();
 
     pool = mysql.createPool({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD,
-      database, timezone: 'Z', connectionLimit: 12 });
+      database: platform.database, timezone: 'Z', connectionLimit: 12 });
     pool.on('connection', connection => connection.query("SET time_zone='+00:00'"));
     const runner = new MigrationRunner(pool as unknown as MigrationPool);
     await runner.run();
@@ -113,20 +134,30 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
         (name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status, lifecycle_state,
          max_connections, connection_timeout_ms, created_by, created_at, updated_at)
         VALUES (?, 'testing', 'mysql', '8.4', '127.0.0.1', ?, ?, ?, ?, 'active', 'available', 10, 5000, 1, ?, ?)`,
-      [name, PORT, targetUser, encryptData(targetPassword), TARGET_SCHEMA, now.replace('T', ' ').replace('Z', ''),
+      [name, PORT, targetUser, encryptData(targetPassword), target.database, now.replace('T', ' ').replace('Z', ''),
         now.replace('T', ' ').replace('Z', '')]);
       return Number((await pool.query<RowDataPacket[]>('SELECT id FROM database_instances WHERE name = ?', [name]))[0][0].id);
     };
     instanceId = await instance('max238-first-unbound', TARGET_USER, TARGET_PASSWORD);
     secondInstanceId = await instance('max238-first-concurrent', TARGET_USER, TARGET_PASSWORD);
     failingInstanceId = await instance('max238-first-bad-credential', TARGET_USER, `${TARGET_PASSWORD}-wrong`);
+    reProbeInstanceId = await instance('max238-r3-reprobe', TARGET_USER, TARGET_PASSWORD);
+    rotatedInstanceId = await instance('max238-r3-rotated', TARGET_USER, TARGET_PASSWORD);
+    evidenceInstanceId = await instance('max238-r3-evidence', TARGET_USER, TARGET_PASSWORD);
     // The accepted collector access reads the live shared connection it built
     // when the connection was saved; a raw fixture row alone is not a target.
     const targetConfig = { host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD,
-      database: TARGET_SCHEMA, db_type: 'mysql' as const };
+      database: target.database, db_type: 'mysql' as const };
     expect(await databaseService.addConnection(instanceId, 'max238-first-unbound', targetConfig)).toBe(true);
     expect(await databaseService.addConnection(secondInstanceId, 'max238-first-concurrent', targetConfig)).toBe(true);
-    (admin as unknown as { instanceScopes: Record<number, string> }).instanceScopes = { [instanceId]: 'admin', [secondInstanceId]: 'admin', [failingInstanceId]: 'admin' };
+    for (const [id, name] of [[reProbeInstanceId, 'max238-r3-reprobe'], [rotatedInstanceId, 'max238-r3-rotated'],
+      [evidenceInstanceId, 'max238-r3-evidence']] as Array<[number, string]>) {
+      expect(await databaseService.addConnection(id, name, targetConfig)).toBe(true);
+    }
+    (admin as unknown as { instanceScopes: Record<number, string> }).instanceScopes = {
+      [instanceId]: 'admin', [secondInstanceId]: 'admin', [failingInstanceId]: 'admin',
+      [reProbeInstanceId]: 'admin', [rotatedInstanceId]: 'admin', [evidenceInstanceId]: 'admin',
+    };
 
     // One real template version with two registered metrics and one parameter.
     const repository = new MySqlTemplateRepository(pool as never);
@@ -174,9 +205,17 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
     await app?.close();
     await pool?.end();
     const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
-    await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`);
-    await root.query(`DROP DATABASE IF EXISTS \`${TARGET_SCHEMA}\``);
-    await root.end();
+    const errors: unknown[] = [];
+    try {
+      // Each cleanup is independently verified on the live root connection; one
+      // failure never hides the others and leaves its handle behind for a human.
+      await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`).catch(error => errors.push(error));
+      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'target', handleDir: HANDLE_DIR })
+        .catch(error => errors.push(error));
+      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'first', handleDir: HANDLE_DIR })
+        .catch(error => errors.push(error));
+    } finally { await root.end(); }
+    if (errors.length) throw errors[0];
   });
 
   it('bootstraps capabilities from a real read-only probe, then commits revision 1', async () => {
@@ -281,5 +320,87 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
     expect([422, 500]).toContain(response.status);
     expect(await evidenceRows(failingInstanceId)).toBe(0);
     expect(await bindings(failingInstanceId)).toHaveLength(0);
+  }, 60_000);
+
+  /* --- R3: re-acquisition, credential/target isolation, late revocation ----- */
+
+  it('R3: an expired evidence row is a refusal to consume but is replaced by a real re-probe', async () => {
+    const first = await call('POST', `/api/metrics/template-bindings/instance/${reProbeInstanceId}/probe`, body(0));
+    expect(first.status, JSON.stringify(first.data)).toBe(200);
+    expect(await evidenceRows(reProbeInstanceId)).toBe(1);
+    // Expire the stored row in the real table; do not re-date it to pretend support.
+    await pool.query(`UPDATE metric_capability_evidence
+        SET payload = JSON_SET(payload, '$.expires_at', '2026-10-29T00:00:00.000Z')
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(payload, '$.resource.id')) = ?`, [String(reProbeInstanceId)]);
+    const refused = await call('POST', `/api/metrics/template-bindings/instance/${reProbeInstanceId}/preview`, body(0));
+    expect(refused.status).toBe(503);
+    expect(refused.data.error).toBe('CAPABILITY_EVIDENCE_EXPIRED');
+    // The explicit probe must re-acquire for real and atomically replace the row.
+    const again = await call('POST', `/api/metrics/template-bindings/instance/${reProbeInstanceId}/probe`, body(0));
+    expect(again.status, JSON.stringify(again.data)).toBe(200);
+    expect(await evidenceRows(reProbeInstanceId)).toBe(1);
+    const fresh = await call('POST', `/api/metrics/template-bindings/instance/${reProbeInstanceId}/preview`, body(0));
+    expect(fresh.status, JSON.stringify(fresh.data)).toBe(200);
+    expect(fresh.data.executable).toBe(true);
+  }, 60_000);
+
+  it('R3: a rewritten credential row is a different evidence identity, so the old facts are not consumed', async () => {
+    const first = await call('POST', `/api/metrics/template-bindings/instance/${rotatedInstanceId}/probe`, body(0));
+    expect(first.status, JSON.stringify(first.data)).toBe(200);
+    expect(await evidenceRows(rotatedInstanceId)).toBe(1);
+    // Same resource id, same credential value, new ciphertext (as a rotation would
+    // store): the evidence was bound to the previous credential version.
+    await pool.execute('UPDATE database_instances SET password_encrypted = ? WHERE id = ?',
+      [encryptData(TARGET_PASSWORD), rotatedInstanceId]);
+    const stale = await call('POST', `/api/metrics/template-bindings/instance/${rotatedInstanceId}/preview`, body(0));
+    expect(stale.status, JSON.stringify(stale.data)).toBe(200);
+    expect(stale.data.executable).toBe(false);
+    const again = await call('POST', `/api/metrics/template-bindings/instance/${rotatedInstanceId}/probe`, body(0));
+    expect(again.status, JSON.stringify(again.data)).toBe(200);
+    // The old row is never reused and a new exact identity was written.
+    expect(await evidenceRows(rotatedInstanceId)).toBe(2);
+    const fresh = await call('POST', `/api/metrics/template-bindings/instance/${rotatedInstanceId}/preview`, body(0));
+    expect(fresh.data.executable).toBe(true);
+  }, 60_000);
+
+  it('R3: a grant revoked after the real read-back leaves zero rows in the real database', async () => {
+    const ref = { type: 'instance' as const, id: evidenceInstanceId };
+    const intent = body(0);
+    const candidate = { resource: ref, package: null, group_id: intent.group_id, overrides: intent.overrides,
+      revision: 0, template_pins: intent.template_pins };
+    const executor = pool as unknown as Parameters<typeof trustedTargetIdentity>[0];
+    const targetIdentity = await trustedTargetIdentity(executor, ref);
+    expect(targetIdentity).toMatch(/^sha256:/);
+    const identity = {
+      resource: ref, revision: 0, template_pins: intent.template_pins,
+      credential_ref: `credential:asset-instance-${evidenceInstanceId}`,
+      target_identity: targetIdentity!, actor_id: 1, intent_digest: probeIntentDigest(candidate),
+    };
+    const key = capabilityEvidenceKey(identity);
+    const rows = async () => Number((await pool.query<RowDataPacket[]>(
+      'SELECT COUNT(*) c FROM metric_capability_evidence WHERE evidence_key = ?', [key]))[0][0].c);
+    const now = AT();
+    const capabilities: Capability[] = [{
+      resource_id: String(evidenceInstanceId), metric: { id: 'mysql.processlist.count', semantic_version: '1.0.0' },
+      status: 'supported', method: 'sql', basis: [{ kind: 'method', evidence: 'r3_real_write' }],
+      evaluated_at: now, valid_until: new Date(Date.parse(now) + 120_000).toISOString(),
+    }];
+    const input = { ...identity, capabilities, probed_at: now,
+      expires_at: new Date(Date.parse(now) + CAPABILITY_EVIDENCE_TTL_MS).toISOString() };
+
+    // Refusal at the boundary after the read-back, immediately before COMMIT.
+    let calls = 0;
+    const authorize = async () => {
+      calls += 1;
+      if (calls >= 4) throw new PolicyError('TEMPLATE_BINDING_FORBIDDEN', 403);
+    };
+    await expect(writeCapabilityEvidence(input, { pool: () => pool, authorize }))
+      .rejects.toBeInstanceOf(PolicyError);
+    expect(await rows()).toBe(0);
+
+    // The same write with a live grant commits exactly one row.
+    const written = await writeCapabilityEvidence(input, { pool: () => pool });
+    expect(written.record.capabilities).toHaveLength(1);
+    expect(await rows()).toBe(1);
   }, 60_000);
 });
