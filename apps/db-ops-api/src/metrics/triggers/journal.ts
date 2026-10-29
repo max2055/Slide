@@ -33,25 +33,36 @@ import { TimestampSchema } from '../../contracts/metrics/index.js';
 import { TriggerResourceSchema } from '../../contracts/metrics/triggers.js';
 import { HashIdSchema } from '../../contracts/metrics/templates.js';
 import type { HashId } from '../../contracts/metrics/templates.js';
-import type { TriggerEpisodeEvidence, TriggerEpisodeRecord } from './episode.js';
+import type {
+  TriggerEpisodeEvidence, TriggerEpisodeRecord, TriggerEpisodeUnknownSegment,
+} from './episode.js';
 
 /** The only file an exclusive journal directory holds. */
 export const TRIGGER_EPISODE_JOURNAL_FILE = 'episodes.json';
 export const TRIGGER_EPISODE_JOURNAL_FORMAT = 'slide.trigger-episode-journal';
 
+/** Every reason the accepted evaluator can produce; a new one must be added here. */
+const TriggerEvaluationReasonSchema = z.enum([
+  'not_applied', 'invalid_input', 'rule_not_found', 'nodata', 'missing_input', 'stale', 'clock_skew',
+  'metric_mismatch', 'semantic_version_mismatch', 'unit_mismatch', 'insufficient_evidence', 'gap',
+  'series_budget_exceeded', 'problem', 'problem_retained', 'recovered', 'healthy',
+]);
+
 /** Exactly the accepted `TriggerEpisodeRecord`; a field it does not have is an error. */
 const TriggerEpisodeEvidenceSchema = z.strictObject({
   business: z.enum(['problem', 'healthy', 'unknown']),
   quality: z.enum(['good', 'partial', 'unknown']),
-  reason: z.enum([
-    'not_applied', 'invalid_input', 'rule_not_found', 'nodata', 'missing_input', 'stale', 'clock_skew',
-    'metric_mismatch', 'semantic_version_mismatch', 'unit_mismatch', 'insufficient_evidence', 'gap',
-    'series_budget_exceeded', 'problem', 'problem_retained', 'recovered', 'healthy',
-  ]),
+  reason: TriggerEvaluationReasonSchema,
   nodata: z.boolean(),
   value: z.number().nullable(),
   dimensions: z.record(z.string(), z.string()).nullable(),
   at: TimestampSchema,
+});
+
+const TriggerEpisodeUnknownSegmentSchema = z.strictObject({
+  from: TimestampSchema,
+  to: TimestampSchema.nullable(),
+  reason: TriggerEvaluationReasonSchema,
 });
 
 const TriggerEpisodeRecordSchema = z.strictObject({
@@ -68,10 +79,13 @@ const TriggerEpisodeRecordSchema = z.strictObject({
   closed_at: TimestampSchema.nullable(),
   recovery_count: z.union([z.literal(0), z.literal(1)]),
   last: TriggerEpisodeEvidenceSchema,
+  unknown_segments: z.array(TriggerEpisodeUnknownSegmentSchema),
+  unknown_open_from: TimestampSchema.nullable(),
 });
 
 type JournalRecord = z.infer<typeof TriggerEpisodeRecordSchema>;
 type JournalEvidence = z.infer<typeof TriggerEpisodeEvidenceSchema>;
+type JournalSegment = z.infer<typeof TriggerEpisodeUnknownSegmentSchema>;
 /**
  * Compile-time proof that the schema and the accepted record carry the same
  * fields, and that every business state, quality and reason the evaluator can
@@ -81,9 +95,11 @@ type JournalEvidence = z.infer<typeof TriggerEpisodeEvidenceSchema>;
 const schemaCoversRecord: Exclude<keyof TriggerEpisodeRecord, keyof JournalRecord> extends never ? true : false = true;
 const recordCoversSchema: Exclude<keyof JournalRecord, keyof TriggerEpisodeRecord> extends never ? true : false = true;
 const evidenceCoversEvaluations: TriggerEpisodeEvidence extends JournalEvidence ? true : false = true;
+const segmentCoversRecord: TriggerEpisodeUnknownSegment extends JournalSegment ? true : false = true;
 void schemaCoversRecord;
 void recordCoversSchema;
 void evidenceCoversEvaluations;
+void segmentCoversRecord;
 
 const JournalFileSchema = z.strictObject({
   format: z.literal(TRIGGER_EPISODE_JOURNAL_FORMAT),

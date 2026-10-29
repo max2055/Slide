@@ -19,6 +19,15 @@
  * episode never reopens: replaying its recovery is a no-op, and a later problem
  * opens the next occurrence under a new id.
  *
+ * An interruption is recorded, not just tolerated: evidence whose quality is
+ * unknown on an already open episode opens an unknown interval on the record,
+ * anchored at the first such evidence's time and reason, and the interval closes
+ * at the first evidence whose quality is no longer unknown — a retained problem
+ * and a recovery close it alike. Consecutive unknown evidence keeps the first
+ * `from` and the first `reason`; a closed record keeps its intervals, and the
+ * next occurrence starts with none. Recorded intervals are episode history only:
+ * they notify nothing, suppress nothing and back-fill nothing.
+ *
  * The identity carries the rule body hash, so a changed rule body — the 90 → 95
  * threshold example — can never share the episode of the old body. A previous
  * record whose identity differs is ignored rather than closed: a new snapshot
@@ -69,6 +78,18 @@ export interface TriggerEpisodeEvidence {
   at: string;
 }
 
+/**
+ * One interval in which the episode was open while the evidence could not be
+ * judged. `from` and `reason` are the first unknown evidence's time and reason;
+ * `to` is the time of the first evidence that was no longer unknown, and stays
+ * `null` while the interval is still open.
+ */
+export interface TriggerEpisodeUnknownSegment {
+  from: string;
+  to: string | null;
+  reason: TriggerEvaluationReason;
+}
+
 export interface TriggerEpisodeRecord {
   episode_id: HashId;
   /** The identity hash this episode belongs to. */
@@ -86,6 +107,13 @@ export interface TriggerEpisodeRecord {
   /** 0 or 1 by construction: a recovery closes an episode at most once. */
   recovery_count: 0 | 1;
   last: TriggerEpisodeEvidence;
+  /**
+   * Intervals observed on this episode while the evidence was unknown. The last
+   * one is still open while its `to` is `null`, which `unknown_open_from` marks.
+   */
+  unknown_segments: TriggerEpisodeUnknownSegment[];
+  /** First unknown evidence's time while an interval is open, else `null`. */
+  unknown_open_from: string | null;
 }
 
 export type TriggerEpisodeErrorCode = 'TRIGGER_EPISODE_IDENTITY' | 'TRIGGER_EPISODE_TIME';
@@ -134,6 +162,41 @@ const instantOf = (value: string): number => {
 };
 
 /**
+ * Fold one piece of evidence into the unknown intervals of an already open
+ * episode. The first unknown evidence of an interval supplies both its `from`
+ * and its `reason`; a consecutive unknown evidence must move neither. The
+ * interval closes at the first evidence whose quality is no longer unknown —
+ * whatever its business verdict — and stays on the record afterwards.
+ */
+const unknownIntervalsAfter = (
+  record: TriggerEpisodeRecord,
+  evidence: TriggerEpisodeEvidence,
+): Pick<TriggerEpisodeRecord, 'unknown_segments' | 'unknown_open_from'> => {
+  if (evidence.quality === 'unknown') {
+    if (record.unknown_open_from !== null) {
+      return { unknown_segments: record.unknown_segments, unknown_open_from: record.unknown_open_from };
+    }
+    return {
+      unknown_segments: [...record.unknown_segments, { from: evidence.at, to: null, reason: evidence.reason }],
+      unknown_open_from: evidence.at,
+    };
+  }
+  if (record.unknown_open_from === null) {
+    return { unknown_segments: record.unknown_segments, unknown_open_from: null };
+  }
+  // Close the still-open last interval at this evidence's time; the finished
+  // interval stays on the record, including after the episode closes.
+  const open = record.unknown_segments.at(-1);
+  // A record whose open marker has no interval behind it (a hand-edited journal
+  // file) must not fabricate a segment out of nothing.
+  if (open === undefined) return { unknown_segments: record.unknown_segments, unknown_open_from: null };
+  return {
+    unknown_segments: [...record.unknown_segments.slice(0, -1), { ...open, to: evidence.at }],
+    unknown_open_from: null,
+  };
+};
+
+/**
  * Apply one evaluation to the last episode record of one incident identity.
  * Returns `null` when the identity has no episode and this evaluation does not
  * start one, and the unchanged record when a closed episode is not followed by a
@@ -174,12 +237,18 @@ export function nextTriggerEpisode(transition: TriggerEpisodeTransition): Trigge
   const evidence = evidenceOf(evaluation);
 
   if (owned !== null && owned.state === 'open') {
+    // Only an already open episode records unknown intervals, and the interval is
+    // folded in before the verdict decides open versus closed, so a recovery
+    // closes the interval it ends and a retained problem closes it too.
+    const unknown = unknownIntervalsAfter(owned, evidence);
     if (evaluation.recovery) {
-      return { ...owned, state: 'closed', closed_at: evidence.at, recovery_count: 1, last: evidence };
+      return {
+        ...owned, ...unknown, state: 'closed', closed_at: evidence.at, recovery_count: 1, last: evidence,
+      };
     }
     // Unknown, nodata, stale, missing input, a retained problem, or a healthy
     // verdict without recovery evidence all keep the same open episode.
-    return { ...owned, last: evidence };
+    return { ...owned, ...unknown, last: evidence };
   }
 
   // A closed (or unrelated) episode never reopens, and unknown evidence while it
@@ -201,5 +270,9 @@ export function nextTriggerEpisode(transition: TriggerEpisodeTransition): Trigge
     closed_at: null,
     recovery_count: 0,
     last: evidence,
+    // Opening is a definite problem with usable evidence; a new occurrence does
+    // not inherit the unknown intervals of the previous one.
+    unknown_segments: [],
+    unknown_open_from: null,
   };
 }

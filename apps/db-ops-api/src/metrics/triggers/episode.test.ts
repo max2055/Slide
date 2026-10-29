@@ -195,6 +195,163 @@ describe('pure episode transition', () => {
   });
 });
 
+describe('unknown intervals on the episode record', () => {
+  // A real interruption: the sample is older than the rule's stale_after_ms, so
+  // the evaluator itself returns unknown evidence, not a flag set by this test.
+  const staleAt = (snapshot: TriggerResourceSnapshot, at: string): TriggerEvaluationResult => evaluate(snapshot, {
+    now: at,
+    previous: 'problem',
+    samples: [near(10, { observed_at: '2026-10-29T11:56:40.000Z' })],
+  });
+  // Explicit nodata, also unknown evidence, one minute after the stale judgement.
+  const nodataAt = (snapshot: TriggerResourceSnapshot, at: string): TriggerEvaluationResult => evaluate(snapshot, {
+    now: at, previous: 'problem', last_seen_at: null, samples: [],
+  });
+  const recoveryAt = (snapshot: TriggerResourceSnapshot, at: string): TriggerEvaluationResult => {
+    const seen = new Date(Date.parse(at) - 5000).toISOString();
+    return evaluate(snapshot, {
+      now: at, last_seen_at: seen, previous: 'problem', samples: [near(60, { observed_at: seen })],
+    });
+  };
+
+  const INTERRUPTED = '2026-10-29T12:01:00Z';
+  const AGAIN = '2026-10-29T12:02:00Z';
+  const RECOVERED_AT = '2026-10-29T12:03:00Z';
+  const RETAINED_AT = '2026-10-29T12:01:30Z';
+  const REOPENED_AT = '2026-10-29T12:04:00Z';
+
+  it('keeps an episode without unknown evidence at an empty array and null', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    expect(opened).toMatchObject({ unknown_segments: [], unknown_open_from: null });
+
+    const retained = nextTriggerEpisode({
+      identity, previous: opened, evaluation: evaluate(snapshot, { previous: 'problem', samples: [near(85)] }),
+    })!;
+    expect(retained).toMatchObject({ unknown_segments: [], unknown_open_from: null });
+
+    const closed = nextTriggerEpisode({
+      identity,
+      previous: retained,
+      evaluation: evaluate(snapshot, { previous: 'problem', samples: [near(60)] }),
+    })!;
+    expect(closed).toMatchObject({ state: 'closed', unknown_segments: [], unknown_open_from: null });
+  });
+
+  it('records one interval from the first unknown evidence to the recovery and keeps it after the close', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+
+    const firstUnknown = staleAt(snapshot, INTERRUPTED);
+    expect(firstUnknown).toMatchObject({ business: 'unknown', quality: 'unknown', reason: 'stale', recovery: false });
+    const interrupted = nextTriggerEpisode({ identity, previous: opened, evaluation: firstUnknown })!;
+    expect(interrupted).toMatchObject({
+      episode_id: opened.episode_id, state: 'open', closed_at: null, recovery_count: 0,
+      unknown_open_from: INTERRUPTED, last: { quality: 'unknown', reason: 'stale', at: INTERRUPTED },
+    });
+    expect(interrupted.unknown_segments).toEqual([{ from: INTERRUPTED, to: null, reason: 'stale' }]);
+
+    // A second unknown judgement with another reason keeps the first `from` and
+    // the first `reason`: it is the same interval, not a second one.
+    const secondUnknown = nodataAt(snapshot, AGAIN);
+    expect(secondUnknown).toMatchObject({ business: 'unknown', quality: 'unknown', reason: 'nodata' });
+    const stillInterrupted = nextTriggerEpisode({ identity, previous: interrupted, evaluation: secondUnknown })!;
+    expect(stillInterrupted).toMatchObject({
+      episode_id: opened.episode_id, state: 'open',
+      unknown_open_from: INTERRUPTED, last: { reason: 'nodata' },
+    });
+    expect(stillInterrupted.unknown_segments).toEqual([{ from: INTERRUPTED, to: null, reason: 'stale' }]);
+
+    const recovered = recoveryAt(snapshot, RECOVERED_AT);
+    expect(recovered).toMatchObject({ business: 'healthy', quality: 'good', recovery: true });
+    const closed = nextTriggerEpisode({ identity, previous: stillInterrupted, evaluation: recovered })!;
+    expect(closed).toMatchObject({
+      episode_id: opened.episode_id, state: 'closed', closed_at: RECOVERED_AT, recovery_count: 1,
+      unknown_open_from: null, last: { reason: 'recovered' },
+    });
+    // The interval stays on the closed record, ending at the recovering evidence.
+    expect(closed.unknown_segments).toEqual([{ from: INTERRUPTED, to: RECOVERED_AT, reason: 'stale' }]);
+
+    // Replaying the recovery neither reopens nor closes a second time.
+    expect(nextTriggerEpisode({ identity, previous: closed, evaluation: recovered })).toBe(closed);
+  });
+
+  it('closes the interval on a retained problem too, not only on a recovery', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const interrupted = nextTriggerEpisode({ identity, previous: opened, evaluation: staleAt(snapshot, INTERRUPTED) })!;
+
+    const seen = '2026-10-29T12:01:25.000Z';
+    const retainedEvaluation = evaluate(snapshot, {
+      now: RETAINED_AT, last_seen_at: seen, previous: 'problem', samples: [near(95, { observed_at: seen })],
+    });
+    expect(retainedEvaluation).toMatchObject({ business: 'problem', quality: 'good', reason: 'problem_retained' });
+
+    const retained = nextTriggerEpisode({ identity, previous: interrupted, evaluation: retainedEvaluation })!;
+    expect(retained).toMatchObject({
+      episode_id: opened.episode_id, state: 'open', closed_at: null, recovery_count: 0,
+      unknown_open_from: null, last: { business: 'problem', reason: 'problem_retained' },
+    });
+    expect(retained.unknown_segments).toEqual([{ from: INTERRUPTED, to: RETAINED_AT, reason: 'stale' }]);
+  });
+
+  it('starts the next occurrence without the intervals of the closed one', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const interrupted = nextTriggerEpisode({ identity, previous: opened, evaluation: staleAt(snapshot, INTERRUPTED) })!;
+    const closed = nextTriggerEpisode({ identity, previous: interrupted, evaluation: recoveryAt(snapshot, RECOVERED_AT) })!;
+
+    const seen = '2026-10-29T12:03:55.000Z';
+    const reopened = nextTriggerEpisode({
+      identity,
+      previous: closed,
+      evaluation: evaluate(snapshot, {
+        now: REOPENED_AT, last_seen_at: seen, samples: [near(95, { observed_at: seen })],
+      }),
+    })!;
+    expect(reopened).toMatchObject({
+      state: 'open', occurrence: 1, closed_at: null, recovery_count: 0,
+      unknown_segments: [], unknown_open_from: null,
+    });
+    expect(reopened.episode_id).not.toBe(closed.episode_id);
+    // The closed record keeps the interval it recorded; nothing was copied over.
+    expect(closed.unknown_segments).toEqual([{ from: INTERRUPTED, to: RECOVERED_AT, reason: 'stale' }]);
+  });
+
+  it('does not record or extend an interval for a late unknown evaluation', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const interrupted = nextTriggerEpisode({ identity, previous: opened, evaluation: staleAt(snapshot, INTERRUPTED) })!;
+
+    const late = staleAt(snapshot, '2026-10-29T12:00:30Z');
+    expect(late).toMatchObject({ quality: 'unknown', reason: 'stale' });
+    expect(Date.parse(late.evaluated_at)).toBeLessThan(Date.parse(interrupted.last.at));
+
+    const kept = nextTriggerEpisode({ identity, previous: interrupted, evaluation: late });
+    expect(kept).toBe(interrupted);
+    expect(kept!.unknown_open_from).toBe(INTERRUPTED);
+    expect(kept!.unknown_segments).toEqual([{ from: INTERRUPTED, to: null, reason: 'stale' }]);
+  });
+
+  it('records no interval before an episode exists or after it has closed', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    expect(nextTriggerEpisode({ identity, previous: null, evaluation: staleAt(snapshot, INTERRUPTED) })).toBeNull();
+    expect(nextTriggerEpisode({ identity, previous: null, evaluation: nodataAt(snapshot, INTERRUPTED) })).toBeNull();
+
+    const opened = nextTriggerEpisode({ identity, previous: null, evaluation: evaluate(snapshot) })!;
+    const closed = nextTriggerEpisode({ identity, previous: opened, evaluation: recoveryAt(snapshot, RECOVERED_AT) })!;
+    expect(nextTriggerEpisode({ identity, previous: closed, evaluation: nodataAt(snapshot, AGAIN) })).toBe(closed);
+    expect(closed.unknown_segments).toEqual([]);
+    expect(closed.unknown_open_from).toBeNull();
+  });
+});
+
 describe('late and out-of-order watermark', () => {
   // An evaluation one minute before NOW, with its own fresh sample. The evidence
   // is usable on its own terms; only its evaluated_at is older than the record.

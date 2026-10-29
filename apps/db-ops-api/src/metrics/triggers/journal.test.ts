@@ -129,6 +129,92 @@ describe('file episode journal', () => {
     expect(journalOf(directory).get(identity)).toEqual(reopened);
   });
 
+  it('reads a closed record back with its unknown segment, id, occurrence and recovery count', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+
+    const writer = journalOf(directory);
+    const opened = writer.apply(identity, evaluate(snapshot))!;
+    // Unknown evidence on the open episode (a stale sample) and then recovery.
+    const interruptedAt = '2026-10-29T12:01:00Z';
+    const interrupted = writer.apply(identity, evaluate(snapshot, {
+      now: interruptedAt, previous: 'problem',
+      samples: [near(10, { observed_at: '2026-10-29T11:56:40.000Z' })],
+    }))!;
+    expect(interrupted).toMatchObject({ state: 'open', unknown_open_from: interruptedAt });
+
+    const recoveredAt = '2026-10-29T12:02:00Z';
+    const closed = writer.apply(identity, evaluate(snapshot, {
+      now: recoveredAt, previous: 'problem', last_seen_at: '2026-10-29T12:01:55.000Z',
+      samples: [near(60, { observed_at: '2026-10-29T12:01:55.000Z' })],
+    }))!;
+    expect(closed).toMatchObject({ state: 'closed', recovery_count: 1, unknown_open_from: null });
+    expect(closed.unknown_segments).toEqual([
+      { from: interruptedAt, to: recoveredAt, reason: 'stale' },
+    ]);
+
+    const readBack = journalOf(directory).get(identity)!;
+    expect(readBack).toEqual(closed);
+    expect(readBack).toMatchObject({
+      episode_id: opened.episode_id, occurrence: 0, recovery_count: 1,
+    });
+    expect(readBack.unknown_segments).toEqual(closed.unknown_segments);
+  });
+
+  it('refuses a record that has lost the unknown interval fields instead of starting over', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+    const path = join(directory, TRIGGER_EPISODE_JOURNAL_FILE);
+
+    journalOf(directory).apply(identity, evaluate(snapshot));
+    const complete = await textOf(directory);
+
+    for (const field of ['unknown_segments', 'unknown_open_from'] as const) {
+      const file = JSON.parse(complete);
+      for (const stored of Object.values(file.records) as Array<Record<string, unknown>>) {
+        delete stored[field];
+      }
+      const damaged = JSON.stringify(file);
+      await writeFile(path, damaged, 'utf8');
+
+      // Missing a field the record now has is a record error: not an empty
+      // journal from occurrence 0, and the file is left exactly as it was.
+      await expectJournalError(() => journalOf(directory).get(identity), 'TRIGGER_EPISODE_JOURNAL_RECORD');
+      await expectJournalError(
+        () => journalOf(directory).apply(identity, evaluate(snapshot)),
+        'TRIGGER_EPISODE_JOURNAL_RECORD',
+      );
+      expect(await textOf(directory), field).toBe(damaged);
+    }
+  });
+
+  it('refuses an unknown segment carrying a field it does not have', async () => {
+    const snapshot = await snapshotOf();
+    const identity = identityOf(snapshot);
+    const directory = await exclusiveDirectory();
+    const path = join(directory, TRIGGER_EPISODE_JOURNAL_FILE);
+
+    journalOf(directory).apply(identity, evaluate(snapshot));
+    journalOf(directory).apply(identity, evaluate(snapshot, {
+      now: '2026-10-29T12:01:00Z', previous: 'problem',
+      samples: [near(10, { observed_at: '2026-10-29T11:56:40.000Z' })],
+    }));
+    const file = JSON.parse(await textOf(directory));
+    for (const stored of Object.values(file.records) as Array<Record<string, unknown>>) {
+      const [segment] = stored.unknown_segments as Array<Record<string, unknown>>;
+      segment.acknowledged_by = 42;
+    }
+    await writeFile(path, JSON.stringify(file), 'utf8');
+
+    await expectJournalError(() => journalOf(directory).get(identity), 'TRIGGER_EPISODE_JOURNAL_RECORD');
+    await expectJournalError(
+      () => journalOf(directory).apply(identity, evaluate(snapshot)),
+      'TRIGGER_EPISODE_JOURNAL_RECORD',
+    );
+  });
+
   it('treats a missing file as an empty journal — the counterexample, not a restart pass', async () => {
     const snapshot = await snapshotOf();
     const identity = identityOf(snapshot);
