@@ -1,0 +1,255 @@
+{
+  "last_applied": {
+    "pin": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "revision": 1,
+    "reported_at": "2026-10-28T09:06:44.298Z",
+    "application": "applied"
+  },
+  "publishes": {
+    "first": {
+      "revision": 1,
+      "published_at": "2026-10-28T09:06:43.298Z",
+      "package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "settings_enabled": true
+    },
+    "second": {
+      "revision": 2,
+      "published_at": "2026-10-28T09:06:43.351Z",
+      "package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "overrides": {
+        "enabled": "disable"
+      },
+      "settings_enabled": false
+    }
+  },
+  "reports": {
+    "first": {
+      "revision": 1,
+      "status": "applied",
+      "reported_at": "2026-10-28T09:06:44.298Z"
+    },
+    "second": {
+      "revision": 2,
+      "status": "failed",
+      "reported_at": "2026-10-28T09:06:45.298Z"
+    }
+  },
+  "statuses": {
+    "applied": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding": {
+        "state": "bound",
+        "package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "published_revision": 1,
+        "applied_revision": 1,
+        "application": "applied"
+      },
+      "blockers": [
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ],
+      "effective_enabled": {
+        "enabled": true,
+        "global_enabled": true,
+        "asset_enabled": true,
+        "policy_enabled": true,
+        "source": "package"
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "collection": {
+        "state": "pending",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "keys": {
+        "binding.published_revision": 1,
+        "binding.application": "applied",
+        "binding.applied_revision": 1,
+        "binding.package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "blockers": [
+          "CAPABILITY_UNKNOWN",
+          "AWAITING_SAMPLE"
+        ],
+        "effective_enabled.policy_enabled": true,
+        "collection.state": "pending"
+      }
+    },
+    "pending": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding": {
+        "state": "bound",
+        "package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "published_revision": 2,
+        "applied_revision": 1,
+        "application": "pending"
+      },
+      "blockers": [
+        "POLICY_COLLECTION_DISABLED",
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ],
+      "effective_enabled": {
+        "enabled": false,
+        "global_enabled": true,
+        "asset_enabled": true,
+        "policy_enabled": false,
+        "source": "resource"
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "collection": {
+        "state": "disabled",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "keys": {
+        "binding.published_revision": 2,
+        "binding.application": "pending",
+        "binding.applied_revision": 1,
+        "binding.package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "blockers": [
+          "POLICY_COLLECTION_DISABLED",
+          "APPLICATION_PENDING",
+          "CAPABILITY_UNKNOWN",
+          "AWAITING_SAMPLE"
+        ],
+        "effective_enabled.policy_enabled": false,
+        "collection.state": "disabled"
+      }
+    },
+    "failed": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding": {
+        "state": "bound",
+        "package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "published_revision": 2,
+        "applied_revision": 1,
+        "application": "failed"
+      },
+      "blockers": [
+        "POLICY_COLLECTION_DISABLED",
+        "APPLICATION_FAILED",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ],
+      "effective_enabled": {
+        "enabled": false,
+        "global_enabled": true,
+        "asset_enabled": true,
+        "policy_enabled": false,
+        "source": "resource"
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "collection": {
+        "state": "disabled",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "keys": {
+        "binding.published_revision": 2,
+        "binding.application": "failed",
+        "binding.applied_revision": 1,
+        "binding.package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "blockers": [
+          "POLICY_COLLECTION_DISABLED",
+          "APPLICATION_FAILED",
+          "CAPABILITY_UNKNOWN",
+          "AWAITING_SAMPLE"
+        ],
+        "effective_enabled.policy_enabled": false,
+        "collection.state": "disabled"
+      }
+    }
+  },
+  "formal_rows": {
+    "before": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "metric_attempts": 0
+    },
+    "after": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "metric_attempts": 0
+    }
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "77dcbce5ad73013d7f4bca9b78a80c3413e758d6",
+    "test": "apply-failure-retains.mysql.test.ts",
+    "disposable_schema": "max238_apply_failure_49773 on 127.0.0.1:13306, dropped by afterAll",
+    "boundaries": {
+      "activate_called": false,
+      "worker_started": false,
+      "attempt_inserted": false,
+      "source_tables_written": "disposable schema only; no 3306 statements",
+      "config_files_changed": false
+    }
+  }
+}

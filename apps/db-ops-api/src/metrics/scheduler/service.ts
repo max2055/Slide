@@ -7,6 +7,7 @@ import type { JobRegistry } from '../../workflows/job-registry.js';
 import { runPackage, type PackageExecution } from '../packages/runner.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { type Ref, RefSchema, refKey, rule } from '../policy/model.js';
+import { bindingReadCode, isTemplateBindingUnsupported } from '../bindings/package-reader.js';
 import { compilePlan } from './compiler.js';
 import { JOB_TYPE, MysqlScheduleStore } from './store.js';
 
@@ -25,9 +26,24 @@ export class MetricScheduler {
     private readonly formalization?: {reconcile(ref: Ref, revision: number): Promise<void>}) {}
   async tick(): Promise<number> {
     let count = 0;
-    for (const published of await this.store.list()) {
-      await this.formalization?.reconcile(published.binding.resource, published.binding.revision);
-      if (await this.store.enqueue(published, this.clock())) count++;
+    const scan = await this.store.scan();
+    // A template/corrupt row is isolated with a stable diagnostic; it never blocks
+    // a legal legacy row from formalizing or enqueueing.
+    for (const rejected of scan.rejected) {
+      platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
+        errorCode: rejected.code, correlationId: rejected.resource_key });
+    }
+    for (const published of scan.published) {
+      try {
+        await this.formalization?.reconcile(published.binding.resource, published.binding.revision);
+        if (await this.store.enqueue(published, this.clock())) count++;
+      } catch (error) {
+        // The row was replaced between the scan and the fenced re-read.
+        const code = bindingReadCode(error);
+        if (code === null) throw error;
+        platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
+          errorCode: code, correlationId: refKey(published.binding.resource) });
+      }
     }
     return count;
   }
@@ -110,6 +126,17 @@ export class MetricScheduler {
         platformLogs.record({ component: 'metrics', eventType: 'collection.committed', status: committed ? 'ok' : 'unknown', correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
         await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
       } catch (error) {
+        // A template row (or a corrupt snapshot) can never become collectable by
+        // retrying the same legacy job: record one stable diagnostic and end it.
+        if (isTemplateBindingUnsupported(error)) {
+          await this.store.event(ref, revision, job.id, 'template_binding_unsupported', false, this.clock() - started, reads);
+          return;
+        }
+        const payloadCode = bindingReadCode(error);
+        if (payloadCode !== null) {
+          await this.store.event(ref, revision, job.id, 'binding_payload_invalid', false, this.clock() - started, reads);
+          return;
+        }
         // Never store remote errors, credentials or SQL. Abort cannot retract an already issued request.
         const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
         const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';

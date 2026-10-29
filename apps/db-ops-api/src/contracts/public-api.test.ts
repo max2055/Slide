@@ -120,6 +120,7 @@ describe('generated public API contract', () => {
       '/api/metrics/config/bulk/preview',
       '/api/metrics/config/resources/{type}/{id}/activate',
       '/api/metrics/config/resources/{type}/{id}/migration',
+      '/api/metrics/config/resources/{type}/{id}/operations/{key}',
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
       '/api/metrics/policy/groups',
@@ -176,6 +177,14 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
+    const operationLookup = document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}'].get;
+    expect(operationLookup.operationId).toBe('getMetricConfigurationOperation');
+    expect(operationLookup.security).toEqual([{ bearerAuth: [] }]);
+    expect(operationLookup.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual([['type', 'path', true], ['id', 'path', true], ['key', 'path', true]]);
+    expect(operationLookup.parameters[2].schema.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+    expect(operationLookup.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/MetricOperationState');
+    expect(Object.keys(operationLookup.responses)).toEqual(['200', '400', '401', '403', '404', '503']);
     expect(document.paths['/api/operations/knowledge'].post.security).toEqual([{ bearerAuth: [] }]);
     expect(document.paths['/api/operations/knowledge'].post.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/OperationsCaseCandidate');
     expect(document.paths['/api/operations/actions/execute']).toBeUndefined();

@@ -1,0 +1,161 @@
+{
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "statuses": {
+    "instance:1": {
+      "package": "mysql-diagnostics",
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding": {
+        "state": "bound",
+        "package": {
+          "id": "mysql-diagnostics",
+          "version": "1.1.0",
+          "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+        },
+        "published_revision": 1,
+        "applied_revision": null,
+        "application": "pending"
+      },
+      "effective_enabled": {
+        "enabled": true,
+        "global_enabled": true,
+        "asset_enabled": true,
+        "policy_enabled": true,
+        "source": "package"
+      },
+      "collection": {
+        "state": "pending",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ],
+      "coverage_unknown": 33
+    },
+    "server:3": {
+      "package": "linux-host",
+      "resource": {
+        "type": "server",
+        "id": 3
+      },
+      "binding": {
+        "state": "bound",
+        "package": {
+          "id": "linux-host",
+          "version": "1.1.0",
+          "digest": "sha256:b5797402cec6302f57563b644f442fffd45b75c0a67c843b73356c2be67f8d2f"
+        },
+        "published_revision": 1,
+        "applied_revision": null,
+        "application": "pending"
+      },
+      "effective_enabled": {
+        "enabled": true,
+        "global_enabled": true,
+        "asset_enabled": true,
+        "policy_enabled": true,
+        "source": "package"
+      },
+      "collection": {
+        "state": "pending",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ],
+      "coverage_unknown": 22
+    }
+  },
+  "disposable": {
+    "normalized_observations_before": 0,
+    "normalized_observations_after": 0,
+    "publications": 0,
+    "attempts": 0,
+    "schedules": 0
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "a367f323a34b63b45b8a773e8b04b8e96f046dcd",
+    "test": "formal-awaiting-sample.mysql.test.ts",
+    "disposable_schema": "max238_formal_awaiting_sample_21449 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22
+    }
+  }
+}

@@ -5,7 +5,7 @@ vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './metric-configuration.js';
 import { collectionStatus } from './metric-test-fixtures.js';
 const settle = () => new Promise(resolve => setTimeout(resolve, 15));
-afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); vi.useRealTimers(); });
+afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); vi.useRealTimers(); sessionStorage.clear(); });
 const catalog = { packages: [{ package: { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }, recommendations: { interval_ms: 60000 } }], metrics: [] };
 const recommendations = { resource: { type: 'instance', id: 1 }, evaluated_at: '', packages: catalog.packages.map(release => ({ release, compatibility: 'compatible', recommended: true, checks: [], coverage: [{ id: 'db.uptime_seconds' }], missing_core_metrics: [] })) };
 const mock = (manage = true) => authFetch.mockImplementation(async (url: string) => ({ ok: !(/policy\/resources\/instance\/\d+$/.test(url)), status: (/policy\/resources\/instance\/\d+$/.test(url)) ? 404 : 200,
@@ -85,6 +85,162 @@ it('publishing a successful trial sends the current revision and reloads applica
   const call = authFetch.mock.calls.find((c: any[]) => c[0].endsWith('/activate'))!;
   expect(JSON.parse(call[1].body).expected_revision).toBe(0);
   expect(el.trial).toBeNull(); expect(el.dirty).toBe(false);
+});
+
+const proven = () => ({
+  preview: { resources: [{ resolved: { settings: { enabled: true }, sources: {}, metric_templates: [], metric_sources: {} } }] },
+  trial: { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1, quality: { status: 'good' } }] },
+});
+const lostResponse = () => {
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'absent' }) });
+};
+const activated = (calls: any[], from: number) => calls.slice(from).map(c => c[0] as string).filter(url => url.endsWith('/activate'));
+
+it('queries the original resource and key after a lost response, and reuses the key only for the same intent', async () => {
+  mock(); const el = await mount();
+  const keys: string[] = [];
+  const queries: string[] = [];
+  const publish = async () => {
+    lostResponse();
+    Object.assign(el, proven());
+    await el.execute('publish');
+    const call = authFetch.mock.calls.filter((c: any[]) => c[0].endsWith('/activate')).at(-1)!;
+    keys.push(JSON.parse(call[1].body).operation_key);
+    const query = authFetch.mock.calls.filter((c: any[]) => c[0].includes('/operations/')).at(-1)!;
+    queries.push(query[0]);
+  };
+  await publish();
+  expect(keys[0]).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+  // The lost response is resolved by querying the original resource and key, then
+  // the same intent repeats the same key.
+  expect(queries[0]).toBe(`/api/metrics/config/resources/instance/1/operations/${keys[0]}`);
+  await publish();
+  expect(keys[1]).toBe(keys[0]);
+  // A changed configuration is a different intent and must not reuse the key.
+  el.overrides = { enabled: 'disable' };
+  await publish();
+  expect(keys[2]).not.toBe(keys[0]);
+  // Another resource never inherits this resource's key.
+  el.resourceId = 2; await settle(); el.overrides = { enabled: 'disable' };
+  await publish();
+  expect(keys[3]).not.toBe(keys[2]);
+});
+
+it('recovers a committed publish after a lost response and reloads instead of republishing', async () => {
+  mock(); const el = await mount();
+  Object.assign(el, proven());
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'committed' }) });
+  const before = authFetch.mock.calls.length;
+  await el.execute('publish');
+  const calls = authFetch.mock.calls.slice(before).map(c => c[0]);
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(1);
+  expect(calls[1]).toContain('/operations/');
+  expect(calls.slice(2).some(url => url.endsWith('/status'))).toBe(true);
+  expect(el.publishPending).toBe(false); expect(el.dirty).toBe(false); expect(el.error).toBe('');
+});
+
+it('keeps a pending publish intent and never resends the mutation', async () => {
+  mock(); const el = await mount();
+  Object.assign(el, proven());
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'pending' }) });
+  await el.execute('publish');
+  expect(el.publishPending).toBe(true); expect(el.error).toBe('');
+  await el.updateComplete;
+  expect(el.shadowRoot.textContent).toContain('尚未确认');
+  const before = authFetch.mock.calls.length;
+  // The next action only queries; the mutation is not resent while unknown.
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'pending' }) });
+  await el.execute('publish');
+  const calls = authFetch.mock.calls.slice(before).map(c => c[0]);
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(0);
+  expect(calls).toHaveLength(1); expect(calls[0]).toContain('/operations/');
+  expect(el.publishPending).toBe(true);
+});
+
+it('treats an unqueryable outcome as unknown instead of retrying the mutation', async () => {
+  mock(); const el = await mount();
+  Object.assign(el, proven());
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  await el.execute('publish');
+  expect(el.publishPending).toBe(true); expect(el.error).toContain('无法确认');
+  const before = authFetch.mock.calls.length;
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'absent' }) });
+  await el.execute('publish');
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(0);
+  expect(el.publishPending).toBe(false);
+});
+
+const operationsAs = (state: unknown) => {
+  const original = authFetch.getMockImplementation()!;
+  authFetch.mockImplementation((url: string, options: any) => url.includes('/operations/')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => state }) : original(url, options));
+};
+
+it('an old-resource failure must not query or block the newly shown resource', async () => {
+  mock(); const el = await mount(); await el.execute('preview');
+  el.trial = { decision: 'attempted', attempts: [{ status: 'succeeded' }], samples: [{ value: 1, quality: { status: 'good' } }] };
+  const original = authFetch.getMockImplementation()!;
+  let rejectOld!: (error: Error) => void;
+  authFetch.mockImplementation((url: string, options: any) => url.endsWith('/activate')
+    ? new Promise((_resolve, reject) => { rejectOld = reject; })
+    : url.includes('/operations/') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ state: 'pending' }) })
+    : original(url, options));
+  const old = el.execute('publish');
+  el.resourceId = 2; await settle();
+  rejectOld(new Error('lost response for resource 1')); await old;
+  const queries = authFetch.mock.calls.map(c => c[0] as string).filter(url => url.includes('/operations/'));
+  expect(queries.some(url => url.includes('/instance/2/operations/'))).toBe(false);
+  expect(el.publishPending).toBe(false); expect(el.error).toBe('');
+});
+
+it('keeps an unresolved intent across a remount and only offers to query it', async () => {
+  mock(); const el = await mount(); Object.assign(el, proven());
+  operationsAs({ state: 'pending' });
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  await el.execute('publish');
+  const call = authFetch.mock.calls.filter(c => c[0].endsWith('/activate')).at(-1)!;
+  const key = JSON.parse(call[1].body).operation_key;
+  expect(el.publishPending).toBe(true);
+  el.remove();
+  // A fresh component (page reload) reads the recorded intent rather than
+  // generating a new key for what looks like the same request.
+  const again = await mount();
+  expect(again.publishPending).toBe(true);
+  const queries = authFetch.mock.calls.filter(c => c[0].includes('/operations/')).map(c => c[0]);
+  expect(queries.at(-1)).toBe(`/api/metrics/config/resources/instance/1/operations/${key}`);
+  const before = authFetch.mock.calls.length;
+  await again.execute('publish');
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(0);
+  expect(authFetch.mock.calls.slice(before)).toHaveLength(1);
+});
+
+it('recovers a committed intent after a remount without resending the mutation', async () => {
+  mock(); const el = await mount(); Object.assign(el, proven());
+  operationsAs({ state: 'pending' });
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  await el.execute('publish');
+  el.remove();
+  operationsAs({ state: 'committed' });
+  const before = authFetch.mock.calls.length;
+  const again = await mount();
+  expect(again.publishPending).toBe(false);
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(0);
+});
+
+it('treats a malformed operation response as unknown rather than absent', async () => {
+  mock(); const el = await mount(); Object.assign(el, proven());
+  operationsAs({ unexpected: true });
+  authFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  await el.execute('publish');
+  expect(el.publishPending).toBe(true);
+  const before = authFetch.mock.calls.length;
+  await el.execute('publish');
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(0);
+  expect(el.publishPending).toBe(true);
 });
 
 it('keeps unsaved edits until the user confirms navigation', async () => {
@@ -271,8 +427,12 @@ it('retains top-level failure and global pause guards with mixed evidence', asyn
 it('clears mixed trial proof after conflict and does not retry activation', async () => {
   mock(); const el = await mount(); await el.execute('preview'); el.trial = mixedTrial();
   authFetch.mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ error: 'POLICY_REVISION_CONFLICT' }) });
+  // Only an explicit absent answer makes the key safe to retry.
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: 'absent', operation: null }) });
   const before = authFetch.mock.calls.length; await el.execute('publish');
-  expect(authFetch.mock.calls.length).toBe(before + 1);
+  // Exactly one mutation, and the outcome is queried before anything is retried.
+  expect(activated(authFetch.mock.calls, before)).toHaveLength(1);
+  expect(authFetch.mock.calls.slice(before).map(c => c[0]).at(-1)).toContain('/operations/');
   expect(el.trial).toBeNull(); expect(el.preview).toBeNull(); expect(el.error).toContain('重新加载');
 });
 it.each(['candidate', 'permission', 'connection'])('invalidates mixed proof after %s changes', async change => {

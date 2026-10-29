@@ -16,6 +16,7 @@ import { showToast } from './app-toast-container.js';
 
 import { metricRequest, metricError, MetricRequestError, recommendationOptions, coverageAvailability, readCollectionStatus, statusLabel,
   type Catalog, type Applicability, type Resolved, type Published, type CollectionStatus, type Recommendation, type RecommendationResult, type PolicyGroup } from './metric-api.js';
+interface OperationState { state: 'committed' | 'pending' | 'absent' }
 export { metricRequest, metricError } from './metric-api.js';
 export type { Catalog } from './metric-api.js';
 import { type Toggle, type Overrides } from './metric-policy-fields.js';
@@ -67,7 +68,7 @@ export class MetricConfiguration extends LitElement {
   private generation = 0;
   private readonly accessChanged = () => {
     clearTimeout(this.groupSearchTimer); this.groupSearchVersion++;
-    this.generation++; this.stopPolling(); this.canManage = false; this.busy = false;
+    this.generation++; this.stopPolling(); this.canManage = false; this.busy = false; this.clearIntent();
     this.catalog = null; this.published = null; this.effective = null; this.collection = null;
     this.preview = null; this.trial = null; this.attempts = []; this.overrides = {}; this.groups = [];
     this.recommendations = []; this.selected = ''; this.groupId = ''; this.dirty = false; this.loaded = false;
@@ -130,6 +131,7 @@ export class MetricConfiguration extends LitElement {
     }, 250);
   }
   private root() { return `resources/${this.resourceType}/${this.resourceId}`; }
+  private refKey() { return `${this.resourceType}:${this.resourceId}`; }
   private invalidate() { this.editVersion++; this.dirty = true; this.preview = null; this.trial = null; this.activationStep = 0; this.error = ''; }
   private async load() {
     this.stopPolling();
@@ -138,6 +140,8 @@ export class MetricConfiguration extends LitElement {
     this.collection = null; this.statusError = ''; this.recommendations = []; this.groups = [];
     this.catalog = null; this.canManage = false; this.published = null; this.effective = null; this.overrides = {}; this.attempts = [];
     this.selected = ''; this.groupId = ''; this.busy = false; this.invalidate(); this.loaded = false; this.dirty = false;
+    // A key belongs to one resource and one intent; switching resource never inherits it.
+    this.clearIntent();
     if (!Number.isSafeInteger(this.resourceId) || this.resourceId <= 0) return;
     this.busy = true;
     try {
@@ -156,6 +160,8 @@ export class MetricConfiguration extends LitElement {
       this.recommendations = recommendationOptions(recommendations); this.groups = groups.groups; this.collection = coverageAvailability(collection, recommendations);
       this.selected = published?.binding.package.digest ?? this.recommendations.find(r => r.recommended && r.status === 'supported')?.package.digest ?? '';
       this.attempts = attempts; this.loaded = true;
+      await this.restorePending(generation);
+      if (generation !== this.generation) return;
       if (published && !this.terminal(collection)) this.startPolling();
     } catch (error) { if (generation === this.generation) this.error = metricError(error); }
     finally { if (generation === this.generation) this.busy = false; }
@@ -188,6 +194,52 @@ export class MetricConfiguration extends LitElement {
     return { expected_revision: this.published?.binding.revision ?? 0, package: { id: pack.id, version: pack.version, digest: pack.digest },
       group_id: this.groupId || null, overrides: this.overrides };
   }
+  /**
+   * One operation key per resource and publish intent, reused only while that
+   * exact intent is retried. The resource identity is part of the intent, so a
+   * key is never carried from one object to another.
+   */
+  private publishKey = '';
+  private publishIntent = '';
+  @state() private publishPending = false;
+  /**
+   * The smallest record that survives a remount or refresh: which intent is
+   * unresolved for which user and resource. It holds the client key and the
+   * non-secret request body only, never credentials or collected values.
+   */
+  private intentStorageKey(resource = this.refKey()) {
+    let user = 'anon';
+    try {
+      const value = JSON.parse(localStorage.getItem('user') ?? 'null') as { id?: unknown } | null;
+      if (value && (typeof value.id === 'number' || typeof value.id === 'string')) user = String(value.id);
+    } catch { /* no user scope available; the tab and resource still isolate it */ }
+    return `slide.metric.publish.${user}.${resource}`;
+  }
+  private storedIntent(resource = this.refKey()) {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(this.intentStorageKey(resource)) ?? 'null') as { key?: unknown; intent?: unknown } | null;
+      if (typeof value?.key === 'string' && typeof value.intent === 'string') return { key: value.key, intent: value.intent };
+    } catch { /* an unusable record is not an absent intent */ }
+    return null;
+  }
+  private storeIntent(resource: string, key: string, intent: string) {
+    try { sessionStorage.setItem(this.intentStorageKey(resource), JSON.stringify({ key, intent })); } catch { /* in-memory key still applies */ }
+  }
+  private forgetIntent(resource: string) {
+    try { sessionStorage.removeItem(this.intentStorageKey(resource)); } catch { /* nothing persisted */ }
+  }
+  private intentKey(body: unknown) {
+    const intent = JSON.stringify({ resource: this.refKey(), body });
+    if (this.publishKey && this.publishIntent === intent) return this.publishKey;
+    // Only the same recorded intent may reuse its key; anything else is a new
+    // explicit user intent and gets a new one.
+    const stored = this.storedIntent();
+    if (stored && stored.intent === intent) { this.publishKey = stored.key; this.publishIntent = intent; return stored.key; }
+    this.publishKey = `publish-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    this.publishIntent = intent;
+    return this.publishKey;
+  }
+  private clearIntent() { this.publishKey = ''; this.publishIntent = ''; this.publishPending = false; }
   private publishReady() {
     return trialPassed(this.trial) || (!!this.trial && !this.trial.error && this.trial.decision === 'disabled'
       && this.preview?.resources[0]?.resolved.settings.enabled === false);
@@ -196,25 +248,99 @@ export class MetricConfiguration extends LitElement {
     return this.collection?.effective_enabled.global_enabled === false
       && this.preview?.resources[0]?.resolved.settings.enabled !== false;
   }
+  /**
+   * Query the original resource and key before any retry. A committed result is
+   * recovered as success, a pending one keeps the intent without offering a
+   * blind retry, and only an explicit, well-formed absent may be published
+   * again. A request that finished after the view moved on must not query or
+   * change the resource now shown; its stored record is left for that resource.
+   */
+  private async resolveOperation(resource: string, key: string, generation: number, failure: unknown, reload = true): Promise<void> {
+    if (generation !== this.generation) return;
+    let state: OperationState;
+    try {
+      state = await metricRequest<OperationState>(`config/resources/${resource.replace(':', '/')}/operations/${encodeURIComponent(key)}`);
+    } catch {
+      if (generation !== this.generation) return;
+      this.publishPending = true;
+      this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      return;
+    }
+    if (generation !== this.generation) return;
+    if (!state || !['committed', 'pending', 'absent'].includes(state.state)) {
+      // An unreadable answer is not proof the intent is absent.
+      this.publishPending = true;
+      this.error = '无法确认上次发布结果，请稍后查询发布结果；不要直接重复发布。';
+      return;
+    }
+    if (state.state === 'committed') {
+      this.forgetIntent(resource); this.clearIntent(); this.dirty = false; this.preview = null; this.trial = null; this.error = '';
+      showToast('已确认上次发布已完成，正在读取应用与正式数据状态', 'success');
+      if (reload) await this.load();
+      this.activationStep = 3;
+      return;
+    }
+    if (state.state === 'pending') {
+      // In flight, or unknown after a restart: neither is a safe retry.
+      this.publishPending = true; this.error = '';
+      return;
+    }
+    this.forgetIntent(resource);
+    this.publishPending = false;
+    if (failure) { this.invalidate(); this.error = metricError(failure); }
+    else { this.error = ''; showToast('未发现此前的发布记录，可以重新发布', 'info'); }
+  }
+  /**
+   * A refresh or remount must not turn an unresolved intent into a new one: its
+   * recorded key is restored so the only offered action is to query it.
+   */
+  private async restorePending(generation: number) {
+    const stored = this.storedIntent();
+    if (!stored) { this.clearIntent(); return; }
+    this.publishKey = stored.key; this.publishIntent = stored.intent; this.publishPending = true;
+    await this.resolveOperation(this.refKey(), stored.key, generation, null, false);
+  }
   private async execute(operation: 'preview' | 'trial' | 'publish') {
     if (this.busy || !this.canManage || this.connectionPending) return;
     if (operation !== 'preview' && this.globalBlocksCandidate()) return;
-    if (operation === 'trial' && !this.preview || operation === 'publish' && (!this.preview || !this.publishReady())) return;
+    if (this.publishPending && operation !== 'publish') return;
+    if (operation === 'trial' && !this.preview || operation === 'publish' && (!this.publishPending && (!this.preview || !this.publishReady()))) return;
     const generation = this.generation, editVersion = this.editVersion;
+    const resource = this.refKey();
     this.busy = true; this.error = '';
+    let key = '';
     try {
+      if (operation === 'publish' && this.publishPending) {
+        // Only the recorded intent may be queried; the current editor state is
+        // a different (possibly invalid) candidate and must not replace its key.
+        if (!this.publishKey) { this.error = '无法确认上次发布结果，请重新打开资源后查询。'; return; }
+        await this.resolveOperation(resource, this.publishKey, generation, null); return;
+      }
+      const body = this.candidate();
+      if (operation === 'publish') {
+        key = this.intentKey(body);
+        // Recorded before the mutation leaves the browser: a refresh during the
+        // request must still find this intent instead of starting another.
+        this.storeIntent(resource, key, this.publishIntent);
+      }
       const path = operation === 'publish' ? `config/${this.root()}/activate` : `${operation === 'trial' ? 'config' : 'policy'}/${this.root()}/${operation}`;
-      const result = await metricRequest<Preview & Trial>(path, this.candidate());
+      // A lost response keeps this key, so the client queries the original
+      // resource and key before deciding how to continue.
+      const result = await metricRequest<Preview & Trial>(path, operation === 'publish' ? { ...body, operation_key: key } : body);
       if (generation !== this.generation || editVersion !== this.editVersion) return;
       if (operation === 'preview') { this.trial = null; this.preview = result; this.activationStep = 1; }
       if (operation === 'trial') { this.trial = result; this.activationStep = this.publishReady() ? 2 : 1; }
       if (operation === 'publish') {
-        this.dirty = false; this.preview = null; this.trial = null;
+        this.dirty = false; this.preview = null; this.trial = null; this.clearIntent(); this.forgetIntent(resource);
         showToast('采集配置已发布，正在确认应用与正式数据状态', 'success');
         await this.load();
         this.activationStep = 3;
       }
-    } catch (error) { if (generation === this.generation) { this.invalidate(); this.error = metricError(error); } }
+    } catch (error) {
+      // Never resend a mutation whose outcome is unknown: query the same key first.
+      if (operation === 'publish' && key) { await this.resolveOperation(resource, key, generation, error); return; }
+      if (generation === this.generation) { this.invalidate(); this.error = metricError(error); }
+    }
     finally { if (generation === this.generation) this.busy = false; }
   }
   private trialMessage() {
@@ -263,6 +389,7 @@ export class MetricConfiguration extends LitElement {
       <p class="muted">${packageName(this.catalog?.packages.find(p => p.package.digest === this.selected)?.package.id ?? '')} · 配置与正式采集分别确认</p>
       <ol class="activation-steps">${steps.map((text, i) => html`<li class=${i < this.activationStep ? 'done' : i === this.activationStep ? 'current' : ''}><span class="step-number">${i < this.activationStep ? '✓' : i + 1}</span><div><strong>${text}</strong><p>${i < this.activationStep ? ['兼容与影响检查完成，目标权限仍由试采确认', this.trial && !trialComplete(this.trial) ? '有效指标可发布，部分指标仍失败/待验证' : '有效样本门禁通过，完整性以正式证据为准', '配置已发布，实际应用结果以运行状态为准'][i] : i === this.activationStep ? ['不更改正式配置', '验证连接、权限和本次样本', '服务复核试采与配置版本后发布', '试采成功不等于持续采集就绪'][i] : '等待前一步完成'}</p></div></li>`)}</ol>
       ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
+      ${this.publishPending ? html`<p class="notice" role="status">上次发布的结果尚未确认：请求可能仍在处理，或结果未知。请先查询发布结果，确认前不要重复发布。</p>` : nothing}
       ${this.globalBlocksCandidate() ? html`<p class="notice" role="status">全局采集已关闭，不能继续启用；请联系平台运维。</p>` : nothing}
       ${this.preview ? html`<p>影响 ${this.preview.affected_resources} 个资源 · 每小时逻辑读取估算 ${this.preview.requests_per_hour_before ?? '未知'} → ${this.preview.requests_per_hour_after ?? '未知'}</p>${this.applicabilityMessage(this.preview.resources[0]?.resolved.applicability)}` : nothing}
       ${this.trial ? html`<h3>本次试采（不写正式观测）</h3><p role="status">${this.trialMessage()}</p>
@@ -271,9 +398,9 @@ export class MetricConfiguration extends LitElement {
         ${this.applicabilityMessage(this.trial.applicability)}<p>返回 ${this.trial.samples.length} 个样本；${this.trial.attempts.length} 次采集尝试。</p>${this.trial.lifecycle_evidence === 'unavailable' ? html`<p>缺少权威生命周期证据：累计计数能力待验证，暂不生成速率。</p>` : nothing}<details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>` : nothing}
       ${this.activationStep === 3 && this.collection ? renderCollectionStatus(this.collection) : nothing}
       <div slot="footer" class="actions"><button class="btn" @click=${() => { this.flowOpen = false; }}>关闭</button>
-        ${this.canManage ? html`<button class="btn" .disabled=${this.busy || this.connectionPending || !this.selected} @click=${() => this.execute('preview')}>预检与影响预览</button>
-        <button class="btn" .disabled=${this.busy || this.connectionPending || this.globalBlocksCandidate() || !this.preview} @click=${() => this.execute('trial')}>试采</button>
-        <button class="btn-primary" .disabled=${this.busy || this.connectionPending || this.globalBlocksCandidate() || !this.preview || !this.publishReady()} @click=${() => this.execute('publish')}>发布</button>` : nothing}</div>
+        ${this.canManage ? html`<button class="btn" .disabled=${this.busy || this.connectionPending || this.publishPending || !this.selected} @click=${() => this.execute('preview')}>预检与影响预览</button>
+        <button class="btn" .disabled=${this.busy || this.connectionPending || this.publishPending || this.globalBlocksCandidate() || !this.preview} @click=${() => this.execute('trial')}>试采</button>
+        <button class="btn-primary" .disabled=${this.busy || this.connectionPending || this.globalBlocksCandidate() || (!this.publishPending && (!this.preview || !this.publishReady()))} @click=${() => this.execute('publish')}>${this.publishPending ? '查询发布结果' : '发布'}</button>` : nothing}</div>
     </app-dialog>`;
   }
   render() {
@@ -294,6 +421,7 @@ export class MetricConfiguration extends LitElement {
     ${!this.loaded && !this.error ? html`<div class="notice" role="status">正在读取采集配置…</div>` : nothing}
     ${this.loaded && !this.canManage ? html`<p class="notice">只读：未获得此资源的管理权限。</p>` : nothing}
     ${this.error ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
+    ${this.publishPending ? html`<p class="notice" role="status">上次发布结果尚未确认；请在“检查并启用”中查询发布结果，确认前不要重复发布。</p>` : nothing}
     ${globalBlocked ? html`<p class="notice" role="status">全局采集已关闭；本资源发布不能解除全局暂停，请联系平台运维。</p>` : nothing}
     <div class="edit-grid"><section class="stack">
       <app-card><div class="section-title"><div><span class="eyebrow">采集配置</span><h2>选择适合此对象的采集模板</h2></div><app-badge variant=${this.dirty ? 'warn' : 'muted'}>${this.dirty ? '有未保存修改' : !this.loaded || !status ? '等待确认' : statusLabel(status.binding.state)}</app-badge></div>

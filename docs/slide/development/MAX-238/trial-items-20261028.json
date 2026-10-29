@@ -1,0 +1,322 @@
+{
+  "target": {
+    "id": 1,
+    "name": "mysql3306",
+    "host": "localhost",
+    "port": 3306,
+    "server_version": "9.6.0"
+  },
+  "pin": {
+    "id": "mysql-basic",
+    "version": "2.0.0",
+    "digest": "sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322"
+  },
+  "trial_call": {
+    "method": "MetricConfigurationService.trialCurrent",
+    "expected_revision": 1,
+    "persisted": false,
+    "decision": "attempted",
+    "error": null,
+    "sample_count": 1,
+    "attempt_count": 1
+  },
+  "response_shape": {
+    "top_level_keys": [
+      "applicability",
+      "attempts",
+      "capabilities",
+      "decision",
+      "lifecycle_evidence",
+      "persisted",
+      "samples",
+      "trial"
+    ],
+    "sample_keys": [
+      "metric",
+      "quality",
+      "read",
+      "transform",
+      "unit",
+      "unit_check",
+      "value"
+    ],
+    "attempt_keys": [
+      "binding_id",
+      "collector_id",
+      "config_revision",
+      "ended_at",
+      "error",
+      "id",
+      "observation_ids",
+      "resource_id",
+      "started_at",
+      "status"
+    ]
+  },
+  "items": {
+    "读取": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "samples[].read.attempt_id + samples[].read.status"
+      ],
+      "observed": {
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
+        "status": "succeeded"
+      },
+      "reason": "该观测 source.attempt_id 对齐到的 attempt trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status 的 status"
+    },
+    "转换": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "samples[].transform.version"
+      ],
+      "observed": "1.0.0",
+      "reason": "该观测已有的 versions.transform_version"
+    },
+    "单位校验": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "samples[].unit_check.input_unit + samples[].unit_check.output_unit"
+      ],
+      "observed": {
+        "input_unit": "s",
+        "output_unit": "s"
+      },
+      "reason": "产生该样本的采集映射上已声明的一对输入/输出单位；不是 samples[].unit"
+    },
+    "值": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "samples[].value"
+      ],
+      "observed": {
+        "encoding": "float64",
+        "value": 204468
+      },
+      "reason": "来自样本自身的 value"
+    },
+    "时间": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "attempts[].started_at"
+      ],
+      "observed": "2026-10-28T08:27:59.187Z",
+      "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
+    },
+    "耗时": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "attempts[].ended_at - attempts[].started_at"
+      ],
+      "observed": 18,
+      "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
+    },
+    "错误": {
+      "present": true,
+      "present_samples": 1,
+      "sample_count": 1,
+      "sources": [
+        "attempts[].error"
+      ],
+      "observed": null,
+      "reason": "来自该样本对应采集 attempt 的 error（可为空）"
+    }
+  },
+  "missing_items": [],
+  "aggregation": "每项要求至少一条实际样本可读；读取/转换/单位校验还要求落在同一条样本上",
+  "projected_together_samples": 1,
+  "samples": [
+    {
+      "metric": "db.uptime_seconds",
+      "value": {
+        "encoding": "float64",
+        "value": 204468
+      },
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "unit": "s",
+      "read": {
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
+        "status": "succeeded"
+      },
+      "transform": {
+        "version": "1.0.0"
+      },
+      "unit_check": {
+        "input_unit": "s",
+        "output_unit": "s"
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "collector_id": "mysql-status",
+      "status": "succeeded",
+      "error": null,
+      "started_at": "2026-10-28T08:27:59.187Z",
+      "ended_at": "2026-10-28T08:27:59.205Z",
+      "duration_ms": 18,
+      "observation_count": 1
+    }
+  ],
+  "per_sample_items": [
+    {
+      "metric": "db.uptime_seconds",
+      "collector_id": "mysql-status",
+      "read": {
+        "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
+        "status": "succeeded"
+      },
+      "transform": {
+        "version": "1.0.0"
+      },
+      "unit_check": {
+        "input_unit": "s",
+        "output_unit": "s"
+      },
+      "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
+      "attempt_status": "succeeded",
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "unit": "s",
+      "items": {
+        "读取": {
+          "source": "samples[].read.attempt_id + samples[].read.status",
+          "present": true,
+          "observed": {
+            "attempt_id": "trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status",
+            "status": "succeeded"
+          },
+          "reason": "该观测 source.attempt_id 对齐到的 attempt trial:31ff9bb2-d4fa-4649-8172-5b57a4a41d37:mysql-status 的 status"
+        },
+        "转换": {
+          "source": "samples[].transform.version",
+          "present": true,
+          "observed": "1.0.0",
+          "reason": "该观测已有的 versions.transform_version"
+        },
+        "单位校验": {
+          "source": "samples[].unit_check.input_unit + samples[].unit_check.output_unit",
+          "present": true,
+          "observed": {
+            "input_unit": "s",
+            "output_unit": "s"
+          },
+          "reason": "产生该样本的采集映射上已声明的一对输入/输出单位；不是 samples[].unit"
+        },
+        "值": {
+          "source": "samples[].value",
+          "present": true,
+          "observed": {
+            "encoding": "float64",
+            "value": 204468
+          },
+          "reason": "来自样本自身的 value"
+        },
+        "时间": {
+          "source": "attempts[].started_at",
+          "present": true,
+          "observed": "2026-10-28T08:27:59.187Z",
+          "reason": "来自该样本对应采集 attempt 的开始时间（采集器粒度）"
+        },
+        "耗时": {
+          "source": "attempts[].ended_at - attempts[].started_at",
+          "present": true,
+          "observed": 18,
+          "reason": "只用现有 attempt 已带的可相减时间戳，没有另造计时"
+        },
+        "错误": {
+          "source": "attempts[].error",
+          "present": true,
+          "observed": null,
+          "reason": "来自该样本对应采集 attempt 的 error（可为空）"
+        }
+      }
+    }
+  ],
+  "formal_rows": {
+    "before": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    },
+    "after": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    },
+    "zero": {
+      "metric_observations": 0,
+      "metric_publications": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0
+    }
+  },
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "instance1_binding": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "boundaries": {
+    "activate_called": false,
+    "service_ts_changed": "trial() success sample projection only (read/transform/unit_check)",
+    "activation_predicate_changed": false,
+    "activation_predicate_lines": "config/service.ts:54-56 unchanged",
+    "required_metric_list_added": false,
+    "target_writes": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
+    "stop_write_copy_switch_rollback_unbind": false
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "195a0a503a28f68dacc539029292490bd270a1ce",
+    "test": "trial-items.mysql.test.ts",
+    "disposable_schema": "max238_trial_items_40539 on 127.0.0.1:13306, dropped by afterAll",
+    "source_selected": "SELECT only; no INSERT/UPDATE/DELETE on the application database",
+    "formal_tables": [
+      "metric_observations",
+      "metric_publications",
+      "alerts",
+      "alert_events",
+      "notification_records"
+    ]
+  }
+}

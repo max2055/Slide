@@ -1,0 +1,771 @@
+{
+  "combined_items": {
+    "package": {
+      "id": "mysql-diagnostics",
+      "version": "1.1.0",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+    },
+    "expected_count": 33,
+    "expected": [
+      {
+        "metric": "mysql.processlist.count@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_connections",
+          "raw_field": "connections"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.connections.limit@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_limit",
+          "raw_field": "capacity"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_transactions",
+          "raw_field": "Com_commit"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_transactions",
+          "raw_field": "Com_rollback"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_size",
+          "raw_field": "bytes"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.queries.total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_queries",
+          "raw_field": "Queries"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.slow_queries.total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Slow_queries"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.protocol.received_bytes_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Bytes_received"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Bytes_sent"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.handler.read_next_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Handler_read_rnd_next"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.connections.aborted_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Aborted_connects"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "buffer_pages",
+          "raw_field": "used"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "uptime_diagnostics",
+          "raw_field": "Uptime"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.threads.running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Threads_running"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.threads.connected@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Threads_connected"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.files.open@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Open_files"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.used_blocks@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Key_blocks_used"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.unused_blocks@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Key_blocks_unused"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "buffer_hit"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.table_cache.hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "table_hit"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.used_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "key_usage"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Innodb_row_lock_time_avg"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.innodb.deadlocks_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Innodb_deadlocks"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.temporary.disk_tables_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Created_tmp_disk_tables"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.thread_cache.hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "thread_cache",
+          "raw_field": "hit"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transactions.active@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "active_transactions",
+          "raw_field": "active"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.replication.behind_source_seconds@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "lag"
+        },
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.replication.io_running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "io_running"
+        },
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.replication.sql_running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "sql_running"
+        },
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.commit_rate"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.rollback_rate"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.completed_rate"
+        },
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql-query-rate"
+        },
+        "required_dimensions": []
+      }
+    ],
+    "read_back": [
+      {
+        "metric": "mysql.processlist.count@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.connections.limit@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.queries.total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.slow_queries.total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.protocol.received_bytes_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.handler.read_next_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.connections.aborted_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.threads.running@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.threads.connected@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.files.open@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.used_blocks@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.unused_blocks@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.table_cache.hit_percent@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.key_cache.used_percent@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.innodb.deadlocks_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.temporary.disk_tables_total@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.thread_cache.hit_percent@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transactions.active@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.replication.behind_source_seconds@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.replication.io_running@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.replication.sql_running@1.0.0",
+        "source_kind": "collector",
+        "enabled": true,
+        "required_dimensions": [
+          "channel"
+        ]
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+        "source_kind": "derived",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+        "source_kind": "derived",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+        "source_kind": "derived",
+        "enabled": true,
+        "required_dimensions": []
+      },
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "source_kind": "derived",
+        "enabled": true,
+        "required_dimensions": []
+      }
+    ],
+    "concrete_plan_entries": [
+      "mysql.processlist.count@1.0.0",
+      "mysql.connections.limit@1.0.0",
+      "mysql.transaction_commands.commit_total@1.0.0",
+      "mysql.transaction_commands.rollback_total@1.0.0",
+      "mysql.tables.estimated_allocated_bytes@1.0.0",
+      "mysql.queries.total@1.0.0",
+      "mysql.slow_queries.total@1.0.0",
+      "mysql.protocol.received_bytes_total@1.0.0",
+      "mysql.protocol.sent_bytes_total@1.0.0",
+      "mysql.handler.read_next_total@1.0.0",
+      "mysql.connections.aborted_total@1.0.0",
+      "mysql.buffer_pool.pages_used_percent@1.0.0",
+      "db.uptime_seconds@1.0.0",
+      "mysql.threads.running@1.0.0",
+      "mysql.threads.connected@1.0.0",
+      "mysql.files.open@1.0.0",
+      "mysql.key_cache.used_blocks@1.0.0",
+      "mysql.key_cache.unused_blocks@1.0.0",
+      "mysql.buffer_pool.read_hit_percent@1.0.0",
+      "mysql.table_cache.hit_percent@1.0.0",
+      "mysql.key_cache.used_percent@1.0.0",
+      "mysql.innodb.row_lock_average_ms@1.0.0",
+      "mysql.innodb.deadlocks_total@1.0.0",
+      "mysql.temporary.disk_tables_total@1.0.0",
+      "mysql.thread_cache.hit_percent@1.0.0",
+      "mysql.transactions.active@1.0.0",
+      "mysql.transaction_commands.commit_rate@1.0.0",
+      "mysql.transaction_commands.rollback_rate@1.0.0",
+      "mysql.transaction_commands.completed_rate@1.0.0",
+      "mysql.queries.per_second@1.0.0"
+    ],
+    "dimensioned_templates": [
+      "mysql.replication.behind_source_seconds@1.0.0",
+      "mysql.replication.io_running@1.0.0",
+      "mysql.replication.sql_running@1.0.0"
+    ],
+    "dimensioned_in_plan": [],
+    "foreign_metric": {
+      "metric": "host.filesystem.used_bytes@1.0.0",
+      "present": false
+    },
+    "derived_in_read_back": 4
+  },
+  "parameter_chain": {
+    "package": {
+      "id": "mysql-diagnostics",
+      "version": "1.1.0",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+    },
+    "release_recommendation_interval_ms": 60000,
+    "default": {
+      "interval_ms": {
+        "final": 60000,
+        "source": {
+          "id": "mysql-diagnostics@1.1.0",
+          "layer": "package"
+        }
+      },
+      "max_concurrency": {
+        "final": 1,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "max_series_per_resource": {
+        "final": 330,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "binding": {
+        "package": {
+          "id": "mysql-diagnostics",
+          "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+          "version": "1.1.0"
+        },
+        "group_id": null,
+        "overrides": {},
+        "revision": 1
+      }
+    },
+    "group": {
+      "interval_ms": {
+        "final": 45000,
+        "source": {
+          "id": "source-chain",
+          "layer": "group",
+          "revision": 1
+        }
+      },
+      "max_concurrency": {
+        "final": 1,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "max_series_per_resource": {
+        "final": 330,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "binding": {
+        "package": {
+          "id": "mysql-diagnostics",
+          "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+          "version": "1.1.0"
+        },
+        "group_id": "source-chain",
+        "overrides": {},
+        "revision": 2
+      }
+    },
+    "resource": {
+      "interval_ms": {
+        "final": 30000,
+        "source": {
+          "id": "instance:1",
+          "layer": "resource",
+          "revision": 3
+        }
+      },
+      "max_concurrency": {
+        "final": 1,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "max_series_per_resource": {
+        "final": 330,
+        "source": {
+          "id": "metrics-limits-v1",
+          "layer": "platform"
+        }
+      },
+      "binding": {
+        "package": {
+          "id": "mysql-diagnostics",
+          "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+          "version": "1.1.0"
+        },
+        "group_id": "source-chain",
+        "overrides": {
+          "interval_ms": {
+            "mode": "set",
+            "value": 30000
+          }
+        },
+        "revision": 3
+      }
+    },
+    "group_value": 45000,
+    "resource_value": 30000,
+    "group_overrides_after_resource": {
+      "interval_ms": {
+        "mode": "set",
+        "value": 45000
+      }
+    }
+  },
+  "conflict_after_bind": {
+    "saved": {
+      "package": {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+      },
+      "revision": 4,
+      "overrides": {
+        "metrics": {
+          "mysql.buffer_pool.pages_used_percent@1.0.0": "disable"
+        }
+      },
+      "metric_enabled": false,
+      "metric_source": {
+        "id": "instance:1",
+        "layer": "resource",
+        "revision": 4
+      }
+    },
+    "attempted": {
+      "package": {
+        "id": "mysql-basic",
+        "version": "1.1.0",
+        "digest": "sha256:9b7ef81926609831bb8b11fa4969a03a83ba74cacd6dc1746fa8fb7724ab9792"
+      },
+      "overrides_submitted": "absent (previous override retained)"
+    },
+    "conflict_metric": {
+      "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+      "in_diagnostics": true,
+      "in_basic": false
+    },
+    "rejection": {
+      "code": "POLICY_UNKNOWN_METRIC",
+      "message": "POLICY_UNKNOWN_METRIC",
+      "status": 400
+    },
+    "after": {
+      "package": {
+        "id": "mysql-diagnostics",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+        "version": "1.1.0"
+      },
+      "overrides": {
+        "metrics": {
+          "mysql.buffer_pool.pages_used_percent@1.0.0": "disable"
+        }
+      },
+      "revision": 4,
+      "binding_rows": 1,
+      "audit_delta": 0
+    },
+    "explicit_clear_overrides_used": false
+  },
+  "product_code": {
+    "config_service_ts_changed": false,
+    "policy_service_ts_changed": false,
+    "policy_model_ts_changed": false,
+    "resolver_ts_changed": false,
+    "store_ts_changed": false,
+    "routes_changed": false,
+    "registry_changed": false,
+    "builtins_changed": false,
+    "migration_changed": false,
+    "frontend_changed": false,
+    "access_ts_changed": false,
+    "activate_called": false,
+    "port_3306_contacted": false,
+    "writes_stopped_copied_switched_rolled_back_unbound": false
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "2feb02f1dbf86eaaa222f08821e2e950a4bdbf88",
+    "test": "source-chain.mysql.test.ts",
+    "disposable_schema": "max238_source_chain_10094 on 127.0.0.1:13306, dropped by afterAll",
+    "ports_contacted": [
+      "127.0.0.1:13306"
+    ],
+    "application_database_3306": "not contacted"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "db_type": "mysql",
+      "db_version": "8.0.46",
+      "credential": "empty"
+    }
+  }
+}

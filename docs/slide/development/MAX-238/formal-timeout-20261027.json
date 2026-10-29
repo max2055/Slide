@@ -1,0 +1,180 @@
+{
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "bindings": [
+    {
+      "resource_key": "instance:1",
+      "revision": 1,
+      "timeout_ms": 250,
+      "interval_ms": 60000
+    },
+    {
+      "resource_key": "server:3",
+      "revision": 1,
+      "timeout_ms": 250,
+      "interval_ms": 60000
+    }
+  ],
+  "schedule": {
+    "first": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "66d85745-89f8-47d2-bbf2-9a352aba46f3",
+        "revision": 1,
+        "next_due_ms": 1793116472280
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "3ef985bd-ca34-4596-a3c3-879dde19fefa",
+        "revision": 1,
+        "next_due_ms": 1793116478313
+      }
+    ]
+  },
+  "attempts": {
+    "worker_lease_seconds": 60,
+    "timeout_ms": 250,
+    "outcomes": [
+      "retry",
+      "retry"
+    ],
+    "elapsed_ms": [
+      266,
+      436
+    ],
+    "claims": [
+      "66d85745-89f8-47d2-bbf2-9a352aba46f3",
+      "3ef985bd-ca34-4596-a3c3-879dde19fefa"
+    ],
+    "jobs": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "66d85745-89f8-47d2-bbf2-9a352aba46f3",
+        "fencing_token": 1,
+        "state": "retry",
+        "attempts": 1,
+        "schedule_job_id": "66d85745-89f8-47d2-bbf2-9a352aba46f3",
+        "elapsed_ms": 266,
+        "observations": 0,
+        "attempts_rows": 0,
+        "events": [
+          {
+            "code": "cancellation_requested",
+            "duration_ms": 254,
+            "uncertain": 0,
+            "logical_reads": 8
+          },
+          {
+            "code": "cancelled_result_uncertain",
+            "duration_ms": 254,
+            "uncertain": 0,
+            "logical_reads": 8
+          }
+        ]
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "3ef985bd-ca34-4596-a3c3-879dde19fefa",
+        "fencing_token": 1,
+        "state": "retry",
+        "attempts": 1,
+        "schedule_job_id": "3ef985bd-ca34-4596-a3c3-879dde19fefa",
+        "elapsed_ms": 436,
+        "observations": 0,
+        "attempts_rows": 0,
+        "events": [
+          {
+            "code": "cancellation_requested",
+            "duration_ms": 251,
+            "uncertain": 1,
+            "logical_reads": 2
+          },
+          {
+            "code": "cancelled_result_uncertain",
+            "duration_ms": 425,
+            "uncertain": 1,
+            "logical_reads": 2
+          }
+        ]
+      }
+    ]
+  },
+  "post_timeout_retick": {
+    "tick_result": 0,
+    "workflow_job_rows": 2,
+    "schedule_job_ids": [
+      {
+        "resource_key": "instance:1",
+        "job_id": "66d85745-89f8-47d2-bbf2-9a352aba46f3"
+      },
+      {
+        "resource_key": "server:3",
+        "job_id": "3ef985bd-ca34-4596-a3c3-879dde19fefa"
+      }
+    ],
+    "observations": {
+      "instance:1": 0,
+      "server:3": 0
+    }
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "c715b5b2340e920f3a5a45ce105dd3fad53e2016",
+    "test": "formal-timeout.mysql.test.ts",
+    "disposable_schema": "max238_formal_timeout_14833 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22
+    }
+  }
+}

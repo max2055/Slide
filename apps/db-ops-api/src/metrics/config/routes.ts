@@ -56,4 +56,23 @@ export async function registerMetricConfigurationRoutes(app: FastifyInstance, ve
         }
       } });
   }
+  // Retry support: an absent key is authoritative (no publication with that key
+  // is in flight), so a client can decide to retry the same intent without
+  // resending a mutation whose outcome it could not observe.
+  app.route({ method: 'GET', url: '/api/metrics/config/resources/:type/:id/operations/:key', preHandler: [verifyToken],
+    handler: async (request, reply) => {
+      reply.header('Cache-Control', 'private, no-store');
+      const actor = (request as unknown as { user?: ActorContext }).user;
+      if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+      try {
+        const params = request.params as { type: string; id: string; key: string };
+        rule(/^[1-9]\d*$/.test(params.id), 'POLICY_RESOURCE');
+        return await implementation.operation(actor, RefSchema.parse({ type: params.type, id: Number(params.id) }), params.key);
+      } catch (error) {
+        if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+        if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
+        if (error instanceof z.ZodError) return reply.code(400).send({ error: 'POLICY_INPUT_INVALID' });
+        return reply.code(500).send({ error: 'POLICY_FAILED' });
+      }
+    } });
 }
