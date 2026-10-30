@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -14,8 +14,10 @@ const api = `http://127.0.0.1:${process.env.MAX238_API_PORT ?? 51849}`;
 const handleFile = process.env.MAX238_HANDLE_FILE
   ?? fileURLToPath(new URL(`.max238-cn-handle-${process.env.MAX238_API_PORT ?? 51849}.json`, import.meta.url));
 
-test.afterAll(() => {
-  execFileSync('bash', ['e2e/max238-collect-now.sh', '--cleanup-handle', handleFile, '--api-url', api], { stdio: 'inherit' });
+test.afterAll(async () => {
+  const response = await fetch(`${api}/__test/shutdown`, { method: 'POST' });
+  expect(response.ok).toBe(true);
+  await expect.poll(() => existsSync(handleFile), { timeout: 30_000 }).toBe(false);
 });
 
 type TaskView = {
@@ -62,4 +64,27 @@ test('real browser: 立即采集 shows the task and the sample this task committ
 
   // The signed-up task samples belong to this resource's binding revision.
   expect(pageText).toContain('目标版本');
+});
+
+test('lost HTTP response and page reload recover the original collection task', async ({ page }) => {
+  let key = '';
+  await page.route('**/api/metrics/template-bindings/instance/1/collect', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    key = route.request().postDataJSON().caller_key;
+    await route.fetch(); // the real Fastify service has received the request
+    await route.abort('connectionreset'); // discard only its response
+  });
+  await page.goto('/e2e/fixtures/max238-collect-now.html');
+  const host = page.locator('native-template-configuration');
+  await host.getByRole('button', { name: '立即采集' }).click();
+  await expect.poll(() => key).not.toBe('');
+  await page.reload();
+  await expect(host.getByText('任务已完成', { exact: true })).toBeVisible({ timeout: 60_000 });
+  const view = await (await fetch(`${api}/__test/task?key=${encodeURIComponent(key)}`)).json() as TaskView;
+  expect(view.task?.caller_key).toBe(key);
+  expect(view.task?.outcome).toBe('sampled');
+  const sample = view.task!.samples[0]!;
+  expect(view.formal.some(entry => entry.id === sample.id)).toBe(true);
+  await host.getByText('样本身份（不可变 ID）').click();
+  await expect(host.getByText(sample.id, { exact: false })).toBeVisible();
 });

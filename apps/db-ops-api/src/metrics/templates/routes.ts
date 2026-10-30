@@ -89,7 +89,7 @@ export const templateBindingService = new TemplateBindingService({
 export const collectNowService = new CollectNowService({
   pool: productionPool, registry,
   reload: actor => actorContextService.revalidateActor(actor, actor.requestId),
-  reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId),
+  reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId, true),
 });
 
 const ref = (params: unknown) => {

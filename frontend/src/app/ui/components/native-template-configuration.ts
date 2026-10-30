@@ -83,7 +83,7 @@ export const collectOutcomeLabels: Record<string, string> = {
   sampled: '已写入本次正式样本', no_samples: '任务完成但本次没有样本',
   failed: '未产生正式样本', cancelled: '已取消', unknown: '结果未知，不能当作成功',
 };
-const collectTerminal = (state: string) => ['completed', 'failed', 'cancelled', 'unknown', 'absent'].includes(state);
+const collectTerminal = (state: string) => ['completed', 'failed', 'cancelled'].includes(state);
 /** The key is written before the request; without that record an unknown outcome is unrecoverable. */
 const collectStorageKey = (principal: string, refKey: string) => `slide.metric-collect.v1:${principal}:${refKey}`;
 const collectStorageRefusal = '无法把采集请求写入会话存储，已在发送前拒绝本次采集，未创建任何任务；请恢复浏览器存储或换用新标签页后重试。';
@@ -962,8 +962,11 @@ export class NativeTemplateConfiguration extends LitElement {
       return true;
     } catch { return false; }
   }
-  private clearStoredCollect(principal: string) {
-    try { sessionStorage.removeItem(collectStorageKey(principal, this.refKey())); } catch { /* nothing to clear */ }
+  private clearStoredCollect(principal: string, key: string) {
+    try {
+      const stored = this.storedCollect(principal);
+      if (stored && stored !== 'corrupt' && stored.key === key) sessionStorage.removeItem(collectStorageKey(principal, this.refKey()));
+    } catch { /* leave the durable record for recovery */ }
   }
   private stopCollectPolling() { clearTimeout(this.collectTimer); this.collectTimer = undefined; }
   private collectTerminal(state?: string): boolean { return !!state && collectTerminal(state); }
@@ -977,15 +980,16 @@ export class NativeTemplateConfiguration extends LitElement {
   }
   /** Query the exact key; a refresh, remount or resource return uses this path, never a new request. */
   private async queryCollect(generation: number, key: string, principal: string, schedule = true) {
+    this.collectResult = null;
     try {
       const result = await readTemplateCollectTask(this.resourceType, this.resourceId, key);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || sessionPrincipal() !== principal || this.collectPendingKey !== key) return;
       this.collectResult = result;
       this.collectPendingKey = this.collectTerminal(result.state) ? null : key;
-      if (this.collectTerminal(result.state)) { this.clearStoredCollect(principal); this.stopCollectPolling(); }
-      else if (schedule) this.scheduleCollectPoll(generation, key, principal);
+      if (this.collectTerminal(result.state)) { this.clearStoredCollect(principal, key); this.stopCollectPolling(); }
+      else if (schedule && result.state !== 'absent' && result.state !== 'unknown') this.scheduleCollectPoll(generation, key, principal);
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || sessionPrincipal() !== principal || this.collectPendingKey !== key) return;
       if (error instanceof MetricRequestError && [401, 403, 404].includes(error.status)) { this.accessChanged(); return; }
       this.collectError = nativeError(error);
     }
@@ -1000,7 +1004,7 @@ export class NativeTemplateConfiguration extends LitElement {
     if (stored === 'corrupt') { this.collectStorageError = collectCorruptMessage; return; }
     if (!stored) return;
     this.collectPendingKey = stored.key;
-    await this.queryCollect(generation, stored.key, principal, false);
+    await this.queryCollect(generation, stored.key, principal);
   }
   /**
    * Start one collection from the published plan. A stored key is reused verbatim
@@ -1015,6 +1019,12 @@ export class NativeTemplateConfiguration extends LitElement {
     if (!principal) { this.collectError = collectPrincipalMessage; return; }
     const stored = this.storedCollect(principal);
     if (stored === 'corrupt') { this.collectStorageError = collectCorruptMessage; return; }
+    if (stored && (this.collectPendingKey !== stored.key || this.collectResult?.caller_key !== stored.key
+      || this.collectResult.state !== 'absent')) {
+      this.collectPendingKey = stored.key;
+      await this.queryCollect(this.generation, stored.key, principal, false);
+      return;
+    }
     const key = this.collectPendingKey ?? stored?.key
       ?? `collect-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     if (!stored && !this.collectPendingKey && !this.persistCollect(principal, key, revision)) {
@@ -1025,25 +1035,28 @@ export class NativeTemplateConfiguration extends LitElement {
     this.collectPendingKey = key; this.collectBusy = true; this.collectError = ''; this.collectPolls = 0;
     try {
       const result = await collectTemplateBindingNow(this.resourceType, this.resourceId,
-        { caller_key: key, expected_revision: revision });
-      if (generation !== this.generation) return;
+        { caller_key: key, expected_revision: stored?.revision ?? revision });
+      if (generation !== this.generation || sessionPrincipal() !== principal || this.collectPendingKey !== key) return;
       this.collectResult = result;
-      if (this.collectTerminal(result.state)) { this.collectPendingKey = null; this.clearStoredCollect(principal); }
+      if (this.collectTerminal(result.state)) { this.collectPendingKey = null; this.clearStoredCollect(principal, key); }
       else this.scheduleCollectPoll(generation, key, principal);
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || sessionPrincipal() !== principal || this.collectPendingKey !== key) return;
       this.collectError = nativeError(error);
       // Never treat an API failure as "absent": query the original key first.
       await this.queryCollect(generation, key, principal, false);
       if (!this.collectResult || this.collectResult.state === 'absent') this.collectPendingKey = key;
-    } finally { if (generation === this.generation) this.collectBusy = false; }
+    } finally { if (generation === this.generation && sessionPrincipal() === principal) this.collectBusy = false; }
   }
   private queryPendingCollect() {
     const key = this.collectPendingKey;
     const principal = sessionPrincipal();
     if (!key || !principal) return;
     this.collectBusy = true;
-    void this.queryCollect(this.generation, key, principal).finally(() => { this.collectBusy = false; });
+    const generation = this.generation;
+    void this.queryCollect(generation, key, principal).finally(() => {
+      if (generation === this.generation && sessionPrincipal() === principal) this.collectBusy = false;
+    });
   }
 
   confirmDiscard(action: () => void) {

@@ -180,7 +180,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     const collectService = new CollectNowService({
       pool: () => pool, registry,
       reload: current => actorContextService.revalidateActor(current, current.requestId),
-      reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId),
+      reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId, true),
     });
     app = Fastify();
     const auth = async (request: unknown) => {
@@ -205,7 +205,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     const authorizer = createCollectNowAuthorizer({
       loadActor: (userId, sessionVersion) => actorContextService.loadActiveActor(userId, sessionVersion),
       loadActorOn: (executor, userId, sessionVersion) =>
-        actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion),
+        actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
     });
     const scheduler = new MetricScheduler(store, registry, createAssetCollectorAccess(),
       Date.now, undefined, undefined, authorizer);
@@ -344,10 +344,113 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       expect(answer.status).toBe(401);
       const [rows] = await pool.query<RowDataPacket[]>(
         "SELECT state, samples FROM metric_collect_requests WHERE caller_key = ?", [key]);
-      expect(rows[0].state).toBe('failed');
+      expect(rows[0].state).toBe('unknown');
       expect(JSON.parse(rows[0].samples ?? '[]')).toEqual([]);
       expect((await counts()).observations).toBe(before.observations);
     } finally {
+      await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
+    }
+  }, 60_000);
+
+  it('rejects a task when its admitted target changes before execution', async () => {
+    const key = `collect-target-change-${process.pid}`;
+    const before = await counts();
+    const admitted = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
+      { caller_key: key, expected_revision: 1 });
+    expect(admitted.status).toBe(200);
+    await pool.execute('UPDATE database_instances SET database_name = ? WHERE id = ?', ['information_schema', instanceId]);
+    try {
+      expect(await databaseService.addConnection(instanceId, 'max238-collect-bound', {
+        host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD,
+        database: 'information_schema', db_type: 'mysql',
+      })).toBe(true);
+      await drain();
+      const answer = await call('GET', `/api/metrics/template-bindings/instance/${instanceId}/collect/${key}`);
+      expect(answer.data.state).not.toBe('completed');
+      const after = await counts();
+      expect(after.observations).toBe(before.observations);
+      expect(after.operations).toBe(before.operations);
+      expect(after.audits).toBe(before.audits);
+    } finally {
+      await pool.execute('UPDATE database_instances SET database_name = ? WHERE id = ?', [target.database, instanceId]);
+      expect(await databaseService.addConnection(instanceId, 'max238-collect-bound', {
+        host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD,
+        database: target.database, db_type: 'mysql',
+      })).toBe(true);
+    }
+  }, 60_000);
+
+  it('rejects a task when its credential changes after admission', async () => {
+    const key = `collect-credential-change-${process.pid}`;
+    const before = await counts();
+    const admitted = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
+      { caller_key: key, expected_revision: 1 });
+    expect(admitted.status).toBe(200);
+    const [rows] = await pool.query<RowDataPacket[]>('SELECT password_encrypted FROM database_instances WHERE id = ?', [instanceId]);
+    const originalCredential = rows[0].password_encrypted;
+    await pool.execute('UPDATE database_instances SET password_encrypted = ? WHERE id = ?', [encryptData('rotated'), instanceId]);
+    try {
+      await drain();
+      const answer = await call('GET', `/api/metrics/template-bindings/instance/${instanceId}/collect/${key}`);
+      expect(answer.data.state).not.toBe('completed');
+      expect((await counts()).observations).toBe(before.observations);
+    } finally { await pool.execute('UPDATE database_instances SET password_encrypted = ? WHERE id = ?', [originalCredential, instanceId]); }
+  }, 60_000);
+
+  it('holds the live session grant through the transaction commit', async () => {
+    const connection = await pool.getConnection();
+    let update: Promise<unknown> | undefined;
+    try {
+      await connection.beginTransaction();
+      await actorContextService.loadActiveActorOn(connection as never, 1, 1, undefined, true);
+      let finished = false;
+      update = pool.execute('UPDATE users SET session_version = 2 WHERE id = 1').then(() => { finished = true; });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(finished).toBe(false);
+    } finally {
+      await connection.commit();
+      connection.release();
+      await update;
+      await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
+    }
+  }, 60_000);
+
+  it('serializes a session rotation against the real writer journal commit', async () => {
+    const key = `collect-commit-lock-${process.pid}`;
+    const admitted = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
+      { caller_key: key, expected_revision: 1 });
+    expect(admitted.status).toBe(200);
+    const original = pool.getConnection.bind(pool);
+    let rotation: Promise<unknown> | undefined;
+    let completedBeforeJournal = false;
+    let intercepted = false;
+    const spy = vi.spyOn(pool, 'getConnection').mockImplementation(async () => {
+      const connection = await original();
+      const execute = connection.execute.bind(connection);
+      connection.execute = (async (sql: string, values?: unknown[]) => {
+        if (!intercepted && sql.includes("UPDATE metric_collect_requests SET state = 'completed'")) {
+          intercepted = true;
+          let finished = false;
+          rotation = pool.execute('UPDATE users SET session_version = 2 WHERE id = 1').then(() => { finished = true; });
+          await new Promise(resolve => setTimeout(resolve, 150));
+          completedBeforeJournal = finished;
+        }
+        return execute(sql, values as never);
+      }) as typeof connection.execute;
+      return connection;
+    });
+    try {
+      await drain();
+      expect(intercepted).toBe(true);
+      expect(completedBeforeJournal).toBe(false);
+      await rotation;
+      const [rows] = await pool.query<RowDataPacket[]>('SELECT state, samples FROM metric_collect_requests WHERE caller_key = ?', [key]);
+      expect(rows[0].state).toBe('completed');
+      const samples = typeof rows[0].samples === 'string' ? JSON.parse(rows[0].samples) : rows[0].samples;
+      expect(samples.length).toBeGreaterThan(0);
+    } finally {
+      spy.mockRestore();
+      await rotation;
       await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
     }
   }, 60_000);

@@ -165,6 +165,13 @@ created=1
 cleanup() {
   local status=$?
   if [ "$created" = 1 ]; then
+    if [ "$status" -ne 0 ]; then
+      local state rc
+      if state="$(ref_state "$name")"; then rc=0; else rc=$?; fi
+      if [ "$rc" -eq 1 ]; then rm -f "$handle_file"; exit "$status"; fi
+      log "run failed; retaining container $name and handle $handle_file for inspection"
+      exit "$status"
+    fi
     if remove_owned "$name" "$nonce"; then
       rm -f "$handle_file"
     elif [ "$status" -eq 0 ]; then status=1; fi
@@ -190,7 +197,10 @@ for _ in $(seq 1 120); do
     docker logs "$name" 2>&1 | tail -20 >&2 || true
     exit 1
   fi
-  if docker exec "$name" mysqladmin ping -uroot --silent >/dev/null 2>&1; then ready=1; break; fi
+  if docker exec "$name" mysql -uroot -N -e 'SELECT 1' >/dev/null 2>&1; then
+    sleep 2
+    if docker exec "$name" mysql -uroot -N -e 'SELECT 1' >/dev/null 2>&1; then ready=1; break; fi
+  fi
   sleep 1
 done
 if [ "$ready" = 0 ]; then log "$name was not ready within 120s"; exit 1; fi

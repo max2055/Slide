@@ -87,6 +87,24 @@ export interface CollectAdmissionInput {
 }
 export interface CollectAdmissionResult { created: boolean; task: CollectTask }
 
+async function collectIntentDigest(c: PoolConnection, ref: Ref, decoded: DecodedTemplateBindingPayload): Promise<string> {
+  // Keep the target and its credentials stable until this transaction commits.
+  const table = ref.type === 'instance' ? 'database_instances' : ref.type === 'server' ? 'servers' : 'network_devices';
+  // The exclusive device lock also fences a new credential row's foreign-key check.
+  await c.execute(`SELECT id FROM ${table} WHERE id = ? ${ref.type === 'network_device' ? 'FOR UPDATE' : 'FOR SHARE'}`, [ref.id]);
+  if (ref.type === 'network_device') {
+    await c.execute('SELECT device_id FROM network_device_credentials WHERE device_id = ? FOR SHARE', [ref.id]);
+  }
+  const targetIdentity = await trustedTargetIdentity(c as never, ref);
+  rule(targetIdentity !== null, 'COLLECT_RESOURCE_NOT_FOUND', 404);
+  return `sha256:${createHash('sha256').update(stable({
+    format: 'max238.collect-intent.v1', resource: refKey(ref), revision: decoded.binding.revision,
+    resolution_identity: decoded.pending.resolution_identity, plan: decoded.pending.plan.identity,
+    pins: decoded.binding.template_pins, credential_ref: `credential:asset-${ref.type}-${ref.id}`,
+    target_identity: targetIdentity,
+  })).digest('hex')}`;
+}
+
 /** Short transactions share the policy publication lock. Never hold a transaction during remote IO. */
 export class MysqlScheduleStore {
   constructor(readonly pool: Pool, private readonly registry: PackageRegistry,
@@ -412,7 +430,6 @@ export class MysqlScheduleStore {
           || Number(source.published_revision) !== revision
           || !pins.has(`${pin.id}@${pin.version}#${pin.digest}`)) continue;
         tickets.set(String(source.series_hash), { source: 'semantic', generation: Number(source.generation), revision });
-        await c.execute('UPDATE metric_rollout SET applied_revision = published_revision WHERE series_hash = ?', [source.series_hash]);
       }
       return { decoded, plan, tickets,
         states: new Map(Object.entries(decode<Record<string, CounterState>>(schedule[0].states))) };
@@ -666,14 +683,7 @@ export class MysqlScheduleStore {
       rule(Date.parse(decoded!.published_at) <= now, 'COLLECT_NOT_PUBLISHED', 409);
       if (input.ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(input.ref.id);
       rule(await assetCollectionEnabled(c, input.ref, true), 'ASSET_COLLECTION_DISABLED', 409);
-      const targetIdentity = await trustedTargetIdentity(c as never, input.ref);
-      rule(targetIdentity !== null, 'COLLECT_RESOURCE_NOT_FOUND', 404);
-      const digest = `sha256:${createHash('sha256').update(stable({
-        format: 'max238.collect-intent.v1', resource: refKey(input.ref), revision,
-        resolution_identity: decoded!.pending.resolution_identity, plan: plan.identity,
-        pins: decoded!.binding.template_pins, credential_ref: `credential:asset-${input.ref.type}-${input.ref.id}`,
-        target_identity: targetIdentity,
-      })).digest('hex')}`;
+      const digest = await collectIntentDigest(c, input.ref, decoded!);
 
       const existing = await this.readCollectTask(c, 'r.resource_key = ? AND r.caller_key = ?',
         [refKey(input.ref), input.callerKey], true);
@@ -746,11 +756,14 @@ export class MysqlScheduleStore {
 
   /** Fenced begin for one manual task; never claims an applied binding or schedule row. */
   async beginCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
-    ctx: JobExecutionContext, now: number): Promise<TemplateExecutionSnapshot | null> {
+    ctx: JobExecutionContext, now: number,
+    authorizeOn: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<TemplateExecutionSnapshot | null> {
     return this.collectTransaction(async c => {
       ctx.signal.throwIfAborted();
       const decoded = await this.currentTemplate(c, ref);
       if (!decoded || decoded.binding.revision !== revision) return null;
+      rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      await authorizeOn(c);
       if (ref.type === 'instance') await instanceAccessLifecycle.assertAvailable(ref.id);
       if (!await assetCollectionEnabled(c, ref, true)) return null;
       const task = await this.readCollectTask(c, 'r.id = ?', [requestId], true);
@@ -797,9 +810,9 @@ export class MysqlScheduleStore {
     [job.id, ctx.workerId, ctx.fencingToken]);
     if (jobs.length !== 1) return false;
     const [rows] = await c.execute<RowDataPacket[]>(
-      "SELECT id FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",
+      "SELECT id, intent_digest FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",
       [requestId, job.id]);
-    return rows.length === 1;
+    return rows.length === 1 && String(rows[0].intent_digest) === await collectIntentDigest(c, ref, current);
   }
 
   async assertCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
@@ -841,9 +854,19 @@ export class MysqlScheduleStore {
    * task/job/state so a late worker cannot overwrite a terminal journal row.
    * Attempt rows are persisted here so a failed task keeps its exact evidence.
    */
-  async failCollectNow(requestId: string, job: ClaimedJob, state: Exclude<CollectTaskState, 'accepted' | 'running' | 'completed'>,
-    code: string, attempts: CollectAttempt[], now: number): Promise<void> {
+  async failCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob, ctx: JobExecutionContext,
+    state: Exclude<CollectTaskState, 'accepted' | 'running' | 'completed'>,
+    code: string, attempts: CollectAttempt[], now: number,
+    authorizeOn: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<void> {
     await this.collectTransaction(async c => {
+      // Only a still-authorized, fenced job may persist attempt data. Keep a
+      // diagnostic unknown journal when its authority or lease has changed.
+      let authorized = false;
+      try {
+        authorized = await this.validCollectNow(c, ref, revision, requestId, job, ctx);
+        if (authorized) await authorizeOn(c);
+      } catch { authorized = false; }
+      if (!authorized) { state = 'unknown'; attempts = []; }
       if (attempts.length) {
         const [rows] = await c.execute<RowDataPacket[]>(
           "SELECT id FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",

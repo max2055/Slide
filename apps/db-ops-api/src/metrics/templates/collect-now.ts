@@ -155,5 +155,5 @@ export const productionCollectNowAuthorizer = (actorService: ActorContextService
   createCollectNowAuthorizer({
     loadActor: (userId, sessionVersion) => actorService.loadActiveActor(userId, sessionVersion),
     loadActorOn: (executor, userId, sessionVersion) =>
-      actorService.loadActiveActorOn(executor, userId, sessionVersion),
+      actorService.loadActiveActorOn(executor, userId, sessionVersion, undefined, true),
   });

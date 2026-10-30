@@ -239,9 +239,10 @@ export class ActorContextService {
     userId: number,
     expectedSessionVersion?: number,
     requestId: string = randomUUID(),
+    locking = false,
   ): Promise<ActorContext> {
     try {
-      return await this.loadActorFrom(executor, userId, expectedSessionVersion, requestId);
+      return await this.loadActorFrom(executor, userId, expectedSessionVersion, requestId, 'user', locking);
     } catch (error) {
       throw asAuthenticationError(error);
     }
@@ -270,12 +271,13 @@ export class ActorContextService {
     executor: QueryExecutor,
     actor: ActorContext,
     requestId: string = randomUUID(),
+    locking = false,
   ): Promise<ActorContext> {
     const resourceBoundary = frozenBoundaryOf(actor);
     const current = actor.principalKind === 'service'
       ? await this.loadInvestigationActorFrom(executor,
         actor.userId, 'service', actor.sessionVersion, requestId)
-      : await this.loadActorFrom(executor, actor.userId, actor.sessionVersion, requestId);
+      : await this.loadActorFrom(executor, actor.userId, actor.sessionVersion, requestId, 'user', locking);
     return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
   }
 

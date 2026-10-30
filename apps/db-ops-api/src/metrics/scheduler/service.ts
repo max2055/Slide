@@ -110,7 +110,8 @@ export class MetricScheduler {
     const cancel = (reason: unknown) => {
       if (cancelled) return;
       cancelled = true; uncertain = inFlight; controller.abort(reason);
-      cancellationRecord = this.store.event(ref, revision, job.id, 'cancellation_requested', inFlight, this.clock() - started, reads);
+      cancellationRecord = job.type === COLLECT_NOW_JOB_TYPE ? Promise.resolve()
+        : this.store.event(ref, revision, job.id, 'cancellation_requested', inFlight, this.clock() - started, reads);
       void cancellationRecord.catch(() => undefined);
     };
     const abort = () => cancel(context.signal.reason);
@@ -182,14 +183,15 @@ export class MetricScheduler {
       const committed = await fence.commit(snapshot, results);
       platformLogs.record({ component: 'metrics', eventType: 'collection.committed', status: committed ? 'ok' : 'unknown',
         correlationId: job.id, jobType: job.type, durationMs: Math.max(0, this.clock() - started) });
-      await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false,
-        this.clock() - started, reads);
+      if (job.type !== COLLECT_NOW_JOB_TYPE) await this.store.event(ref, revision, job.id,
+        committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
       if (committed) await fence.afterCommit?.();
     } catch (error) {
       const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
       const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';
       const code = cancelled ? 'cancelled_result_uncertain' : superseded || stale ? 'late_result_discarded' : 'collection_failed';
-      await this.store.event(ref, revision, job.id, code, uncertain || inFlight, this.clock() - started, reads);
+      if (job.type !== COLLECT_NOW_JOB_TYPE) await this.store.event(ref, revision, job.id, code,
+        uncertain || inFlight, this.clock() - started, reads);
       // A manual task always records why it ended; a cadence tick keeps its own event.
       await fence.fail(code, uncertain || inFlight, attempts());
       if (superseded) return;
@@ -236,7 +238,7 @@ export class MetricScheduler {
       return this.executeTemplate(ref, revision, job, context, exec => ({
         onMissingBinding: () => 'throw',
         assertCurrent: async () => { await authorize(); await this.store.assertCollectNow(ref, revision, request_id, job, exec); },
-        begin: () => this.store.beginCollectNow(ref, revision, request_id, job, exec, this.clock()),
+        begin: () => this.store.beginCollectNow(ref, revision, request_id, job, exec, this.clock(), authorizeOn),
         commit: async (snapshot, results) => {
           const committed = await this.store.commitCollectNow(ref, revision, request_id, snapshot, results,
             job, exec, this.clock(), authorizeOn);
@@ -246,7 +248,7 @@ export class MetricScheduler {
         fail: async (code, uncertain, attempts) => {
           const state = code === 'cancelled_result_uncertain' ? (uncertain ? 'unknown' : 'cancelled')
             : code === 'late_result_discarded' ? 'unknown' : 'failed';
-          await this.store.failCollectNow(request_id, job, state, code, attempts, this.clock());
+          await this.store.failCollectNow(ref, revision, request_id, job, exec, state, code, attempts, this.clock(), authorizeOn);
         },
         afterCommit: async () => {
           // The same formalization pass the cadence tick runs; never a second writer.

@@ -645,6 +645,49 @@ const collectAnswer = (state: string, overrides: Record<string, unknown> = {}) =
 const collectButton = (element: any, text = '立即采集') =>
   [...element.shadowRoot.querySelectorAll('button')].find((button: HTMLButtonElement) => button.textContent?.trim() === text) as HTMLButtonElement | undefined;
 
+it('keeps the original collection intent when its task is unknown', async () => {
+  const storageKey = 'slide.metric-collect.v1:user-7:instance:1';
+  window.sessionStorage.setItem(storageKey, JSON.stringify({ key: 'stored-key', revision: 5 }));
+  authFetch.mockImplementation(routes({
+    '/collect/stored-key': () => ({ ok: true, json: async () => collectAnswer('unknown') }),
+  }));
+  const element = await mount();
+  for (let i = 0; i < 40 && element.collectResult?.state !== 'unknown'; i++) await settle();
+  expect(element.collectPendingKey).toBe('stored-key');
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey) ?? '{}')).toEqual({ key: 'stored-key', revision: 5 });
+});
+
+it('does not send a collection after an unresolved lookup fails', async () => {
+  window.sessionStorage.setItem('slide.metric-collect.v1:user-7:instance:1', JSON.stringify({ key: 'stored-key', revision: 5 }));
+  let posts = 0;
+  authFetch.mockImplementation(routes({
+    '/collect/stored-key': () => ({ ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }),
+    '/collect': () => { posts++; return { ok: true, json: async () => collectAnswer('accepted') }; },
+  }));
+  const element = await mount();
+  await settle();
+  await element.collectNow();
+  expect(posts).toBe(0);
+  expect(element.collectPendingKey).toBe('stored-key');
+});
+
+it('retries an authoritatively absent intent with its original revision', async () => {
+  window.sessionStorage.setItem('slide.metric-collect.v1:user-7:instance:1', JSON.stringify({ key: 'stored-key', revision: 4 }));
+  let body: { caller_key: string; expected_revision: number } | undefined;
+  authFetch.mockImplementation(routes({
+    '/collect/stored-key': () => ({ ok: true, json: async () => collectAnswer('absent', { task: null }) }),
+    '/collect': (_url: string, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return { ok: true, json: async () => collectAnswer('accepted') };
+    },
+  }));
+  const element = await mount();
+  for (let i = 0; i < 40 && element.collectResult?.state !== 'absent'; i++) await settle();
+  await element.collectNow();
+  expect(body).toEqual({ caller_key: 'stored-key', expected_revision: 4 });
+  element.stopCollectPolling();
+});
+
 it('manual collection sends the published revision and shows only this task\'s samples', async () => {
   let polls = 0;
   let key = '';
@@ -735,7 +778,7 @@ it('an unconfirmed collection response is resolved by querying the same key, nev
   window.sessionStorage.setItem(`slide.metric-collect.v1:user-7:instance:1`, JSON.stringify({ key, revision: 5 }));
   element.collectPendingKey = key;
   await element.collectNow();
-  expect(posts).toBe(1);
+  expect(posts).toBe(0);
   expect(element.collectResult?.state).toBe('completed');
   expect(element.collectPendingKey).toBeNull();
 });

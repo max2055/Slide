@@ -41,13 +41,14 @@ import { MetricScheduler } from '../src/metrics/scheduler/service.js';
 import { JobRegistry } from '../src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../src/workflows/worker-runtime.js';
 import { refKey } from '../src/metrics/policy/model.js';
+import { createOwnedDatabase } from '../src/testing/owned-fixture.js';
+import { join } from 'node:path';
 
 const mysqlPort = Number(process.env.MAX238_TEST_MYSQL_PORT);
 const apiPort = Number(process.env.MAX238_API_PORT ?? 51839);
 if (!mysqlPort) { console.error('MAX238_TEST_MYSQL_PORT is required'); process.exit(2); }
 const nonce = process.env.MAX238_E2E_NONCE ?? randomUUID().replaceAll('-', '').slice(0, 16);
-const platformDb = `max238cn_platform_${nonce}`.slice(0, 60);
-const targetDb = `max238cn_target_${nonce}`.slice(0, 60);
+const schemaNonce = createHash('sha256').update(nonce).digest('hex').slice(0, 24);
 const targetUser = `max238cn_ro_${createHash('sha256').update(nonce).digest('hex').slice(0, 16)}`;
 const targetPassword = randomBytes(12).toString('hex');
 const instanceId = 1;
@@ -58,8 +59,10 @@ const actor = {
 
 async function main() {
   const root = mysql.createPool({ host: '127.0.0.1', port: mysqlPort, user: 'root', password: '' });
-  await root.query(`CREATE DATABASE \`${platformDb}\` DEFAULT CHARACTER SET utf8mb4`);
-  await root.query(`CREATE DATABASE \`${targetDb}\` DEFAULT CHARACTER SET utf8mb4`);
+  const handleDir = join(process.cwd(), '.max238-handles');
+  const platform = await createOwnedDatabase(root, { nonce: schemaNonce, purpose: 'cnplatform', handleDir });
+  const target = await createOwnedDatabase(root, { nonce: schemaNonce, purpose: 'cntarget', handleDir });
+  const platformDb = platform.database, targetDb = target.database;
   await root.query(`CREATE TABLE \`${targetDb}\`.probe (id INT PRIMARY KEY)`);
   await root.query(`INSERT INTO \`${targetDb}\`.probe VALUES (1)`);
   await root.query(`CREATE USER '${targetUser}'@'%' IDENTIFIED BY ?`, [targetPassword]);
@@ -121,30 +124,36 @@ async function main() {
   const collectService = new CollectNowService({
     pool: () => pool, registry,
     reload: current => actorContextService.revalidateActor(current, current.requestId),
-    reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId),
+    reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId, true),
   });
   const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry,
     createAssetCollectorAccess(), Date.now, undefined, undefined, createCollectNowAuthorizer({
       loadActor: (userId, sessionVersion) => actorContextService.loadActiveActor(userId, sessionVersion),
       loadActorOn: (executor, userId, sessionVersion) =>
-        actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion),
+        actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
     }));
   const jobs = new JobRegistry();
   scheduler.register(jobs);
   const worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), `max238cn-${process.pid}`, 30);
   let draining = false;
+  let workerError: unknown;
   const timer = setInterval(() => {
     if (draining) return;
     draining = true;
-    worker.runOnce((job, context) => jobs.execute(job, context)).catch(() => undefined).finally(() => { draining = false; });
+    worker.runOnce((job, context) => jobs.execute(job, context)).catch(error => { workerError = error; }).finally(() => { draining = false; });
   }, 250);
   timer.unref();
 
   const configService = new MetricConfigurationService(policyService, registry,
     createTrialStore(() => pool, registry), trialAccess, configurationReader(() => pool), async seed => seed);
   const app = Fastify({ logger: false });
+  let shutdown: () => Promise<void>;
   const auth = async (request: unknown) => { (request as { user?: ActorContext }).user = actor; };
   app.get('/__health', async () => ({ ok: true }));
+  app.post('/__test/shutdown', async () => {
+    setTimeout(() => { void shutdown(); }, 50);
+    return { stopping: true };
+  });
   app.get('/__test/handle', async () => ({ container: process.env.MAX238_E2E_CONTAINER ?? null,
     nonce: process.env.MAX238_E2E_NONCE ?? null, pid: process.pid, port: apiPort, cwd: process.cwd() }));
   const taskView = async (row: RowDataPacket) => {
@@ -190,13 +199,23 @@ async function main() {
   await app.listen({ host: '127.0.0.1', port: apiPort });
   console.log(`MAX238 collect-now API on 127.0.0.1:${apiPort}; platform ${platformDb}; target ${targetDb}`);
 
-  const shutdown = async () => {
+  shutdown = async () => {
     clearInterval(timer);
-    await app.close().catch(() => undefined);
-    await worker.shutdown(2000).catch(() => undefined);
-    await pool.query(`DROP DATABASE IF EXISTS \`${targetDb}\``).catch(() => undefined);
-    await pool.query(`DROP DATABASE IF EXISTS \`${platformDb}\``).catch(() => undefined);
-    await pool.end().catch(() => undefined); await root.end().catch(() => undefined);
+    try {
+      await app.close();
+      await worker.shutdown(2000);
+      if (draining || workerError) throw workerError ?? new Error('worker still draining');
+      await databaseService.removeConnection(instanceId);
+      await dbConnection.close();
+      await pool.end();
+      await root.query(`DROP USER '${targetUser}'@'%'`);
+      await target.drop();
+      await platform.drop();
+      await root.end();
+    } catch (error) {
+      console.error('MAX238 fixture shutdown failed; retain container and schema handles:', error);
+      process.exit(1);
+    }
     let cleanupCode = 0;
     const container = process.env.MAX238_E2E_CONTAINER, ownerNonce = process.env.MAX238_E2E_NONCE;
     if (container && ownerNonce) {
