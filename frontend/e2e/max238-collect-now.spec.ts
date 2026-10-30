@@ -88,3 +88,17 @@ test('lost HTTP response and page reload recover the original collection task', 
   await host.getByText('样本身份（不可变 ID）').click();
   await expect(host.getByText(sample.id, { exact: false })).toBeVisible();
 });
+
+test('collection action remains reachable at the supported desktop sizes', async ({ page }) => {
+  await page.goto('/e2e/fixtures/max238-collect-now.html');
+  const collect = page.locator('native-template-configuration').getByRole('button', { name: '立即采集' });
+  for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
+    await page.setViewportSize({ width, height });
+    await collect.scrollIntoViewIfNeeded();
+    await expect(collect).toBeEnabled();
+    const rect = await collect.boundingBox();
+    expect(rect).not.toBeNull();
+    expect(rect!.x).toBeGreaterThanOrEqual(0);
+    expect(rect!.x + rect!.width).toBeLessThanOrEqual(width);
+  }
+});
