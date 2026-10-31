@@ -2,6 +2,7 @@ import "../../src/app/styles/tokens.css";
 import "../../src/app/ui/components/app-toast-container.js";
 import "../../src/app/ui/components/native-template-configuration.js";
 import "../../src/app/ui/views/event-management.js";
+import "../../src/app/ui/views/event-center.js";
 document.body.style.cssText =
   "margin:24px;background:var(--bg);color:var(--text);font-family:system-ui";
 const note = document.createElement("p");
@@ -14,4 +15,6 @@ cfg.resourceId = 1;
 document.body.append(cfg);
 const heading = document.createElement("h2");
 heading.textContent = "现有事件中心";
-document.body.append(heading, document.createElement("event-management-page"));
+document.body.append(heading, document.createElement("event-center-page"));
+
+window.history.replaceState({},'', '?view=aggregate');window.dispatchEvent(new PopStateEvent('popstate'));

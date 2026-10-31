@@ -79,7 +79,12 @@ class AlertEventService {
     return dbConnection.getPool();
   }
 
-  private instanceScope(column: string, allowedInstanceIds?: readonly number[] | null): { sql: string; params: number[] } {
+  private instanceScope(column: string, allowedInstanceIds?: readonly number[] | null, allowedEventIds?: readonly number[]): { sql: string; params: number[] } {
+    if (allowedEventIds !== undefined) {
+      const legacy=this.instanceScope(column,allowedInstanceIds);
+      const id=column.replace('instance_id','id');
+      return {sql:` AND ((${column} IS NOT NULL ${legacy.sql} AND NOT EXISTS (SELECT 1 FROM metric_trigger_episodes te WHERE te.event_id=${id})) OR ${allowedEventIds.length ? `${id} IN (${allowedEventIds.map(()=>'?').join(',')})` : 'FALSE'})`,params:[...legacy.params,...allowedEventIds]};
+    }
     if (allowedInstanceIds === undefined || allowedInstanceIds === null) return { sql: '', params: [] };
     if (allowedInstanceIds.length === 0) return { sql: ' AND 1 = 0', params: [] };
     return {
@@ -94,6 +99,7 @@ class AlertEventService {
   async getEvents(options?: {
     instance_id?: number;
     allowed_instance_ids?: readonly number[] | null;
+    allowed_event_ids?: readonly number[];
     status?: string;
     severity?: string;
     limit?: number;
@@ -117,7 +123,7 @@ class AlertEventService {
         sql += ' AND e.instance_id = ?';
         params.push(options.instance_id);
       }
-      const listScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids);
+      const listScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
       sql += listScope.sql;
       params.push(...listScope.params);
       if (options?.status) {
@@ -154,7 +160,7 @@ class AlertEventService {
       let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
       const countParams: any[] = [];
       if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
-      const countScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids);
+      const countScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
       countSql += countScope.sql;
       countParams.push(...countScope.params);
       if (options?.status) {
@@ -301,20 +307,13 @@ class AlertEventService {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
-    try {
-      // 检查事件是否存在
-      const [check] = await pool.execute('SELECT id FROM alert_events WHERE id = ?', [eventId]) as any;
-      if (!Array.isArray(check) || check.length === 0) {
-        return { success: false, error: '事件不存在' };
-      }
-      // 删除关联的 members 和 logs
-      await pool.execute('DELETE FROM alert_event_members WHERE event_id = ?', [eventId]);
-      await pool.execute('DELETE FROM alert_event_logs WHERE event_id = ?', [eventId]);
-      await pool.execute('DELETE FROM alert_events WHERE id = ?', [eventId]);
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
+    return this._withEventLock(eventId, async (connection, event) => {
+      const [episodes] = await connection.execute<mysql.RowDataPacket[]>('SELECT episode_id FROM metric_trigger_episodes WHERE event_id=?',[eventId]);
+      if (event.source_type === 'template-trigger' || episodes.length) throw new Error('模板事件历史不可删除');
+      await connection.execute('DELETE FROM alert_event_members WHERE event_id=?',[eventId]);
+      await connection.execute('DELETE FROM alert_event_logs WHERE event_id=?',[eventId]);
+      await connection.execute('DELETE FROM alert_events WHERE id=?',[eventId]);
+    });
   }
 
   /**
@@ -469,7 +468,7 @@ class AlertEventService {
    * MTTR 统计（仅统计已解决/已关闭的事件）
    * MTTR = 从 created_at 到 resolved_at/closed_at 的时间（分钟）
    */
-  async getMTTRStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
+  async getMTTRStats(allowedInstanceIds: readonly number[] | null = null, allowedEventIds?: readonly number[]): Promise<{
     avg_mttr_minutes: number;
     median_mttr_minutes: number;
     p95_mttr_minutes: number;
@@ -482,7 +481,7 @@ class AlertEventService {
 
     try {
       // 获取所有已解决/已关闭事件的 MTTR 值
-      const scope = this.instanceScope('instance_id', allowedInstanceIds);
+      const scope = this.instanceScope('instance_id', allowedInstanceIds, allowedEventIds);
       const [rows] = await pool.execute(
         `SELECT TIMESTAMPDIFF(MINUTE, created_at, COALESCE(resolved_at, updated_at)) AS mttr_minutes
          FROM alert_events
@@ -635,6 +634,7 @@ class AlertEventService {
     limit?: number;
     offset?: number;
     allowed_instance_ids?: readonly number[] | null;
+    allowed_event_ids?: readonly number[];
   }): Promise<any[]> {
     const pool = this.getPool();
     if (!pool) return [];
@@ -659,7 +659,7 @@ class AlertEventService {
         sql += ' AND e.instance_id = ?';
         params.push(query.instance_id);
       }
-      const searchScope = this.instanceScope('e.instance_id', query.allowed_instance_ids);
+      const searchScope = this.instanceScope('e.instance_id', query.allowed_instance_ids, query.allowed_event_ids);
       sql += searchScope.sql;
       params.push(...searchScope.params);
       if (query.status) {
@@ -703,7 +703,7 @@ class AlertEventService {
   /**
    * 事件统计
    */
-  async getEventStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
+  async getEventStats(allowedInstanceIds: readonly number[] | null = null, allowedEventIds?: readonly number[]): Promise<{
     total: number; open: number; investigating: number;
     handled: number; resolved: number; closed: number;
   }> {
@@ -713,7 +713,7 @@ class AlertEventService {
     }
 
     try {
-      const scope = this.instanceScope('instance_id', allowedInstanceIds);
+      const scope = this.instanceScope('instance_id', allowedInstanceIds, allowedEventIds);
       const [rows] = await pool.execute(
         `SELECT
           COUNT(*) AS total,

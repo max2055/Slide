@@ -520,16 +520,16 @@ class AlertDatabaseService {
     try {
       if (retentionDays <= 0) {
         // 显式传 0 才允许清除所有（需确认操作）
-        const [rows] = await pool.execute('SELECT COUNT(*) as count FROM alerts') as any;
+        const [rows] = await pool.execute('SELECT COUNT(*) as count FROM alerts WHERE NOT (source <=> \"template-trigger\")') as any;
         const total = rows[0]?.count || 0;
-        await pool.execute('DELETE FROM alerts');
+        await pool.execute('DELETE FROM alerts WHERE NOT (source <=> \"template-trigger\")');
         console.log(`⚠️ 已清除全部 ${total} 条告警记录（retentionDays=${retentionDays}）`);
         return { success: true, deletedCount: total };
       }
 
       // 默认行为：只清除超过 retentionDays 的旧告警
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-      const [result] = await pool.execute('DELETE FROM alerts WHERE created_at < ?', [cutoff]) as any;
+      const [result] = await pool.execute('DELETE FROM alerts WHERE created_at < ? AND NOT (source <=> \"template-trigger\")', [cutoff]) as any;
       const deletedCount = result.affectedRows ?? 0;
       if (deletedCount > 0) {
         console.log(`已清除 ${deletedCount} 条超过 ${retentionDays} 天的旧告警`);
@@ -717,8 +717,8 @@ class AlertDatabaseService {
     }
 
     try {
-      await pool.execute('DELETE FROM alerts WHERE id = ?', [alertId]);
-      return { success: true };
+      const [result] = await pool.execute<mysql.ResultSetHeader>('DELETE FROM alerts WHERE id = ? AND NOT (source <=> \"template-trigger\")', [alertId]);
+      return { success: result.affectedRows === 1 };
     } catch (error: any) {
       console.error('删除告警失败:', error);
       return { success: false, error: error.message };

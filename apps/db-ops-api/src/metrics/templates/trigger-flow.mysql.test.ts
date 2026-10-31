@@ -80,7 +80,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let worker: WorkerRuntime;
   let jobs: JobRegistry;
   let scheduleStore: MysqlScheduleStore;
-  let controlledValue = 95;
+  let controlledValue: number|null = 95;
   let clock = Date.now();
   let accessCheckHook: (() => Promise<void>) | undefined;
   const registry = createConfigurationRegistry();
@@ -358,7 +358,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       },
       () => clock,
       async () => [
-        { dimensions: {}, fields: { connections: { encoding: 'uint64', value: String(controlledValue) } } },
+        { dimensions: {}, fields: { connections: controlledValue === null ? null : { encoding: 'uint64', value: String(controlledValue) } } },
       ],
       undefined,
       authorizer,
@@ -459,6 +459,9 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     );
     expect(events).toHaveLength(1);
     const id = Number(events[0].event_id);
+    expect((await alertEventService.deleteEvent(id)).success).toBe(false);
+    expect((await alertDatabaseService.deleteAlert(Number(events[0].alert_id))).success).toBe(false);
+    expect((await pool.query<RowDataPacket[]>('SELECT * FROM alert_event_members WHERE event_id=?',[id]))[0]).toHaveLength(1);
     expect((await alertDatabaseService.resolveAlert(Number(events[0].alert_id), 1)).success).toBe(false);
     expect((await alertEventService.resolveEvent(id, 'manual must not recover', 1)).success).toBe(false);
     expect((await alertEventService.updateEvent(id, { source_type: 'manual' })).success).toBe(false);
@@ -592,7 +595,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
         node: 'compare',
         select: { aggregation: 'avg', window_ms: 60000 },
         operator: '<',
-        threshold: { kind: 'constant', value: 50 },
+        threshold: { kind: 'constant', value: 70 },
       },
       quality: r.quality,
       clock: { stale_after_ms: 120000, nodata: { enabled: true, after_ms: 180000 } },
@@ -608,7 +611,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       });
       expect(result.status, JSON.stringify(result.data)).toBe(200);
     }
-    const tick = async (value: number, at: number, key: string) => {
+    const tick = async (value: number|null, at: number, key: string) => {
       controlledValue = value;
       clock = at;
       expect(
@@ -644,7 +647,12 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     episodes = await rows();
     expect(episodes).toHaveLength(1);
     expect(episodes[0]).toMatchObject({ state: 'open', last: { value: 95, quality: 'good' } });
-    await tick(60, t + 120000, 'window-gap');
+    await tick(60,t+90000,'window-low-a');
+    await tick(null,t+105000,'window-null');
+    await tick(60,t+120000,'window-low-b');
+    await tick(60,t+150000,'window-low-c');
+    expect((await rows())[0]).toMatchObject({state:'open',last:{quality:'unknown'},recovery_count:0});
+    await tick(60, t + 210000, 'window-gap');
     episodes = await rows();
     expect(episodes[0]).toMatchObject({ state: 'open', last: { quality: 'unknown' }, recovery_count: 0 });
   }, 120000);

@@ -1,3 +1,4 @@
+import {registerEventReadRoutes} from '../src/alert-event-access.js';
 /** Isolated MAX239 acceptance fixture. Controlled scalar transport; real registered package, trial target, formal writer and event services. No production worker or external delivery. */
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -391,18 +392,7 @@ app.post('/__test/revoke', async (req) => {
   await pool.execute('UPDATE users SET session_version=? WHERE id=1', [(req.body as any).revoked ? 2 : 1]);
   return { ok: true };
 });
-// Existing event reader, exposed by the fixture with the same live token boundary; no seeded events.
-app.get('/api/alerts/events', { preHandler: auth }, async (req) =>
-  alertEventService.getEvents({ status: (req.query as any).status }),
-);
-app.get('/api/alerts/events/stats', { preHandler: auth }, async () => alertEventService.getEventStats());
-app.get('/api/alerts/events/mttr', { preHandler: auth }, async () => alertEventService.getMTTRStats());
-app.get('/api/alerts/events/:id', { preHandler: auth }, async (req) =>
-  alertEventService.getEventById(Number((req.params as any).id)),
-);
-app.get('/api/alerts/events/:id/logs', { preHandler: auth }, async (req) =>
-  alertEventService.getEventLogs(Number((req.params as any).id)),
-);
+await registerEventReadRoutes(app,auth);
 await app.listen({ host: '127.0.0.1', port: Number(process.env.MAX239_API_PORT) });
 process.on('SIGTERM', () => {
   void app
