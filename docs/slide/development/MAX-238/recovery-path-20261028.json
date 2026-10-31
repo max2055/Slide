@@ -1,0 +1,82 @@
+{
+  "missing_template": {
+    "before": {
+      "state": "unbound",
+      "published_revision": null,
+      "rows": 0
+    },
+    "chosen": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "compatible_offered": [
+      "mysql-basic@1.0.0",
+      "mysql-representative@1.0.0",
+      "mysql-basic@1.1.0",
+      "mysql-diagnostics@1.0.0",
+      "mysql-diagnostics@1.1.0",
+      "mysql-custom-processlist-connections@1.0.0",
+      "mysql-custom-slow-query-snapshot@1.0.0",
+      "mysql-custom-existing-scalars@1.0.0"
+    ],
+    "rejection": {
+      "code": "POLICY_PACKAGE_REQUIRED",
+      "message": "POLICY_PACKAGE_REQUIRED",
+      "status": 400
+    },
+    "after_rejection": {
+      "rows": 0,
+      "audit_unchanged": true,
+      "state": "unbound",
+      "still_offered": true
+    },
+    "published": {
+      "revision": 1,
+      "read_back": {
+        "id": "mysql-basic",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "version": "1.0.0"
+      },
+      "rows": 1
+    }
+  },
+  "missing_credential": {
+    "credential_before": "blank",
+    "reading_before": "empty_string",
+    "binding_before": {
+      "package": {
+        "id": "mysql-basic",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "version": "1.0.0"
+      },
+      "revision": 1
+    },
+    "credential_after": "present",
+    "reading_after": "non_empty_and_matches_fixture",
+    "binding_after": {
+      "package": {
+        "id": "mysql-basic",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "version": "1.0.0"
+      },
+      "revision": 1,
+      "rows": 1
+    },
+    "republish_required": false
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "c8e1232a7ac06b30d2b4445ae5b7a7c886f1915e",
+    "test": "recovery-path.mysql.test.ts",
+    "disposable_schema": "max238_recovery_path_15751 on 127.0.0.1:13306, dropped by afterAll",
+    "resource": {
+      "id": 1,
+      "db_type": "mysql",
+      "db_version": "8.0.46",
+      "status": "active",
+      "lifecycle_state": "available",
+      "credential": "blank at start"
+    }
+  }
+}

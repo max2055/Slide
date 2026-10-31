@@ -29,6 +29,24 @@ export interface ConsumerStore extends QueryStore {
   attempts(ref: Ref): Promise<CollectionAttempt[]>;
   latestCapacity?(ref: Ref, definition: MetricDefinition, to: string, revision: number): Promise<NormalizedObservation | null>;
 }
+/**
+ * The template binding as a consumer view. It carries exactly the plan facts the
+ * query path uses (settings, selected items with their collector source and
+ * capability, and the exact releases) — never a synthesized package binding.
+ */
+export interface TemplateQueryView {
+  revision: number;
+  settings: { enabled: boolean; interval_ms: number; stale_after_ms: number; max_counter_gap_ms: number };
+  releases: Array<{ id: string; version: string; digest: string }>;
+  items: Array<{
+    metric: { id: string; semantic_version: string };
+    source: { kind: 'collector'; collector_id: string };
+    enabled: boolean;
+    capability: { status: string } & Record<string, unknown>;
+    release: { id: string; version: string; digest: string };
+  }>;
+}
+export interface TemplateQueryPort { read(ref: Ref): Promise<TemplateQueryView | null> }
 export interface ConsumerMetric {
   definition: MetricDefinition;
   capability: unknown;
@@ -40,15 +58,28 @@ export interface ConsumerMetric {
 }
 export class MetricConsumerService {
   constructor(private policy: Pick<PolicyService, 'assertAccess' | 'effective'>, private registry: PackageRegistry,
-    private store: ConsumerStore, private clock = () => new Date().toISOString()) {}
+    private store: ConsumerStore, private clock = () => new Date().toISOString(),
+    private readonly templateBindings?: TemplateQueryPort) {}
   async discover(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);
     let effective: Awaited<ReturnType<PolicyService['effective']>> | null = null;
+    let template: TemplateQueryView | null = null;
     try { effective = await this.policy.effective(actor, ref); }
-    catch (e) { if (!(e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND')) throw e; }
+    catch (e) {
+      if (e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND') effective = null;
+      else if (e instanceof PolicyError && e.code === 'TEMPLATE_BINDING_UNSUPPORTED' && this.templateBindings) {
+        template = await this.templateBindings.read(ref);
+        if (!template) throw e;
+      } else throw e;
+    }
     const canonical = canonicalDefinitions.filter(d => d.resource_type === ref.type);
     const pin = effective?.resolved.plan.binding.package;
-    const extensions = pin ? this.registry.get(pin).extensions : [];
+    // A template binding may pin several releases; its extension definitions are
+    // the union of those exact releases, never an inferred package.
+    const extensions = template
+      ? [...new Map(template.releases.flatMap(release => this.registry.get(release).extensions)
+        .map(definition => [`${definition.id}@${definition.semantic_version}`, definition])).values()]
+      : pin ? this.registry.get(pin).extensions : [];
     const inventory = ref.type === 'instance' ? await this.store.inventory(ref.type, String(ref.id)) : null;
     const size = capacityDefinition(String(inventory?.attributes['db.engine']?.value ?? ''));
     const definitions = [...canonical, ...extensions];
@@ -57,8 +88,20 @@ export class MetricConsumerService {
       columns: [...coreProfiles[ref.type].map(c => ({ key: c.id, label: c.label, metric: { id: c.id, semantic_version: '1.0.0' } })),
         ...(size ? [{ key: 'database_size', label: '数据库大小', metric: { id: size.id, semantic_version: size.semantic_version } }] : [])] };
     if (size) profile.version = '1.1.0';
-    return { profile,
-      definitions, effective };
+    // A template plan is exposed through the same read surface the query path
+    // uses. It carries no package `application` acknowledgement: the accepted
+    // envelope keeps `applied_revision` at the previous revision, so the view
+    // reports it as pending instead of inventing an applied claim.
+    const view = effective ?? (template ? {
+      published_revision: template.revision,
+      application: { status: 'pending' as const, applied_revision: null },
+      resolved: {
+        settings: template.settings,
+        metric_templates: template.items,
+        plan: { binding: { package: template.releases[0] ?? null } },
+      },
+    } as unknown as Awaited<ReturnType<PolicyService['effective']>> : null);
+    return { profile, definitions, effective: view };
   }
   async inventory(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);

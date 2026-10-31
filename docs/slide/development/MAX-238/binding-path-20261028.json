@@ -1,0 +1,494 @@
+{
+  "authorized_templates": {
+    "instance": {
+      "returned": [
+        "dameng-diagnostics@1.0.0",
+        "dameng-diagnostics@1.1.0",
+        "dameng-representative@1.0.0",
+        "dameng-representative@1.1.0",
+        "mysql-basic@1.0.0",
+        "mysql-basic@1.1.0",
+        "mysql-basic@2.0.0",
+        "mysql-custom-existing-scalars@1.0.0",
+        "mysql-custom-processlist-connections@1.0.0",
+        "mysql-custom-slow-query-snapshot@1.0.0",
+        "mysql-diagnostics@1.0.0",
+        "mysql-diagnostics@1.1.0",
+        "mysql-representative@1.0.0",
+        "oracle-diagnostics@1.0.0",
+        "oracle-diagnostics@1.1.0",
+        "oracle-representative@1.0.0",
+        "oracle-representative@1.1.0",
+        "postgresql-diagnostics@1.0.0",
+        "postgresql-diagnostics@1.1.0",
+        "postgresql-representative@1.0.0"
+      ],
+      "registry": [
+        "dameng-diagnostics@1.0.0",
+        "dameng-diagnostics@1.1.0",
+        "dameng-representative@1.0.0",
+        "dameng-representative@1.1.0",
+        "mysql-basic@1.0.0",
+        "mysql-basic@1.1.0",
+        "mysql-basic@2.0.0",
+        "mysql-custom-existing-scalars@1.0.0",
+        "mysql-custom-processlist-connections@1.0.0",
+        "mysql-custom-slow-query-snapshot@1.0.0",
+        "mysql-diagnostics@1.0.0",
+        "mysql-diagnostics@1.1.0",
+        "mysql-representative@1.0.0",
+        "oracle-diagnostics@1.0.0",
+        "oracle-diagnostics@1.1.0",
+        "oracle-representative@1.0.0",
+        "oracle-representative@1.1.0",
+        "postgresql-diagnostics@1.0.0",
+        "postgresql-diagnostics@1.1.0",
+        "postgresql-representative@1.0.0"
+      ],
+      "recommended": "mysql-basic",
+      "recommended_compatibility": "compatible",
+      "excluded": [
+        "linux-host",
+        "if-mib-basic"
+      ]
+    },
+    "server": {
+      "returned": [
+        "linux-basic@1.0.0",
+        "linux-host@1.0.0",
+        "linux-host@1.1.0"
+      ],
+      "registry": [
+        "linux-basic@1.0.0",
+        "linux-host@1.0.0",
+        "linux-host@1.1.0"
+      ],
+      "excluded": [
+        "mysql-diagnostics"
+      ]
+    },
+    "forbidden": {
+      "other_instance": {
+        "code": "POLICY_FORBIDDEN",
+        "message": "POLICY_FORBIDDEN",
+        "status": 403
+      },
+      "other_server": {
+        "code": "POLICY_FORBIDDEN",
+        "message": "POLICY_FORBIDDEN",
+        "status": 403
+      }
+    }
+  },
+  "empty_binding": {
+    "before": {
+      "state": "unbound",
+      "published_revision": null,
+      "rows": 0
+    },
+    "rejection": {
+      "code": "POLICY_PACKAGE_REQUIRED",
+      "message": "POLICY_PACKAGE_REQUIRED",
+      "status": 400
+    },
+    "after": {
+      "state": "unbound",
+      "rows": 0
+    }
+  },
+  "cancel": {
+    "previewed": {
+      "id": "mysql-basic",
+      "version": "1.1.0",
+      "digest": "sha256:9b7ef81926609831bb8b11fa4969a03a83ba74cacd6dc1746fa8fb7724ab9792"
+    },
+    "published": false,
+    "after": {
+      "state": "unbound",
+      "published_revision": null,
+      "rows": 0
+    }
+  },
+  "multi_select": {
+    "previewed": [
+      {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+      },
+      {
+        "id": "mysql-basic",
+        "version": "1.1.0",
+        "digest": "sha256:9b7ef81926609831bb8b11fa4969a03a83ba74cacd6dc1746fa8fb7724ab9792"
+      }
+    ],
+    "during": {
+      "state": "unbound",
+      "published_revision": null,
+      "rows": 0
+    },
+    "published": {
+      "revision": 1
+    },
+    "binding_contains_other": false
+  },
+  "fixed_version": {
+    "submitted": {
+      "id": "mysql-diagnostics",
+      "version": "1.1.0",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+    },
+    "read_back": {
+      "id": "mysql-diagnostics",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+      "version": "1.1.0"
+    },
+    "other_version": {
+      "version": "1.0.0",
+      "digest": "sha256:55bb3cf6aaa2c1f469d06e0cb17591344dd90e4baf56511b527ec76854ad3642"
+    },
+    "selected_version": "1.1.0",
+    "tampered_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rejection": {
+      "code": null,
+      "message": "PACKAGE_PIN",
+      "status": null
+    },
+    "revision_before": 1,
+    "revision_after": 1
+  },
+  "compatibility_reason": {
+    "submitted": {
+      "id": "linux-host",
+      "version": "1.1.0",
+      "digest": "sha256:b5797402cec6302f57563b644f442fffd45b75c0a67c843b73356c2be67f8d2f"
+    },
+    "rejection": {
+      "code": "POLICY_PACKAGE_RESOURCE",
+      "message": "POLICY_PACKAGE_RESOURCE",
+      "status": 400
+    },
+    "binding_after": {
+      "id": "mysql-diagnostics",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+      "version": "1.1.0"
+    },
+    "revision_after": 1,
+    "incompatible": [
+      {
+        "package": "mysql-basic@2.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "mysql"
+            ],
+            "status": "supported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "9.6"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "postgresql-representative@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "postgresql"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "16.4"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "oracle-representative@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "oracle"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "19.3"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "dameng-representative@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "dameng"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "8.1"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "oracle-representative@1.1.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "oracle"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "19.3"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "dameng-representative@1.1.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "dameng"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "8.1"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "postgresql-diagnostics@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "postgresql"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "16.4"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "postgresql-diagnostics@1.1.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "postgresql"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "16.4"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "oracle-diagnostics@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "oracle"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "19.3"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "oracle-diagnostics@1.1.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "oracle"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "19.3"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "dameng-diagnostics@1.0.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "dameng"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "8.1"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      },
+      {
+        "package": "dameng-diagnostics@1.1.0",
+        "compatibility": "incompatible",
+        "checks": [
+          {
+            "attribute": "db.engine",
+            "value": "mysql",
+            "supported_values": [
+              "dameng"
+            ],
+            "status": "unsupported"
+          },
+          {
+            "attribute": "db.version",
+            "value": "8.0.46",
+            "supported_values": [
+              "8.1"
+            ],
+            "status": "unsupported"
+          }
+        ]
+      }
+    ],
+    "draft_release_fixture": "absent"
+  },
+  "isolation": {
+    "instance:1": {
+      "resource": {
+        "id": 1,
+        "type": "instance"
+      },
+      "package": {
+        "id": "mysql-diagnostics",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+        "version": "1.1.0"
+      },
+      "revision": 1
+    },
+    "server:3": {
+      "resource": {
+        "id": 3,
+        "type": "server"
+      },
+      "package": {
+        "id": "linux-host",
+        "digest": "sha256:b5797402cec6302f57563b644f442fffd45b75c0a67c843b73356c2be67f8d2f",
+        "version": "1.1.0"
+      },
+      "revision": 1
+    }
+  },
+  "application_database": {
+    "reviewed": false,
+    "note": "应用库未复核：SLIDE_DEBUG_ENV_FILE 未设置"
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "6b17fe57d826a4cedb986c27ab87ca964d5defa6",
+    "test": "binding-path.mysql.test.ts",
+    "disposable_schema": "max238_binding_path_95210 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "db_type": "mysql",
+      "db_version": "8.0.46",
+      "credential": "empty"
+    },
+    "server": {
+      "id": 3,
+      "os_type": "kylin",
+      "credential": "empty"
+    }
+  }
+}

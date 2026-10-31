@@ -68,7 +68,9 @@ export async function readCollectionStatus(type: string, id: number): Promise<Co
 }
 export interface PolicyGroup { id: string; label?: string; revision: number; can_manage?: boolean }
 export class MetricRequestError extends Error {
-  constructor(readonly status: number, readonly code?: string) { super(String(status)); }
+  constructor(readonly status: number, readonly code?: string,
+    /** Structured rejection fields (conflict item/setting, release, provider), never a driver message. */
+    readonly details: Record<string, unknown> = {}) { super(String(status)); }
 }
 export async function metricRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await authFetch(`/api/metrics/${path}`, {
@@ -77,7 +79,8 @@ export async function metricRequest<T>(path: string, body?: unknown): Promise<T>
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new MetricRequestError(response.status, typeof body?.error === 'string' ? body.error : undefined);
+    const { error, ...details } = body && typeof body === 'object' ? body as Record<string, unknown> : {} as Record<string, unknown>;
+    throw new MetricRequestError(response.status, typeof error === 'string' ? error : undefined, details);
   }
   const data = await response.json();
   if (path.endsWith('/status') && (!data || data.contract_version !== '1.0.0' || !data.binding
@@ -115,3 +118,188 @@ export const collectionStatusLabels: Record<string, string> = {
 };
 export const statusLabel = (value?: string) => collectionStatusLabels[value ?? 'unknown'] ?? '待确认';
 export const collectionRoot = (type: string, id: number) => `config/resources/${type}/${id}`;
+
+/* --- Native fixed-version template bindings (MAX-238) --------------------- */
+
+export interface TemplatePin { template_id: string; version: number; content_hash: string }
+export interface TemplateVersionSummary { version: number; content_hash: string; status: 'published' | 'retired' }
+export interface TemplateSummary {
+  template_id: string; name: string; status: 'draft' | 'active' | 'deprecated' | 'archived';
+  current_published_version: number | null; versions: TemplateVersionSummary[];
+}
+export interface TemplateCatalogPage { templates: TemplateSummary[]; next_cursor: string | null }
+export interface TemplateParameterSpec { type: 'number' | 'integer' | 'boolean' | 'string'; min?: number; max?: number }
+export interface TemplateVersionDetail {
+  template_id: string; version: number; status: 'published' | 'retired'; content_hash: string;
+  items: Array<{ item_id: string; version: number; display_name: string;
+    canonical_metric: { id: string; semantic_version: string }; unit: string;
+    dimensions: Record<string, string>; collector_ref: { package_release: string; implementation_id: string } }>;
+  parameters: { schema: Record<string, TemplateParameterSpec>; defaults: Record<string, number | string | boolean> };
+  source_chain: Record<string, unknown>; published_at: string;
+}
+export interface ResolvedParameter {
+  name: string; type: TemplateParameterSpec['type'];
+  default: number | string | boolean | null; override: number | string | boolean | null;
+  effective: number | string | boolean; source: 'default' | 'override';
+}
+export interface TemplatePending {
+  base_revision: number; target_revision: number; resolution_identity: string;
+  decided_at: string; operation_key: string;
+  plan: { settings: Record<string, number | boolean>; parameters: Array<{ pin: TemplatePin; parameters: ResolvedParameter[] }>;
+    releases: unknown[]; excluded: unknown[] };
+}
+export interface TemplateBindingStatus {
+  source: 'template' | 'package' | 'unbound'; revision: number | null;
+  application: { status: string; applied_revision: number | null; reported_at: string | null; error_code: string | null } | null;
+  template_pins: TemplatePin[]; pending: TemplatePending | null;
+  /** The stored per-resource choice; an editor round-trips from this, never from a plan. */
+  configuration: { overrides: Record<string, unknown>; group_id: string | null } | null;
+  effective: { revision: number; resolution_identity: string | null } | null; published_at: string | null;
+}
+export interface TemplatePreviewItem {
+  template_id: string; item_id: string; item_version: number;
+  canonical_metric: { id: string; semantic_version: string }; unit: string; dimensions: Record<string, string>;
+  release: { id: string; version: string; digest: string }; release_ref: string;
+  collector_id: string; implementation_id: string; enabled: boolean;
+  decision: 'collect' | 'derive' | 'disabled' | 'unsupported' | 'capability_unknown';
+  capability: 'supported' | 'unsupported' | 'unknown';
+}
+export interface TemplateExclusion {
+  pin: TemplatePin; template_id: string; item_id: string; item_version: number;
+  release: { id: string; version: string; digest: string }; metric: { id: string; semantic_version: string };
+  decision: 'disabled' | 'unsupported' | 'capability_unknown';
+  reason: 'settings_disabled' | 'metric_disabled' | 'capability_unsupported' | 'capability_unknown';
+  blocking: boolean;
+}
+export interface TemplatePreview {
+  template: true; resource: { type: string; id: number }; revision: number; resolution_identity: string;
+  executable: boolean; settings: Record<string, number | boolean>;
+  parameters: Array<{ pin: TemplatePin; parameters: ResolvedParameter[] }>;
+  releases: Array<{ release: { id: string; version: string; digest: string }; release_ref: string;
+    interval_ms: number; timeout_ms: number; collector_ids: string[]; metric_keys: string[];
+    requests_per_hour_estimate: number;
+    applicability: Array<{ attribute: string; value: string | number | boolean | null; supported_values: string[]; status: string }> }>;
+  items: TemplatePreviewItem[]; excluded: TemplateExclusion[];
+  budget: { estimated_series_upper_bound: number; max_series_per_resource: number; requests_per_hour_estimate: number };
+  plan: unknown;
+}
+export interface TemplateUnbindImpact {
+  resource: { type: string; id: number }; revision: number; resolution_identity: string;
+  removed_pins: TemplatePin[]; remaining_pins: TemplatePin[];
+  removed_items: Array<{ pin: TemplatePin; template_id: string; item_id: string; item_version: number;
+    canonical_metric: { id: string; semantic_version: string }; unit: string; dimensions: Record<string, string>;
+    snapshot_decision: string; loses_provider: boolean; remaining_providers: Array<{ template_id: string; item_id: string; item_version: number; pin: TemplatePin;
+      unit: string; dimensions: Record<string, string>; snapshot_decision: string }> }>;
+  triggers: Array<{ template_id: string; rule_id: string; scope: string; version: number; pin: TemplatePin }>;
+  configuration: { group_id: string | null; overrides: Record<string, unknown> };
+  history: 'retained'; rule_effect: 'references_only_unknown';
+}
+export interface TemplateProbeCapability {
+  resource_id: string; metric: { id: string; semantic_version: string };
+  status: 'supported' | 'unsupported' | 'unknown'; method: 'sql' | 'ssh' | 'snmp' | 'derived';
+  basis: Array<{ kind: 'resource' | 'version' | 'permission' | 'method'; evidence: string }>;
+  evaluated_at: string; valid_until: string;
+}
+/** Bootstrap capability facts from one real read-only probe; not a trial or a binding. */
+export interface TemplateProbe {
+  template: true; resource: { type: string; id: number }; revision: number;
+  probed_at: string; expires_at: string; capabilities: TemplateProbeCapability[];
+}
+export interface TemplateTrialSample {
+  template_id: string; item_id: string; item_version: number;
+  metric: { id: string; semantic_version: string }; value: unknown; unit: string; observed_at: string;
+  quality: { status?: string; reason?: string } | null;
+  read: { collector_id: string; attempt_ids: string[]; status: string };
+  transform: { version: string }; unit_check: { input_unit: string; output_unit: string };
+}
+export interface TemplateTrial {
+  trial: true; persisted: false; decision: 'attempted' | 'disabled' | 'unsupported' | 'capability_unknown';
+  receipt_id: string; expires_at: string; resolution_identity: string;
+  items: Array<{ template_id: string; item_id: string; item_version: number;
+    phases: { read: boolean; transform: boolean; unit: boolean } }>;
+  optional_exclusions: Array<{ template_id: string; item_id: string; item_version: number }>;
+  samples: TemplateTrialSample[];
+  attempts: Array<{ collector_id?: string; status: string; error?: string }>;
+  releases: Array<{ release_ref: string; decision: string }>;
+}
+export type TemplateApplyResult =
+  | { kind: 'legacy_delegate' }
+  | { kind: 'replay'; base_revision: number; target_revision: number; candidate_digest: string;
+      operation: { key: string; caller_key: string; receipt_id: string; status: 'committed' } }
+  | { kind: 'operation_lookup_required'; candidate_digest: string;
+      operation: { key: string; caller_key: string; status: 'unknown' } }
+  | { kind: 'rejected'; code: string }
+  | { kind: 'committed'; revision: number; resolution_identity: string;
+      operation: { key: string; caller_key: string; receipt_id: string; status: 'committed' } }
+  | { kind: 'rolled_back'; code: string }
+  | { kind: 'commit_unknown'; cause: string;
+      operation: { key: string; caller_key: string; status: 'unknown' } };
+export interface TemplateOperationState {
+  state: 'committed' | 'pending' | 'absent';
+  operation: { resource: { type: string; id: number }; target_revision: number; candidate_digest: string;
+    resolution_identity: string; status: 'committed' | 'unknown' | 'pending' } | null;
+}
+export interface TemplateBindingRequest {
+  expected_revision: number; template_pins: TemplatePin[];
+  overrides?: Record<string, unknown>; group_id?: string | null;
+}
+export type TemplateCollectState = 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+/** One sample this exact task committed; never the resource's latest periodic value. */
+export interface TemplateCollectSample {
+  id: string; metric: { id: string; semantic_version: string }; unit: string; value: unknown;
+  observed_at: string; quality: unknown; attempt_ids: string[];
+}
+export interface TemplateCollectTask {
+  id: string; job_id: string; state: TemplateCollectState; revision: number; resolution_identity: string;
+  outcome: 'sampled' | 'no_samples' | 'failed' | 'cancelled' | 'unknown' | null;
+  error_code: string | null; created_at: string; started_at: string | null; finished_at: string | null;
+}
+export interface TemplateCollectResult {
+  collect: true; resource: { type: string; id: number }; caller_key: string;
+  /** `absent` proves no task with that key exists for this principal. */
+  state: TemplateCollectState | 'absent';
+  task: TemplateCollectTask | null;
+  samples: TemplateCollectSample[];
+  attempts: Array<{ id: string; collector_id: string | null; status: string }>;
+}
+const queryString = (params: Record<string, string | number | undefined>) => {
+  const query = Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join('&');
+  return query ? `?${query}` : '';
+};
+export const listMetricTemplates = (params: { query?: string; status?: string; cursor?: string; limit?: number } = {}) =>
+  metricRequest<TemplateCatalogPage>(`templates${queryString(params)}`);
+export const getMetricTemplateVersion = (templateId: string, version: number) =>
+  metricRequest<TemplateVersionDetail>(`templates/${encodeURIComponent(templateId)}/versions/${version}`);
+export const readTemplateBinding = (type: string, id: number) =>
+  metricRequest<TemplateBindingStatus>(`template-bindings/${type}/${id}`);
+export const probeTemplateBinding = (type: string, id: number, body: TemplateBindingRequest) =>
+  metricRequest<TemplateProbe>(`template-bindings/${type}/${id}/probe`, body);
+export const previewTemplateBinding = (type: string, id: number, body: TemplateBindingRequest) =>
+  metricRequest<TemplatePreview>(`template-bindings/${type}/${id}/preview`, body);
+export const previewTemplateUnbind = (type: string, id: number,
+  body: { expected_revision: number; expected_identity: string; remove_pins: TemplatePin[] }) =>
+  metricRequest<TemplateUnbindImpact>(`template-bindings/${type}/${id}/unbind-preview`, body);
+export const trialTemplateBinding = (type: string, id: number, body: TemplateBindingRequest & { receipt_id: string }) =>
+  metricRequest<TemplateTrial>(`template-bindings/${type}/${id}/trial`, body);
+export const applyTemplateBinding = (type: string, id: number,
+  body: TemplateBindingRequest & { receipt_id: string; caller_key: string }) =>
+  metricRequest<TemplateApplyResult>(`template-bindings/${type}/${id}/apply`, body);
+export const readTemplateOperation = (type: string, id: number, key: string) =>
+  metricRequest<TemplateOperationState>(`template-bindings/${type}/${id}/operations/${encodeURIComponent(key)}`);
+export const collectTemplateBindingNow = (type: string, id: number,
+  body: { caller_key: string; expected_revision: number }) =>
+  metricRequest<TemplateCollectResult>(`template-bindings/${type}/${id}/collect`, body);
+export const readTemplateCollectTask = (type: string, id: number, key: string) =>
+  metricRequest<TemplateCollectResult>(`template-bindings/${type}/${id}/collect/${encodeURIComponent(key)}`);
+export type TemplateRepinResult = { unchanged: true; template_id: string; version: number } | {
+  unchanged: false; template_id: string; from_version: number; to_version: number; content_hash: string;
+  changes: Array<{ item_id: string;
+    from: { version: number; release: string; implementation_id: string };
+    to: { version: number; release: string; implementation_id: string };
+    reason: 'target_version_incompatible' }>;
+  pin: TemplatePin;
+};
+/** Publishes one new immutable template version for this target; never edits the old version. */
+export const repinMetricTemplate = (templateId: string, resource: { type: string; id: number }) =>
+  metricRequest<TemplateRepinResult>(`templates/${encodeURIComponent(templateId)}/repin`, { resource });

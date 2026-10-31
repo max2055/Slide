@@ -1,0 +1,155 @@
+{
+  "started_at": "2026-10-29T21:46:58.723Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "before": {
+    "binding_status": {
+      "source": "unbound",
+      "revision": null,
+      "application": null,
+      "template_pins": [],
+      "pending": null,
+      "configuration": null,
+      "effective": null,
+      "published_at": null
+    },
+    "counts": {
+      "bindings": 2,
+      "evidence": 0,
+      "operations": 0,
+      "audits": 0
+    }
+  },
+  "after": {
+    "checked": true,
+    "preview_shown": true,
+    "probe_request": {
+      "expected_revision": 0,
+      "template_pins": [
+        {
+          "template_id": "tpl-845353cba7224ff6",
+          "version": 1,
+          "content_hash": "sha256:09128786236e0c2c656369f1ad198a155da3d31fce19377dc6f471be849b40af"
+        }
+      ],
+      "overrides": {},
+      "group_id": null
+    },
+    "preview_request": {
+      "expected_revision": 0,
+      "template_pins": [
+        {
+          "template_id": "tpl-845353cba7224ff6",
+          "version": 1,
+          "content_hash": "sha256:09128786236e0c2c656369f1ad198a155da3d31fce19377dc6f471be849b40af"
+        }
+      ],
+      "overrides": {},
+      "group_id": null
+    },
+    "preview": {
+      "executable": true,
+      "revision": 0,
+      "items": [
+        {
+          "metric": "mysql.processlist.count",
+          "decision": "collect",
+          "capability": "supported"
+        }
+      ]
+    },
+    "evidence_after_probe": 1,
+    "trial_clicked": true,
+    "trial_passed": true,
+    "trial": null,
+    "apply_clicked": true,
+    "apply_shown": true,
+    "apply_result": {
+      "revision": 1,
+      "replayed": false
+    },
+    "binding_status": {
+      "source": "template",
+      "revision": 1,
+      "configuration": {
+        "overrides": {},
+        "group_id": null
+      },
+      "template_pins": [
+        {
+          "template_id": "tpl-845353cba7224ff6",
+          "version": 1,
+          "content_hash": "sha256:09128786236e0c2c656369f1ad198a155da3d31fce19377dc6f471be849b40af"
+        }
+      ]
+    },
+    "counts": {
+      "before": {
+        "bindings": 2,
+        "evidence": 0,
+        "operations": 0,
+        "audits": 0
+      },
+      "after_probe": {
+        "bindings": 2,
+        "evidence": 1,
+        "operations": 0,
+        "audits": 0
+      },
+      "after_apply": {
+        "bindings": 3,
+        "evidence": 1,
+        "operations": 1,
+        "audits": 1
+      }
+    },
+    "replies": [
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/templates?limit=10"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/templates/tpl-845353cba7224ff6/versions/1"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1/probe"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1/preview"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1/trial"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1/apply"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/templates?limit=10"
+      },
+      {
+        "status": 200,
+        "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvu2q1oc-0e1a2uvd"
+      }
+    ]
+  }
+}

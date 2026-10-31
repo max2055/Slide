@@ -1,0 +1,86 @@
+{
+  "legacy_no_envelope": {
+    "producer": "PolicyService.changeBinding -> resolvePolicy -> MysqlPolicyStore.saveBinding",
+    "row_keys": [
+      "binding",
+      "resolved",
+      "application",
+      "published_at"
+    ],
+    "revision": 1,
+    "application_status": "pending",
+    "effective": null,
+    "effective_missing": false
+  },
+  "effective_applied": {
+    "revision": 1,
+    "applied_at": "2026-10-29T00:00:01.000Z",
+    "effective": {
+      "source": "package",
+      "revision": 1,
+      "resolution_identity": null,
+      "plan": {
+        "package": {
+          "id": "mysql-basic",
+          "version": "1.0.0",
+          "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+        },
+        "config_revision": 1,
+        "entries": 3
+      },
+      "settings": {
+        "enabled": true,
+        "interval_ms": 60000,
+        "timeout_ms": 5000,
+        "stale_after_ms": 120000,
+        "max_counter_gap_ms": 300000,
+        "max_rows": 100,
+        "max_concurrency": 1,
+        "max_series_per_resource": 100
+      }
+    },
+    "effective_missing": false
+  },
+  "pending_after_publish": {
+    "revision": 2,
+    "application": {
+      "applied_revision": 1,
+      "reported_at": "2026-10-29T00:00:01.000Z",
+      "status": "pending",
+      "error_code": null
+    },
+    "effective": null,
+    "effective_missing": true
+  },
+  "explicit_package_v1": {
+    "envelope": "package-v1",
+    "binding_equal": true,
+    "effective_equal": true
+  },
+  "rejections": {
+    "sparse_legacy": "BINDING_PAYLOAD_LEGACY_INVALID",
+    "spliced_settings": "BINDING_PAYLOAD_EFFECTIVE_INVALID",
+    "foreign_plan": "BINDING_PAYLOAD_EFFECTIVE_INVALID",
+    "wrong_revision": "BINDING_PAYLOAD_EFFECTIVE_INVALID",
+    "unknown_envelope": "BINDING_PAYLOAD_UNKNOWN_ENVELOPE",
+    "template_envelope_with_package": "BINDING_PAYLOAD_AMBIGUOUS_SOURCE",
+    "invalid_json": "BINDING_PAYLOAD_INVALID_JSON"
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "f562cc3b0d68a9bd1b23cae62553a552ac95b7b8",
+    "test": "legacy-published-contract.mysql.test.ts",
+    "disposable_schema": "max238_legacy_contract_1413 on 127.0.0.1:13306, dropped by afterAll",
+    "container": "e5f67a7b85062f239a764e348a1ef5b347965f0be685fd6184790adea9396e87",
+    "owner": "15coder1",
+    "nonce": "1793230293-9666",
+    "boundaries": {
+      "publisher": "PolicyService.changeBinding",
+      "store": "MysqlPolicyStore saveBinding/reportApplied",
+      "collector_started": false,
+      "worker_started": false,
+      "route_mounted": false,
+      "source_tables_written": "disposable schema only; no 3306 statements"
+    }
+  }
+}

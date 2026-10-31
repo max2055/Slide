@@ -1,0 +1,217 @@
+{
+  "at": "2026-10-29T20:38:48.713Z",
+  "api": "http://127.0.0.1:3001",
+  "scenarios": {
+    "first_binding": {
+      "binding": {
+        "source": "unbound",
+        "revision": null,
+        "configuration": null
+      },
+      "preview": {
+        "status": 200,
+        "revision": 0,
+        "executable": false,
+        "excluded": [
+          {
+            "item": "itm-24211217b5a04317",
+            "reason": "capability_unknown",
+            "blocking": true
+          }
+        ]
+      },
+      "trial": {
+        "status": 422,
+        "error": "TEMPLATE_BINDING_NOT_EXECUTABLE"
+      },
+      "row_created": false
+    },
+    "conversion": {
+      "base_revision": 3,
+      "preview": {
+        "status": 200,
+        "executable": true
+      },
+      "trial": {
+        "status": 200,
+        "decision": "attempted",
+        "samples": [
+          {
+            "metric": "mysql.processlist.count",
+            "unit": "count",
+            "observed_at": "2026-10-29T20:38:48.777Z"
+          }
+        ]
+      },
+      "apply": {
+        "status": 200,
+        "kind": "committed",
+        "revision": 4
+      },
+      "after": {
+        "source": "template",
+        "revision": 4,
+        "pending": 4,
+        "application": {
+          "status": "pending",
+          "applied_revision": 3,
+          "reported_at": null,
+          "error_code": null,
+          "resolution_identity": null
+        },
+        "configuration": {
+          "overrides": {
+            "max_rows": {
+              "mode": "set",
+              "value": 50
+            },
+            "interval_ms": {
+              "mode": "set",
+              "value": 45000
+            }
+          },
+          "group_id": null
+        }
+      },
+      "journal": {
+        "state": "committed",
+        "operation": {
+          "resource": {
+            "type": "instance",
+            "id": 2
+          },
+          "target_revision": 4,
+          "candidate_digest": "sha256:6d4e5ce491480ca09c023f73367c9399af606ba66950b927abd2033f528fc019",
+          "resolution_identity": "sha256:d2cbe0a27c3ab97f0d6845a61d845537063979cd47f9ba963e944bba1f9122ae",
+          "status": "committed"
+        }
+      },
+      "counts": {
+        "operations": 1,
+        "audits": 1
+      },
+      "stored_row": {
+        "revision": "4",
+        "capabilities": "present"
+      },
+      "duplicate_revisions": 1
+    },
+    "lossless": {
+      "seeded": {
+        "overrides": {
+          "max_rows": {
+            "mode": "set",
+            "value": 50
+          },
+          "interval_ms": {
+            "mode": "set",
+            "value": 45000
+          }
+        },
+        "group_id": null
+      },
+      "noop": {
+        "preview": 200,
+        "trial_decision": "attempted",
+        "apply": {
+          "status": 200,
+          "kind": "committed",
+          "revision": 5
+        },
+        "configuration_after": {
+          "overrides": {
+            "max_rows": {
+              "mode": "set",
+              "value": 50
+            },
+            "interval_ms": {
+              "mode": "set",
+              "value": 45000
+            }
+          },
+          "group_id": null
+        }
+      },
+      "single_edit": {
+        "preview": 200,
+        "executable": true,
+        "apply": {
+          "status": 200,
+          "kind": "committed",
+          "revision": 6
+        },
+        "configuration_after": {
+          "overrides": {
+            "max_rows": {
+              "mode": "set",
+              "value": 50
+            },
+            "interval_ms": {
+              "mode": "set",
+              "value": 30000
+            }
+          },
+          "group_id": null
+        },
+        "other_values_kept": true
+      }
+    },
+    "cancel": {
+      "revision_before": "6",
+      "revision_after": "6",
+      "audits_before": 3,
+      "audits_after": 3
+    },
+    "concurrency": {
+      "base_revision": 6,
+      "first": {
+        "status": 409,
+        "kind": "TRANSACTION_REVISION_CONFLICT"
+      },
+      "second": {
+        "status": 200,
+        "kind": "committed",
+        "revision": 7
+      },
+      "revisions_written": 1,
+      "final_revision": 7,
+      "final_interval": 39000
+    },
+    "unknown": {
+      "base_revision": 7,
+      "journal": {
+        "state": "committed",
+        "operation": {
+          "resource": {
+            "type": "instance",
+            "id": 2
+          },
+          "target_revision": 8,
+          "candidate_digest": "sha256:1d2ab796f07bc94ec2e6e5eba3d6571b3e5ec2a43cb74ea3bf2a6222e744bcb1",
+          "resolution_identity": "sha256:50834cf47bfa33ca809976db9379e2c11f0e84ac4b3034038b763a066cfafd5f",
+          "status": "committed"
+        }
+      },
+      "replay": {
+        "status": 200,
+        "kind": "replay",
+        "revision": 8
+      },
+      "counts": {
+        "operations": 1,
+        "audits": 1
+      },
+      "final_revision": 8,
+      "final_interval": 41000
+    },
+    "revocation": {
+      "status": 403,
+      "error": "TEMPLATE_BINDING_FORBIDDEN",
+      "trial_status": 200,
+      "audits_before": 5,
+      "audits_after": 5,
+      "revision_unchanged": true,
+      "operations_for_key": 0
+    }
+  }
+}

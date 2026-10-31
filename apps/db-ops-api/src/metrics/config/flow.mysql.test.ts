@@ -22,6 +22,9 @@ import { MetricConfigurationService } from './service.js';
 import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
 import { configurationReader } from './status-store.js';
 import { configurationInventory } from './inventory.js';
+import { TemplateBindingService } from '../templates/binding-service.js';
+import { registerMetricTemplateRoutes } from '../templates/routes.js';
+import { createAssetCollectorAccess } from './access.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
@@ -56,7 +59,15 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       // Fixed simulated remote target; HTTP, policy persistence, CAS and reservation are real.
       resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }] : [], []] } }),
     }) }, configurationReader(() => pool));
-    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy); await registerMetricConfigurationRoutes(app, auth, service);
+    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
+    // The ordinary configuration entry reads the stored binding source before it
+    // picks the legacy editor or the fixed-version template flow. That read is
+    // part of the product contract, so this isolated app serves the real route
+    // against the same disposable schema instead of leaving it 404.
+    await registerMetricTemplateRoutes(app, auth, new TemplateBindingService({
+      pool: () => pool, registry, access: createAssetCollectorAccess(),
+      reload: async () => admin as never,
+    }));
     base = await app.listen({ host: '127.0.0.1', port: 0 });
     vite = await createServer({ configFile: false, root: fileURLToPath(new URL('../../../../../frontend', import.meta.url)),
       server: { host: '127.0.0.1', port: 0, proxy: { '/api': base } }, logLevel: 'error' });

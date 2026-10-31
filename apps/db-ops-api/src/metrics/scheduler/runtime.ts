@@ -5,11 +5,13 @@ import { MetricScheduler } from './service.js';
 import { MysqlScheduleStore } from './store.js';
 import { MetricSchedulerLifecycle, metricCollectionEnabled } from './lifecycle.js';
 import { MetricFormalization } from '../rollout/formalization.js';
+import { actorContextService } from '../../auth/actor-context.js';
+import { productionCollectNowAuthorizer } from '../templates/collect-now.js';
 
 export function createMetricSchedulerLifecycle(pool: Pool) {
   const packages = createConfigurationRegistry();
   return new MetricSchedulerLifecycle(new MetricScheduler(new MysqlScheduleStore(pool, packages, 'production'), packages, productionAccess,
-    Date.now, undefined, new MetricFormalization(pool, packages)), {
+    Date.now, undefined, new MetricFormalization(pool, packages), productionCollectNowAuthorizer(actorContextService)), {
     enabled: metricCollectionEnabled(process.env.METRICS_COLLECTION_ENABLED),
     report: event => { if (event.code !== 'METRIC_TICK_OK' || event.queued) console.info('[Metrics]', JSON.stringify(event)); },
   });
@@ -21,6 +23,7 @@ export async function assertMetricSchedulerSchema(pool: Pool): Promise<void> {
     await pool.query('SELECT id, payload FROM metric_observations LIMIT 0');
     await pool.query('SELECT resource_key, payload FROM metric_policy_bindings LIMIT 0');
     await pool.query('SELECT resource_key, revision, states FROM metric_schedule LIMIT 0');
+    await pool.query('SELECT id, job_id, state FROM metric_collect_requests LIMIT 0');
     await pool.query('SELECT series_hash, generation, published_revision, applied_revision, resource_type, resource_id FROM metric_rollout LIMIT 0');
     await pool.query('SELECT observation_id FROM metric_publications LIMIT 0');
   } catch { throw new Error('METRIC_SCHEMA_NOT_READY'); }
