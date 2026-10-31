@@ -816,11 +816,14 @@ export class MysqlScheduleStore {
   }
 
   async assertCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
-    ctx: JobExecutionContext): Promise<void> {
+    ctx: JobExecutionContext,
+    authorizeOn: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<void> {
     await this.collectTransaction(async c => {
       const current = await this.currentTemplate(c, ref);
       rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
       rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      await authorizeOn(c);
+      ctx.signal.throwIfAborted();
     });
   }
 

@@ -65,6 +65,8 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let contentHash = '';
   let worker: WorkerRuntime;
   let jobs: JobRegistry;
+  let scheduleStore: MysqlScheduleStore;
+  let accessCheckHook: (() => Promise<void>) | undefined;
   const registry = createConfigurationRegistry();
   const call = async (method: 'GET' | 'POST', url: string, body?: unknown) => {
     const response = await app.inject({ method, url, ...(body === undefined ? {} : { payload: body }) });
@@ -201,13 +203,17 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     expect(applied.data).toMatchObject({ kind: 'committed', revision: 1 });
 
     // The existing queue, worker and formal writer; the same access object the trial used.
-    const store = new MysqlScheduleStore(pool, registry, 'production');
+    const store = scheduleStore = new MysqlScheduleStore(pool, registry, 'production');
     const authorizer = createCollectNowAuthorizer({
       loadActor: (userId, sessionVersion) => actorContextService.loadActiveActor(userId, sessionVersion),
       loadActorOn: (executor, userId, sessionVersion) =>
         actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
     });
-    const scheduler = new MetricScheduler(store, registry, createAssetCollectorAccess(),
+    const access = createAssetCollectorAccess();
+    const scheduler = new MetricScheduler(store, registry, { async resolve(ref) {
+      const resolved = await access.resolve(ref);
+      return { ...resolved, assertCurrent: async () => { await resolved.assertCurrent?.(); await accessCheckHook?.(); } };
+    } },
       Date.now, undefined, undefined, authorizer);
     jobs = new JobRegistry(); scheduler.register(jobs);
     worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), `collect-now-${process.pid}`, 30);
@@ -348,6 +354,73 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       expect(JSON.parse(rows[0].samples ?? '[]')).toEqual([]);
       expect((await counts()).observations).toBe(before.observations);
     } finally {
+      await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
+    }
+  }, 60_000);
+
+  it('rechecks the live grant after waiting for the policy lock before remote SQL', async () => {
+    const key = `collect-wait-revoke-${process.pid}`;
+    const before = await counts();
+    const admitted = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
+      { caller_key: key, expected_revision: 1 });
+    expect(admitted.status).toBe(200);
+    const original = scheduleStore.assertCollectNow.bind(scheduleStore);
+    let checks = 0, revoked = false, remoteAfter = 0;
+    const create = mysql.createConnection.bind(mysql);
+    const connectionSpy = vi.spyOn(mysql, 'createConnection').mockImplementation((async (...args: Parameters<typeof mysql.createConnection>) => {
+      if (revoked) remoteAfter++;
+      return create(...args);
+    }) as typeof mysql.createConnection);
+    const guard = vi.spyOn(scheduleStore, 'assertCollectNow').mockImplementation(async (...args) => {
+      checks++;
+      if (checks !== 6) return original(...args);
+      const lock = await pool.getConnection();
+      await lock.beginTransaction();
+      await lock.query('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
+      const waiting = original(...args);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 80));
+        await pool.execute('UPDATE users SET session_version = 2 WHERE id = 1');
+        revoked = true;
+      } finally { await lock.commit(); lock.release(); }
+      return waiting;
+    });
+    try {
+      await drain();
+      expect(checks).toBeGreaterThanOrEqual(6);
+      expect(remoteAfter).toBe(0);
+      expect((await counts()).observations).toBe(before.observations);
+    } finally {
+      guard.mockRestore(); connectionSpy.mockRestore();
+      await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
+    }
+  }, 60_000);
+
+  it('rechecks authorization after a delayed target identity check', async () => {
+    const before = await counts();
+    const admitted = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
+      { caller_key: `collect-access-wait-${process.pid}`, expected_revision: 1 });
+    expect(admitted.status).toBe(200);
+    let checks = 0, revoked = false, remoteAfter = 0;
+    const create = mysql.createConnection.bind(mysql);
+    const spy = vi.spyOn(mysql, 'createConnection').mockImplementation((async (...args: Parameters<typeof mysql.createConnection>) => {
+      if (revoked) remoteAfter++;
+      return create(...args);
+    }) as typeof mysql.createConnection);
+    accessCheckHook = async () => {
+      if (++checks === 5) {
+        await pool.execute('UPDATE users SET session_version = 2 WHERE id = 1');
+        revoked = true;
+      }
+    };
+    try {
+      await drain();
+      expect(checks).toBeGreaterThanOrEqual(5);
+      expect(remoteAfter).toBe(0);
+      expect((await counts()).observations).toBe(before.observations);
+    } finally {
+      accessCheckHook = undefined;
+      spy.mockRestore();
       await pool.execute('UPDATE users SET session_version = 1 WHERE id = 1');
     }
   }, 60_000);

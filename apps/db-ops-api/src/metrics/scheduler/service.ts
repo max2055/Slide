@@ -144,8 +144,9 @@ export class MetricScheduler {
       const check = async () => {
         signal.throwIfAborted();
         await reservation.connection.ping();
-        await fence.assertCurrent();
         await access.assertCurrent?.();
+        // Credential and target checks may wait; authorize only after they finish.
+        await fence.assertCurrent();
         signal.throwIfAborted();
       };
       await check();
@@ -232,12 +233,11 @@ export class MetricScheduler {
         && execution.task.revision === revision, 'COLLECT_TASK_IDENTITY');
       if (!this.collectNow) throw new Error('COLLECT_NOW_UNAVAILABLE');
       const authorizer = this.collectNow;
-      const authorize = () => authorizer.authorize(execution.actorId, execution.sessionVersion, ref);
       const authorizeOn = (c: { execute(sql: string, values?: any[]): Promise<unknown> }) =>
         authorizer.authorizeOn(c, execution.actorId, execution.sessionVersion, ref);
       return this.executeTemplate(ref, revision, job, context, exec => ({
         onMissingBinding: () => 'throw',
-        assertCurrent: async () => { await authorize(); await this.store.assertCollectNow(ref, revision, request_id, job, exec); },
+        assertCurrent: () => this.store.assertCollectNow(ref, revision, request_id, job, exec, authorizeOn),
         begin: () => this.store.beginCollectNow(ref, revision, request_id, job, exec, this.clock(), authorizeOn),
         commit: async (snapshot, results) => {
           const committed = await this.store.commitCollectNow(ref, revision, request_id, snapshot, results,

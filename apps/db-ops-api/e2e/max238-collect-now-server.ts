@@ -54,7 +54,7 @@ const targetPassword = randomBytes(12).toString('hex');
 const instanceId = 1;
 const actor = {
   userId: 1, username: 'max238-collect-now', roles: ['admin'], permissions: ['*'],
-  sessionVersion: 1, instanceScopes: { [instanceId]: 'admin' }, requestId: 'max238-collect-now',
+  sessionVersion: 1, instanceScopes: { [instanceId]: 'admin', 2: 'admin' }, requestId: 'max238-collect-now',
 } as unknown as ActorContext;
 
 async function main() {
@@ -92,6 +92,13 @@ async function main() {
     VALUES (?, 'max238-collect-now', 'testing', 'mysql', '8.4', '127.0.0.1', ?, ?, ?, ?, 'active', 'available', 10, 5000, 1, ?, ?)`,
   [instanceId, mysqlPort, targetUser, encryptData(targetPassword), targetDb,
     now.replace('T', ' ').replace('Z', ''), now.replace('T', ' ').replace('Z', '')]);
+  await pool.execute(`INSERT INTO database_instances
+    (id, name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
+     lifecycle_state, max_connections, connection_timeout_ms, created_by, created_at, updated_at)
+    SELECT 2, 'max238-collect-now-second', environment, db_type, db_version, host, port, username,
+      password_encrypted, database_name, status, lifecycle_state, max_connections, connection_timeout_ms,
+      created_by, created_at, updated_at FROM database_instances WHERE id = ?`, [instanceId]);
+  await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, 2, 'admin')");
   if (!await databaseService.addConnection(instanceId, 'max238-collect-now', {
     host: '127.0.0.1', port: mysqlPort, user: targetUser, password: targetPassword, database: targetDb, db_type: 'mysql',
   })) throw new Error('the real read-only target connection was not saved');

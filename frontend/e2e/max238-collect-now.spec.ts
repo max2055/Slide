@@ -102,3 +102,36 @@ test('collection action remains reachable at the supported desktop sizes', async
     expect(rect!.x + rect!.width).toBeLessThanOrEqual(width);
   }
 });
+
+test('a delayed real task lookup cannot leak its key to a different resource', async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let key = '', lookupStarted = false;
+  await page.route('**/api/metrics/template-bindings/instance/1/collect', async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    key = route.request().postDataJSON().caller_key;
+    await route.fetch();
+    await route.abort('connectionreset');
+  });
+  await page.route('**/api/metrics/template-bindings/instance/1/collect/*', async route => {
+    lookupStarted = true;
+    await gate;
+    await route.continue();
+  });
+  await page.goto('/e2e/fixtures/max238-collect-now.html');
+  const host = page.locator('native-template-configuration');
+  await host.getByRole('button', { name: '立即采集' }).click();
+  await expect.poll(() => lookupStarted).toBe(true);
+  await host.evaluate((element: any) => { element.resourceId = 2; });
+  await expect(host.getByText('尚未建立原生模板配置')).toBeVisible();
+  const response = page.waitForResponse(result => result.url().includes(`/instance/1/collect/${key}`));
+  release();
+  expect((await response).ok()).toBe(true);
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
+  await expect.poll(() => host.evaluate((element: any) => element.collectBusy)).toBe(false);
+  await expect.poll(() => host.evaluate((element: any) => element.collectPendingKey)).toBeNull();
+  const stored = await page.evaluate(() => ({ old: sessionStorage.getItem('slide.metric-collect.v1:user-1:instance:1'),
+    current: sessionStorage.getItem('slide.metric-collect.v1:user-1:instance:2') }));
+  expect(JSON.parse(stored.old!).key).toBe(key);
+  expect(stored.current).toBeNull();
+});

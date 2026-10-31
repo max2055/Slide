@@ -645,6 +645,58 @@ const collectAnswer = (state: string, overrides: Record<string, unknown> = {}) =
 const collectButton = (element: any, text = '立即采集') =>
   [...element.shadowRoot.querySelectorAll('button')].find((button: HTMLButtonElement) => button.textContent?.trim() === text) as HTMLButtonElement | undefined;
 
+it('a late failed collection lookup cannot install its key on another resource', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let lookupStarted = false;
+  // Match dynamic caller keys while leaving all other routes unchanged.
+  const base = routes({ '/collect': () => ({ ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }) });
+  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (/\/instance\/1\/collect\/[^/]+$/.test(url)) { lookupStarted = true; await gate; return { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }; }
+    return base(url, init);
+  });
+  const element = await mount();
+  const action = element.collectNow();
+  for (let i = 0; i < 40 && !lookupStarted; i++) await settle();
+  expect(lookupStarted).toBe(true);
+  element.resourceId = 2;
+  for (let i = 0; i < 40 && (!element.loaded || element.collectPendingKey); i++) await settle();
+  release(); await action;
+  expect(element.collectPendingKey).toBeNull();
+  expect(sessionStorage.getItem('slide.metric-collect.v1:user-7:instance:1')).not.toBeNull();
+  expect(sessionStorage.getItem('slide.metric-collect.v1:user-7:instance:2')).toBeNull();
+});
+
+it('a late lookup for the previous principal cannot overwrite a new principal request', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let lookupStarted = false;
+  const base = routes({ '/collect': () => ({ ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }) });
+  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (/\/instance\/1\/collect\/[^/]+$/.test(url)) { lookupStarted = true; await gate; return { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }; }
+    return base(url, init);
+  });
+  const element = await mount();
+  const action = element.collectNow();
+  for (let i = 0; i < 40 && !lookupStarted; i++) await settle();
+  expect(lookupStarted).toBe(true);
+  signedIn(8);
+  element.collectPendingKey = 'new-key';
+  sessionStorage.setItem('slide.metric-collect.v1:user-8:instance:1', JSON.stringify({ key: 'new-key', revision: 5 }));
+  release(); await action;
+  expect(element.collectPendingKey).toBe('new-key');
+  expect(JSON.parse(sessionStorage.getItem('slide.metric-collect.v1:user-8:instance:1') ?? '{}').key).toBe('new-key');
+});
+
+it('refuses to send an in-memory key that has no durable intent', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  element.collectPendingKey = 'orphan-key';
+  await element.collectNow();
+  expect(authFetch.mock.calls.some(entry => String(entry[0]).endsWith('/collect') && entry[1]?.method === 'POST')).toBe(false);
+  expect(element.collectStorageError).toBeTruthy();
+});
+
 it('keeps the original collection intent when its task is unknown', async () => {
   const storageKey = 'slide.metric-collect.v1:user-7:instance:1';
   window.sessionStorage.setItem(storageKey, JSON.stringify({ key: 'stored-key', revision: 5 }));
