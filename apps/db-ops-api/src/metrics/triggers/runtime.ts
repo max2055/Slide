@@ -126,9 +126,9 @@ export async function evaluateTemplateSamples(
           if (n.select.aggregation !== 'last') windowMs = Math.max(windowMs, n.select.window_ms);
         } else selectors.push(...n.children);
       }
-      let selected = windowMs
+      const selected = windowMs
         ? samples
-            .map((sample, index) => {
+            .map((sample) => {
               const inputIndex = inputs.findIndex(row => decode<{sample:TriggerSample|null}>(row.payload).sample?.observed_at === sample.observed_at);
               const prior = inputIndex > 0 ? decode<{sample:TriggerSample|null}>(inputs[inputIndex-1].payload).sample : null,
                 gap = prior ? Date.parse(sample.observed_at) - Date.parse(prior.observed_at) : Infinity;
@@ -142,11 +142,8 @@ export async function evaluateTemplateSamples(
             })
             .filter((s) => Date.parse(s.observed_at) >= now - windowMs)
         : samples.slice(-1);
-      // A formal unknown inside a window is a coverage hole, even if good
-      // neighbours are close enough to satisfy the nominal sampling interval.
-      if (windowMs && inputs.some(row =>
-        !decode<{sample:TriggerSample|null}>(row.payload).sample
-        && new Date(row.observed_at).getTime() >= now-windowMs)) selected = [];
+      // Keep valid scalar evidence for last and each shorter window. A null
+      // breaks original adjacency above; each selector judges that gap itself.
       // A null newest formal value must not fall back to an older good value.
       const lastInput = inputs.at(-1);
       const newestUsable = lastInput && decode<{ sample: TriggerSample | null }>(lastInput.payload).sample;

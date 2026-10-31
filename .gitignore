@@ -22,6 +22,8 @@ coverage
 **/.playwright/
 frontend/test-results/
 frontend/e2e/.max238-handle-*.json
+frontend/e2e/.max238-cn-handle-*.json
+apps/db-ops-api/.max238-handles/
 tmp/
 /outputs/
 

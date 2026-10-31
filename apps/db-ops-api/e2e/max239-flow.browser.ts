@@ -117,7 +117,10 @@ try {
   await cfg.locator('summary').filter({ hasText: '的指标与参数' }).click();
   const editor = cfg.locator('template-trigger-editor');
   await expect(editor.getByRole('button', { name: '发布新模板版本' })).toBeEnabled();
-  await editor.getByLabel('problem组合', { exact: true }).selectOption('all');
+  await editor.getByLabel('problem组合', { exact: true }).selectOption('any');
+  await editor.locator('select:has(option[value="avg"])').nth(1).selectOption('avg');
+  await editor.getByLabel('problem组合1', {exact:true}).selectOption('all');
+  await editor.locator('select:has(option[value="avg"])').nth(2).selectOption('last');
   await editor.getByRole('button', { name: '发布新模板版本' }).click();
   await expect(cfg.getByText(/v2 的指标与参数/)).toBeVisible();
   await cfg.getByRole('button', { name: '检查配置', exact: true }).click();

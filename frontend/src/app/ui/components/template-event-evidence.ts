@@ -6,7 +6,7 @@ import "./app-data-table.js";
 const condition = (n: any): string =>
   n?.node === "compare"
     ? `${n.select.aggregation}${n.select.window_ms ? `(${n.select.window_ms / 1000}秒)` : ""} ${n.operator} ${n.threshold.value ?? n.threshold.name}`
-    : (n?.children?.map(condition).join(n.node === "all" ? " 且 " : " 或 ") ?? "未知");
+    : `(${n?.children?.map(condition).join(n.node === "all" ? " 且 " : " 或 ") ?? "未知"})`;
 @customElement("template-event-evidence")
 export class TemplateEventEvidence extends LitElement {
   @property({ type: Number }) eventId = 0;

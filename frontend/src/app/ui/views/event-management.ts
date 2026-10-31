@@ -237,7 +237,7 @@ export class EventManagementPage extends LitElement {
 
     .main-layout {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: var(--space-lg);
       flex: 1;
       min-height: 0;
@@ -299,6 +299,8 @@ export class EventManagementPage extends LitElement {
     }
 
     .detail-panel {
+      min-width: 0;
+      overflow-wrap: anywhere;
       padding: var(--space-lg);
     }
 

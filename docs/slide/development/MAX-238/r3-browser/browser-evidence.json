@@ -1,0 +1,76 @@
+{
+  "started_at": "2026-10-29T22:32:25.816Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "resources": {
+    "A": 1,
+    "B": 2
+  },
+  "counts": {
+    "before": {
+      "bindings": 2,
+      "evidence": 0,
+      "operations": 0,
+      "audits": 0
+    }
+  },
+  "caseA": {
+    "opened": true,
+    "checked": true,
+    "previewShown": true,
+    "trialClicked": true,
+    "trialPassed": true,
+    "clicked": true,
+    "applies": 1,
+    "stored_intent": {
+      "key": "apply-mvu4ci4b-8t46hhkw",
+      "pending": true,
+      "has_draft": true
+    },
+    "state_before_reload": {
+      "dirty": true,
+      "unresolved": 1
+    },
+    "after_reload": {
+      "settled_text": true,
+      "unresolved": 0,
+      "binding": {
+        "source": "template",
+        "revision": 1
+      },
+      "intents": [
+        {
+          "key": "apply-mvu4ci4b-8t46hhkw",
+          "pending": false
+        }
+      ],
+      "counts": {
+        "bindings": 3,
+        "evidence": 1,
+        "operations": 1,
+        "audits": 1
+      }
+    }
+  },
+  "caseB": {
+    "opened": true,
+    "checked": true,
+    "previewShown": true,
+    "trialClicked": true,
+    "trialPassed": true,
+    "clicked": true,
+    "applies": 0,
+    "refused_text": true,
+    "storage_limited": true,
+    "dirty": true,
+    "settings": {},
+    "counts": {
+      "bindings": 3,
+      "evidence": 2,
+      "operations": 1,
+      "audits": 1
+    }
+  }
+}

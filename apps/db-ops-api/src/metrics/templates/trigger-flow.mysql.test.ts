@@ -74,6 +74,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let target: OwnedDatabase;
   let instanceId = 0;
   let unboundId = 0;
+  let insertInstance: (name:string)=>Promise<number>;
   let templateId = '';
   let templateVersion = 0;
   let contentHash = '';
@@ -186,7 +187,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     (actor as unknown as { userId: number }).userId = 1;
 
     const now = new Date().toISOString();
-    const insertInstance = async (name: string): Promise<number> => {
+    insertInstance = async (name: string): Promise<number> => {
       await pool.execute(
         `INSERT INTO database_instances
         (name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
@@ -670,4 +671,47 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       expect((await rows())[0]).toMatchObject({state:'open',recovery_count:0});
     }
   }, 120000);
+  it.each(['last','short'])('preserves %s when a longer window has a formal null',async(mode)=>{
+    const mixedId=await insertInstance('max239-mixed-'+mode);
+    expect(await databaseService.addConnection(mixedId,'max239-mixed',{host:'127.0.0.1',port:PORT,user:TARGET_USER,password:TARGET_PASSWORD,database:target.database,db_type:'mysql'})).toBe(true);
+    await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')",[mixedId]);
+    const current=await new MySqlTemplateRepository(pool as never).getVersion(templateId,templateVersion);
+    const r=(await call('GET',`/api/metrics/templates/${templateId}/versions/${templateVersion}/triggers`)).data.rules[0];
+    const compare=(aggregation:string,window_ms?:number)=>({node:'compare',select:{aggregation,...(window_ms?{window_ms}:{})},operator:'>',threshold:{kind:'constant',value:90}});
+    const publication=await call('POST',`/api/metrics/templates/${templateId}/triggers`,{
+      expected_version:templateVersion,expected_content_hash:contentHash,item_id:current!.items[0].item_id,
+      parameters:r.parameters,problem:{node:'any',children:[...(mode==='last'?[compare('last')]:[]),compare('avg',30000),compare('avg',60000)]},
+      recovery:{node:'compare',select:{aggregation:'last'},operator:'<',threshold:{kind:'constant',value:70}},
+      quality:r.quality,clock:{stale_after_ms:120000,nodata:{enabled:false}},
+    });
+    expect(publication.status,JSON.stringify(publication.data)).toBe(200);
+    templateVersion=Number(publication.data.version);contentHash=String(publication.data.content_hash);
+    for(const action of ['probe','trial','apply']){
+      const response=await call('POST',`/api/metrics/template-bindings/instance/${mixedId}/${action}`,{
+        ...body(),expected_revision:0,...(action==='probe'?{}:{receipt_id:'mixed-trial-'+mode}),...(action==='apply'?{caller_key:'mixed-apply-'+mode}:{})});
+      expect(response.status,JSON.stringify(response.data)).toBe(200);
+    }
+    const start=Date.now()+1000;
+    const tick=async(value:number|null,offset:number)=>{
+      controlledValue=value;clock=start+offset;
+      const key=`mixed-${mode}-${offset}`;
+      expect((await call('POST',`/api/metrics/template-bindings/instance/${mixedId}/collect`,{caller_key:key,expected_revision:1})).status).toBe(200);
+      await drain();
+      expect((await call('GET',`/api/metrics/template-bindings/instance/${mixedId}/collect/${key}`)).data.state).toBe('completed');
+    };
+    const events=async()=> (await pool.query<RowDataPacket[]>('SELECT event_id,payload FROM metric_trigger_episodes WHERE resource_key=? AND config_revision=1',[`instance:${mixedId}`]))[0];
+    await tick(60,0);
+    if(mode==='last'){await tick(60,30000);await tick(null,45000);}
+    else {await tick(null,15000);await tick(95,30000);}
+    await tick(95,60000);
+    let rows=await events();expect(rows).toHaveLength(1);
+    const parse=(v:any)=>typeof v==='string'?JSON.parse(v):v;
+    expect(parse(rows[0].payload)).toMatchObject({state:'open',opened:{value:95},recovery_count:0});
+    await tick(85,90000);expect(parse((await events())[0].payload)).toMatchObject({state:'open'});
+    await tick(60,120000);rows=await events();expect(rows).toHaveLength(1);
+    expect(parse(rows[0].payload)).toMatchObject({state:'closed',recovery_count:1});
+    const history=await call('GET',`/api/metrics/template-events/${rows[0].event_id}`);
+    expect(history.status).toBe(200);expect((history.data.episode as any).opened.value).toBe(95);
+  },120000);
+
 });
