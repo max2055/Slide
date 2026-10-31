@@ -63,6 +63,9 @@ import { repinTemplateVersion, type RepinResult } from './repin.js';
 import { runPackage, type PackageResult } from '../packages/runner.js';
 import { TemplateUnbindPreviewRequestSchema } from '../../contracts/metrics/template-bindings.js';
 import { analyzeUnbindImpact } from '../bindings/unbind-impact.js';
+import { resolveTriggerRules } from '../triggers/resolve.js';
+import { compileTriggerSnapshot } from '../triggers/compile.js';
+import { mysqlTriggerCatalog, stageTriggerSnapshot } from '../triggers/persistence.js';
 
 export type TemplateBindingErrorCode =
   | 'TEMPLATE_BINDING_INPUT_INVALID'
@@ -940,6 +943,19 @@ export class TemplateBindingService {
     onAuthError?: (error: unknown) => void): TrustedBindingInputs {
     const versions = new MySqlTemplateRepository(connectionTemplatePool(connection));
     return {
+      stageTriggers: async (targetRevision, resolutionIdentity) => {
+        const live = await this.contextOn(connection, candidate.resource, candidate, actor.userId);
+        const resolved = await resolveTemplateBinding(candidate, live, versions, this.deps.registry);
+        if (resolved.kind !== 'template_resolution') throw new Error('TRIGGER_INPUT_INVALID');
+        // No trigger table dependency for templates that declare no triggers.
+        if (!resolved.triggers.some(entry => entry.refs.length)) return;
+        const rules = await resolveTriggerRules(resolved, mysqlTriggerCatalog(connection), versions);
+        if (rules.plan_identity !== resolutionIdentity) throw new Error('TRIGGER_RESOLUTION_MISMATCH');
+        await stageTriggerSnapshot(connection, compileTriggerSnapshot({ ...rules, config_revision: targetRevision }));
+        const auth = this.deps.reloadOnLocked
+          ? await this.deps.reloadOnLocked(actor, connection) : await this.liveOn(actor, connection);
+        await this.assertAccess(auth, candidate.resource, true, connection);
+      },
       authorize: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
         // The host calls this after its own row lock, and again after every

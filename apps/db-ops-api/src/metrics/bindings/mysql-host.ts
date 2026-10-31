@@ -112,6 +112,8 @@ export interface BindingSqlPool {
 
 /** Same-transaction trusted reads; the factory receives the live connection. */
 export interface TrustedBindingInputs {
+  /** Stage immutable trigger evidence on this host's connection before settlement. */
+  stageTriggers?(targetRevision: number, resolutionIdentity: string): Promise<void>;
   authorize(resource: ResourceRef): Promise<unknown>;
   /** Returns `{resource, group, capabilities, at, actor_id}`; the host adds `application`. */
   applicationContext(resource: ResourceRef): Promise<unknown>;
@@ -659,6 +661,14 @@ class MysqlTransactionHost implements BindingApplicationHost {
     }
 
     const handle: { status: 'staged' } = { status: 'staged' };
+    try {
+      if (valid.plan.triggers.some(entry => entry.refs.length) && !this.inputs.stageTriggers) {
+        throw new Error('TRIGGER_SNAPSHOT_UNAVAILABLE');
+      }
+      await this.inputs.stageTriggers?.(valid.target_revision, valid.resolution_identity);
+    } catch {
+      return this.reject('UNAVAILABLE');
+    }
     this.staged = { handle, target_revision: valid.target_revision, redeemed: false };
     return handle;
   }

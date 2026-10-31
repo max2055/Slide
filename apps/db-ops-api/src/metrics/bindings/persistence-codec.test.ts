@@ -4,7 +4,7 @@ import { PackageRegistry, sealRelease, type ImplementationSpec, type PackageRele
 import { resolvePolicy } from '../policy/resolver.js';
 import {
   BINDING_PAYLOAD_ENVELOPE, BINDING_PAYLOAD_PACKAGE_ENVELOPE, BindingPersistenceError,
-  bindingPayloadSource, decodeBindingPayload, encodeBindingPayload, encodeTemplatePendingPayload,
+  bindingPayloadSource, decodeBindingPayload, encodeTemplateAppliedPayload, encodeBindingPayload, encodeTemplatePendingPayload,
   type BindingPersistenceErrorCode,
 } from './persistence-codec.js';
 
@@ -668,4 +668,23 @@ describe('template pending encoding', () => {
     (source.plan as unknown as Record<string, any>).budget.requests_per_hour_estimate = Number.NaN;
     expect(codeOf(() => encodeTemplatePendingPayload(source))).toBe('BINDING_PAYLOAD_SHAPE_INVALID');
   });
+});
+
+
+describe('explicit formal-commit application envelope',()=>{
+ it('maps the base plan to its target only with a complete strict formal receipt',()=>{
+  const pending=decodeBindingPayload(templatePayload());if(pending.kind!=='template_pending')throw Error('fixture');
+  const proof={sample_ids:['formal-sample'],attempt_ids:['normal-attempt'],at:NOW};
+  const text=encodeTemplateAppliedPayload(pending,proof),payload=JSON.parse(text);
+  expect(decodeBindingPayload(text)).toMatchObject({kind:'template_pending',application:{status:'applied',applied_revision:5},effective:{source:'template',revision:5}});
+  expect(pending.application.status).toBe('pending');
+  const withoutProof=structuredClone(payload);delete withoutProof.formal_commit;
+  expect(()=>decodeBindingPayload(withoutProof)).toThrow();
+  const forged=structuredClone(payload);forged.effective.plan.settings.enabled=false;
+  expect(()=>decodeBindingPayload(forged)).toThrow();
+  const oldEnvelope=structuredClone(payload);oldEnvelope.envelope='templates-v1';delete oldEnvelope.formal_commit;
+  expect(()=>decodeBindingPayload(oldEnvelope)).toThrow();
+  expect(()=>encodeTemplateAppliedPayload(pending,{...proof,sample_ids:[]})).toThrow();
+  expect(()=>encodeTemplateAppliedPayload(pending,{...proof,attempt_ids:[]})).toThrow();
+ });
 });

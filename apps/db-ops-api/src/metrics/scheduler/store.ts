@@ -12,7 +12,8 @@ import type { CounterState } from '../state.js';
 import { type Published, type Ref, type Group, RefSchema, refKey, rule } from '../policy/model.js';
 import { resolvePolicy } from '../policy/resolver.js';
 import { bindingReadCode, readLegacyPublished, readStoredBinding, TEMPLATE_BINDING_UNSUPPORTED } from '../bindings/package-reader.js';
-import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
+import { decodeBindingPayload, encodeTemplateAppliedPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
+import { evaluateTemplateSamples } from '../triggers/runtime.js';
 import type { TemplateCollectionPlan } from '../bindings/plan.js';
 import type { PackageResult } from '../packages/runner.js';
 import { compilePlan, hash, jitterFor, type CollectorPlan } from './compiler.js';
@@ -561,6 +562,26 @@ export class MysqlScheduleStore {
       await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
         ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
       [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);
+    }
+    // Application is a successful normal writer outcome, never an API label.
+    // Require every selected metric, successful reads and usable values before first promotion.
+    const observations = results.flatMap(entry => entry.result.observations.map(o => o.observation));
+    const required = snapshot.plan.releases.flatMap(release => release.steps.flatMap(step => step.items));
+    const complete = required.length > 0 && required.every(item => observations.some(o =>
+      o.metric.id === item.canonical_metric.id && o.metric.semantic_version === item.canonical_metric.semantic_version
+      && o.value !== null && ['good','partial'].includes(o.quality.status)))
+      && attempts.length > 0 && attempts.every(a => a.status === 'succeeded');
+    let live = await this.currentTemplate(c, ref);
+    rule(live && live.binding.revision === revision, 'SCHEDULE_STALE_EXECUTION');
+    if (complete && live.application.applied_revision !== revision) {
+      const appliedPayload = encodeTemplateAppliedPayload(live, {
+        sample_ids:sampleIds,attempt_ids:attempts.map(a => a.id),at:new Date(now).toISOString(),
+      });
+      await c.execute('UPDATE metric_policy_bindings SET payload=? WHERE resource_key=?', [appliedPayload,refKey(ref)]);
+      live = decodeBindingPayload(appliedPayload) as DecodedTemplateBindingPayload;
+    }
+    if (live.application.status === 'applied' && live.application.applied_revision === revision) {
+      await evaluateTemplateSamples(c,live,observations,now);
     }
     return { samples, attempts };
   }

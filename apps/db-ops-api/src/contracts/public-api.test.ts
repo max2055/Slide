@@ -134,9 +134,13 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/probe',
       '/api/metrics/template-bindings/{type}/{id}/trial',
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
+      '/api/metrics/template-events/{eventId}',
+      '/api/metrics/template-events/{eventId}/acknowledge',
       '/api/metrics/templates',
       '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
+      '/api/metrics/templates/{templateId}/versions/{version}/triggers',
       '/api/network-devices',
       '/api/network-devices/{id}',
       '/api/network-devices/{id}/backup-schedule',
@@ -231,6 +235,8 @@ describe('generated public API contract', () => {
       if (route.method === 'GET' || route.method === 'POST') registered.add(route.url.replace(/:(\w+)/g, '{$1}'));
     });
     await registerMetricTemplateRoutes(app, async () => undefined);
+    const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
+    await registerTemplateTriggerRoutes(app,async()=>undefined);
     await app.ready();
     await app.close();
     expect([...registered].sort()).toEqual([
@@ -243,9 +249,13 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/probe',
       '/api/metrics/template-bindings/{type}/{id}/trial',
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
+      '/api/metrics/template-events/{eventId}',
+      '/api/metrics/template-events/{eventId}/acknowledge',
       '/api/metrics/templates',
       '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
+      '/api/metrics/templates/{templateId}/versions/{version}/triggers',
     ]);
     const documented = Object.keys(document.paths).filter(path => path.startsWith('/api/metrics/template')).sort();
     expect(documented).toEqual([...registered].sort());

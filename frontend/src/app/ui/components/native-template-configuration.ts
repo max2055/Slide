@@ -8,6 +8,7 @@ import './app-form-field.js';
 import './app-badge.js';
 import './app-dialog.js';
 import './metric-policy-fields.js';
+import './template-trigger-editor.js';
 import { metricName } from './resource-metric-summary.js';
 import { renderCollectionStatus, collectionFactsStyles } from './metric-collection-status.js';
 import { collectionLayoutStyles } from './collection-layout-styles.js';
@@ -380,6 +381,7 @@ export class NativeTemplateConfiguration extends LitElement {
       this.templates = page.templates; this.nextCursor = page.next_cursor;
       this.names = Object.fromEntries(page.templates.map(entry => [entry.template_id, entry.name]));
       this.seedFromBinding(binding);
+      for (const pin of this.selected) void this.ensureDetail(pin);
       this.loaded = true;
       // Background recovery lookups never block the editor: a user edit made
       // while one is in flight must be possible and must survive its answer.
@@ -1210,7 +1212,10 @@ export class NativeTemplateConfiguration extends LitElement {
             .rows=${detail.items.map(item => ({ metric: `${metricName(item.canonical_metric.id)}（${item.item_id}@${item.version}）`,
               unit: item.unit, release: `${item.collector_ref.package_release} · ${item.collector_ref.implementation_id}` }))}></app-data-table></div>
           <p class="muted">参数：${Object.keys(detail.parameters.schema).length ? Object.entries(detail.parameters.schema).map(([name, spec]) =>
-            `${name}（${label(spec.type)}）`).join('、') : '无'} · 内容校验 ${detail.content_hash}</p></details>` : nothing;
+            `${name}（${label(spec.type)}）`).join('、') : '无'} · 内容校验 ${detail.content_hash}</p>
+          <template-trigger-editor .template=${detail} .disabled=${!this.canWrite()||this.busy}
+            @trigger-published=${(event:CustomEvent<{pin:TemplatePin}>)=>{this.selected=this.selected.map(p=>p.template_id===pin.template_id?event.detail.pin:p);this.invalidate(false);void this.ensureDetail(event.detail.pin);}}></template-trigger-editor>
+          </details>` : nothing;
       })}
     </app-card>`;
   }
@@ -1369,7 +1374,7 @@ export class NativeTemplateConfiguration extends LitElement {
   private renderStatus() {    const status = this.collection;
     const binding = this.binding;
     const application = binding?.application;
-    const pending = binding?.pending;
+    const pending = application?.status === 'applied' && application.applied_revision === binding?.pending?.target_revision ? null : binding?.pending;
     return html`<app-card class="state-card"><span class="eyebrow">当前权威状态</span>
       ${status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
         ${status.formal_visibility.state === 'pending' ? '等待正式数据' : statusLabel(status.formal_visibility.state)}</app-badge>` : nothing}

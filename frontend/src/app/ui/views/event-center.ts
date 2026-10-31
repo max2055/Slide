@@ -2,12 +2,11 @@ import { LitElement, css, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import './system-events.ts';
 
-type EventCenterView = "active" | "aggregate" | "rules" | "notifications" | "system";
+type EventCenterView = "active" | "aggregate" | "notifications" | "system";
 
 const EVENT_VIEWS: readonly { id: EventCenterView; label: string }[] = [
   { id: "active", label: "活动告警" },
   { id: "aggregate", label: "聚合事件" },
-  { id: "rules", label: "规则与策略" },
   { id: "notifications", label: "通知投递" },
   { id: "system", label: "平台异常" },
 ];
@@ -54,6 +53,7 @@ export class EventCenterPage extends LitElement {
 
   private syncFromLocation() {
     const requested = new URL(window.location.href).searchParams.get("view");
+    if (requested === "rules") { this.activeView = "aggregate"; return; }
     if (EVENT_VIEWS.some((view) => view.id === requested)) {
       this.activeView = requested as EventCenterView;
     }
@@ -69,6 +69,7 @@ export class EventCenterPage extends LitElement {
 
   override render() {
     return html`
+      <p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>
       <div class="tabs" role="tablist" aria-label="事件中心">
         ${EVENT_VIEWS.map((view) => html`
           <button
@@ -88,19 +89,14 @@ export class EventCenterPage extends LitElement {
     switch (this.activeView) {
       case "system": return html`<system-events-page></system-events-page>`;
       case "aggregate": return html`<event-management-page></event-management-page>`;
-      case "rules": return html`<alerts-page mode="rules"></alerts-page>`;
       case "notifications": return html`<alerts-page mode="notifications"></alerts-page>`;
       default: return html`
         <alerts-page
           mode="active"
           @event-center-view=${(event: CustomEvent<{ view: EventCenterView; action?: string }>) => {
-            this.selectView(event.detail.view);
-            if (event.detail.action === "create-rule") {
-              void this.updateComplete.then(() => {
-                const alerts = this.shadowRoot?.querySelector("alerts-page") as (HTMLElement & { openRuleEditor?: () => void }) | null;
-                alerts?.openRuleEditor?.();
-              });
-            }
+            if ((event.detail.view as string) === 'rules' || event.detail.action === 'create-rule') {
+              window.location.assign('/?tab=instances-db');
+            } else this.selectView(event.detail.view);
           }}
         ></alerts-page>
       `;

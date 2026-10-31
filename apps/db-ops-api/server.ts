@@ -1,3 +1,4 @@
+import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
 import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
@@ -195,6 +196,7 @@ import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
 import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
+import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -484,6 +486,7 @@ async function start() {
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
     await registerMetricTemplateRoutes(app, verifyToken);
+    await registerTemplateTriggerRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
@@ -5186,56 +5189,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  await registerEventReadRoutes(fastify,verifyToken);
   // --- 事件管理 (10 条) ---
   async function requireAlertEventAccess(request: any, reply: any, eventId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
-    const event = await alertEventService.getEventById(eventId);
-    if (!event || !hasInstanceAccess(request.user, Number(event.instance_id), minLevel)) {
-      reply.code(404).send({ error: '事件未找到' });
-      return null;
-    }
-    return event;
+    return requireEventAccess(request,reply,eventId,minLevel);
   }
 
-  fastify.get('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const query = request.query as any;
-      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
-      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
-        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
-      }
-      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
-        return reply.code(403).send({ error: '无权访问该实例' });
-      }
-      const events = await alertEventService.getEvents({
-        ...query,
-        instance_id: instanceId,
-        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
-      });
-      reply.send(events);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/stats', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const stats = await alertEventService.getEventStats(getAccessibleInstanceIds((request as any).user));
-      reply.send(stats);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/:id', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const event = await requireAlertEventAccess(request, reply, Number(id));
-      if (!event) return;
-      reply.send(event);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+
+
+
 
   fastify.post('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
@@ -5393,46 +5357,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/alerts/events/:id/logs', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id))) return;
-      const logs = await alertEventService.getEventLogs(Number(id));
-      reply.send(logs);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/mttr', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const stats = await alertEventService.getMTTRStats(getAccessibleInstanceIds((request as any).user));
-      reply.send(stats);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/search', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const query = request.query as any;
-      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
-      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
-        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
-      }
-      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
-        return reply.code(403).send({ error: '无权访问该实例' });
-      }
-      const result = await alertEventService.searchEvents({
-        ...query,
-        instance_id: instanceId,
-        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
-      });
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+
+
+
 
   // --- 事件聚合 (1 条) ---
   fastify.post('/api/alerts/aggregate', { preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {

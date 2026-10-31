@@ -592,6 +592,7 @@ function legacyPublished(overrides: Record<string, unknown> = {}): Record<string
 }
 
 interface HostSetup {
+  stageTriggers?: TrustedBindingInputs['stageTriggers'];
   faults?: Faults;
   omit?: 'mandatoryItems' | 'trustedInputs';
   now?: () => unknown;
@@ -608,6 +609,7 @@ function makeHost(db: FakeDatabase, setup: HostSetup = {}) {
     },
   };
   const inputs: TrustedBindingInputs = {
+    stageTriggers: setup.stageTriggers,
     authorize: async () => allowed(),
     applicationContext: async () => trustedContext(),
     mandatoryItems: async () => [],
@@ -672,6 +674,27 @@ function committedOperation(identity: HashId, digest: HashId): OperationRecord {
 }
 
 describe('MySQL binding host', () => {
+  it('MAX239: stages triggers before commit and rolls the whole binding back on refusal', async () => {
+    const db = await seededDb();
+    const stage = vi.fn(async () => { throw new Error('TRIGGER_RULE_MISSING'); });
+    const before = structuredClone(db.bindings);
+    const { outcome } = await outcomeOf(db, { stageTriggers: stage });
+    expect(stage).toHaveBeenCalledWith(5, await identityFor());
+    expect(outcome.kind).toBe('rejected');
+    expect(db.bindings).toEqual(before);
+    expect(db.operations).toHaveLength(0);
+    expect(db.audits).toHaveLength(0);
+    expect(db.eventNames()).not.toContain('commit');
+    expect(db.eventNames()).toContain('rollback');
+  });
+
+  it('MAX239: exact committed replay never stages trigger evidence twice', async () => {
+    const db = await seededDb();
+    const stage = vi.fn(async () => undefined);
+    expect((await outcomeOf(db, { stageTriggers: stage })).outcome.kind).toBe('committed');
+    expect((await outcomeOf(db, { stageTriggers: stage })).outcome.kind).toBe('replay');
+    expect(stage).toHaveBeenCalledTimes(1);
+  });
   it('accepts a real mysql2 pool and connection as the narrow injected port', () => {
     // Compile-time assignments only: no connection is created, nothing is imported at runtime.
     const toPool = (pool: Pool): BindingSqlPool => pool;
