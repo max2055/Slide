@@ -122,8 +122,10 @@ export class PolicyService {
       for (const group of await tx.groups()) {
         if (!group.id.toLowerCase().includes(query.toLowerCase())) continue;
         try {
-          const members = await this.groupAccess(actor, tx, group.id, false);
-          visible.push({ ...group, can_manage: members.length ? members.every(m => canManageResource(actor, m.binding.resource)) : actor.permissions.includes('*') });
+          const members = await tx.memberRefs(group.id);
+          if (!members.length) rule(actor.permissions.includes('*'), 'POLICY_FORBIDDEN', 403);
+          for (const ref of members) await this.assertAccess(actor, ref, false);
+          visible.push({ ...group, can_manage: members.length ? members.every(ref => canManageResource(actor, ref)) : actor.permissions.includes('*') });
         } catch(e) { if (!(e instanceof PolicyError && e.status === 403)) throw e; }
         if (visible.length === 100) break;
       }

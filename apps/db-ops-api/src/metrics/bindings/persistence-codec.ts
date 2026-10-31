@@ -18,6 +18,7 @@
  * call before decoding; changing that reader is a later wiring package.
  */
 import { z } from 'zod';
+import { stable } from '../packages/model.js';
 import {
   CapabilitySchema, CollectionPlanSchema, DimensionsSchema, IdSchema, MetricRefSchema,
   ResourceTypeSchema, TimestampSchema, UnitSchema, VersionSchema,
@@ -32,6 +33,13 @@ import type { TemplateCollectionPlan } from './plan.js';
 
 /** The storage discriminant of the template form. It lives at the top level only. */
 export const BINDING_PAYLOAD_ENVELOPE = 'templates-v1';
+/** A successful normal formal commit, with an explicit base→target plan mapping. */
+export const BINDING_APPLIED_ENVELOPE = 'templates-applied-v1';
+const FormalCommitSchema = z.strictObject({
+  sample_ids: z.array(z.string().min(1).max(255)).min(1),
+  attempt_ids: z.array(z.string().min(1).max(255)).min(1),
+  at: TimestampSchema,
+});
 /**
  * The admitted explicit form of the legacy single-package payload. Its content is
  * exactly the no-envelope `Published` value; the envelope only states the source.
@@ -448,7 +456,7 @@ export function decodeBindingPayload(raw: string | unknown): DecodedBindingPaylo
   const payload = typeof raw === 'string' ? parseText(raw) : clone(raw);
 
   if (Object.hasOwn(payload, 'envelope')) {
-    if (payload.envelope === BINDING_PAYLOAD_ENVELOPE) return decodeTemplatePayload(payload);
+    if (payload.envelope === BINDING_PAYLOAD_ENVELOPE || payload.envelope === BINDING_APPLIED_ENVELOPE) return decodeTemplatePayload(payload);
     // The explicit legacy form: the same `Published` content, no template member.
     if (payload.envelope === BINDING_PAYLOAD_PACKAGE_ENVELOPE) return decodeLegacyPayload(payload, true);
     return fail('BINDING_PAYLOAD_UNKNOWN_ENVELOPE');
@@ -599,7 +607,9 @@ function checkPackageEffectiveSnapshot(
 }
 
 function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplateBindingPayload {
-  if (!hasOnlyKeys(payload, ['envelope', 'binding', 'template_resolution', 'application', 'effective', 'published_at'])) {
+  const formallyApplied = payload.envelope === BINDING_APPLIED_ENVELOPE;
+  if (!hasOnlyKeys(payload, ['envelope', 'binding', 'template_resolution', 'application', 'effective', 'published_at',
+    ...(formallyApplied ? ['formal_commit'] : [])])) {
     return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   }
   if (!isPlainObject(payload.binding)) return fail('BINDING_PAYLOAD_BINDING_INVALID');
@@ -638,7 +648,7 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
   if (application.data.error_code !== null && application.data.status !== 'failed') {
     return fail('BINDING_PAYLOAD_APPLICATION_INVALID');
   }
-  if (application.data.applied_revision !== null && application.data.applied_revision > base) {
+  if (!formallyApplied && application.data.applied_revision !== null && application.data.applied_revision > base) {
     return fail('BINDING_PAYLOAD_REVISION_INVALID');
   }
 
@@ -651,6 +661,20 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
   }, 'BINDING_PAYLOAD_PLAN_INVALID');
 
   const effective = parseEffective(payload.effective, binding.data.resource);
+  if (formallyApplied) {
+    const proof = FormalCommitSchema.safeParse(payload.formal_commit);
+    if (!proof.success || application.data.status !== 'applied'
+      || application.data.applied_revision !== target
+      || application.data.resolution_identity !== pending.data.resolution_identity
+      || application.data.reported_at !== proof.data.at || application.data.error_code !== null) {
+      return fail('BINDING_PAYLOAD_APPLICATION_INVALID');
+    }
+    // Only revision is mapped: no item, release, parameter, switch or identity may change.
+    if (effective?.source !== 'template' || effective.revision !== target
+      || stable(effective.plan) !== stable({ ...pendingPlan, revision: target })) {
+      return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
+    }
+  }
   const applied = application.data.applied_revision;
   if (applied === null) {
     if (effective !== null) return fail('BINDING_PAYLOAD_EFFECTIVE_INVALID');
@@ -753,6 +777,24 @@ function parseEffective(
 /** Re-serialize a decoded payload unchanged; a legacy row keeps its exact fields. */
 export function encodeBindingPayload(decoded: DecodedBindingPayload): string {
   return JSON.stringify(decoded.payload);
+}
+
+/** Called only after the normal formal writer has written these exact identities. */
+export function encodeTemplateAppliedPayload(input: DecodedTemplateBindingPayload,
+  commit: z.infer<typeof FormalCommitSchema>): string {
+  const decoded = decodeBindingPayload(input.payload);
+  if (decoded.kind !== 'template_pending') return fail('BINDING_PAYLOAD_BINDING_INVALID');
+  const proof = FormalCommitSchema.parse(commit);
+  const payload = { ...decoded.payload, envelope: BINDING_APPLIED_ENVELOPE,
+    formal_commit: proof,
+    application: { status: 'applied', applied_revision: decoded.pending.target_revision,
+      reported_at: proof.at, error_code: null, resolution_identity: decoded.pending.resolution_identity },
+    effective: { source: 'template', revision: decoded.pending.target_revision,
+      resolution_identity: decoded.pending.resolution_identity,
+      plan: { ...decoded.pending.plan, revision: decoded.pending.target_revision } } };
+  const text = JSON.stringify(payload);
+  decodeBindingPayload(text);
+  return text;
 }
 
 export interface TemplatePendingWriteInput {

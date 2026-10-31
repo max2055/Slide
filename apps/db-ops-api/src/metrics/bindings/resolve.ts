@@ -537,7 +537,11 @@ export async function resolveTemplateBinding(
   const toggles = lastLayers!.toggles;
   const toggleOrigins = lastLayers!.metricSources;
   const policyId = group?.id ?? `resource:${refKey(candidate.binding.resource)}`;
-  const policyRevision = group ? group.policy_revision ?? group.revision : candidate.binding.revision;
+  // A pending plan is recorded at the revision it will become. An unbound
+  // resource names base 0, which is never a recorded configuration, so its first
+  // plan carries revision 1 (the target) instead of an impossible 0.
+  const recordedRevision = Math.max(candidate.binding.revision, 1);
+  const policyRevision = group ? group.policy_revision ?? group.revision : recordedRevision;
 
   const resolvedReleases: ResolvedTemplateRelease[] = [];
   const excluded: ResolvedTemplateExclusion[] = [];
@@ -547,7 +551,7 @@ export async function resolveTemplateBinding(
     const collection: CollectionBinding = {
       id: `${refKey(candidate.binding.resource)}:${releaseRef}`, resource_id: resource.id, resource_type: resource.type,
       package: { id: state.release.package.id, version: state.release.package.version, digest: state.release.package.digest },
-      policy_id: policyId, policy_revision: policyRevision, config_revision: candidate.binding.revision, enabled: settings.enabled,
+      policy_id: policyId, policy_revision: policyRevision, config_revision: recordedRevision, enabled: settings.enabled,
     };
     const { max_rows: _rows, ...policySettings } = settings;
     const policy: CollectionPolicy = { id: policyId, revision: policyRevision, ...policySettings };
@@ -657,6 +661,17 @@ export const TEMPLATE_RESOLUTION_IDENTITY_FORMAT = 'max238.template-resolution.v
  * keep their order; only true sets are sorted.
  */
 export function templateResolutionIdentity(resolution: ResolvedTemplateBinding): string {
+  // A disabled item never reaches the plan and cannot authorize anything. Its
+  // synthesized capability carries the resolution instant (`evaluated_at = at`)
+  // and would make two resolutions of the same unchanged configuration differ by
+  // clock alone, which a trial receipt can never match at apply time. Excluding
+  // that inert field is the only normalization; collected and blocking items keep
+  // their full capability identity.
+  const inert = <T extends { decision: string; capability?: unknown }>(entry: T): T | Omit<T, 'capability'> => {
+    if (entry.decision !== 'disabled') return entry;
+    const { capability: _capability, ...rest } = entry;
+    return rest;
+  };
   const identity = {
     format: TEMPLATE_RESOLUTION_IDENTITY_FORMAT,
     resource: resolution.resource,
@@ -675,14 +690,14 @@ export function templateResolutionIdentity(resolution: ResolvedTemplateBinding):
         collector_id: collector.collector_id, implementation_id: collector.implementation_id, method: collector.method,
         estimated_cost: collector.estimated_cost, collector_timeout_ms: collector.collector_timeout_ms,
         timeout_ms: collector.timeout_ms, timeout_source: collector.timeout_source,
-        items: collector.items.map(item => ({
+        items: collector.items.map(item => inert({
           pin: item.pin, template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
           canonical_metric: item.canonical_metric, unit: item.unit, dimensions: item.dimensions,
           mapping: item.mapping, enabled: item.enabled, decision: item.decision, capability: item.capability,
         })),
       })),
     })),
-    excluded: resolution.excluded,
+    excluded: resolution.excluded.map(inert),
   };
   return `sha256:${createHash('sha256').update(stable(identity)).digest('hex')}`;
 }

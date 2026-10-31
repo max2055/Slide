@@ -338,6 +338,20 @@ function checkExpressionBudget(expression: TriggerExpression, location: TriggerR
   }
 }
 
+/** Publication shares the exact compiler budgets and parameter resolver. */
+export function validatePublishedTrigger(input: unknown): TriggerRuleVersion {
+  const rule = TriggerRuleVersionSchema.parse(input);
+  checkExpressionBudget(rule.problem, NO_LOCATION);
+  checkExpressionBudget(rule.recovery, NO_LOCATION);
+  for (const name of [...referencedParameters(rule.problem), ...referencedParameters(rule.recovery)]) {
+    if (!rule.parameters.schema[name]) fail('TRIGGER_PARAMETER_UNKNOWN', { ...NO_LOCATION, parameter: name });
+  }
+  const parameters = resolveParameters(rule, undefined, NO_LOCATION);
+  resolveExpression(rule.problem, parameters.numeric, NO_LOCATION);
+  resolveExpression(rule.recovery, parameters.numeric, NO_LOCATION);
+  return rule;
+}
+
 async function readRule(
   catalog: TriggerRuleCatalogPort,
   ref: RuleRef,

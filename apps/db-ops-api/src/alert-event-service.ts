@@ -8,6 +8,13 @@ import { assertWorkflowActive } from './workflows/execution-context.js';
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
 import { alertRCAService } from './alert-rca-service';
+import { alertDatabaseService } from './alert-database-service.js';
+import type { TriggerEpisodeRecord } from './metrics/triggers/episode.js';
+import type { TriggerResourceSnapshot, TriggerSample } from './contracts/metrics/triggers.js';
+import { randomUUID } from 'node:crypto';
+import { MysqlWorkflowStore } from './workflows/worker-runtime.js';
+import { NotificationDispatchScheduler } from './workflows/notification-dispatch.js';
+import { notificationService } from './notification-service.js';
 
 const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
   open: ['investigating', 'resolved'],
@@ -18,6 +25,56 @@ const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
 };
 
 class AlertEventService {
+  /** The caller holds the policy and incident row locks and owns the formal-sample transaction. */
+  async persistTemplateTransition(connection: mysql.PoolConnection, previous: TriggerEpisodeRecord | null,
+    next: TriggerEpisodeRecord, snapshot: TriggerResourceSnapshot,
+    evidence: { sample_ids: string[]; attempt_ids: string[]; unit: string; dimensions: Record<string,string>; samples: Array<TriggerSample & {id:string}> }) {
+    const key = `${next.resource.type}:${next.resource.id}`;
+    if (!previous || previous.episode_id !== next.episode_id) {
+      const result = await alertDatabaseService.createAlert({
+        ...(next.resource.type === 'instance' ? { instance_id: Number(next.resource.id) }
+          : next.resource.type === 'server' ? { server_id: Number(next.resource.id) }
+          : { network_device_id: Number(next.resource.id) }),
+        target_type: next.resource.type, alert_type: 'performance', level: 'warning',
+        title: `模板触发器：${next.rule_id}`, message: `指标 ${next.opened.metric.id} = ${next.opened.value ?? '未知'} ${evidence.unit}`,
+        source: 'template-trigger', metric_name: next.opened.metric.id,
+        metric_value: next.opened.value === null ? undefined : String(next.opened.value),
+        tags: { template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
+      }, connection);
+      if (!result.success || !result.alertId) throw new Error('TRIGGER_ALERT_WRITE_FAILED');
+      const [inserted] = await connection.execute<mysql.ResultSetHeader>(`INSERT INTO alert_events
+        (event_id,title,description,instance_id,source_type,severity,status)
+        VALUES(?,?,?,?,?,'warning','open')`, [randomUUID(), `模板事件：${next.opened.metric.id}`,
+        '问题与恢复由固定模板规则判定；确认仅代表处理。', next.resource.type === 'instance' ? Number(next.resource.id) : null, 'template-trigger']);
+      const eventId = inserted.insertId;
+      await connection.execute("UPDATE alerts SET tags=JSON_SET(tags,'$.template_event_id',?) WHERE id=?",[eventId,result.alertId]);
+      await connection.execute("INSERT INTO alert_event_members(event_id,alert_id,role) VALUES(?,?,'triggered')", [eventId,result.alertId]);
+      await connection.execute(`INSERT INTO metric_trigger_episodes
+        (episode_id,identity_hash,resource_key,config_revision,event_id,alert_id,payload,snapshot) VALUES(?,?,?,?,?,?,?,?)`,
+      [next.episode_id,next.identity_hash,key,snapshot.config_revision,eventId,result.alertId,JSON.stringify(next),
+        JSON.stringify({ configuration: snapshot, opening: evidence })]);
+      await connection.execute("INSERT INTO alert_event_logs(event_id,action,details) VALUES(?,'note_added',?)", [eventId,
+        JSON.stringify({ action:'trigger_opened', episode_id:next.episode_id, ...evidence })]);
+      // Reuse the existing routing, workflow outbox and delivery idempotency key.
+      const [channels] = await connection.execute<mysql.RowDataPacket[]>('SELECT id,config,delivery_start_at FROM notification_channels WHERE enabled=1');
+      const deliveryChannels = channels.map(row => ({ ...row, config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config }));
+      const alert = { id: result.alertId, level:'warning', created_at: new Date(next.opened_at) };
+      await new NotificationDispatchScheduler({ getPendingAlerts: async () => [alert],
+        getEnabledChannels: async () => deliveryChannels as any },
+      { routeAlert: (a, cs) => notificationService.routeAlert(a as any, cs as any) },
+      new MysqlWorkflowStore(() => connection as any)).enqueuePending();
+      return;
+    }
+    await connection.execute('UPDATE metric_trigger_episodes SET payload=? WHERE episode_id=?', [JSON.stringify(next),next.episode_id]);
+    if (previous.state === 'open' && next.state === 'closed') {
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>('SELECT alert_id,event_id FROM metric_trigger_episodes WHERE episode_id=? FOR UPDATE', [next.episode_id]);
+      if (rows.length !== 1) throw new Error('TRIGGER_EPISODE_MISSING');
+      await connection.execute("UPDATE alerts SET status='resolved',resolved_at=? WHERE id=?", [new Date(next.closed_at!),rows[0].alert_id]);
+      await connection.execute("UPDATE alert_events SET status='resolved',resolved_at=? WHERE id=?", [new Date(next.closed_at!),rows[0].event_id]);
+      await connection.execute("INSERT INTO alert_event_logs(event_id,action,details) VALUES(?,'resolved',?)", [rows[0].event_id,
+        JSON.stringify({ action:'trigger_recovered', episode_id:next.episode_id, ...evidence, at:next.closed_at, value:next.last.value })]);
+    }
+  }
   private getPool(): mysql.Pool | null {
     return dbConnection.getPool();
   }
@@ -222,7 +279,7 @@ class AlertEventService {
 
       params.push(eventId);
       const [result] = await pool.execute(
-        `UPDATE alert_events SET ${sets.join(', ')} WHERE id = ?`,
+        `UPDATE alert_events SET ${sets.join(', ')} WHERE id = ? AND NOT (source_type <=> 'template-trigger')`,
         params
       ) as any;
 
@@ -304,6 +361,7 @@ class AlertEventService {
   async resolveEvent(eventId: number, resolutionNotes: string, userId?: number): Promise<{ success: boolean; error?: string }> {
     if (!Number.isSafeInteger(userId) || !userId || userId < 1) return { success: false, error: '缺少有效操作者' };
     return this._withEventLock(eventId, async (connection, event) => {
+      if (event.source_type === 'template-trigger') throw new Error('模板事件仅由独立恢复条件恢复');
       if (!VALID_STATUS_TRANSITIONS[event.status]?.includes('resolved')) throw new Error('当前状态不允许直接解决（重复操作或流转冲突）');
       await connection.execute(
         `UPDATE alert_events SET status = 'resolved', resolution_notes = ?, resolved_at = NOW(), resolved_by = ?,
@@ -489,6 +547,7 @@ class AlertEventService {
         // Re-read state after locking: a delayed worker must never overwrite a manual close.
         await this._withEventLock(m.event_id, async (connection, event) => {
           assertWorkflowActive();
+          if (event.source_type === 'template-trigger') return;
           if (!VALID_STATUS_TRANSITIONS[event.status]?.includes('resolved')) throw new Error('事件状态已变化');
           const [alerts] = await connection.execute(
             `SELECT a.id, a.status FROM alert_event_members mem

@@ -194,6 +194,8 @@ import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.j
 import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
+import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
+import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -408,7 +410,10 @@ async function start() {
           database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : inst.db_type === 'mysql' ? 'mysql' : undefined),
           db_type: inst.db_type,
         }), () => databaseService.removeConnection(inst.id));
-        if (ok) { recoveredConnections.add(inst.id); reconnected++; }
+        if (ok) {
+          recoveredConnections.add(inst.id); reconnected++;
+          await instanceDatabaseService.recordDetectedVersion(inst.id, await databaseService.detectVersion(inst.id));
+        }
       } catch (e: any) {
         startup.signal.throwIfAborted();
         console.warn(`  ⚠️  实例 ${inst.name} (id=${inst.id}) 重连失败: ${e.message}`);
@@ -479,6 +484,8 @@ async function start() {
     await registerMetricConfigurationRoutes(app, verifyToken);
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
+    await registerMetricTemplateRoutes(app, verifyToken);
+    await registerTemplateTriggerRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
@@ -1500,6 +1507,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
+        await instanceDatabaseService.recordDetectedVersion(Number(id), await databaseService.detectVersion(Number(id)));
         return reply.send({ success: true, message: '连接已建立，统一采集按当前绑定调度',
           configuration: await metricConfigurationService.status((request as any).user, { type: 'instance', id: Number(id) }) });
       } else {

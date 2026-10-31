@@ -456,7 +456,7 @@ class AlertDatabaseService {
 
     try {
       await pool.execute(
-        'UPDATE alerts SET status = "read", acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ?',
+        'UPDATE alerts SET status = "read", acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ? AND (NOT (source <=> "template-trigger") OR status IN (\"unread\",\"read\"))',
         [userId || null, alertId]
       );
       return { success: true };
@@ -477,7 +477,7 @@ class AlertDatabaseService {
 
     try {
       await pool.execute(
-        'UPDATE alerts SET status = "acknowledged", acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ?',
+        'UPDATE alerts SET status = "acknowledged", acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ? AND (NOT (source <=> "template-trigger") OR status IN (\"unread\",\"read\"))',
         [userId || null, alertId]
       );
       return { success: true };
@@ -551,11 +551,11 @@ class AlertDatabaseService {
     }
 
     try {
-      await pool.execute(
-        'UPDATE alerts SET status = "resolved", resolved_by = ?, resolved_at = NOW() WHERE id = ?',
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        'UPDATE alerts SET status = "resolved", resolved_by = ?, resolved_at = NOW() WHERE id = ? AND NOT (source <=> "template-trigger")',
         [userId || null, alertId]
       );
-      return { success: true };
+      return Number(result.affectedRows) === 1 ? { success: true } : { success: false, error: '模板告警须由独立恢复条件恢复或告警不存在' };
     } catch (error: any) {
       console.error('解决告警失败:', error);
       return { success: false, error: error.message };

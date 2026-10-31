@@ -2,7 +2,7 @@ import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
 import { dbConnection } from '../../db-connection.js';
 import { CapabilitySchema, TimestampSchema, type Capability } from '../../contracts/metrics/index.js';
-import { BindingPersistenceError } from '../bindings/persistence-codec.js';
+import { BindingPersistenceError, decodeBindingPayload } from '../bindings/persistence-codec.js';
 import { readLegacyPublished, TemplateBindingUnsupportedError } from '../bindings/package-reader.js';
 import { type ApplyOperation, type Audit, type Group, type Published, type Ref, ConfigurationDigestSchema, IntentDigestSchema, OperationKeySchema, PolicyError, refKey, rule } from './model.js';
 import { PolicyTemplateGateway, type PolicyTemplateGatewayOptions } from './template-gateway.js';
@@ -11,6 +11,7 @@ export interface PolicyTransaction {
   groups(): Promise<Group[]>;
   group(id: string): Promise<Group | null>;
   members(id: string): Promise<Published[]>;
+  memberRefs(id: string): Promise<Ref[]>;
   binding(ref: Ref): Promise<Published | null>;
   capabilities(ref: Ref): Promise<Capability[]>;
   saveCapabilities(ref: Ref, capabilities: Capability[]): Promise<void>;
@@ -142,6 +143,19 @@ class MysqlTransaction implements PolicyTransaction {
   async members(id: string): Promise<Published[]> {
     const rows = await this.rows('SELECT payload FROM metric_policy_bindings WHERE group_id = ? ORDER BY resource_key', [id]);
     return rows.map(r => storedPublished(decode(r.payload)));
+  }
+  async memberRefs(id: string): Promise<Ref[]> {
+    const rows = await this.rows('SELECT resource_key, payload FROM metric_policy_bindings WHERE group_id = ? ORDER BY resource_key', [id]);
+    return rows.map(row => {
+      try {
+        const binding = decodeBindingPayload(row.payload).binding;
+        if (binding.group_id !== id || refKey(binding.resource) !== row.resource_key) throw new PolicyError('POLICY_BINDING_INVALID', 409);
+        return binding.resource;
+      } catch (error) {
+        if (error instanceof BindingPersistenceError) throw new PolicyError('POLICY_BINDING_INVALID', 409);
+        throw error;
+      }
+    });
   }
   async binding(ref: Ref): Promise<Published | null> {
     const rows = await this.rows('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);

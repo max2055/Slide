@@ -306,7 +306,7 @@ async function boundReceipt(overrides: Record<string, unknown> = {}) {
 
 type FaultMode =
   | 'throw' | 'throw-after' | 'missing' | 'two-rows' | 'cas-zero'
-  | 'conflict-caller' | 'conflict-receipt' | 'apply-throw';
+  | 'conflict-caller' | 'conflict-receipt' | 'conflict-insert' | 'apply-throw';
 type Faults = Record<string, FaultMode | undefined>;
 
 interface OperationRecord {
@@ -493,6 +493,22 @@ class FakeSqlConnection implements BindingSqlConnection {
         if (mode === 'throw-after') throw new Error('fixture binding update failed after write');
         return [{ affectedRows: 1 }, []];
       }
+      case 'bindingInsert': {
+        if (mode === 'throw') throw new Error('fixture binding insert failed');
+        const key = textOf(params[0]);
+        const row: BindingRow = { payload: textOf(params[1]), group_id: textOf(params[2]), capabilities: textOf(params[3]) };
+        // The primary key is the CAS for a first binding.
+        if (tx.bindings.has(key)) throw duplicateEntry();
+        if (mode === 'conflict-insert') {
+          // A concurrent client created this row after the guard's absent read.
+          tx.bindings.set(key, row);
+          throw duplicateEntry();
+        }
+        tx.bindings.set(key, row);
+        tx.pending.binding += 1;
+        if (mode === 'throw-after') throw new Error('fixture binding insert failed after write');
+        return [{ affectedRows: 1 }, []];
+      }
       case 'auditInsert': {
         if (mode === 'throw') throw new Error('fixture audit insert failed');
         tx.audits.push({ target: textOf(params[0]), payload: textOf(params[1]) });
@@ -576,6 +592,7 @@ function legacyPublished(overrides: Record<string, unknown> = {}): Record<string
 }
 
 interface HostSetup {
+  stageTriggers?: TrustedBindingInputs['stageTriggers'];
   faults?: Faults;
   omit?: 'mandatoryItems' | 'trustedInputs';
   now?: () => unknown;
@@ -592,6 +609,7 @@ function makeHost(db: FakeDatabase, setup: HostSetup = {}) {
     },
   };
   const inputs: TrustedBindingInputs = {
+    stageTriggers: setup.stageTriggers,
     authorize: async () => allowed(),
     applicationContext: async () => trustedContext(),
     mandatoryItems: async () => [],
@@ -656,12 +674,102 @@ function committedOperation(identity: HashId, digest: HashId): OperationRecord {
 }
 
 describe('MySQL binding host', () => {
+  it('MAX239: stages triggers before commit and rolls the whole binding back on refusal', async () => {
+    const db = await seededDb();
+    const stage = vi.fn(async () => { throw new Error('TRIGGER_RULE_MISSING'); });
+    const before = structuredClone(db.bindings);
+    const { outcome } = await outcomeOf(db, { stageTriggers: stage });
+    expect(stage).toHaveBeenCalledWith(5, await identityFor());
+    expect(outcome.kind).toBe('rejected');
+    expect(db.bindings).toEqual(before);
+    expect(db.operations).toHaveLength(0);
+    expect(db.audits).toHaveLength(0);
+    expect(db.eventNames()).not.toContain('commit');
+    expect(db.eventNames()).toContain('rollback');
+  });
+
+  it('MAX239: exact committed replay never stages trigger evidence twice', async () => {
+    const db = await seededDb();
+    const stage = vi.fn(async () => undefined);
+    expect((await outcomeOf(db, { stageTriggers: stage })).outcome.kind).toBe('committed');
+    expect((await outcomeOf(db, { stageTriggers: stage })).outcome.kind).toBe('replay');
+    expect(stage).toHaveBeenCalledTimes(1);
+  });
   it('accepts a real mysql2 pool and connection as the narrow injected port', () => {
     // Compile-time assignments only: no connection is created, nothing is imported at runtime.
     const toPool = (pool: Pool): BindingSqlPool => pool;
     const toConnection = (connection: PoolConnection): BindingSqlConnection => connection;
     expect(typeof toPool).toBe('function');
     expect(typeof toConnection).toBe('function');
+  });
+
+  it('creates the first binding of an unbound resource with the primary key as the CAS', async () => {
+    const first = candidate({ revision: 0 });
+    const compiled = await compileFor(first);
+    const digest = bindingCandidateDigest(compiled, 1, DEP);
+    const identity = await identityFor(first);
+    const db = new FakeDatabase();
+    db.receipts.set('receipt-1', receiptV2({
+      base_revision: 0, target_revision: 1, candidate_digest: digest, resolution_identity: identity,
+    }));
+
+    const { outcome } = await outcomeOf(db, {}, request({ candidate: first }));
+
+    expect(outcome.kind).toBe('committed');
+    if (outcome.kind !== 'committed') throw new Error('unreachable');
+    expect(outcome.revision).toBe(1);
+    // The insert replaced the CAS update; no row existed to update.
+    expect(db.eventNames()).toEqual([
+      'begin', 'lock', 'bindingRead', 'operationRead', 'bindingRead', 'receiptRead',
+      'consumptionRead', 'bindingLock', 'operationInsert', 'bindingInsert', 'auditInsert',
+      'commit', 'release',
+    ]);
+    expect(db.log.some(entry => entry.at === 'bindingUpdate')).toBe(false);
+    const insertedBinding = db.log.find(entry => entry.at === 'bindingInsert')!.params;
+    expect((insertedBinding[0] as Buffer).toString('utf8')).toBe(RESOURCE_KEY);
+    expect(insertedBinding[2]).toBe('web');
+    // The first binding stores the trusted capability facts the enable decision
+    // used, not an empty placeholder: later reads resolve from the same facts.
+    expect((JSON.parse(String(insertedBinding[3])) as Array<{ metric: { id: string } }>)
+      .map(capability => capability.metric.id)).toEqual(['fixture.alpha', 'fixture.beta']);
+    expect(db.writes).toEqual({ binding: 1, operation: 1, audit: 1 });
+    expect(db.operations).toHaveLength(1);
+    expect(db.audits).toHaveLength(1);
+
+    const stored = decodeBindingPayload(db.bindings.get(RESOURCE_KEY)!.payload);
+    if (stored.kind !== 'template_pending') throw new Error('unreachable');
+    expect(stored.binding.revision).toBe(1);
+    expect(stored.binding.template_pins).toEqual([pin(templateV1)]);
+    expect(stored.pending.base_revision).toBe(0);
+    expect(stored.pending.target_revision).toBe(1);
+    expect(stored.effective).toBeNull();
+    expect(stored.application.applied_revision).toBeNull();
+  });
+
+  it('rejects a concurrent first binding as a revision conflict with no partial write', async () => {
+    const first = candidate({ revision: 0 });
+    const compiled = await compileFor(first);
+    const digest = bindingCandidateDigest(compiled, 1, DEP);
+    const db = new FakeDatabase();
+    db.receipts.set('receipt-1', receiptV2({
+      base_revision: 0, target_revision: 1, candidate_digest: digest, resolution_identity: await identityFor(first),
+    }));
+
+    const { outcome } = await outcomeOf(db, { faults: { bindingInsert: 'conflict-insert' } }, request({ candidate: first }));
+
+    expect(outcome).toMatchObject({ kind: 'rejected', code: 'REVISION_CONFLICT' });
+    // Rolled back: the operation row the insert preceded is gone with it.
+    expect(db.operations).toHaveLength(0);
+    expect(db.audits).toHaveLength(0);
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
+  });
+
+  it('refuses a first binding that claims a history the storage does not have', async () => {
+    const db = new FakeDatabase();
+    db.receipts.set('receipt-1', await boundReceipt());
+
+    // No row, but the candidate names base 4: not a create.
+    expect(await codeOf(db, {}, request())).toBe('TRANSACTION_BINDING_MISSING');
   });
 
   it('commits one atomic intent on a single lease and stores the template pending payload', async () => {

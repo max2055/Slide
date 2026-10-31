@@ -4,6 +4,8 @@ import type { ResourceDetail, ResourceRef, ResourceRelation, ResourceRelationTyp
 
 export interface ResourceRelationStore {
   exists(ref: ResourceRef): Promise<boolean>;
+  /** The same existence read on an executor the caller already holds. */
+  existsOn?(executor: SqlQueryExecutor, ref: ResourceRef): Promise<boolean>;
   insertRelation(relation: ResourceRelation): Promise<void>;
   listRelations(ref: ResourceRef): Promise<ResourceRelation[]>;
   describe?(ref: ResourceRef): Promise<ResourceDetail | null>;
@@ -102,10 +104,14 @@ export class ResourceService {
   }
 }
 
-interface SqlExecutor {
+export interface SqlExecutor {
   execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>;
 }
 
+/** A non-generic view of an executor, so a held connection can be passed in. */
+export interface SqlQueryExecutor {
+  execute(sql: string, values?: unknown[]): Promise<[unknown, unknown?]>;
+}
 interface SqlPool extends SqlExecutor {
   getConnection(): Promise<TransactionExecutor>;
 }
@@ -121,10 +127,13 @@ export class MysqlResourceRelationStore implements ResourceRelationStore {
   constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
 
   async exists(ref: ResourceRef): Promise<boolean> {
-    const pool = this.pool();
+    return this.existsOn(this.pool(), ref);
+  }
+
+  async existsOn(executor: SqlQueryExecutor, ref: ResourceRef): Promise<boolean> {
     const table = resourceTable(ref.type);
-    const [rows] = await pool.execute<Array<{ id: number }>>(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`, [ref.id]);
-    return rows.length > 0;
+    const [rows] = await executor.execute(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`, [ref.id]);
+    return (rows as Array<{ id: number }>).length > 0;
   }
 
   async insertRelation(relation: ResourceRelation): Promise<void> {

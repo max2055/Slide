@@ -75,6 +75,8 @@ export const TriggerEpisodeIdentitySchema = z.strictObject({
   version: VersionNumberSchema,
   body_hash: HashIdSchema,
   scope: TemplateTriggerScopeSchema,
+  /** Runtime isolation (configuration revision, item and dimensions); omitted by legacy callers. */
+  context_hash: HashIdSchema.optional(),
 });
 export type TriggerEpisodeIdentity = z.infer<typeof TriggerEpisodeIdentitySchema>;
 
@@ -168,6 +170,7 @@ export const triggerEpisodeIdentityHash = (identity: TriggerEpisodeIdentity): Ha
     version: identity.version,
     body_hash: identity.body_hash,
     scope: identity.scope,
+    ...(identity.context_hash ? { context_hash: identity.context_hash } : {}),
   });
 
 const episodeIdOf = (identityHash: HashId, occurrence: number): HashId =>

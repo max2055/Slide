@@ -18,6 +18,7 @@
 import { z } from 'zod';
 import type { PackageRegistry } from '../packages/model.js';
 import type { ResourceBindingCandidate, HashId } from '../../contracts/metrics/templates.js';
+import type { Capability } from '../../contracts/metrics/index.js';
 import { refKey } from '../policy/model.js';
 import type { TemplateVersionReadPort } from './preflight.js';
 import type { TemplateCollectionPlan } from './plan.js';
@@ -78,6 +79,8 @@ export interface BindingApplicationIntent {
     applied_revision: number | null;
     previous_resolution_identity: HashId | null;
   };
+  /** Trusted capability facts; a first binding persists them with the new row. */
+  capabilities: Capability[];
   operation: {
     key: string;
     caller_key: string;
@@ -234,6 +237,7 @@ function buildIntent(decision: PreparedTemplateBindingMutation): BindingApplicat
       applied_revision: previous?.applied_revision ?? null,
       previous_resolution_identity: previous?.resolution_identity ?? null,
     },
+    capabilities: structuredClone(decision.capabilities),
     operation: {
       key: decision.operation.key,
       caller_key: decision.operation.caller_key,

@@ -15,6 +15,7 @@ import { alertEventService } from './alert-event-service';
 import { dbConnection } from './db-connection';
 import { serverAlertEvaluator } from './server-alert-evaluator';
 import { networkDeviceAlertEvaluator } from './network-devices/network-device-alert-evaluator.js';
+import { evaluateTemplateClock } from './metrics/triggers/runtime.js';
 
 interface AlertEngineStatus {
   running: boolean;
@@ -98,6 +99,8 @@ class AlertEngine {
   async evaluateAndCreateAlerts(): Promise<{ evaluated: number; triggered: number }> {
     this.evaluatedCount++;
     assertWorkflowActive();
+    const pool = dbConnection.getPool();
+    if (pool) await evaluateTemplateClock(pool);
     const triggeredAlerts = await evaluateAllRules();
 
     // 更新统计

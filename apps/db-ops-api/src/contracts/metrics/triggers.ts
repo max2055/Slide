@@ -3,13 +3,9 @@
  * restricted comparison AST, the resolved rule candidate and the immutable
  * resource rule snapshot.
  *
- * This file is **unmounted and unexported**: `contracts/metrics/index.ts`,
- * `public-api.ts` and every runtime consumer ignore it. It adds no route, no
- * store, no event/outbox writer, no scheduler and no DDL. It does not redefine
- * the accepted template aggregate (`templates.ts` keeps
- * `TemplateTriggerRefSchema` as the unresolved `item:<id>` reference) and it
- * does not replace `AlertPolicy`/`ConsumerAlertPolicy` or the existing alert
- * evaluator; see `docs/slide/development/MAX-239/template-trigger-snapshot.md`.
+ * Published rules and event evidence are exposed through the metrics public API.
+ * The runtime adapter mounts these contracts on the existing formal writer and
+ * alert/event path; application evidence remains separately fenced.
  *
  * Why a separate body at all: the fixed template version only names
  * `(rule_id, version, scope)`. A trigger cannot be evaluated from that reference,
@@ -28,7 +24,7 @@
  * bounded windows/depth/nodes only.
  */
 import { z } from 'zod';
-import { MetricRefSchema, ResourceTypeSchema, UnitSchema } from './definitions.js';
+import { MetricRefSchema, ResourceTypeSchema, TimestampSchema, UnitSchema } from './definitions.js';
 import { ScalarValueSchema, QualitySchema, AccuracySchema } from './observations.js';
 import {
   HashIdSchema, ItemIdSchema, ParameterNameSchema, ParameterValueSchema, RevisionSchema,
@@ -178,6 +174,18 @@ export const TriggerRuleVersionSchema = z.strictObject({
 });
 export type TriggerRuleVersion = z.infer<typeof TriggerRuleVersionSchema>;
 
+/** Resource UI publishes a new immutable template version; identities are server-derived. */
+export const TemplateTriggerPublishSchema = z.strictObject({
+  expected_version: VersionNumberSchema,
+  expected_content_hash: HashIdSchema,
+  item_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/),
+  parameters: TemplateParametersSchema,
+  problem: TriggerExpressionSchema,
+  recovery: TriggerExpressionSchema,
+  quality: TriggerQualityPolicySchema,
+  clock: TriggerClockPolicySchema,
+});
+
 /** One parameter after resolution; `source` says which input decided it. */
 export const ResolvedTriggerParameterSchema = z.strictObject({
   name: ParameterNameSchema,
@@ -310,3 +318,23 @@ export const TriggerSampleSchema = z.strictObject({
 export type TriggerSample = z.infer<typeof TriggerSampleSchema>;
 
 export type TriggerRuleVersionInput = z.input<typeof TriggerRuleVersionSchema>;
+
+
+/** Persisted event evidence DTO. Source sample time is distinct from evaluation time. */
+const EpisodeEvidenceSchema = z.strictObject({
+  business:z.enum(['healthy','problem','unknown']), quality:z.enum(['good','partial','unknown']),
+  reason:z.string(),nodata:z.boolean(),value:z.number().nullable(),
+  dimensions:z.record(z.string(),z.string()).nullable(),at:TimestampSchema,
+});
+export const TemplateTriggerEpisodeSchema = z.strictObject({
+  episode_id:HashIdSchema,identity_hash:HashIdSchema,resource:TriggerResourceSchema,
+  rule_id:RuleIdSchema,version:VersionNumberSchema,body_hash:HashIdSchema,scope:TemplateTriggerScopeSchema,
+  state:z.enum(['open','closed']),occurrence:z.number().int().nonnegative(),opened_at:TimestampSchema,
+  closed_at:TimestampSchema.nullable(),recovery_count:z.union([z.literal(0),z.literal(1)]),
+  last:EpisodeEvidenceSchema,
+  opened:z.strictObject({item:TriggerItemIdentitySchema,metric:MetricRefSchema,value:z.number().nullable(),reason:z.string(),at:TimestampSchema}),
+  unknown_segments:z.array(z.strictObject({from:TimestampSchema,to:TimestampSchema.nullable(),reason:z.string()})),
+  unknown_open_from:TimestampSchema.nullable(),
+});
+export const TemplateTriggerOpeningSchema = z.strictObject({sample_ids:z.array(z.string()),attempt_ids:z.array(z.string()),
+  unit:UnitSchema,dimensions:z.record(z.string(),z.string()),samples:z.array(TriggerSampleSchema.extend({id:z.string()}))});
