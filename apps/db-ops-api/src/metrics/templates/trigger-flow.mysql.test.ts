@@ -611,7 +611,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       });
       expect(result.status, JSON.stringify(result.data)).toBe(200);
     }
-    const tick = async (value: number|null, at: number, key: string) => {
+    const tick = async (value: number|null, at: number, key: string, expected = 'completed') => {
       controlledValue = value;
       clock = at;
       expect(
@@ -624,7 +624,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       ).toBe(200);
       await drain();
       const result = await call('GET', `/api/metrics/template-bindings/instance/${unboundId}/collect/${key}`);
-      expect(result.data.state, JSON.stringify(result.data)).toBe('completed');
+      expect(result.data.state, JSON.stringify(result.data)).toBe(expected);
     };
     const start = Date.now() + 1000;
     await tick(60, start, 'window-first');
@@ -655,5 +655,19 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     await tick(60, t + 210000, 'window-gap');
     episodes = await rows();
     expect(episodes[0]).toMatchObject({ state: 'open', last: { quality: 'unknown' }, recovery_count: 0 });
+    // Controlled malformed producer output enters the real normal writer. The
+    // storage/quality fences must reject it atomically rather than recover.
+    const normalWrite=(scheduleStore as any).writeTemplateResults.bind(scheduleStore);
+    for(const boundary of ['unit','quality']) {
+      vi.spyOn(scheduleStore as any,'writeTemplateResults').mockImplementationOnce(async(...args:any[])=>{
+        for(const release of args[2])for(const item of release.result.observations) {
+          if(boundary==='unit')item.observation.unit='%';
+          else item.observation.quality={status:'invalid',reason:'source_error'};
+        }
+        return normalWrite(...args);
+      });
+      await tick(60,t+(boundary==='unit'?240000:270000),'window-invalid-'+boundary,'failed');
+      expect((await rows())[0]).toMatchObject({state:'open',recovery_count:0});
+    }
   }, 120000);
 });
