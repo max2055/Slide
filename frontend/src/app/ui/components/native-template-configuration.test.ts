@@ -92,6 +92,43 @@ const jsonOf = (suffix: string) => {
   return call ? JSON.parse(String((call[1] as RequestInit).body)) : null;
 };
 
+it('previews selected published pins without applying and keeps the draft on cancel', async () => {
+  const pin = binding().template_pins[0];
+  authFetch.mockImplementation(routes({ '/unbind-preview': () => ({ ok: true, json: async () => ({
+    resource: { type: 'instance', id: 1 }, revision: 5, resolution_identity: hash('a'), removed_pins: [pin], remaining_pins: [],
+    removed_items: [{ pin, template_id: pin.template_id, item_id: 'uptime', item_version: 1,
+      canonical_metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', dimensions: {},
+      snapshot_decision: 'disabled', loses_provider: true, remaining_providers: [] }], triggers: [], configuration: { group_id: null, overrides: {} },
+    history: 'retained', rule_effect: 'references_only_unknown',
+  }) }) }));
+  const element = await mount();
+  const draft = JSON.stringify(element.requestBody());
+  element.unbindPins = [pin.template_id];
+  await element.inspectUnbind(); await element.updateComplete;
+  expect(jsonOf('/unbind-preview')).toEqual({ expected_revision: 5, expected_identity: hash('a'), remove_pins: [pin] });
+  expect(element.shadowRoot.textContent).toContain('没有剩余固定模板引用此指标');
+  expect(element.shadowRoot.textContent).toContain('disabled');
+  const cancel = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('取消预览')) as HTMLButtonElement;
+  cancel.click(); await element.updateComplete;
+  expect(element.unbindImpact).toBeNull();
+  expect(JSON.stringify(element.requestBody())).toBe(draft);
+  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
+});
+
+it('discards a late unbind preview after changing resource or session', async () => {
+  let resolve!: (value: unknown) => void;
+  authFetch.mockImplementation(routes({ '/unbind-preview': () => new Promise(r => { resolve = r; }) }));
+  const element = await mount();
+  element.unbindPins = ['tpl-mysql'];
+  const pending = element.inspectUnbind();
+  element.resourceId = 2; await element.updateComplete;
+  signedIn(8);
+  resolve({ ok: true, json: async () => ({ removed_items: [], remaining_pins: [], triggers: [] }) });
+  await pending; await element.updateComplete;
+  expect(element.unbindImpact).toBeNull();
+  expect(element.unbindError).toBe('');
+});
+
 it('does not preselect a template or a first-row default version', async () => {
   authFetch.mockImplementation(routes());
   const element = await mount();

@@ -7,6 +7,7 @@ import {
   TemplateBindingApplyBodySchema, TemplateBindingApplyResponseSchema, TemplateBindingBodySchema,
   TemplateBindingPreviewSchema, TemplateBindingStatusSchema, TemplateCatalogSchema,
   TemplateCollectRequestSchema, TemplateCollectResponseSchema,
+  TemplateUnbindPreviewRequestSchema, TemplateUnbindPreviewResponseSchema,
   TemplateOperationStateSchema, TemplateProbeResponseSchema, TemplateRepinBodySchema, TemplateRepinResponseSchema,
   TemplateTrialBodySchema, TemplateTrialResponseSchema, TemplateVersionDetailSchema,
 } from './template-bindings.js';
@@ -50,6 +51,8 @@ export const metricPublicSchemas = {
   TemplateTrialResponse: TemplateTrialResponseSchema,
   TemplateBindingApplyResponse: TemplateBindingApplyResponseSchema,
   TemplateBindingRequest: TemplateBindingBodySchema,
+  TemplateUnbindPreviewRequest: TemplateUnbindPreviewRequestSchema,
+  TemplateUnbindPreviewResponse: TemplateUnbindPreviewResponseSchema,
   TemplateTrialRequest: TemplateTrialBodySchema,
   TemplateBindingApplyRequest: TemplateBindingApplyBodySchema,
 };
@@ -113,6 +116,10 @@ export const metricPublicPaths = {
     security: [{ bearerAuth: [] }], parameters,
     description: 'Binding source, pending template plan, application status, effective revision and pins as independent facts. Requires read access to the resource; a failure never becomes "unbound".',
     responses: { '200': response('TemplateBindingStatus'), ...errors } } },
+  '/api/metrics/template-bindings/{type}/{id}/unbind-preview': { post: { operationId: 'previewMetricTemplateUnbind',
+    security: [{ bearerAuth: [] }], parameters, description: 'Read-only impact of removing exact pinned versions; no binding, history or event is modified.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateUnbindPreviewRequest') } } },
+    responses: { '200': response('TemplateUnbindPreviewResponse'), ...errors, '409': { description: 'Binding or pins changed' } } } },
   '/api/metrics/template-bindings/{type}/{id}/operations/{key}': { get: { operationId: 'getMetricTemplateOperation',
     security: [{ bearerAuth: [] }],
     parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],

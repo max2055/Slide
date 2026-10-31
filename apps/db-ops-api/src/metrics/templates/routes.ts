@@ -27,6 +27,7 @@ import { RefSchema, rule } from '../policy/model.js';
 import {
   TemplateBindingApplyBodySchema, TemplateCollectRequestSchema, TemplateRepinBodySchema, TemplateTrialBodySchema,
   TemplateBindingBodySchema,
+  TemplateUnbindPreviewRequestSchema,
 } from '../../contracts/metrics/template-bindings.js';
 import { metricJsonSchemas } from '../../contracts/metrics/public-api.js';
 import {
@@ -83,6 +84,7 @@ export const templateBindingService = new TemplateBindingService({
   // Persistence boundaries re-read on the connection already held (receipt
   // writer / re-pin transaction), so no second pool connection is needed.
   reloadOn: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId),
+  reloadOnLocked: (actor, executor) => actorContextService.revalidateActorOn(executor, actor, actor.requestId, true),
 });
 
 /** Manual collection: admission and queries re-read the same live session. */
@@ -241,6 +243,8 @@ export async function registerMetricTemplateRoutes(
       run: (actor, params, body) => service.probe(actor, ref(params), body) },
     { method: 'POST', suffix: '/preview', response: 'TemplateBindingPreview', body: TemplateBindingBodySchema,
       run: (actor, params, body) => service.preview(actor, ref(params), body) },
+    { method: 'POST', suffix: '/unbind-preview', response: 'TemplateUnbindPreviewResponse', body: TemplateUnbindPreviewRequestSchema,
+      run: (actor, params, body) => service.unbindPreview(actor, ref(params), body) },
     { method: 'POST', suffix: '/trial', response: 'TemplateTrialResponse', body: TemplateTrialBodySchema,
       run: (actor, params, body) => service.trial(actor, ref(params), body) },
     { method: 'POST', suffix: '/apply', response: 'TemplateBindingApplyResponse', body: TemplateBindingApplyBodySchema,

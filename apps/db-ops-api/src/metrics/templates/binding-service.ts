@@ -61,6 +61,8 @@ import { MySqlTemplateRepository, type TemplateSqlConnection, type TemplateSqlPo
 import type { TemplateRepository } from './repository.js';
 import { repinTemplateVersion, type RepinResult } from './repin.js';
 import { runPackage, type PackageResult } from '../packages/runner.js';
+import { TemplateUnbindPreviewRequestSchema } from '../../contracts/metrics/template-bindings.js';
+import { analyzeUnbindImpact } from '../bindings/unbind-impact.js';
 
 export type TemplateBindingErrorCode =
   | 'TEMPLATE_BINDING_INPUT_INVALID'
@@ -294,6 +296,7 @@ export interface TemplateBindingDeps {
    * from the pool while a transaction is open. Falls back to `reload`.
    */
   readonly reloadOn?: (actor: ActorContext, executor: Pick<BindingSqlConnection, 'execute'>) => Promise<ActorContext>;
+  readonly reloadOnLocked?: (actor: ActorContext, executor: Pick<BindingSqlConnection, 'execute'>) => Promise<ActorContext>;
   /** The accepted resource relation store; tests inject a controlled boundary. */
   readonly relations?: ResourceRelationStore;
   /** Where a re-pin publishes; defaults to one MySQL transaction on `pool`. */
@@ -524,6 +527,63 @@ export class TemplateBindingService {
       parameters: resolution.templates, releases, items: this.items(resolution), excluded: resolution.excluded,
       budget: plan.budget, plan,
     };
+  }
+
+  /** Read-only impact of removing exact published pins; never changes the binding. */
+  async unbindPreview(actor: ActorContext, ref: Ref, body: unknown) {
+    // The request actor is only an early denial. Do not query resource existence
+    // until after the policy lock and a fresh authorization on that connection.
+    RefSchema.parse(ref);
+    if (!canManageResource(actor, ref)) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
+    const parsed = TemplateUnbindPreviewRequestSchema.safeParse(body);
+    if (!parsed.success) throw new PolicyError('UNBIND_PREVIEW_INPUT_INVALID', 400);
+    const connection = await this.pool().getConnection();
+    let reusable = true;
+    try {
+      await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await connection.beginTransaction();
+      const [lock] = await connection.query<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR SHARE');
+      rule(lock.length === 1, 'TEMPLATE_BINDING_STORE_UNAVAILABLE', 503);
+      const currentActor = this.deps.reloadOnLocked
+        ? await this.deps.reloadOnLocked(actor, connection) : await this.liveOn(actor, connection);
+      await this.assertAccess(currentActor, ref, true, connection);
+      const [rows] = await connection.execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
+      rule(rows.length === 1, 'UNBIND_PREVIEW_STALE', 409);
+      const decoded = decodeBindingPayload(rows[0].payload);
+      rule(decoded.kind === 'template_pending', 'UNBIND_PREVIEW_STALE', 409);
+      if (decoded.kind !== 'template_pending') throw new PolicyError('UNBIND_PREVIEW_STALE', 409);
+      rule(refKey(decoded.binding.resource) === refKey(ref)
+        && decoded.binding.revision === parsed.data.expected_revision
+        && decoded.pending.resolution_identity === parsed.data.expected_identity, 'UNBIND_PREVIEW_STALE', 409);
+      // Pin rows may be retired concurrently outside the policy writer. Lock
+      // each immutable snapshot through the analysis so the answer has one
+      // coherent version view, or fail closed if a row has disappeared.
+      for (const pin of decoded.binding.template_pins) {
+        const [versions] = await connection.execute<RowDataPacket[]>(
+          'SELECT template_id FROM metric_template_versions WHERE template_id = ? AND version = ? FOR SHARE',
+          [pin.template_id, pin.version]);
+        rule(versions.length === 1, 'UNBIND_PREVIEW_VERSION_MISSING', 409);
+      }
+      const result = await analyzeUnbindImpact(decoded.binding, parsed.data.remove_pins,
+        new MySqlTemplateRepository(connectionTemplatePool(connection)));
+      const decision = (entry: { pin: TemplatePin; item_id: string; item_version: number }) => {
+        const matches = (item: { pin: TemplatePin; item_id: string; item_version: number }) =>
+          stable(item.pin) === stable(entry.pin) && item.item_id === entry.item_id && item.item_version === entry.item_version;
+        const excluded = decoded.pending.plan.excluded.find(matches);
+        if (excluded) return excluded.decision;
+        if (decoded.pending.plan.releases.some(release => release.steps.some(step => step.items.some(matches)))) return 'collect' as const;
+        return 'unknown' as const;
+      };
+      const items = result.removed_items.map(item => ({ ...item, snapshot_decision: decision(item),
+        remaining_providers: item.remaining_providers.map(provider => ({ ...provider, snapshot_decision: decision(provider) })) }));
+      await this.assertAccess(await this.liveOn(actor, connection), ref, true, connection);
+      await connection.commit();
+      return { resource: ref, revision: decoded.binding.revision,
+        resolution_identity: decoded.pending.resolution_identity, ...result, removed_items: items };
+    } catch (error) {
+      try { await connection.rollback(); } catch { reusable = false; connection.destroy(); }
+      throw error;
+    } finally { if (reusable) connection.release(); }
   }
 
   /**

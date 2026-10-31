@@ -4,6 +4,7 @@ import {
   type TemplateParameters, type TemplatePin, type TemplateVersion, type VersionNumber,
 } from '../../contracts/metrics/templates.js';
 import { templateContentHash } from '../templates/model.js';
+import { analyzeUnbindImpact } from './unbind-impact.js';
 import {
   BindingPreflightError, preflightResourceBinding, type TemplateVersionReadPort,
 } from './preflight.js';
@@ -138,6 +139,29 @@ async function failure(promise: Promise<unknown>): Promise<BindingPreflightError
 }
 
 const metric = (id: string, semantic_version = '1.0.0') => ({ id, semantic_version });
+
+it('previews removal by canonical identity while retaining another provider and trigger references', async () => {
+  const a = templateVersion({ template_id: 'tpl-a', items: [item({ template_id: 'tpl-a', item_id: 'cpu', metric: metric('mysql.threads_running'), release: release('pkg-a') })],
+    triggers: [{ rule_id: 'rule-a', scope: 'item:cpu', version: 1 }] });
+  const b = templateVersion({ template_id: 'tpl-b', items: [item({ template_id: 'tpl-b', item_id: 'other-name', metric: metric('mysql.threads_running'), release: release('pkg-b') })] });
+  const pins = [pin('tpl-a', 1, a.content_hash), pin('tpl-b', 1, b.content_hash)];
+  const result = await analyzeUnbindImpact(binding({ template_pins: pins }), [pins[0]], portOf([a, b]).port);
+  expect(result.removed_items[0]).toMatchObject({ item_id: 'cpu', loses_provider: false, remaining_providers: [{ template_id: 'tpl-b' }] });
+  expect(result.removed_items[0].remaining_providers[0]).toMatchObject({ unit: '1', dimensions: {} });
+  expect(result.triggers).toMatchObject([{ template_id: 'tpl-a', rule_id: 'rule-a', scope: 'item:cpu' }]);
+  expect(result.remaining_pins).toEqual([pins[1]]);
+  const noChange = await analyzeUnbindImpact(binding({ template_pins: pins }), [], portOf([a, b]).port);
+  expect(noChange.removed_items).toEqual([]);
+  expect(noChange.remaining_pins).toEqual(pins);
+  const all = await analyzeUnbindImpact(binding({ template_pins: pins }), pins, portOf([a, b]).port);
+  expect(all.remaining_pins).toEqual([]);
+  expect(all.removed_items.every(entry => entry.loses_provider)).toBe(true);
+  await expect(analyzeUnbindImpact(binding({ template_pins: pins }), [pin('tpl-other', 1, a.content_hash)], portOf([a, b]).port))
+    .rejects.toThrow('UNBIND_PREVIEW_PIN_CONFLICT');
+  await expect(analyzeUnbindImpact(binding({ template_pins: pins }), [pins[0], pins[0]], portOf([a, b]).port))
+    .rejects.toThrow('UNBIND_PREVIEW_PIN_CONFLICT');
+  await expect(analyzeUnbindImpact(binding({ template_pins: pins }), pins, portOf([a]).port)).rejects.toThrow('PREFLIGHT_VERSION_MISSING');
+});
 
 describe('MAX-238 B1 fixed template pin preflight', () => {
   it('resolves multiple pins keeping each item, release and parameter set under its own template', async () => {

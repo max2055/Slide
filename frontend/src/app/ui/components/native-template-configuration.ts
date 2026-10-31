@@ -14,12 +14,12 @@ import { collectionLayoutStyles } from './collection-layout-styles.js';
 import { showToast } from './app-toast-container.js';
 import {
   applyTemplateBinding, collectTemplateBindingNow, getMetricTemplateVersion, listMetricTemplates, metricError, metricRequest,
-  probeTemplateBinding, previewTemplateBinding, readCollectionStatus, readTemplateBinding, readTemplateCollectTask,
+  probeTemplateBinding, previewTemplateBinding, previewTemplateUnbind, readCollectionStatus, readTemplateBinding, readTemplateCollectTask,
   readTemplateOperation,
   repinMetricTemplate, statusLabel, trialTemplateBinding, MetricRequestError,
   type CollectionStatus, type PolicyGroup, type TemplateApplyResult, type TemplateBindingStatus,
   type TemplateCatalogPage, type TemplateCollectResult, type TemplatePin, type TemplatePreview, type TemplateRepinResult,
-  type TemplateSummary,
+  type TemplateSummary, type TemplateUnbindImpact,
   type TemplateTrial, type TemplateTrialSample, type TemplateVersionDetail,
 } from './metric-api.js';
 import { type Overrides } from './metric-policy-fields.js';
@@ -218,6 +218,11 @@ export class NativeTemplateConfiguration extends LitElement {
 
   // One exact pin per selected template; versions are published/retired only.
   @state() private selected: TemplatePin[] = [];
+  @state() private unbindPins: string[] = [];
+  @state() private unbindImpact: TemplateUnbindImpact | null = null;
+  @state() private unbindError = '';
+  @state() private unbindBusy = false;
+  private unbindSequence = 0;
   @state() private names: Record<string, string> = {};
   @state() private details: Record<string, TemplateVersionDetail> = {};
   @state() private detailError = '';
@@ -274,6 +279,7 @@ export class NativeTemplateConfiguration extends LitElement {
     clearTimeout(this.catalogTimer); clearTimeout(this.groupTimer);
     this.catalogGeneration++; this.groupVersion++; this.generation++; this.draftVersion++; this.stopPolling();
     this.stopCollectPolling(); this.collectPendingKey = null; this.collectResult = null; this.collectBusy = false;
+    this.unbindSequence++; this.unbindPins = []; this.unbindImpact = null; this.unbindError = ''; this.unbindBusy = false;
     this.binding = null; this.collection = null; this.canManage = false; this.busy = false;
     this.preview = null; this.trial = null; this.selected = [];
     // Intents are keyed by the current principal + resource: a session switch
@@ -349,6 +355,7 @@ export class NativeTemplateConfiguration extends LitElement {
     this.draftVersion++;
     this.binding = null; this.collection = null; this.canManage = false; this.loaded = false;
     this.preview = null; this.previewStale = false; this.previewIssue = null; this.trial = null;
+    this.unbindSequence++; this.unbindPins = []; this.unbindImpact = null; this.unbindError = ''; this.unbindBusy = false;
     this.selected = []; this.settings = {}; this.parameters = {}; this.metricToggles = {}; this.groupId = '';
     this.detailError = ''; this.error = ''; this.statusError = ''; this.step = 0; this.dirty = false;
     // A resource switch closes the re-pin dialog: its result belongs to the old resource.
@@ -571,12 +578,62 @@ export class NativeTemplateConfiguration extends LitElement {
       overrides: this.overrides(), group_id: this.groupId || null };
   }
   private invalidate(keepPreview: boolean) {
+    this.unbindSequence++; this.unbindImpact = null; this.unbindBusy = false;
     this.draftVersion++;
     this.trial = null; this.step = 0; this.applyResult = null; this.dirty = true; this.error = '';
     if (!keepPreview) { this.preview = null; this.previewStale = false; this.previewIssue = null; }
     else if (this.preview) this.previewStale = true;
     // An unconfirmed application is not a draft: editing, discarding or reloading
     // never clears it. Only a journal answer does (see `lookup`).
+  }
+  private async inspectUnbind() {
+    const binding = this.binding, principal = sessionPrincipal(), resource = this.refKey(), generation = this.generation;
+    if (!principal || !this.canWrite() || binding?.source !== 'template' || !binding.revision || !binding.pending) return;
+    let session: string | null;
+    try { session = localStorage.getItem('token'); } catch { return; }
+    const selection = [...this.unbindPins];
+    const sequence = ++this.unbindSequence;
+    const draft = JSON.stringify(canonical(this.requestBody()));
+    const current = () => {
+      let sameSession = false;
+      try { sameSession = localStorage.getItem('token') === session; } catch { /* unavailable storage is not the original session */ }
+      return this.isConnected && sequence === this.unbindSequence && generation === this.generation && this.refKey() === resource
+        && sessionPrincipal() === principal && sameSession && JSON.stringify(canonical(this.requestBody())) === draft
+        && JSON.stringify(this.unbindPins) === JSON.stringify(selection) && this.binding?.revision === binding.revision
+        && this.binding?.pending?.resolution_identity === binding.pending?.resolution_identity;
+    };
+    this.unbindBusy = true; this.unbindImpact = null; this.unbindError = '';
+    try {
+      const result = await previewTemplateUnbind(this.resourceType, this.resourceId, {
+        expected_revision: binding.revision, expected_identity: binding.pending.resolution_identity,
+        remove_pins: binding.template_pins.filter(pin => selection.includes(pin.template_id)),
+      });
+      if (current()) this.unbindImpact = result;
+    } catch (error) { if (current()) this.unbindError = nativeError(error); }
+    finally { if (current()) this.unbindBusy = false; }
+  }
+  private renderUnbindImpact() {
+    const binding = this.binding, impact = this.unbindImpact;
+    if (binding?.source !== 'template' || !binding.pending) return nothing;
+    return html`<app-card><h2>预览移除模板的影响</h2>
+      <p>只分析当前已发布版本，不执行解绑；历史数据默认保留。</p>
+      ${binding.template_pins.map(pin => html`<label><input type="checkbox" .checked=${this.unbindPins.includes(pin.template_id)}
+        .disabled=${!this.canWrite() || this.unbindBusy} @change=${(event: Event) => {
+          this.unbindPins = (event.target as HTMLInputElement).checked ? [...this.unbindPins, pin.template_id]
+            : this.unbindPins.filter(id => id !== pin.template_id); this.unbindImpact = null;
+        }}> ${this.names[pin.template_id] ?? pin.template_id} v${pin.version} · ${pin.content_hash.slice(0, 15)}</label>`)}
+      <div class="actions"><button class="btn" .disabled=${!this.canWrite() || this.unbindBusy} @click=${() => void this.inspectUnbind()}>查看影响</button>
+        <button class="btn" @click=${() => { this.unbindSequence++; this.unbindPins = []; this.unbindImpact = null; this.unbindError = ''; this.unbindBusy = false; }}>取消预览</button></div>
+      ${this.unbindError ? html`<p role="alert">${this.unbindError} 请重新加载后预览。</p>` : nothing}
+      ${impact ? html`<div role="status"><p>发布版本 ${impact.revision}；剩余模板 ${impact.remaining_pins.length} 个；历史保留。</p>
+        <p>选中版本：${impact.removed_pins.map(pin => `${pin.template_id} v${pin.version} (${pin.content_hash})`).join('；') || '无'}</p>
+        <p>剩余来源：${impact.remaining_pins.map(pin => `${pin.template_id} v${pin.version} (${pin.content_hash})`).join('；') || '无'}</p>
+        ${impact.removed_items.length ? html`<ul>${impact.removed_items.map(item => html`<li>${item.template_id} / ${item.item_id}：${item.canonical_metric.id}@${item.canonical_metric.semantic_version} · 单位 ${item.unit} · 维度 ${JSON.stringify(item.dimensions)} · 绑定快照决策 ${item.snapshot_decision} · ${item.loses_provider ? '没有剩余固定模板引用此指标' : `其他固定模板引用：${item.remaining_providers.map(p => `${p.template_id}/${p.item_id}（单位 ${p.unit}，维度 ${JSON.stringify(p.dimensions)}，快照决策 ${p.snapshot_decision}）`).join('、')}`}</li>`)}</ul>` : html`<p>没有选中移除的监控项。</p>`}
+        <p>这里只比较固定版本中的指标引用，决策来自该绑定的发布快照；具体序列及当前能力是否保持未知，需结合当前显式设置与实际能力判断。</p>
+        <p>已知触发器引用 ${impact.triggers.length} 个；仅列引用，实际规则和事件影响未知，未执行停止或恢复。</p>
+        <ul>${impact.triggers.map(trigger => html`<li>${trigger.template_id} / ${trigger.rule_id}@${trigger.version} · ${trigger.scope}</li>`)}</ul>
+        <details><summary>当前显式设置与策略组</summary><pre>${JSON.stringify(impact.configuration, null, 2)}</pre></details></div>` : nothing}
+    </app-card>`;
   }
   private changeSettings(overrides: Overrides) {
     this.settings = overrides;
@@ -1349,6 +1406,7 @@ export class NativeTemplateConfiguration extends LitElement {
       ${this.error && !this.previewIssue ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
       ${this.loaded ? html`
         ${this.renderCatalog()}
+        ${this.renderUnbindImpact()}
         ${this.selected.length ? this.renderOverrides() : nothing}
         <div class="actions">
           <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.selected.length}

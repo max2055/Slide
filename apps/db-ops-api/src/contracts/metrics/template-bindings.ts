@@ -302,6 +302,28 @@ export const TemplateTrialBodySchema = TemplateBindingBodySchema.extend({ receip
 export const TemplateBindingApplyBodySchema = TemplateTrialBodySchema.extend({ caller_key: z.string() });
 export const TemplateRepinBodySchema = z.strictObject({ resource: RefSchema });
 
+export const TemplateUnbindPreviewRequestSchema = z.strictObject({
+  expected_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  expected_identity: HashIdSchema,
+  remove_pins: z.array(TemplatePinSchema).max(256),
+});
+export const TemplateUnbindPreviewResponseSchema = z.strictObject({
+  resource: RefSchema, revision: z.number().int().positive(), resolution_identity: HashIdSchema,
+  removed_pins: z.array(TemplatePinSchema), remaining_pins: z.array(TemplatePinSchema),
+  removed_items: z.array(z.strictObject({ pin: TemplatePinSchema, template_id: z.string(), item_id: z.string(),
+    item_version: VersionNumberSchema, canonical_metric: MetricRefOutSchema, unit: z.string(),
+    dimensions: z.looseObject({}), snapshot_decision: z.enum(['collect', 'disabled', 'unsupported', 'capability_unknown', 'unknown']),
+    loses_provider: z.boolean(), remaining_providers: z.array(z.strictObject({
+      template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema, pin: TemplatePinSchema,
+      unit: z.string(), dimensions: z.looseObject({}),
+      snapshot_decision: z.enum(['collect', 'disabled', 'unsupported', 'capability_unknown', 'unknown']),
+    })) })),
+  triggers: z.array(z.strictObject({ pin: TemplatePinSchema, template_id: z.string(), rule_id: z.string(),
+    scope: z.string(), version: VersionNumberSchema })),
+  configuration: TemplateBindingConfigurationSchema, history: z.literal('retained'),
+  rule_effect: z.literal('references_only_unknown'),
+});
+
 /* --- immediate collection ------------------------------------------------- */
 
 const CollectStateSchema = z.enum(['accepted', 'running', 'completed', 'failed', 'cancelled', 'unknown']);

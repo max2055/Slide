@@ -33,6 +33,7 @@ export class MemoryPolicyStore implements PolicyStore {
         groups: async () => structuredClone([...groups.values()]),
         group: async id => structuredClone(groups.get(id) ?? null),
         members: async id => structuredClone([...bindings.values()].filter(v => v.binding.group_id === id)),
+        memberRefs: async id => structuredClone([...bindings.values()].filter(v => v.binding.group_id === id).map(v => v.binding.resource)),
         binding: async ref => structuredClone(bindings.get(refKey(ref)) ?? null),
         capabilities: async ref => structuredClone(caps.get(refKey(ref)) ?? []),
         saveCapabilities: async (ref, values) => { caps.set(refKey(ref), structuredClone(values)); },

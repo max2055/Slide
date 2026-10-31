@@ -27492,6 +27492,409 @@
         ],
         "type": "object"
       },
+      "TemplateUnbindPreviewRequest": {
+        "$id": "TemplateUnbindPreviewRequest",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_identity": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "expected_revision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "remove_pins": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content_hash": {
+                  "pattern": "^sha256:[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "template_id": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "template_id",
+                "version",
+                "content_hash"
+              ],
+              "type": "object"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "expected_identity",
+          "remove_pins"
+        ],
+        "type": "object"
+      },
+      "TemplateUnbindPreviewResponse": {
+        "$id": "TemplateUnbindPreviewResponse",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "additionalProperties": false,
+            "properties": {
+              "group_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "overrides": {
+                "additionalProperties": {},
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "required": [
+              "overrides",
+              "group_id"
+            ],
+            "type": "object"
+          },
+          "history": {
+            "const": "retained",
+            "type": "string"
+          },
+          "remaining_pins": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content_hash": {
+                  "pattern": "^sha256:[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "template_id": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "template_id",
+                "version",
+                "content_hash"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "removed_items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "canonical_metric": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "semantic_version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "semantic_version"
+                  ],
+                  "type": "object"
+                },
+                "dimensions": {
+                  "additionalProperties": {},
+                  "properties": {},
+                  "type": "object"
+                },
+                "item_id": {
+                  "type": "string"
+                },
+                "item_version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647,
+                  "type": "integer"
+                },
+                "loses_provider": {
+                  "type": "boolean"
+                },
+                "pin": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "content_hash": {
+                      "pattern": "^sha256:[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "template_id": {
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                      "type": "string"
+                    },
+                    "version": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 2147483647,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "template_id",
+                    "version",
+                    "content_hash"
+                  ],
+                  "type": "object"
+                },
+                "remaining_providers": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dimensions": {
+                        "additionalProperties": {},
+                        "properties": {},
+                        "type": "object"
+                      },
+                      "item_id": {
+                        "type": "string"
+                      },
+                      "item_version": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 2147483647,
+                        "type": "integer"
+                      },
+                      "pin": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "content_hash": {
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "template_id": {
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                            "type": "string"
+                          },
+                          "version": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 2147483647,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "template_id",
+                          "version",
+                          "content_hash"
+                        ],
+                        "type": "object"
+                      },
+                      "snapshot_decision": {
+                        "enum": [
+                          "collect",
+                          "disabled",
+                          "unsupported",
+                          "capability_unknown",
+                          "unknown"
+                        ],
+                        "type": "string"
+                      },
+                      "template_id": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "template_id",
+                      "item_id",
+                      "item_version",
+                      "pin",
+                      "unit",
+                      "dimensions",
+                      "snapshot_decision"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "snapshot_decision": {
+                  "enum": [
+                    "collect",
+                    "disabled",
+                    "unsupported",
+                    "capability_unknown",
+                    "unknown"
+                  ],
+                  "type": "string"
+                },
+                "template_id": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pin",
+                "template_id",
+                "item_id",
+                "item_version",
+                "canonical_metric",
+                "unit",
+                "dimensions",
+                "snapshot_decision",
+                "loses_provider",
+                "remaining_providers"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "removed_pins": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "content_hash": {
+                  "pattern": "^sha256:[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "template_id": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "template_id",
+                "version",
+                "content_hash"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "resolution_identity": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "instance",
+                  "server",
+                  "network_device"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "rule_effect": {
+            "const": "references_only_unknown",
+            "type": "string"
+          },
+          "triggers": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "pin": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "content_hash": {
+                      "pattern": "^sha256:[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    "template_id": {
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                      "type": "string"
+                    },
+                    "version": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 2147483647,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "template_id",
+                    "version",
+                    "content_hash"
+                  ],
+                  "type": "object"
+                },
+                "rule_id": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "template_id": {
+                  "type": "string"
+                },
+                "version": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "pin",
+                "template_id",
+                "rule_id",
+                "scope",
+                "version"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "resource",
+          "revision",
+          "resolution_identity",
+          "removed_pins",
+          "remaining_pins",
+          "removed_items",
+          "triggers",
+          "configuration",
+          "history",
+          "rule_effect"
+        ],
+        "type": "object"
+      },
       "TemplateVersionDetail": {
         "$id": "TemplateVersionDetail",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -31954,6 +32357,81 @@
           },
           "422": {
             "description": "Not executable or trial failed"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/metrics/template-bindings/{type}/{id}/unbind-preview": {
+      "post": {
+        "description": "Read-only impact of removing exact pinned versions; no binding, history or event is modified.",
+        "operationId": "previewMetricTemplateUnbind",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateUnbindPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateUnbindPreviewResponse"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "409": {
+            "description": "Binding or pins changed"
           },
           "503": {
             "description": "Configuration facts unavailable"

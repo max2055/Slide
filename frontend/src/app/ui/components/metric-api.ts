@@ -183,6 +183,17 @@ export interface TemplatePreview {
   budget: { estimated_series_upper_bound: number; max_series_per_resource: number; requests_per_hour_estimate: number };
   plan: unknown;
 }
+export interface TemplateUnbindImpact {
+  resource: { type: string; id: number }; revision: number; resolution_identity: string;
+  removed_pins: TemplatePin[]; remaining_pins: TemplatePin[];
+  removed_items: Array<{ pin: TemplatePin; template_id: string; item_id: string; item_version: number;
+    canonical_metric: { id: string; semantic_version: string }; unit: string; dimensions: Record<string, string>;
+    snapshot_decision: string; loses_provider: boolean; remaining_providers: Array<{ template_id: string; item_id: string; item_version: number; pin: TemplatePin;
+      unit: string; dimensions: Record<string, string>; snapshot_decision: string }> }>;
+  triggers: Array<{ template_id: string; rule_id: string; scope: string; version: number; pin: TemplatePin }>;
+  configuration: { group_id: string | null; overrides: Record<string, unknown> };
+  history: 'retained'; rule_effect: 'references_only_unknown';
+}
 export interface TemplateProbeCapability {
   resource_id: string; metric: { id: string; semantic_version: string };
   status: 'supported' | 'unsupported' | 'unknown'; method: 'sql' | 'ssh' | 'snmp' | 'derived';
@@ -266,6 +277,9 @@ export const probeTemplateBinding = (type: string, id: number, body: TemplateBin
   metricRequest<TemplateProbe>(`template-bindings/${type}/${id}/probe`, body);
 export const previewTemplateBinding = (type: string, id: number, body: TemplateBindingRequest) =>
   metricRequest<TemplatePreview>(`template-bindings/${type}/${id}/preview`, body);
+export const previewTemplateUnbind = (type: string, id: number,
+  body: { expected_revision: number; expected_identity: string; remove_pins: TemplatePin[] }) =>
+  metricRequest<TemplateUnbindImpact>(`template-bindings/${type}/${id}/unbind-preview`, body);
 export const trialTemplateBinding = (type: string, id: number, body: TemplateBindingRequest & { receipt_id: string }) =>
   metricRequest<TemplateTrial>(`template-bindings/${type}/${id}/trial`, body);
 export const applyTemplateBinding = (type: string, id: number,
