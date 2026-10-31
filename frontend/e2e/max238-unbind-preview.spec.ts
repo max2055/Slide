@@ -98,6 +98,17 @@ test('real handler rejects stale revision, revocation during lock wait and missi
   });
   const before = await (await fetch(`${api}/__test/snapshot`)).json();
   expect((await call(2)).status).toBe(409);
+  const wrongPin = { ...pins[0], content_hash: `sha256:${'f'.repeat(64)}` };
+  const mismatch = await fetch(`${api}/api/metrics/template-bindings/instance/1/unbind-preview`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_revision: 1, expected_identity: identity, remove_pins: [wrongPin] }),
+  });
+  expect(mismatch.status).toBe(409);
+  const wrongResource = await fetch(`${api}/api/metrics/template-bindings/instance/2/unbind-preview`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_revision: 1, expected_identity: identity, remove_pins: [pins[0]] }),
+  });
+  expect(wrongResource.status).toBe(404);
   expect((await fetch(`${api}/__test/hold`, { method: 'POST' })).ok).toBe(true);
   let released = false;
   try {
