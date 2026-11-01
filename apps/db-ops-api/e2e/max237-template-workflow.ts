@@ -105,6 +105,17 @@ try {
  await page.addInitScript((token:string)=>localStorage.setItem('token',token),token);
  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/e2e/fixtures/max237-template-library.html`);
  await expect(page.getByRole('heading',{name:'原生监控模板',exact:true})).toBeVisible();
+ // R1: direct HTTP 403, without a window revocation event, must erase old facts.
+ await expect(page.getByRole('row').filter({hasText:'Huawei'})).toHaveCount(1);
+ const revokeRead=()=>pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=701 AND p.code='metric:view'");
+ const restoreRead=()=>pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 701,id FROM permissions WHERE code='metric:view'");
+ await revokeRead();await page.getByRole('button',{name:'刷新模板库',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('权限已变更');await expect(page.getByRole('row')).toHaveCount(0);
+ await restoreRead();await page.getByRole('button',{name:'刷新模板库',exact:true}).click();await expect(page.getByRole('row').filter({hasText:'Huawei'})).toHaveCount(1);
+ await revokeRead();await page.getByRole('row').filter({hasText:'MySQL by ODBC'}).getByRole('button',{name:'查看与编辑'}).click();
+ await expect(page.getByRole('alert')).toContainText('权限已变更');await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('row')).toHaveCount(0);
+ await restoreRead();await page.getByRole('button',{name:'刷新模板库',exact:true}).click();await expect(page.getByRole('row').filter({hasText:'Huawei'})).toHaveCount(1);
+ passed('R1 direct library/editor read403 removes stale facts; real permission restoration refresh recovers');
  await page.getByRole('combobox',{name:'资源类型',exact:true}).selectOption('network_device');await expect(page.getByRole('row').filter({hasText:'Huawei'})).toHaveCount(1);
  await page.getByRole('combobox',{name:'资源类型',exact:true}).selectOption('');
  await page.getByRole('searchbox',{name:'搜索模板',exact:true}).fill('MySQL');
@@ -127,7 +138,33 @@ try {
  const nameInput=page.getByRole('textbox',{name:/^监控项名称 /}).first();await nameInput.fill('Lit监控项重命名');
  await page.getByRole('button',{name:'保存监控项名称',exact:true}).first().click();await expect(page.getByRole('status')).toContainText('稳定身份保留');
  await page.getByRole('button',{name:'保存草稿',exact:true}).click();await expect(page.getByRole('status')).toContainText('草稿已保存');
+ // R2: uncommitted names survive draft saves, block publish/close, and can be explicitly abandoned.
+ const templateName=page.getByRole('textbox',{name:'模板名称',exact:true});
+ await templateName.fill('待放弃模板名称');await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toBeVisible();
+ await page.getByRole('button',{name:'保存草稿',exact:true}).click();await expect(page.getByRole('status')).toContainText('草稿已保存');
+ await expect(templateName).toHaveValue('待放弃模板名称');await expect(page.getByRole('button',{name:'发布不可变版本',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'关闭详情',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();
+ await page.getByRole('button',{name:'放弃未保存修改',exact:true}).click();await expect(templateName).toHaveValue('真实Lit全流程');
+ await nameInput.fill('待放弃监控项');await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toBeVisible();
+ await page.getByRole('button',{name:'保存草稿',exact:true}).click();await expect(page.getByRole('status')).toContainText('草稿已保存');
+ await expect(nameInput).toHaveValue('待放弃监控项');await expect(page.getByRole('button',{name:'发布不可变版本',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'放弃未保存修改',exact:true}).click();await expect(nameInput).toHaveValue('Lit监控项重命名');
+ await templateName.fill('真实Lit名称已保存');await page.getByRole('button',{name:'保存名称',exact:true}).click();await expect(page.getByRole('status')).toContainText('名称已保存');
+ await expect(page.getByRole('button',{name:'发布不可变版本',exact:true})).toBeEnabled();
+ assert.equal((await api('GET',browserId+'/editor')).body.template.name,'真实Lit名称已保存');
+ await templateName.fill('真实Lit全流程');await page.getByRole('button',{name:'保存名称',exact:true}).click();await expect(page.getByRole('status')).toContainText('名称已保存');
+ passed('R2 template/item input survives save and Escape/close; explicit discard restores stored names; save then publish uses current values');
  await page.getByRole('button',{name:'发布不可变版本',exact:true}).click();await expect(page.getByRole('status')).toContainText('已发布不可变版本');
+ const browserPublished=(await api('GET',browserId+'/editor')).body;
+ assert.equal(browserPublished.versions[0].items[0].display_name,'Lit监控项重命名');
+ // R1 write-only denial removes editability without erasing readable facts; recovery is explicit.
+ await pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=701 AND p.code='metric:manage'");
+ await templateName.fill('撤权不得保存');await page.getByRole('button',{name:'保存名称',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('编辑权限已被拒绝');await expect(templateName).toBeDisabled();
+ assert.equal((await api('GET',browserId+'/editor')).body.template.name,'真实Lit全流程');
+ await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 701,id FROM permissions WHERE code='metric:manage'");
+ await page.getByRole('button',{name:'重新读取草稿（放弃未保存修改）',exact:true}).click();await expect(templateName).toBeEnabled();await expect(templateName).toHaveValue('真实Lit全流程');
+ passed('R1 direct write403 disables editing; backend unchanged; grant restoration and explicit reload recover');
  await page.getByRole('combobox',{name:'查看版本',exact:true}).selectOption('1');await expect(page.getByRole('button',{name:'保存草稿',exact:true})).toBeDisabled();
  await expect(page.getByText('模板发现执行尚未实现；不执行自动发现，不作为成功采集证据。')).toBeVisible();
  await page.getByRole('heading',{name:'真实Lit全流程',exact:true}).scrollIntoViewIfNeeded();
