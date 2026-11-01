@@ -1,3 +1,4 @@
+import type { TransactionConnection } from '../workflows/outbox-service.js';
 import { InvestigationAuthorization } from './authorization.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
@@ -16,7 +17,7 @@ import type { InvestigationSessionBridge } from './session-bridge.js';
 export async function checkEntryEvents(actor: ActorContext, context: InvestigationEntryContext) {
   if (!context.sourceEventIds.length) return;
   const live = await actorContextService.revalidateActor(actor, actor.requestId);
-  if (!hasPermission(new Set(live.permissions), 'alert:view')) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+  if (!hasPermission(new Set(actor.permissions), 'alert:view') || !hasPermission(new Set(live.permissions), 'alert:view')) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
   for (const id of context.sourceEventIds) {
     const event = await alertEventService.getEventById(id);
     if (!event || !await eventResourceAccess(live, event)) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
@@ -29,18 +30,29 @@ export async function checkEntryEvents(actor: ActorContext, context: Investigati
     if (!context.resourceRefs.some(r => r.type === ref.type && r.id === Number(ref.id)))
       throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
   }
+  const final = await actorContextService.revalidateActor(actor, actor.requestId);
+  if (!hasPermission(new Set(actor.permissions), 'alert:view') || !hasPermission(new Set(final.permissions), 'alert:view'))
+    throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
 }
 /** Existing Investigation persistence, no admission, queue, Run or provider. */
 export async function registerInvestigationEntryRoutes(app: FastifyInstance, verify: preHandlerHookHandler,
   bridge: InvestigationSessionBridge, metrics = authenticatedMetricConsumerService, events = checkEntryEvents) {
   const actorKey = (a: ActorContext) => ({ kind: a.principalKind ?? 'user', id: a.userId });
+  async function scopeOn(connection: TransactionConnection, actor: ActorContext, context: InvestigationEntryContext) {
+    await new InvestigationAuthorization().authorize(connection, actor, {
+      id: 'entry-preview', sessionId: 'entry-preview', profileId: 'ops', profileVersion: 1,
+      scopeVersion: 'entry-preview', lifecycle: 'open', version: 1, owner: actorKey(actor), resources: context.resourceRefs,
+    }, 'read');
+    if (context.sourceEventIds.length) {
+      // Current locking read on the SAME transaction: a committed revocation is
+      // seen, and grants remain stable through draft commit / read completion.
+      const live = await actorContextService.revalidateActorOn(connection, actor, actor.requestId, true);
+      if (!hasPermission(new Set(actor.permissions), 'alert:view') || !hasPermission(new Set(live.permissions), 'alert:view'))
+        throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
+    }
+  }
   async function scope(actor: ActorContext, context: InvestigationEntryContext) {
-    await bridge.storeFor(actor).transaction(async connection => {
-      await new InvestigationAuthorization().authorize(connection, actor, {
-        id: 'entry-preview', sessionId: 'entry-preview', profileId: 'ops', profileVersion: 1,
-        scopeVersion: 'entry-preview', lifecycle: 'open', version: 1, owner: actorKey(actor), resources: context.resourceRefs,
-      }, 'read');
-    });
+    await bridge.storeFor(actor).transaction(connection => scopeOn(connection, actor, context));
   }
   async function read(actor: ActorContext, context: InvestigationEntryContext) {
     await scope(actor, context);
@@ -82,9 +94,14 @@ export async function registerInvestigationEntryRoutes(app: FastifyInstance, ver
     await read(actor, context);
     const primary = context.resourceRefs.find(r => r.role === 'primary')!;
     const title = context.sourceEventIds.length ? '事件只读调查' : context.metric ? '指标历史调查' : '资源只读调查';
-    const result = await bridge.create(actor, { title, goal: '核对所选资源与时间窗口内的授权事实，保留证据与缺口。',
-      profileId: 'ops', profileVersion: 1, resources: context.resourceRefs, idempotencyKey: key,
-      context: { subject: { kind: 'resource', resource: { type: primary.type, id: primary.id } }, from: context.from, to: context.to, entry: context } });
+    const result = await bridge.storeFor(actor).transaction(async (connection, append) => {
+      const created = await bridge.createOnConnection(actor, connection, append, { title, goal: '核对所选资源与时间窗口内的授权事实，保留证据与缺口。',
+        profileId: 'ops', profileVersion: 1, resources: context.resourceRefs, idempotencyKey: key,
+        context: { subject: { kind: 'resource', resource: { type: primary.type, id: primary.id } }, from: context.from, to: context.to, entry: context } });
+      // Rejecting here rolls back Session, create-key and investigation together.
+      await scopeOn(connection, actor, context);
+      return created;
+    });
     return { id: result.investigation.id, context, modelInvoked: false };
   });
   route('POST', '/api/investigations/entry-facts', async (r, actor) => {
@@ -99,6 +116,7 @@ export async function registerInvestigationEntryRoutes(app: FastifyInstance, ver
     // Historical absolute window is immutable, even after it leaves retention.
     const context = parseEntryContext(record.context.entry), facts = await read(actor, context);
     await bridge.storeFor(actor).detail(actorKey(actor), r.params.id);
+    await scope(actor, context);
     return { context, facts, modelInvoked: false };
   });
 }

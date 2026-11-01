@@ -215,6 +215,7 @@ test.afterAll(async () => {
   expect(modelCalls).toBe(0);
 });
 
+let ownerStorage: Array<{ name: string; value: string }> | undefined;
 async function login(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem('slide.i18n.locale', 'zh-CN');
@@ -222,14 +223,19 @@ async function login(page: Page) {
     const key = 'slide.control.settings.v1:default';
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ locale: 'zh-CN', themeMode: 'light' }));
   });
+  if (ownerStorage) await page.addInitScript(values => { for (const { name, value } of values) localStorage.setItem(name, value); }, ownerStorage);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${origin}/servers`);
+  if (ownerStorage) { await expect(page.locator('.login-gate')).toHaveCount(0); return; }
   await page.getByLabel('用户名', { exact: true }).fill('max242-owner');
   await page.getByLabel('密码', { exact: true }).fill(password);
-  const authenticated = page.waitForResponse(r => r.url().endsWith('/api/auth/login') && r.status() === 200);
+  const authenticated = page.waitForResponse(r => r.url().endsWith('/api/auth/login'));
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  await authenticated;
+  expect((await authenticated).status()).toBe(200);
   await expect(page.locator('.login-gate')).toHaveCount(0);
+  // Keep only this run's signed session in memory. Every subsequent request still
+  // performs real live JWT validation; do not weaken the production login limiter.
+  ownerStorage = await page.evaluate(() => Object.keys(localStorage).map(name => ({ name, value: localStorage.getItem(name)! })));
 }
 
 const entryContext = (extra = {}) => ({ schemaVersion: 1, resourceRefs: [{ type: 'instance', id: RESOURCE_ID, role: 'primary' }],
@@ -289,6 +295,41 @@ test('real JWT/API/DB browser: exact event/history context, zero-model draft and
   await expect(page).toHaveURL(new RegExp(`investigation=${id}`)); expect(await counts()).toEqual(persisted);
   await writeFile(`${output}/real-flow.json`, JSON.stringify({ context: entryContext(), before, after: persisted,
     source: 'controlled formal observations + production JWT/API/MySQL + browser', modelCalls, testedSource: process.env.MAX242_SOURCE_SHA }, null, 2));
+});
+
+test('R1 real parent rerender and fact refresh preserve a committed save, context and exact return', async ({ page }) => {
+  await login(page);
+  const context = entryContext({ returnTo: `/instance-detail?id=${RESOURCE_ID}&tab=parent-race` });
+  await page.goto(entryUrl(context)); const entry = page.locator('investigation-entry');
+  await expect(entry.locator('table')).toBeVisible();
+  let reached!: () => void, release!: () => void;
+  const committed = new Promise<void>(r => reached = r), gate = new Promise<void>(r => release = r);
+  await page.route('**/api/investigations/drafts', async route => {
+    const response = await route.fetch(); reached(); await gate; await route.fulfill({ response });
+  });
+  const before = await counts();
+  await entry.getByRole('button', { name: '保存调查草案', exact: true }).click();
+  await committed;
+  try {
+    // Use the actual list read/filter path; it re-renders the real parent with a new equal parsed context.
+    const listed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/investigations' && r.request().method() === 'GET');
+    await page.locator('form[aria-label="调查筛选"]').getByRole('button', { name: '筛选', exact: true }).click();
+    await listed;
+    // Also overlap an explicit fact reread with this save; only reads may supersede reads.
+    await entry.evaluate(async (element: any) => { await element.load(); });
+  } finally { release(); }
+  await expect(page).toHaveURL(/investigation=[a-f0-9-]+/, { timeout: 10000 });
+  await expect(page.locator('investigation-entry').getByRole('link', { name: '返回来源' })).toHaveAttribute('href', context.returnTo);
+  await expect(page.getByText('正在保存…', { exact: true })).toHaveCount(0);
+  const after = await counts(); expect(after.investigations).toBe(before.investigations + 1);
+  expect(after.chat_sessions).toBe(before.chat_sessions + 1);
+  for (const key of ['investigation_requests','agent_runs','workflow_jobs']) expect(after[key]).toBe(before[key]);
+  await page.reload(); await expect(page.locator('investigation-entry table')).toBeVisible();
+  expect(await counts()).toEqual(after);
+  await page.locator('investigation-entry').getByRole('link', { name: '返回来源' }).click();
+  await expect(page).toHaveURL(origin + context.returnTo);
+  await writeFile(`${output}/parent-save-race.json`, JSON.stringify({ testedSource: process.env.MAX242_SOURCE_SHA,
+    before, after, parentFilterRerender: true, factRereadWhileSaving: true, exactReturn: context.returnTo, modelCalls }, null, 2));
 });
 
 test('invalid resources/windows/metric identity and event mismatch are rejected without creating', async ({ page }) => {
