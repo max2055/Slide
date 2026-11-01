@@ -1,3 +1,5 @@
+import { investigationEntryHref, type InvestigationEntryContext } from '../controllers/investigation-entry.ts';
+import { inferBasePathFromPathname } from '../navigation.ts';
 import type { MetricHistoryContext as HistoryContext } from '../../../api/generated/public-api.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
@@ -301,6 +303,22 @@ export class SemanticMetrics extends LitElement {
         <details><summary>质量与来源</summary><p>质量原因：${b.quality.reason}</p><pre>${JSON.stringify(b.sources, null, 2)}</pre></details>
       </div>`)}`;
   }
+  private investigationHref(metric?: MetricResult, series?: MetricResult['series'][number], eventId?: number) {
+    const window = this.result?.window;
+    if (!window || !Number.isFinite(Date.parse(window.from)) || !Number.isFinite(Date.parse(window.to))
+      || metric && !metric.definition.semantic_version) return null;
+    const context: InvestigationEntryContext = { schemaVersion: 1,
+      resourceRefs: [{ type: this.resourceType as 'instance' | 'server' | 'network_device', id: this.resourceId, role: 'primary' }],
+      from: window.from, to: window.to,
+      ...(metric && series ? { metric: { id: metric.definition.id, semantic_version: metric.definition.semantic_version! }, dimensions: { ...series.dimensions } } : {}),
+      sourceEventIds: eventId ? [eventId] : [], returnTo: location.pathname + location.search + location.hash };
+    try { return investigationEntryHref(context, inferBasePathFromPathname(location.pathname)); }
+    catch (error) {
+      // Standalone component hosts may have no valid application route prefix.
+      if (error instanceof Error && error.message === 'INVALID_BASE_PATH') return null;
+      throw error;
+    }
+  }
   private renderSeries(metric: MetricResult, series: MetricResult['series'][number]) {
     const key = metric.definition.id + JSON.stringify(series.dimensions);
     const last = series.buckets.at(-1), summary = this.bucketSummary(metric, series);
@@ -453,10 +471,11 @@ export class SemanticMetrics extends LitElement {
       <h3>同窗口问题区段</h3>
       ${!context.events_readable ? html`<p>没有事件查看权限。</p>` : context.events.length ? context.events.map(event => html`
         <details @toggle=${(e: Event) => { if ((e.target as HTMLDetailsElement).open) this.historyEvent = event.event_id; }}><summary>事件 ${event.event_id} · ${localTime(event.from)} — ${event.to ? localTime(event.to) : '尚未恢复'} · 配置${event.config_revision}</summary>
+          ${this.investigationHref(undefined, undefined, event.event_id) ? html`<a class="btn btn-sm" href=${this.investigationHref(undefined, undefined, event.event_id)!}>以此事件打开调查草案</a>` : nothing}
           <p>规则 ${event.rule_id} v${event.version}；未知区段 ${event.unknown_segments.length} 个。问题区段与当前查询窗口相交。</p>
           ${this.historyEvent === event.event_id ? html`<template-event-evidence .eventId=${event.event_id}></template-event-evidence>` : nothing}
         </details>`) : html`<p>此窗口没有可读取的问题区段。</p>`}
-      <p class="hint">维护历史暂不可用，不能据此判断没有维护。暂不支持将此窗口转入 AI 调查；查看这些事实不会调用模型。</p>
+      <p class="hint">维护历史暂不可用，不能据此判断没有维护。调查草案沿用所选绝对窗口与来源；打开与读取事实不会调用模型。</p>
     </details>`;
   }
   private renderRaw(metrics: MetricResult[]) {
@@ -544,8 +563,9 @@ export class SemanticMetrics extends LitElement {
       <span>当前采集状态：${states[m.state] ?? m.state}</span>
       ${m.state !== 'available' ? html`<p class="hint">当前状态不代表历史：以下时间桶按各自窗口显示当时质量，旧值不代表当前健康。</p>` : nothing}
       ${!m.series.length ? html`<p>暂无可用观测</p>` : m.series.map(series => {
-        const b = series.buckets.at(-1);
-        return html`<div>${Object.values(series.dimensions).join(' / ')}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
+        const b = series.buckets.at(-1), investigation = this.investigationHref(m, series);
+        return html`<div>${Object.values(series.dimensions).join(' / ')}
+          ${investigation ? html`<a class="btn btn-sm" href=${investigation}>以此指标维度打开调查草案</a>` : nothing}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
           ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
       })}</div>`)}</div>` : nothing}
     ${this.renderHistoryContext()}

@@ -505,10 +505,10 @@ class ServerDiagnosticService {
     }));
   }
 
-  async analyzeHealth(serverId: number): Promise<Record<string, unknown>> {
+  async analyzeHealth(serverId: number, userActor?: ActorContext): Promise<Record<string, unknown>> {
     const server = await this.dependencies.serverDatabaseService.getServerById(serverId);
     if (!server) throw new Error('SERVER_NOT_FOUND');
-    const metrics = await this.getMetricData(serverId, { maxRows: 100 });
+    const metrics = await this.getMetricData(serverId, { maxRows: 100 }, userActor);
     const byName = new Map(metrics.latest.map((row) => [row.metric_name, row.metric_value]));
     const ageMs = metrics.freshness ? this.dependencies.now().getTime() - new Date(metrics.freshness).getTime() : null;
     const fresh = ageMs !== null && ageMs <= SERVER_DIAGNOSTIC_TTL_MS;

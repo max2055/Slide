@@ -577,3 +577,30 @@ it('keeps the retained observation visible beside an unknown trailing bucket', a
   expect(el.shadowRoot!.textContent).toContain('未知');
   expect(el.shadowRoot!.textContent).toContain('窗口内最后保留观测');
 });
+it('links the exact visible series and absolute result window into a workspace draft', async () => {
+  const data = structuredClone(result) as any;
+  data.window = { from: '2026-10-29T00:00:00.000Z', to: '2026-10-30T00:00:00.000Z' };
+  data.metrics[0].definition.semantic_version = '1.2.0';
+  data.metrics[0].series[0].dimensions = { device: 'sda' };
+  authFetch.mockResolvedValue({ ok: true, json: async () => data });
+  const el = await mount();
+  const link = el.shadowRoot!.querySelector('a[href*="entry="]') as HTMLAnchorElement;
+  const context = JSON.parse(new URL(link.href).searchParams.get('entry')!);
+  expect(context).toMatchObject({ schemaVersion: 1, resourceRefs: [{ type: 'instance', id: 1, role: 'primary' }],
+    ...data.window, metric: { id: 'db.uptime_seconds', semantic_version: '1.2.0' }, dimensions: { device: 'sda' }, sourceEventIds: [] });
+  expect(authFetch.mock.calls.some(call => String(call[0]).includes('investigations'))).toBe(false);
+});
+
+it('keeps metrics readable in a standalone host without an application route prefix', async () => {
+  const original = location.pathname;
+  history.replaceState(null, '', '/e2e/fixtures/detail-observation.html');
+  try {
+    const data = structuredClone(result) as any;
+    data.window = { from: '2026-10-29T00:00:00.000Z', to: '2026-10-30T00:00:00.000Z' };
+    data.metrics[0].definition.semantic_version = '1.0.0';
+    authFetch.mockResolvedValue({ ok: true, json: async () => data });
+    const el = await mount();
+    expect(el.shadowRoot!.textContent).toContain('9007199254740993');
+    expect(el.shadowRoot!.querySelector('a[href*="entry="]')).toBeNull();
+  } finally { history.replaceState(null, '', original); }
+});

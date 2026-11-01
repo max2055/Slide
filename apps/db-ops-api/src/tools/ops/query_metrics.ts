@@ -66,7 +66,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         const from = args.from ?? (args.mode === 'history' ? new Date(Date.parse(to!) - hours * 3600000).toISOString() : undefined);
         const interval = args.interval ?? (args.mode === 'history' ? hours <= 1 ? '1m' : hours <= 6 ? '5m' : hours <= 24 ? '15m' : '1h' : undefined);
         const bucket_ms = interval ? { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 }[interval] : undefined;
-        let data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms });
+        let data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms, history: args.mode === 'history' });
         let selection: { series_index: number; total_series: number } | undefined;
         if (args.series_index !== undefined) {
           const metric = data.metrics[0];

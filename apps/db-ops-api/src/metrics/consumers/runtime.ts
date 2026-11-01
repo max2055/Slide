@@ -1,4 +1,3 @@
-import { templateBindingService } from '../templates/routes.js';
 import { actorContextService } from '../../auth/actor-context.js';
 import { readHistoryContext } from './history-context.js';
 import type { RowDataPacket } from 'mysql2/promise';
@@ -60,7 +59,10 @@ export const internalMetricConsumerService = new MetricConsumerService(policySer
 // Never select between these readers by trusting an actor field from a request.
 export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
   () => new Date().toISOString(), templateQueryPort, actor => actorContextService.revalidateActor(actor, actor.requestId),
-  (actor, ref, revision) => templateBindingService.readConfigurationAt(actor, ref, revision));
+  async (actor, ref, revision) => {
+    const { templateBindingService } = await import('../templates/routes.js');
+    return templateBindingService.readConfigurationAt(actor, ref, revision);
+  });
 
 export const operationalSource = (ref: Ref) => new MysqlFormalMetricStore(pool()).sourceState(ref);
 

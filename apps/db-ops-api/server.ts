@@ -1047,6 +1047,8 @@ async function start() {
     const { instanceId } = request.params as any;
     try {
       const metrics = await resourceMetricRead((request as any).user,{type:'instance',id:Number(instanceId)});
+      const live = await actorContextService.revalidateActor((request as any).user, request.id);
+      if (!hasPermission(new Set(live.permissions), 'metric:view')) return reply.code(403).send({ error: 'POLICY_FORBIDDEN' });
       reply.send(metrics);
     } catch (error: any) {
       if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
@@ -1787,13 +1789,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const { server_id } = request.body as { server_id?: number };
-      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined);
+      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined, (request as any).user);
       if (result.success) {
         reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
       } else {
         reply.code(500).send({ error: result.error || '生成服务器健康报告失败' });
       }
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
@@ -1803,7 +1807,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { format = 'html' } = request.query as { format?: string };
       const safeFormat = (format === 'md' || format === 'markdown') ? 'md' : 'html';
-      const reportData = await serverReportService.generateReport();
+      const reportData = await serverReportService.generateReport(undefined, (request as any).user);
 
       if (safeFormat === 'md') {
         const md = serverReportService.generateMarkdown(reportData);
@@ -1813,6 +1817,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         reply.header('Content-Type', 'text/html; charset=utf-8').send(html);
       }
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
@@ -3048,9 +3054,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const validFormats = ['html', 'pdf', 'json', 'md', 'csv'] as const;
         const safeFormat: string = validFormats.includes(format as any) ? format : 'html';
 
-        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv' });
+        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv', actor: (request as any).user });
         reply.send({ id: report.id, status: report.status, name: report.name });
       } catch (error: any) {
+        if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+        if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
         reply.code(500).send({ error: error.message });
       }
     }

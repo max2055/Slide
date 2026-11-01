@@ -141,7 +141,7 @@ export const analyzeServerHealthTool: AnyAgentTool = {
     const id = serverId(args);
     if (id === null) return { success: false, error: 'serverId 必须为正整数', errorCode: 'INVALID_PARAMETER' };
     try {
-      const data = await serverDiagnosticService.analyzeHealth(id);
+      const data = await serverDiagnosticService.analyzeHealth(id, context!.actor);
       return { success: true, data, summary: `服务器 #${id} 健康状态：${String(data.overall_health)}`, details: { server_id: id, freshness: data.freshness, gaps: data.gaps } };
     } catch (error: any) {
       return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'HEALTH_ANALYSIS_FAILED' };

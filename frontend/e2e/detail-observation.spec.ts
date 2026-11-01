@@ -79,7 +79,7 @@ test.beforeAll(async () => {
   app.get('/api/servers/:id/instances', { preHandler: verify }, async () => ({ instances: [] }));
   app.setNotFoundHandler(async (_request, reply) => reply.send({ items: [], records: [] }));
   const api = await app.listen({ host: '127.0.0.1', port: 0 });
-  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: api }, '/__slide': { target: api } } } });
+  vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'), server: { host: '127.0.0.1', port: 0, strictPort: false, proxy: { '/api': { target: api }, '/__slide': { target: api } } } });
   await vite.listen(); url = `http://127.0.0.1:${(vite.httpServer!.address() as any).port}`;
   await mkdir(output, { recursive: true });
 });

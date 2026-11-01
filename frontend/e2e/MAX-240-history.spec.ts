@@ -1,3 +1,4 @@
+import type { Socket } from 'node:net';
 import { compileTriggerSnapshot } from '../../apps/db-ops-api/src/metrics/triggers/compile.ts';
 import { evaluateTriggerRule } from '../../apps/db-ops-api/src/metrics/triggers/evaluate.ts';
 import { nextTriggerEpisode } from '../../apps/db-ops-api/src/metrics/triggers/episode.ts';
@@ -40,6 +41,8 @@ const password = ` ${randomUUID()} `;
 let adminPool: any, pool: any, backend: ChildProcess, vite: Awaited<ReturnType<typeof createServer>>;
 let origin: string, workspace: string, backendLog = '', modelCalls = 0;
 let apiToken: string | undefined;
+let browserState: Record<string, string> | undefined;
+const frontendSockets = new Set<Socket>();
 let modelGuard: ReturnType<typeof createHttpServer>;
 let from = 0, to = 0, eventId = 0;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -190,10 +193,13 @@ test.beforeAll(async () => {
       '/agent-ws': { target: `http://127.0.0.1:${wsPort}`, ws: true },
     } },
   });
+  vite.httpServer!.on('connection', socket => { frontendSockets.add(socket); socket.once('close', () => frontendSockets.delete(socket)); });
   await vite.listen(); origin = `http://127.0.0.1:${(vite.httpServer!.address() as { port: number }).port}`;
 });
 
 test.afterAll(async () => {
+  for (const socket of frontendSockets) socket.destroy();
+  frontendSockets.clear();
   await vite?.close();
   if (backend && backend.exitCode === null) {
     const stopped = new Promise<void>(done => backend.once('exit', () => done()));
@@ -226,6 +232,7 @@ async function login(page: Page) {
   // evidence that was mounted before the permission event.
   await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
   await page.getByRole('tab', { name: '指标与趋势' }).click();
+  browserState = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
 }
 
 const queryResponse = (page: Page, match: (body: any) => boolean) => page.waitForResponse(response => {
@@ -414,6 +421,35 @@ async function authenticatedToken(request: APIRequestContext) {
   return apiToken!;
 }
 
+test('a selected history series opens an authorized workspace draft with the same immutable context', async ({ page, request }) => {
+  if (!browserState) await login(page);
+  else {
+    await page.addInitScript(state => { for (const [key, value] of Object.entries(state)) localStorage.setItem(key, value); }, browserState);
+    await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
+    await page.getByRole('tab', { name: '指标与趋势' }).click();
+  }
+  const metrics = page.locator('semantic-metrics');
+  const link = metrics.getByRole('link', { name: '以此指标维度打开调查草案' }).first();
+  await expect(link).toBeVisible();
+  const href = await link.getAttribute('href');
+  const context = JSON.parse(new URL(href!, origin).searchParams.get('entry')!);
+  expect(context.resourceRefs).toEqual([{ type: 'instance', id: RESOURCE_ID, role: 'primary' }]);
+  expect(context.metric).toEqual({ id: 'db.uptime_seconds', semantic_version: '1.0.0' });
+  expect(context.dimensions).toEqual({});
+  expect(context.sourceEventIds).toEqual([]);
+  expect(context.returnTo).toContain(`/instance-detail?id=${RESOURCE_ID}`);
+  const facts = page.waitForResponse(r => r.url().endsWith('/api/investigations/entry-facts'), { timeout: 15000 });
+  await link.click();
+  await writeFile(`${output}/workspace-navigation.json`, JSON.stringify({ href, url: page.url(), text: (await page.locator('body').innerText()).slice(-6000) }, null, 2));
+  const response = await facts;
+  expect(response.status()).toBe(200);
+  expect((await response.json()).context).toEqual(context);
+  await expect(page.locator('investigation-entry')).toContainText('草案');
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n)).toBe(0);
+  expect(modelCalls).toBe(0);
+  await writeFile(`${output}/history-workspace-context.json`, JSON.stringify({ context, factsStatus: response.status(), createdOnOpen: 0, modelCalls }, null, 2));
+});
+
 test('old sampling settings survive a current-period change through production history APIs', async ({ request }) => {
   const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
   const token = await authenticatedToken(request), headers = { Authorization: `Bearer ${token}` };
@@ -422,6 +458,7 @@ test('old sampling settings survive a current-period change through production h
     const response = await request.post(`${api}/api/metrics/query`, { headers, data: body });
     expect(response.status()).toBe(200); return response.json();
   };
+  await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)', [`instance:${RESOURCE_ID}`, JSON.stringify({ basis: 'controlled_formal_history_fixture' })]);
   const before = await read();
   expect(before.history_context.configurations).toEqual([expect.objectContaining({ revision: 1, state: 'effective', settings: expect.objectContaining({ interval_ms: MINUTE }) })]);
   const [old] = await pool.query('SELECT payload,capabilities FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
@@ -430,7 +467,7 @@ test('old sampling settings survive a current-period change through production h
     const policies = new PolicyService(new MysqlPolicyStore(() => pool), registry, { exists: async () => true, inventory: async () => inventory() });
     const pin = registry.list().find(r => r.package.id === 'mysql-basic' && r.package.version === '2.0.0')!.package;
     await policies.changeBinding(admin as any, body.resource, { expected_revision: 1, package: { id: pin.id, version: pin.version, digest: pin.digest },
-      overrides: { interval_ms: { mode: 'set', value: 300000 }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
+      overrides: { interval_ms: { mode: 'set', value: 300000 }, timeout_ms: { mode: 'set', value: 5000 }, stale_after_ms: { mode: 'set', value: 900000 }, max_counter_gap_ms: { mode: 'set', value: 900000 } } }, true);
     const oldConfiguration = await request.get(`${api}/api/metrics/configuration-history/instance/${RESOURCE_ID}/1`, { headers });
     expect(oldConfiguration.status()).toBe(200);
     expect(await oldConfiguration.json()).toMatchObject({ revision: 1, state: 'effective', settings: { interval_ms: MINUTE } });
@@ -439,7 +476,9 @@ test('old sampling settings survive a current-period change through production h
     expect(after.history_context.configurations).toEqual(before.history_context.configurations);
     expect(after.metrics[0].series).toEqual(before.metrics[0].series);
     await writeFile(`${output}/historical-settings.json`, JSON.stringify({ currentRevision: after.configuration_revision, historicalConfigurations: after.history_context.configurations, sameHistoricalSeries: true }, null, 2));
-  } finally { await pool.execute('UPDATE metric_policy_bindings SET payload=?,capabilities=? WHERE resource_key=?', [typeof old[0].payload === 'string' ? old[0].payload : JSON.stringify(old[0].payload), typeof old[0].capabilities === 'string' ? old[0].capabilities : JSON.stringify(old[0].capabilities), `instance:${RESOURCE_ID}`]); }
+  } finally {
+    await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute('UPDATE metric_policy_bindings SET payload=?,capabilities=? WHERE resource_key=?', [typeof old[0].payload === 'string' ? old[0].payload : JSON.stringify(old[0].payload), typeof old[0].capabilities === 'string' ? old[0].capabilities : JSON.stringify(old[0].capabilities), `instance:${RESOURCE_ID}`]); }
 });
 
 test('internal server report reads remain available without a user session identity', async ({ request }) => {
@@ -456,7 +495,7 @@ test('internal server report reads remain available without a user session ident
 
 test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {
   const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
-  for (const revoked of ['permission', 'session'] as const) {
+  for (const revoked of ['permission', 'metric_permission', 'session'] as const) {
     const token = await authenticatedToken(request);
     const locker = await pool.getConnection();
     let pending: ReturnType<typeof request.get> | undefined;
@@ -470,10 +509,11 @@ test('legacy HTTP rejects permission and session revocation committed during a r
         return Number(rows[0].n);
       }).toBeGreaterThan(0);
       if (revoked === 'permission') await pool.query('DELETE FROM role_permissions WHERE role_id=8401');
+      else if (revoked === 'metric_permission') await pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=8401 AND (p.code='*' OR p.code LIKE 'metric:%')");
       else await pool.query('UPDATE users SET session_version=session_version+1 WHERE id=8401');
       await locker.query('UNLOCK TABLES');
       const response = await pending;
-      expect(response.status()).toBe(revoked === 'permission' ? 403 : 401);
+      expect(response.status()).toBe(revoked === 'session' ? 401 : 403);
       const body = await response.json();
       expect(body).not.toHaveProperty('semantic_metrics');
       expect(body).not.toHaveProperty('metrics');
