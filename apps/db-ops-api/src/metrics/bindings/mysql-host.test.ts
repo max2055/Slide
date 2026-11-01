@@ -831,7 +831,10 @@ describe('MySQL binding host', () => {
     expect(auditPayload.actor_id).toBe(9);
     expect(auditPayload.request_id).toBe('caller-1');
     expect(auditPayload.configuration).toMatchObject({ base_revision: 4, target_revision: 5 });
-    expect(JSON.stringify(auditPayload)).not.toContain(legacyPackage.digest);
+    expect(JSON.stringify(auditPayload.configuration)).not.toContain(legacyPackage.digest);
+    // The archived full resolved snapshot deliberately retains historical package identities.
+    expect(decodeBindingPayload(auditPayload.configuration_history.payload)).toMatchObject({ kind: 'template_pending' });
+    expect(auditPayload.configuration_history.basis).toBe('publication');
 
     // The stored row: envelope, raw candidate at the target revision, the pending
     // snapshot for the *base* identity, and the previous effective value preserved.

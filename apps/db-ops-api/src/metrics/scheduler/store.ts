@@ -1,3 +1,4 @@
+import { appendConfigurationHistory, templateHistoryPayload } from '../policy/configuration-history.js';
 import { validSourceSnapshot } from '../rollout/source-history.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { validateBindings, type Resource } from '../../contracts/metrics/index.js';
@@ -258,6 +259,7 @@ export class MysqlScheduleStore {
       rule(now >= Date.parse(published.published_at) && (!published.application.reported_at || now >= Date.parse(published.application.reported_at)), 'SCHEDULE_APPLICATION_TIME');
       published.application = { status: 'applied', applied_revision: revision, reported_at: new Date(now).toISOString(), error_code: null };
       await c.execute('UPDATE metric_policy_bindings SET payload = ? WHERE resource_key = ?', [JSON.stringify(published), refKey(ref)]);
+      await appendConfigurationHistory(c, { ...published, resolved: effective }, 'scheduler_activation', new Date(now).toISOString());
       const tickets = new Map<string, Ticket>();
       if (this.rolloutTicket === 'production') {
         // Snapshot source generations BEFORE remote IO; never borrow a new generation when a late result commits.
@@ -559,6 +561,7 @@ export class MysqlScheduleStore {
       }
     }
     if (sampleIds.length) {
+      await appendConfigurationHistory(c, templateHistoryPayload(decoded), 'formal_observation_commit', new Date(now).toISOString(), sampleIds);
       await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
         ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
       [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);

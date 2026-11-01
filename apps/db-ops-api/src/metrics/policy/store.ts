@@ -1,3 +1,4 @@
+import { appendConfigurationHistory } from './configuration-history.js';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
 import { dbConnection } from '../../db-connection.js';
@@ -180,6 +181,10 @@ class MysqlTransaction implements PolicyTransaction {
     await this.connection.execute(`INSERT INTO metric_policy_bindings (resource_key, group_id, payload, capabilities) VALUES (?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE group_id = VALUES(group_id), payload = VALUES(payload)`,
     [refKey(value.binding.resource), value.binding.group_id, JSON.stringify(value), '[]']);
+    if (!existing[0] || storedPublished(decode(existing[0].payload)).binding.revision !== value.binding.revision)
+      await appendConfigurationHistory(this.connection, value, 'publication', value.published_at);
+    if (value.application.status === 'applied' && value.application.applied_revision === value.binding.revision)
+      await appendConfigurationHistory(this.connection, value, 'application_report', value.application.reported_at!);
     if (resetCapabilities) await this.connection.execute('UPDATE metric_policy_bindings SET capabilities = ? WHERE resource_key = ?', ['[]', refKey(value.binding.resource)]);
   }
   async audit(value: Audit): Promise<void> {
@@ -187,7 +192,7 @@ class MysqlTransaction implements PolicyTransaction {
   }
   async audits(target: string, requestId?: string): Promise<Audit[]> {
     const rows = requestId === undefined
-      ? await this.rows('SELECT payload FROM metric_policy_audit WHERE target = ? ORDER BY id DESC LIMIT 100', [target])
+      ? await this.rows("SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.action')) <> 'configuration.snapshot' ORDER BY id DESC LIMIT 100", [target])
       : await this.rows("SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.request_id')) = ? ORDER BY id DESC LIMIT 1", [target,requestId]);
     return rows.map(r => storedAudit(decode(r.payload)));
   }

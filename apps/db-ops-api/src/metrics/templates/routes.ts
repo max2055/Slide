@@ -233,6 +233,18 @@ export async function registerMetricTemplateRoutes(
       }
     } });
 
+  app.get('/api/metrics/configuration-history/:type/:id/:revision', { preHandler: [verifyToken],
+    schema: { response: { 200: json('ConfigurationAt'), ...refusals([400, 401, 403, 404, 409, 503]) } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    const actor = actorOf(request);
+    if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
+    try {
+      const params = request.params as { revision: string };
+      if (!/^[1-9]\d*$/.test(params.revision)) return reply.code(400).send({ error: 'CONFIGURATION_HISTORY_REVISION' });
+      return await service.readConfigurationAt(actor, ref(params), Number(params.revision));
+    } catch (error) { const mapped = refuse(error, 'CONFIGURATION_HISTORY_FAILED'); return reply.code(mapped.status).send({ error: mapped.code }); }
+  });
+
   const root = '/api/metrics/template-bindings';
   const flow: Array<{ method: 'GET' | 'POST'; suffix: string; response: string;
     body?: z.ZodType;
