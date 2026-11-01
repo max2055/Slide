@@ -65,3 +65,22 @@ MAX237_OWNED_MYSQL_PORT=<自有动态端口> MAX237_OWNED_MYSQL_CONTAINER=<自�
 - 当前 VM 存在 MemAvailable。真实未知证据是只读命令不可用；缺 MemAvailable 的自然环境未声称存在，受控解析负例已通过。
 - 未执行部署、外部通知、实际解绑、生产 gate 激活、共享3306写入、模型调用或子代理。
 - 本次交付等待 Chief 独立复核，整单不标 done。CI 保留合并门禁，推送后只交接一次快照，不等待/轮询。
+
+
+## 当前候选验证记录
+
+源码与真实验收 SHA：`524cca44b364c129bd1cc1a1aa08aee92b410476`。其后仅补本文验收记录，不改变已测代码。
+
+| 检查 | 当前结果 |
+| --- | --- |
+| 最终集成：`vitest run src/metrics src/contracts/metrics src/server-metric-provider.test.ts src/alert-event-access.test.ts src/security/server-instance-authorization.test.ts --maxWorkers=2` | 自有 MySQL 8.4，METRICS_TEST_MYSQL_PORT 与 MAX238_HISTORY_MYSQL_PORT 指向动态端口；124文件、1308项通过；23文件/72项环境门控跳过，未计通过 |
+| 浏览器：`playwright test e2e/metric-settings.spec.ts e2e/audit-dialog.spec.ts --workers=2` | 同一源码下19项通过；保留原矩阵，不新增移动/暗色验收范围 |
+| PG 真实联合脚本 | 同一源码下通过；PG16.4，自有 MySQL8.4平台库；3次采集15个规范化样本；open/hold/recover，最新值/历史/配置/事件联查 |
+| MySQL/VM 真实语义脚本 | 同一源码下通过；使用率严格比对快照、速率严格比对 uint64 delta/真实时间、重置和凭据失效；VM 正常及真实 SSH 只读故障未知 |
+| 既有不可变发布兼容 | 从起点加载原诊断发布构造器，与当前8份原 release 完整深比较相等，含 digest；仅新增 MySQL1.2.0 |
+| 安全 | secret scan通过；35文件336项安全测试通过；无共享库写入及目标 VM 修改 |
+| 静态/契约/构建 | API/frontend typecheck、两个 e2e 脚本单独 bundler 模式 typecheck、contracts:check、frontend build/CSP 均通过 |
+
+最初单独检查 e2e 时误用了 NodeNext 模式，与仓库 bundler 配置不一致；改用仓库模式后通过。没有为该工具参数问题改动旧模块。初次 PG 清理曾遇 Docker `--rm` 的完成可见性时序；补前台有界确认后重跑，最终容器及 schema 清理全部确认。日志保留准确退出状态，不以完成标志替代实际清理。
+
+CI `41318880479` 的已读取失败分类：browser(1)旧维护入口；browser(2)旧目录折叠区及缺原生库 fixture；API(1)/(3)/(5)/(7)发布操作计数混用，API(5)/(6)/(7)证据目录缺失；release-artifact由上游失败传递。均由本次相关回归覆盖；未修改合并 gate。推送后的 CI 另作一次快照，不能把本地通过写成 CI 已绿。
