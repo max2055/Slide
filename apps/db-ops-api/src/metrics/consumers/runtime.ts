@@ -1,3 +1,5 @@
+import { actorContextService } from '../../auth/actor-context.js';
+import { readHistoryContext } from './history-context.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from '../../db-connection.js';
 import { CollectionAttemptSchema } from '../../contracts/metrics/index.js';
@@ -11,7 +13,13 @@ import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 const pool = () => { const p = dbConnection.getPool(); rule(p, 'METRIC_STORE_UNAVAILABLE', 503); return p; };
 const decode = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v;
 export const consumerStore: ConsumerStore = {
+  historyMetrics: (...args) => new MysqlFormalMetricStore(pool()).historyMetrics(...args),
+  readHistoryWindow: (...args) => new MysqlFormalMetricStore(pool()).readHistoryWindow(...args),
+  historyDimensions: (...args) => new MysqlFormalMetricStore(pool()).historyDimensions(...args),
+  historyContext: (...args) => readHistoryContext(pool(), ...args),
   queryWindow: (...args) => new MysqlFormalMetricStore(pool()).queryWindow(...args),
+  readWindow: (...args) => new MysqlFormalMetricStore(pool()).readWindow(...args),
+  readObservationPage: (...args) => new MysqlFormalMetricStore(pool()).readObservationPage(...args),
   inventory: (type, id) => configurationInventory({ type, id: Number(id) }),
   latestCapacity: (...args) => new MysqlFormalMetricStore(pool()).latestCapacity(...args),
   dimensions: (...args) => new MysqlFormalMetricStore(pool()).dimensions(...args),
@@ -43,7 +51,20 @@ export const templateQueryPort: TemplateQueryPort = {
     };
   },
 };
-export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
+// Existing scheduler/report adapters construct resource-scoped internal actors;
+// they are not authenticated user sessions. Keep their reader inside the server.
+export const internalMetricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
   () => new Date().toISOString(), templateQueryPort);
+// HTTP callers always use live user authentication before and after storage waits.
+// Never select between these readers by trusting an actor field from a request.
+export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
+  () => new Date().toISOString(), templateQueryPort, actor => actorContextService.revalidateActor(actor, actor.requestId),
+  async (actor, ref, revision) => {
+    const { templateBindingService } = await import('../templates/routes.js');
+    return templateBindingService.readConfigurationAt(actor, ref, revision);
+  });
 
 export const operationalSource = (ref: Ref) => new MysqlFormalMetricStore(pool()).sourceState(ref);
+
+/** Compatibility name for the authenticated HTTP registrar. */
+export const authenticatedMetricConsumerService = metricConsumerService;

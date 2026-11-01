@@ -31,7 +31,7 @@ import { MetricScheduler } from '../src/metrics/scheduler/service.js';
 import { JobRegistry } from '../src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../src/workflows/worker-runtime.js';
 const nonce = randomBytes(8).toString('hex'),
-  directory = resolve('../../outputs/max244-governance-' + nonce);
+  directory = resolve('/Users/max/Coding/40-Slide/outputs/max244-governance-' + nonce);
 mkdirSync(directory, { recursive: true });
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8' }).trim();
 const handle = {

@@ -1,3 +1,4 @@
+import { extension, fixtureRelease } from '../triggers/test-support.js';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -64,6 +65,55 @@ describe('MAX-75 deterministic consumer contract', () => {
     expect(result.metrics[0].series).toHaveLength(1);
     attempts[0].error = 'permission_denied'; result = await service.query(admin, query());
     expect(result.metrics[0]).toMatchObject({ state: 'permission_denied', series: [] });
+  });
+  it('history ignores the current binding and interval, while live queries still respect coverage', async () => {
+    const before = await service.query(admin, { ...query(), history: true, metric_ids: [fixture.metric], bucket_ms: 60000 });
+    store.bindings.delete('instance:1');
+    const after = await service.query(admin, { ...query(), history: true, metric_ids: [fixture.metric], bucket_ms: 60000 });
+    expect(after.metrics[0].state).toBe('not_covered');
+    expect(after.metrics[0].series).toEqual(before.metrics[0].series);
+    expect((await service.query(admin, { ...query(), metric_ids: [fixture.metric] })).metrics[0].series).toEqual([]);
+  });
+  it('keeps installed semantic versions separate without duplicating metrics or stitching their curves', async () => {
+    store.bindings.delete('instance:1');
+    const registry = createConfigurationRegistry();
+    const first = extension('fixture.alpha', '1'), second = { ...first, semantic_version: '2.0.0' };
+    // Consumer catalog port: installation/mapping validation is covered by PackageRegistry tests.
+    registry.list = () => [{ ...fixtureRelease(), extensions: [first, second] }];
+    const points = [first, second].map((definition, i) => identify({ ...sample(fixture.metric), resource_id: '1',
+      observed_at: fixture.observed_at, collected_at: fixture.observed_at, stored_at: fixture.observed_at,
+      metric: { id: definition.id, semantic_version: definition.semantic_version }, unit: '1', value: { encoding: 'float64', value: 95 + i } }));
+    const versions = new MetricConsumerService(policies, registry, {
+      queryWindow: async series => points.filter(p => p.metric.semantic_version === series.metric.semantic_version),
+      dimensions: async () => [{}], inventory: async () => null, attempts: async () => [],
+      historyMetrics: async () => points.map(p => p.metric),
+    }, () => now);
+    const result = await versions.query(admin, { ...query(), history: true, view: 'extension' });
+    expect(result.metrics.map(m => m.definition.semantic_version)).toEqual(['1.0.0', '2.0.0']);
+    expect(result.metrics.map(m => m.series[0].buckets[0].value)).toEqual([
+      { encoding: 'float64', value: 95 }, { encoding: 'float64', value: 96 }]);
+  });
+  it('rejects a revocation committed during a window or raw-page storage wait', async () => {
+    let live = admin;
+    const revoked = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
+    const registry = createConfigurationRegistry();
+    const guarded = new MetricConsumerService(policies, registry, {
+      queryWindow: async () => { live = revoked; return rows; },
+      dimensions: async () => [{}], inventory: async () => null, attempts: async () => [],
+      readObservationPage: async () => { live = revoked; return { observations: rows, total: 1, has_more: false, next: null }; },
+    }, () => now, undefined, async () => live);
+    await expect(guarded.query(admin, { ...query(), metric_ids: [fixture.metric] })).rejects.toThrow('POLICY_FORBIDDEN');
+    live = admin;
+    await expect(guarded.observations(admin, { resource: fixture.resource, metric: rows[0].metric,
+      dimensions: {}, ...fixture.window })).rejects.toThrow('POLICY_FORBIDDEN');
+  });
+  it.each(['discover', 'inventory'] as const)('%s revalidates after its storage reads', async operation => {
+    let live = admin;
+    const guarded = new MetricConsumerService(policies, createConfigurationRegistry(), {
+      queryWindow: async () => [], attempts: async () => [], dimensions: async () => [],
+      inventory: async () => { live = { ...admin, permissions: [], instanceScopes: {} }; return null; },
+    }, () => now, undefined, async () => live);
+    await expect(guarded[operation](admin, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
   });
   it('denies resource scope before reading observations or revealing extensions', async () => {
     const actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };

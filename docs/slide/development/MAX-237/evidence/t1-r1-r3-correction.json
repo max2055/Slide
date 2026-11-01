@@ -1,0 +1,111 @@
+{
+  "issue": "MAX-237",
+  "github_issue": 261,
+  "package": "MAX237-T1-R1-R3-correction",
+  "generated_at": "2026-10-27",
+  "authorization": {
+    "review": "e91b79c84:docs/slide/development/MAX-237/reviews/chief-t1-review-20261027.md",
+    "instruction": "e91b79c84:docs/slide/development/MAX-237/reviews/t1-correction-instruction-20261027.md",
+    "scope": "Only apps/db-ops-api/src/metrics/templates/** and docs/slide/development/MAX-237/**; single extra exception: byte-for-byte extraction of afa5b3d25d:apps/db-ops-api/src/contracts/metrics/templates.ts.",
+    "release": "none — bounded correction of an unmounted internal package; not a production approval"
+  },
+  "branch": "agent/15coder1/max-237",
+  "base": "919bc0d29b919e850e2b8b706bdcfe26ddf8dea4",
+  "previous_code_commit": "ac9270324",
+  "previous_docs_commit": "919bc0d29",
+  "code_commit": "ed501a077",
+  "allowlist": {
+    "patch": "docs/slide/development/MAX-237/evidence/t1-r1-r3-allowlist.patch",
+    "patch_bytes": 69424,
+    "patch_sha256": "685d0cd86a80ec7050f230b51b4da1df10bdc9c6b43eae407bbe7247b5bf49b8",
+    "new_files": ["apps/db-ops-api/src/contracts/metrics/templates.ts"],
+    "modified_files": [
+      "apps/db-ops-api/src/metrics/templates/errors.ts",
+      "apps/db-ops-api/src/metrics/templates/model.ts",
+      "apps/db-ops-api/src/metrics/templates/repository.ts",
+      "apps/db-ops-api/src/metrics/templates/service.ts",
+      "apps/db-ops-api/src/metrics/templates/repository.test.ts",
+      "apps/db-ops-api/src/metrics/templates/service.test.ts"
+    ],
+    "unchanged_within_package": [
+      { "path": "apps/db-ops-api/src/metrics/templates/catalog.ts", "sha256": "371ac1648425eeead47ace8a2f467a388a83a74b7a1b90f829e4a2f74a45174d" },
+      { "path": "apps/db-ops-api/src/metrics/templates/index.ts", "sha256": "b63c556b9e9e393541cb8c25cccd6aa37f5afd18c2d865c98c454947b2a7097c" },
+      { "path": "apps/db-ops-api/src/metrics/templates/catalog.test.ts", "sha256": "854c62626334a5c6c8a85428e02cc3d9c99d254694993378fe2aa1630e0b7e05" }
+    ],
+    "outside_allowlist": []
+  },
+  "files": [
+    { "path": "apps/db-ops-api/src/contracts/metrics/templates.ts", "lines": 556, "sha256": "76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45", "role": "byte-for-byte extraction" },
+    { "path": "apps/db-ops-api/src/metrics/templates/errors.ts", "lines": 56, "sha256": "4f047fc3d92bb079c5bf4fcb952803f033c42adcfb7d5a800b2b9c162321570c" },
+    { "path": "apps/db-ops-api/src/metrics/templates/model.ts", "lines": 91, "sha256": "d3207eb11ddb727399328690b545128c9f8acadc61de1c2f77563bcb8c85d7d1" },
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.ts", "lines": 352, "sha256": "05c33d5abe987b4eee27a48a09c6b2e0342ef68829ba83c57b4b9eb3dc806829" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.ts", "lines": 591, "sha256": "b2190c1c169f40120c0cffdc07efc0a5838c4b330114161585a1ff5d781cf254" },
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.test.ts", "lines": 229, "sha256": "52cb28cce7894b8f6c474f94311d9f8a82acec97eee9b13b0c7818c7204c0071" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.test.ts", "lines": 611, "sha256": "b97c9f28299cff4545866bb82680314bf559969867a1a2e77b33b9adb96d4ce9" }
+  ],
+  "schema_reuse": {
+    "r1": "The synonymous template schemas were deleted from metrics/templates/model.ts; they are imported and re-exported from contracts/metrics/templates.ts. Only derived type aliases (MetricRef, ParameterValue, TemplateStatus, TemplateVersionSummary) and domain helpers (canonicalKey, packageReleaseRef, parsePackageReleaseRef, placeholderCapabilities, emptyDraftAggregate, templateContentHash) remain.",
+    "target_existed_before": false,
+    "extraction": {
+      "source_commit": "afa5b3d25d1bf4f72d017a8cf6a952d7591356b0",
+      "source_path": "apps/db-ops-api/src/contracts/metrics/templates.ts",
+      "git_blob_source": "bdd455ccc218c9e8543eaee6ad5bc5686f414170",
+      "git_blob_target": "bdd455ccc218c9e8543eaee6ad5bc5686f414170",
+      "sha256_source": "76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45",
+      "sha256_target": "76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45",
+      "byte_identical": true
+    },
+    "dependencies_unchanged_vs_source_commit": {
+      "paths": [
+        "apps/db-ops-api/src/contracts/metrics/definitions.ts",
+        "apps/db-ops-api/src/contracts/metrics/index.ts",
+        "apps/db-ops-api/src/contracts/metrics/public-api.ts",
+        "apps/db-ops-api/src/metrics/packages/model.ts",
+        "apps/db-ops-api/src/metrics/packages/builtins.ts"
+      ],
+      "diff": "empty"
+    },
+    "not_reexported": "HTTP request/response and resource-binding schemas of the extracted file stay internal to it; T1 keeps its own private request shapes and the unmounted module exports only the template domain.",
+    "public_contract_graph": "contracts/metrics/index.ts and public-api.ts untouched; pnpm contracts:check exit 0 with no generated diff"
+  },
+  "stable_identity": {
+    "r2": "A (template_id, item_id) identity may only append a version while canonical metric id@semantic_version, unit and dimension key set stay compatible; the guard lives inside the repository's conditional append.",
+    "error_code": "TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE",
+    "status": 422,
+    "allowed_changes": ["display name", "default parameters", "compatible implementation/package pin update"],
+    "counterexamples": [
+      "db.uptime_seconds@1.0.0 / s published, then the same item_id selects mysql.queries.total@1.0.0 / count -> rejected; old version snapshot, version list and latest item unchanged",
+      "same item_id with a changed unit -> rejected",
+      "same item_id with a changed dimension key set -> rejected",
+      "racing service selections with different metrics under one item_id -> exactly one wins, one TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE",
+      "racing repository putItemVersion calls under one item_id -> exactly one version stored",
+      "rename and compatible pin update -> appended v2 under the same identity"
+    ],
+    "not_claimed": "The in-memory repository is a synchronous test double; production transaction/row-lock behaviour remains a port requirement. No DB adapter, DDL or migration was added."
+  },
+  "parameter_types": {
+    "r3": "checkParameterValue branches on the declared type: boolean/string accept only their own type, number/integer accept only finite numbers (integer also requires an integer).",
+    "counterexamples": [
+      "updateDraft {type:'boolean'} default 1 -> TEMPLATE_PARAMETER_INVALID",
+      "updateDraft {type:'string'} default 0 -> TEMPLATE_PARAMETER_INVALID",
+      "number parameter with a boolean default -> TEMPLATE_PARAMETER_INVALID",
+      "bad draft stored directly through the repository -> publish re-validates and rejects without writing a version",
+      "item params_default numeric value against a boolean template parameter -> TEMPLATE_PARAMETER_INVALID at publish"
+    ],
+    "positive_cases": "one valid default of each type (number, integer, boolean, string) is accepted by updateDraft",
+    "preserved": "TEMPLATE_INVALID_PERIOD bounds/type checks, item-level interval_ms rejection and undeclared parameter rejection keep their previous behaviour"
+  },
+  "checks": [
+    { "command": "npx vitest run src/metrics/templates", "cwd": "apps/db-ops-api", "result": "41 passed / 41 (catalog 6, repository 10, service 25)", "exit": 0 },
+    { "command": "npx vitest run src/metrics", "cwd": "apps/db-ops-api", "result": "47 files passed, 24 skipped; 483 tests passed, 121 skipped", "exit": 0 },
+    { "command": "npx tsc --noEmit", "cwd": "apps/db-ops-api", "result": "no diagnostics", "exit": 0 },
+    { "command": "npx oxlint apps/db-ops-api/src/metrics/templates", "cwd": "repo root", "result": "0 warnings, 0 errors", "exit": 0 },
+    { "command": "pnpm contracts:check", "cwd": "repo root", "result": "no generated diff", "exit": 0 },
+    { "command": "npx tsx <chief-t1-probes-20261027.ts> <repo root>", "cwd": "apps/db-ops-api", "result": "3/3 pass: R2 TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE, R3 TEMPLATE_PARAMETER_INVALID, permission control TEMPLATE_FORBIDDEN", "exit": 0 }
+  ],
+  "not_run": [
+    "real MySQL persistence/DDL/routes/browser UAT — outside the admitted scope",
+    "real collection, history, triggers, notifications, AI evidence — dependent packages"
+  ],
+  "status": "in_progress — T1 correction delivered, the issue as a whole is not complete"
+}

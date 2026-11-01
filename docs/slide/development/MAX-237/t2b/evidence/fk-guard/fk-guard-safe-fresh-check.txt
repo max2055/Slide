@@ -1,0 +1,5 @@
+# fresh check before safe fixture
+containers:
+volumes:
+container absent
+volume absent

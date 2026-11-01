@@ -19,7 +19,7 @@ function transport(sample: typeof fixture.samples[number], deny = ''): { value: 
   const execCommands = vi.fn(async (_client: Client, commands: string[]) => commands.map(command => {
     if (deny && command.includes(deny)) return { ...ok(), exitCode: 1, stderr: 'Permission denied: fixture-private-path' };
     if (command.includes('top -bn1')) return ok(sample.gauges.cpu_usage);
-    if (command.includes('free |')) return ok(sample.gauges.memory_usage);
+    if (command.includes('/proc/meminfo')) return ok(`MemTotal: 100000 kB\nMemAvailable: ${100000 - Number(sample.gauges.memory_usage) * 1000} kB\n`);
     if (command.includes('df -P -B1')) return ok(sample.filesystem.bytes);
     if (command.includes('df -Pi')) return ok(sample.filesystem.inodes);
     if (command.includes('findmnt')) return ok(sample.filesystem.mounts);

@@ -1,10 +1,9 @@
 /**
  * MAX-237 / T2B — internal MySQL adapter for the template repository port.
  *
- * Unmounted: no route, process registration, shared pool, migration or consumer
- * imports this file. The only way it reaches a database is the `mysql2` pool a
- * caller passes to the constructor; this module never creates, connects or
- * closes a pool itself and never reads an application `.env`.
+ * Used by native template HTTP and binding services. The only way it reaches
+ * a database is the `mysql2` pool passed to the constructor; this module never
+ * creates, connects or closes a pool itself and never reads an application `.env`.
  *
  * Storage shape is the T2B candidate DDL
  * (`docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql`),

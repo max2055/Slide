@@ -41,7 +41,6 @@ describe('server instance authorization coverage', () => {
     for (const path of [
       '/api/metrics/:instanceId',
       '/api/baseline/:instanceId/:metricName',
-      '/api/maintenance-windows/check/:instanceId',
       '/api/sql/audit/instance/:instanceId',
     ]) {
       const [route] = routeBlocks(path);
@@ -79,15 +78,19 @@ describe('server instance authorization coverage', () => {
     expect(routeBlocks('/api/dashboard/capacity-trend')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/reports/stats')[0]?.block).toContain('getAccessibleInstanceIds(');
-    expect(routeBlocks('/api/alerts')[0]?.block).toContain('getAccessibleInstanceIds(');
-    // MAX239 moved all six reads to the production/browser shared registrar.
-    // The first remaining inline route is POST, not the scoped GET list.
+    expect(source).toContain('await registerAlertListRoute(fastify,verifyToken)');
+    expect(readFileSync(resolve(import.meta.dirname, '../alert-list-route.ts'), 'utf8')).toContain('getAccessibleInstanceIds(');
+    // MAX-240 integration: MAX-239 moved scoped reads into the shared registrar.
     expect(source).toContain('await registerEventReadRoutes(fastify,verifyToken)');
-    expect(eventReads).toContain("for (const path of ['', '/stats', '/mttr', '/search', '/:id', '/:id/logs'])");
+    const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
     expect(eventReads).toContain('allowed_instance_ids: getAccessibleInstanceIds(actor)');
+    expect(eventReads).toContain('canReadResource(actor, RefSchema.parse(');
+    expect(routeBlocks('/api/alerts/events').find(r => r.method === 'post' && r.path === '/api/alerts/events')?.block).toContain("hasInstanceAccess((request as any).user, instanceId, 'read-write')");
+    expect(eventReads).toContain("for (const path of ['', '/stats', '/mttr', '/search', '/:id', '/:id/logs'])");
     expect(eventReads).toContain('allowed_event_ids: ids');
     expect(eventReads).toContain('await scope(actor)');
     expect(eventReads).toContain('await requireEventAccess(req, reply, Number(req.params.id))');
+
   });
 
   it('checks instance ownership before reading or mutating alert event records', () => {
@@ -103,10 +106,11 @@ describe('server instance authorization coverage', () => {
   });
 
   it('scopes maintenance windows and silence records, including ID-based mutations', () => {
-    expect(routeBlocks('/api/maintenance-windows')[0]?.block).toContain('getAccessibleInstanceIds(');
-    for (const route of routeBlocks('/api/maintenance-windows/:id')) {
-      expect(route.block, `${route.method} ${route.path}`).toContain('requireMaintenanceWindowAccess(');
-    }
+    expect(source).toContain('await registerMaintenanceRoutes(fastify, verifyToken)');
+    const maintenance = readFileSync(resolve(import.meta.dirname, '../maintenance-intervals.ts'), 'utf8');
+    expect(maintenance).toContain('canReadResource(await live(),ref)');
+    expect(maintenance).toContain('this.access(final,previous');
+    expect(maintenance).toContain('this.access(final,next');
     expect(routeBlocks('/api/silence')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/silence/:id')[0]?.block).toContain('getSilenceInstanceId(');
   });

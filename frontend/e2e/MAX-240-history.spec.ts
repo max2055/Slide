@@ -1,0 +1,592 @@
+import type { Socket } from 'node:net';
+import { compileTriggerSnapshot } from '../../apps/db-ops-api/src/metrics/triggers/compile.ts';
+import { evaluateTriggerRule } from '../../apps/db-ops-api/src/metrics/triggers/evaluate.ts';
+import { nextTriggerEpisode } from '../../apps/db-ops-api/src/metrics/triggers/episode.ts';
+import { alertEventService } from '../../apps/db-ops-api/src/alert-event-service.ts';
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { createRequire } from 'node:module';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdir, rm, writeFile, mkdtemp } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { createServer } from 'vite';
+import { MigrationRunner } from '../../apps/db-ops-api/src/migrations/runner.ts';
+import { identify, sample } from '../../apps/db-ops-api/src/contracts/metrics/fixtures.ts';
+import type { NormalizedObservation } from '../../apps/db-ops-api/src/contracts/metrics/index.ts';
+import { seriesHash } from '../../apps/db-ops-api/src/metrics/storage.ts';
+import { createConfigurationRegistry } from '../../apps/db-ops-api/src/metrics/config/registry.ts';
+import { PolicyService } from '../../apps/db-ops-api/src/metrics/policy/service.ts';
+import { MysqlPolicyStore } from '../../apps/db-ops-api/src/metrics/policy/store.ts';
+import { admin } from '../../apps/db-ops-api/src/metrics/policy/test-support.ts';
+import { RolloutControl } from '../../apps/db-ops-api/src/metrics/rollout/control.ts';
+
+// MAX240-HISTORY-UI browser acceptance: real production server, real JWT/password login,
+// an isolated task-owned MySQL schema on a non-3306 port, and a controlled formal history
+// fixture. No MAX238 fixture and no product model invocation is used.
+// This harness owns a disposable database and two server processes; it only runs when the
+// task supplies its isolated MySQL port. Other suites skip it instead of starting it.
+const enabled = Boolean(process.env.MAX240_TEST_MYSQL_PORT && process.env.MAX240_TEST_API_PORT);
+test.skip(!enabled, 'requires the task-owned MAX240 MySQL/API fixture');
+
+const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
+const mysql = require('mysql2/promise');
+const bcrypt = require('bcrypt');
+const MINUTE = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
+const RESOURCE_ID = 8401;
+const output = resolve(process.env.MAX240_BROWSER_OUTPUT ?? '../outputs/max240-browser-20261101');
+const schema = `max240_ui_${randomUUID().replaceAll('-', '')}`;
+const password = ` ${randomUUID()} `;
+let adminPool: any, pool: any, backend: ChildProcess, vite: Awaited<ReturnType<typeof createServer>>;
+let origin: string, workspace: string, backendLog = '', modelCalls = 0;
+let apiToken: string | undefined;
+let browserState: Record<string, string> | undefined;
+const frontendSockets = new Set<Socket>();
+let modelGuard: ReturnType<typeof createHttpServer>;
+let from = 0, to = 0, eventId = 0;
+const iso = (ms: number) => new Date(ms).toISOString();
+const sqlTime = (value: string) => new Date(value).toISOString().slice(0, 23).replace('T', ' ');
+const fixture = sample('db.uptime_seconds');
+const point = (ms: number, value: number, tag: string) => identify({ ...fixture, resource_id: String(RESOURCE_ID),
+  observed_at: iso(ms), collected_at: iso(ms), stored_at: iso(ms), value: { encoding: 'float64', value },
+  source: { ...fixture.source, attempt_id: `max240-ui-${tag}` } });
+const inventory = () => ({ type: 'instance' as const, id: String(RESOURCE_ID), attributes: {
+  'db.engine': { value: 'mysql', observed_at: iso(Date.now()), source: 'fixture' },
+  'db.version': { value: '9.6.0', observed_at: iso(Date.now()), source: 'fixture' } } });
+
+async function seed(rows: NormalizedObservation[]) {
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200);
+    await pool.query(`INSERT INTO metric_observations
+      (id, series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash, evidence_expires_at)
+      VALUES ${chunk.map(() => '(?,?,?,?,?,?,?,?,NULL)').join(',')}`,
+    chunk.flatMap(o => [o.id, seriesHash(o), o.stage, sqlTime(o.observed_at), sqlTime(o.stored_at!), 1, JSON.stringify(o), 'fixture']));
+    await pool.query(`INSERT INTO metric_publications (observation_id, series_hash, generation, observed_at)
+      VALUES ${chunk.map(() => '(?,?,?,?)').join(',')}`,
+    chunk.flatMap(o => [o.id, seriesHash(o), 1, sqlTime(o.observed_at)]));
+  }
+}
+
+test.beforeAll(async () => {
+  const port = Number(process.env.MAX240_TEST_MYSQL_PORT);
+  if (!port) throw new Error('MAX240_TEST_MYSQL_PORT must point to a task-owned isolated MySQL fixture');
+  await mkdir(output, { recursive: true });
+  workspace = await mkdtemp(`${tmpdir()}/slide-max240-`);
+  const options = { host: '127.0.0.1', port, user: 'root', password: process.env.MAX240_TEST_MYSQL_PASSWORD ?? '' };
+  adminPool = mysql.createPool(options); await adminPool.query(`CREATE DATABASE ${schema}`);
+  pool = mysql.createPool({ ...options, database: schema });
+  await new MigrationRunner(pool).run();
+  const hash = await bcrypt.hash(password, 10);
+  await pool.execute("INSERT INTO users (id,username,password_hash) VALUES (8401,'max240-owner',?)", [hash]);
+  await pool.query("INSERT INTO roles (id,name) VALUES (8401,'max240-admin')");
+  await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('*','Fixture admin','admin','all')");
+  await pool.query('INSERT INTO role_permissions (role_id,permission_id) SELECT 8401,id FROM permissions');
+  await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (8401,8401)');
+  await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,username,password_encrypted,db_version,status)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`, [RESOURCE_ID, 'MAX240 历史验收实例', 'testing', 'mysql', 'history.fixture.invalid', 3306, 'fixture', 'unused', '9.6.0', 'active']);
+
+  // Model traffic is forbidden: a local guard answers every provider call with 503.
+  modelGuard = createHttpServer((_request, response) => { modelCalls++; response.writeHead(503); response.end('MODEL_CALL_FORBIDDEN'); });
+  await new Promise<void>(done => modelGuard.listen(0, '127.0.0.1', done));
+  await pool.query('UPDATE llm_providers SET enabled=0,is_default=0');
+  await pool.execute("UPDATE llm_providers SET enabled=1,is_default=1,api_base_url=?,deployment_type='local',api_format=NULL WHERE name='ollama'",
+    [`http://127.0.0.1:${(modelGuard.address() as { port: number }).port}`]);
+
+  const registry = createConfigurationRegistry();
+  const policy = new PolicyService(new MysqlPolicyStore(() => pool), registry,
+    { exists: async () => true, inventory: async () => inventory() });
+  const pin = registry.list().find(r => r.package.id === 'mysql-basic' && r.package.version === '2.0.0')!.package;
+  await policy.changeBinding(admin as any, { type: 'instance', id: RESOURCE_ID }, { expected_revision: 0,
+    package: { id: pin.id, version: pin.version, digest: pin.digest },
+    overrides: { interval_ms: { mode: 'set', value: MINUTE }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
+  await new MysqlPolicyStore(() => pool).reportApplied({ type: 'instance', id: RESOURCE_ID }, 1, iso(Date.now()), 'applied');
+  const series = { resource_type: 'instance' as const, resource_id: String(RESOURCE_ID),
+    metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: {} };
+  const control = new RolloutControl(pool);
+  await control.initialize(series, { source: 'semantic', read: 'semantic', revision: 1,
+    package: { id: pin.id, version: pin.version, digest: pin.digest } });
+  await control.applied(series, { source: 'semantic', generation: 1, revision: 1 });
+
+  to = Math.floor(Date.now() / MINUTE) * MINUTE; from = to - DAY;
+  const rows: NormalizedObservation[] = [];
+  // Three samples per minute: any 60s query bucket (offset by query time) still holds several
+  // samples, so the min/max envelope is meaningful and independent of bucket alignment.
+  for (let i = 0; i < 1440; i++) {
+    if (i === 1400 || i === 1401) continue; // retained gap; must stay null, never zero-filled
+    const base = i % 41, minute = from + i * MINUTE;
+    rows.push(point(minute + 5_000, i === 720 ? 999_999 : base + 3, `m${i}a`));
+    rows.push(point(minute + 25_000, base, `m${i}b`));
+    rows.push(point(minute + 45_000, base + 2, `m${i}c`));
+  }
+  await seed(rows);
+
+  // Controlled read-side fixture uses the real snapshot compiler and existing event
+  // writer. It does not claim a remote collection/production binding acceptance.
+  const snapshotIdentity = `sha256:${'a'.repeat(64)}`;
+  const expression = (value: number, operator: string) => ({ node: 'compare', select: { aggregation: 'last' }, operator,
+    threshold: { kind: 'constant', value } });
+  const snapshot = compileTriggerSnapshot({ kind: 'trigger_candidate', internal: true, persisted: false, applied: false,
+    effective: false, status: 'candidate', resource: { type: 'instance', id: String(RESOURCE_ID) }, config_revision: 1,
+    plan_identity: snapshotIdentity, templates: [{ template_id: 'max240-fixture', version: 1, content_hash: snapshotIdentity }],
+    rules: [{ rule_id: 'max240-uptime', version: 1, body_hash: snapshotIdentity, scope: 'item:uptime',
+      item: { template_id: 'max240-fixture', item_id: 'uptime', item_version: 1 },
+      metric: series.metric, unit: 's', dimensions: {}, decision: 'collect', parameters: [],
+      problem: expression(90, '>'), recovery: expression(70, '<'),
+      quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 180000, nodata: { enabled: false } } }],
+  });
+  await pool.execute('INSERT INTO metric_trigger_snapshots(resource_key,config_revision,snapshot_hash,payload) VALUES(?,1,?,?)',
+    [`instance:${RESOURCE_ID}`, snapshot.snapshot_hash, JSON.stringify(snapshot)]);
+  const peak = rows.find(o => o.value && 'value' in o.value && o.value.value === 999999)!;
+  const triggerSample = { metric: peak.metric, unit: peak.unit, value: peak.value!, observed_at: peak.observed_at,
+    dimensions: {}, quality: peak.quality, accuracy: peak.accuracy, coverage: 1, window: null };
+  const rule = snapshot.rules[0];
+  const evaluation = evaluateTriggerRule(snapshot, { rule_id: rule.rule_id, scope: rule.scope }, {
+    input: { now: peak.observed_at, last_seen_at: peak.observed_at, previous: null, samples: [triggerSample] },
+    applied: { resource: { type: 'instance', id: RESOURCE_ID }, applied_revision: 1, plan_identity: snapshotIdentity, application_status: 'applied' },
+  });
+  const episode = nextTriggerEpisode({ identity: { resource: snapshot.resource, rule_id: rule.rule_id, version: rule.version,
+    body_hash: rule.body_hash, scope: rule.scope }, previous: null, evaluation })!;
+  await pool.query('UPDATE notification_channels SET enabled=0');
+  const c = await pool.getConnection();
+  try { await c.beginTransaction(); await alertEventService.persistTemplateTransition(c, null, episode, snapshot,
+    { sample_ids: [peak.id], attempt_ids: [peak.source.attempt_id], unit: peak.unit, dimensions: {}, samples: [{ ...triggerSample, id: peak.id }] });
+    await c.commit(); } catch (e) { await c.rollback(); throw e; } finally { c.release(); }
+  eventId = Number((await pool.query('SELECT event_id FROM metric_trigger_episodes WHERE episode_id=?', [episode.episode_id]))[0][0].event_id);
+
+  // MAX240-LATEST-DATA: the current collection is failed while an older formal success and
+  // its history stay readable. The status route derives state/blockers from these attempts.
+  const attempt = (id: string, status: string, startedMs: number, endedMs: number, error: string | null, evidence?: string) => ({
+    id, resource_id: String(RESOURCE_ID), binding_id: `instance:${RESOURCE_ID}`, collector_id: 'mysql.status',
+    config_revision: 1, started_at: iso(startedMs), ended_at: iso(endedMs), status, error,
+    ...(evidence ? { evidence_code: evidence } : {}), observation_ids: [] });
+  const succeededAttempt = attempt('max240-attempt-success', 'succeeded', to - 2 * HOUR, to - 2 * HOUR + MINUTE, null);
+  const failedAttempt = attempt('max240-attempt-failed', 'failed', to - 10 * MINUTE, to - 9 * MINUTE, 'connection_error', 'CONNECTION_REFUSED');
+  for (const row of [succeededAttempt, failedAttempt]) {
+    await pool.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?,?,?)', [row.id, JSON.stringify(row), sqlTime(row.ended_at)]);
+  }
+
+  const apiPort = Number(process.env.MAX240_TEST_API_PORT);
+  const wsPort = Number(process.env.MAX240_TEST_WS_PORT);
+  backend = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
+    cwd: resolve('../apps/db-ops-api'), stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, NODE_ENV: 'development', DB_HOST: options.host, DB_PORT: String(port), DB_USER: options.user,
+      DB_PASSWORD: options.password, DB_NAME: schema, PORT: String(apiPort),
+      AGENT_WS_HOST: '127.0.0.1', AGENT_WS_PORT: String(wsPort), AGENT_WORKSPACE: workspace,
+      JWT_SECRET_KEY: randomBytes(32).toString('hex'), ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+      // Collection must be enabled for the status route to report the seeded failed attempt,
+      // not "disabled". The fixture never runs a collector process.
+      METRICS_COLLECTION_ENABLED: 'true',
+      SLIDE_MEMORY_PIPELINE_ENABLED: 'false', PROMPT_HOT_RELOAD: 'false' },
+  });
+  backend.stdout!.on('data', data => { backendLog += data; }); backend.stderr!.on('data', data => { backendLog += data; });
+  await expect.poll(async () => {
+    if (backend.exitCode !== null) throw new Error(`Backend exited: ${backendLog.slice(-2500)}`);
+    try { return (await fetch(`http://127.0.0.1:${apiPort}/api/health/ready`)).status; } catch { return 0; }
+  }, { timeout: 90_000 }).toBe(200);
+  vite = await createServer({ configFile: resolve('vite.config.js'), root: resolve('.'),
+    define: { 'import.meta.env.VITE_AGENT_WS_URL': '""' },
+    server: { host: '127.0.0.1', port: 0, strictPort: false, proxy: {
+      '/api': { target: `http://127.0.0.1:${apiPort}`, changeOrigin: true },
+      '/__slide': { target: `http://127.0.0.1:${wsPort}` },
+      '/agent-ws': { target: `http://127.0.0.1:${wsPort}`, ws: true },
+    } },
+  });
+  vite.httpServer!.on('connection', socket => { frontendSockets.add(socket); socket.once('close', () => frontendSockets.delete(socket)); });
+  await vite.listen(); origin = `http://127.0.0.1:${(vite.httpServer!.address() as { port: number }).port}`;
+});
+
+test.afterAll(async () => {
+  for (const socket of frontendSockets) socket.destroy();
+  frontendSockets.clear();
+  await vite?.close();
+  if (backend && backend.exitCode === null) {
+    const stopped = new Promise<void>(done => backend.once('exit', () => done()));
+    backend.kill('SIGTERM'); await stopped;
+  }
+  await writeFile(`${output}/backend.log`, backendLog);
+  await pool?.end();
+  if (adminPool) { await adminPool.query(`DROP DATABASE IF EXISTS ${schema}`); await adminPool.end(); }
+  if (workspace) await rm(workspace, { recursive: true, force: true });
+  if (modelGuard) await new Promise<void>(done => modelGuard.close(() => done()));
+  expect(modelCalls).toBe(0);
+});
+
+async function login(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem('slide.i18n.locale', 'zh-CN');
+    localStorage.setItem('app-theme-mode', 'light');
+    const key = 'slide.control.settings.v1:default';
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ locale: 'zh-CN', themeMode: 'light' }));
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${origin}/servers`);
+  await page.getByLabel('用户名', { exact: true }).fill('max240-owner');
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  const authenticated = page.waitForResponse(r => r.url().endsWith('/api/auth/login') && r.status() === 200);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  apiToken = (await (await authenticated).json()).token;
+  await expect(page.locator('.login-gate')).toHaveCount(0);
+  // Open the resource only after permissions are loaded; the detail page invalidates
+  // evidence that was mounted before the permission event.
+  await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
+  await page.getByRole('tab', { name: '指标与趋势' }).click();
+  browserState = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
+}
+
+const queryResponse = (page: Page, match: (body: any) => boolean) => page.waitForResponse(response => {
+  if (!response.url().endsWith('/api/metrics/query') || response.request().method() !== 'POST') return false;
+  try { return match(response.request().postDataJSON()); } catch { return false; }
+});
+const windowSpan = (spanMs: number) => (body: any) => Date.parse(body.to) - Date.parse(body.from) === spanMs;
+const chooseWindow = async (page: Page, value: string) => {
+  const select = page.locator('semantic-metrics select[aria-label="时间范围"]');
+  await select.selectOption(value);
+};
+
+test('24h, 7d and custom windows share one number/chart context with gaps, peaks and stale-good history', async ({ page }) => {
+  await login(page);
+  await expect(page.locator('semantic-metrics')).toBeVisible();
+
+  const first = queryResponse(page, windowSpan(DAY)); await chooseWindow(page, '24'); const response24 = await first;
+  const request24 = response24.request().postDataJSON();
+  expect(request24.bucket_ms).toBe(MINUTE);
+  expect(Date.parse(request24.to) - Date.parse(request24.from)).toBe(DAY);
+  const body24 = await response24.json() as any;
+  const buckets = body24.metrics[0].series[0].buckets as any[];
+  expect(buckets).toHaveLength(1440);
+  expect(buckets[0].window).toEqual({ from: request24.from, to: new Date(Date.parse(request24.from) + MINUTE).toISOString() });
+  expect(buckets.at(-1).window).toEqual({ from: new Date(Date.parse(request24.to) - MINUTE).toISOString(), to: request24.to });
+  expect(buckets.reduce((n, b) => n + b.sample_count, 0)).toBeGreaterThan(4_000);
+  const gap = buckets.find(b => b.sample_count === 0);
+  expect(gap).toMatchObject({ value: null, stats: null, coverage: 0 });
+  expect(buckets.some(b => b.stats?.max?.value === 999_999)).toBe(true);
+  // The mode value is one sample; the envelope keeps the bucket's in-bucket peak.
+  expect(buckets.some(b => b.stats && b.value && Number(b.value.value) < Number(b.stats.max.value))).toBe(true);
+  expect(buckets.some(b => b.value && b.quality.status === 'good' && b.accuracy === 'exact')).toBe(true);
+  // A good/exact historical bucket may be stale by age; that alone must not hide it.
+  expect(buckets.some(b => b.value && b.quality.status === 'good' && b.freshness === 'stale')).toBe(true);
+
+  const metrics = page.locator('semantic-metrics');
+  await expect(metrics).toContainText('共 1440 个');
+  await expect(metrics).toContainText('本地时区');
+  const chart = metrics.locator('metric-chart').first();
+  await expect(chart.locator('.chart-title')).not.toBeEmpty();
+  await expect(chart.locator('canvas').first()).toBeVisible();
+  const chartData = await chart.evaluate((element: any) => ({ time: element.timeData, series: element.series }));
+  expect(chartData.time).toHaveLength(1440);
+  // The in-bucket spike reaches the chart through the min/max envelope, not only the mode value.
+  expect(chartData.series[0].data).toHaveLength(1440);
+  expect(Math.max(...chartData.series[0].max.filter((v: number | null) => v !== null))).toBe(999_999);
+  // 1,440 bucket rows stay collapsed by default; only the summary and chart are in the DOM.
+  expect(await metrics.locator('.bucket-row').count()).toBe(0);
+  // Older minute buckets keep good/exact values while being stale relative to now.
+  await metrics.locator('summary', { hasText: '查看时间桶、定义与来源' }).first().click();
+  await metrics.locator('summary', { hasText: '时间桶明细' }).first().click();
+  await expect(metrics.locator('.bucket-row').first()).toBeVisible();
+  expect(await metrics.locator('.bucket-row').count()).toBe(200);
+  await expect(metrics).toContainText('过期');
+  await expect(metrics).toContainText('良好');
+
+  const seven = queryResponse(page, windowSpan(7 * DAY)); await chooseWindow(page, '168'); const response7d = await seven;
+  const request7d = response7d.request().postDataJSON();
+  expect(request7d.bucket_ms).toBe(MINUTE);
+  const body7d = await response7d.json() as any;
+  expect(body7d.metrics[0].series[0].buckets).toHaveLength(10_080);
+  await expect(metrics).toContainText('共 10080 个');
+
+  await chooseWindow(page, 'custom');
+  const day = (offset: number) => {
+    const d = new Date(Date.now() + offset), p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  await page.locator('input[aria-label="自定义开始时间"]').fill(day(-8 * DAY));
+  await page.locator('input[aria-label="自定义结束时间"]').fill(day(-MINUTE));
+  const custom = queryResponse(page, body => body.bucket_ms === 2 * MINUTE); await page.getByRole('button', { name: '应用自定义窗口' }).click();
+  const requestCustom = (await custom).request().postDataJSON();
+  expect(requestCustom.bucket_ms).toBe(2 * MINUTE);
+  await expect(metrics).toContainText('每桶 2 分钟');
+  await expect(metrics).toContainText('未静默截断');
+
+  for (const [width, height, name] of [[1440, 900, '1440x900'], [1366, 768, '1366x768'], [1920, 1080, '1920x1080']] as const) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, animations: 'disabled' });
+  }
+});
+
+test('the numeric and chart views stay on the same selected resource, metric, dimensions and window after a fast switch', async ({ page }) => {
+  await login(page);
+  const metrics = page.locator('semantic-metrics');
+  const select = metrics.locator('select[aria-label="指标"]');
+  await select.selectOption('db.uptime_seconds');
+  const fast = page.waitForRequest(r => r.url().endsWith('/api/metrics/query') && r.method() === 'POST' && windowSpan(6 * HOUR)(r.postDataJSON()));
+  await chooseWindow(page, '6');
+  await fast; // An intentionally superseded request may be aborted, so only require dispatch.
+  const final = queryResponse(page, windowSpan(DAY));
+  await chooseWindow(page, '24');
+  const selected = await final;
+  const body = await selected.json() as any;
+  const uptime = body.metrics.find((metric: any) => metric.definition.id === 'db.uptime_seconds');
+  expect(uptime.series).toHaveLength(1);
+  const latest = selected.request().postDataJSON();
+  expect(Date.parse(latest.to) - Date.parse(latest.from)).toBe(DAY);
+  await expect(select).toHaveValue('db.uptime_seconds');
+  await expect(metrics).toContainText('共 1440 个');
+  await expect(metrics.locator('metric-chart').first()).toBeVisible();
+  expect(await metrics.locator('.metric-name').count()).toBe(1);
+});
+
+test('failed collection keeps the old usable value beside the real status, last attempt and both success times', async ({ page }) => {
+  await login(page);
+  const metrics = page.locator('semantic-metrics');
+  const day = queryResponse(page, windowSpan(DAY)); await chooseWindow(page, '24'); await day;
+  const statusResponse = page.waitForResponse(r => r.url().endsWith(`/config/resources/instance/${RESOURCE_ID}/status`) && r.status() === 200);
+  const attemptsResponse = page.waitForResponse(r => r.url().endsWith(`/config/resources/instance/${RESOURCE_ID}/attempts`) && r.status() === 200);
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  const status = await (await statusResponse).json() as any;
+  const attempts = await (await attemptsResponse).json() as any[];
+  // Real HTTP data: the latest attempt is a failure, the older success still supplies last_success_at.
+  expect(status.collection.state).toBe('failed');
+  expect(status.blockers).toContain('COLLECTION_FAILED');
+  expect(status.collection.last_success_at).toBe(new Date(to - 2 * HOUR + MINUTE).toISOString());
+  expect(status.collection.last_attempt_at).toBe(new Date(to - 10 * MINUTE).toISOString());
+  expect(typeof status.formal_visibility.last_observed_at).toBe('string');
+  expect(attempts[0]).toMatchObject({ status: 'failed', error: 'connection_error', evidence_code: 'CONNECTION_REFUSED' });
+
+  await expect(metrics).toContainText('当前采集状态');
+  await expect(metrics).toContainText('最近一次采集尝试');
+  await expect(metrics).toContainText('正式采集成功时间');
+  await expect(metrics).toContainText('窗口内最近可用值');
+  await expect(metrics).toContainText('失败 · 不是成功');
+  await expect(metrics).toContainText('最近采集失败');
+  await expect(metrics).toContainText('connection_error · CONNECTION_REFUSED');
+  await expect(metrics).toContainText('最近成功采集');
+  await expect(metrics).toContainText('正式来源最近观测');
+  await expect(metrics).toContainText('两者不同，分别列示，不合并为同一个时间');
+  // Current collection is failed, so the retained value is greyed and never called current health.
+  const value = metrics.locator('.latest-value').first();
+  await expect(value.locator('.old-value')).not.toHaveCount(0);
+  await expect(value).toContainText('旧值，不代表当前健康');
+  await expect(value).toContainText('窗口内最近可用值');
+  await expect(metrics).not.toContainText('全局最近成功值');
+  // The historical curve and its exact bucket count survive the current failure.
+  const chartData = await metrics.locator('metric-chart').first().evaluate((element: any) => ({ time: element.timeData, series: element.series }));
+  expect(chartData.time).toHaveLength(1440);
+  expect(chartData.series[0].data.filter((v: number | null) => v !== null).length).toBeGreaterThan(1_000);
+  await page.screenshot({ path: `${output}/latest-data-failed.png`, fullPage: true, animations: 'disabled' });
+});
+
+test('reads frozen thresholds and same-window events after controlled unbinding and renaming', async ({ page }) => {
+  const [bindings] = await pool.query('SELECT * FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+  const [rollouts] = await pool.query("SELECT * FROM metric_rollout WHERE resource_type='instance' AND resource_id=?", [String(RESOURCE_ID)]);
+  await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)',
+    [`instance:${RESOURCE_ID}`, JSON.stringify({ validation: 'controlled_read_fixture' })]);
+  try {
+    await pool.execute('DELETE FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute("UPDATE metric_rollout SET source='retired',read_mode='pending',generation=2,published_revision=2,applied_revision=NULL WHERE resource_type='instance' AND resource_id=?", [String(RESOURCE_ID)]);
+    await pool.execute('UPDATE database_instances SET name=? WHERE id=?', ['MAX240 已改名且解绑', RESOURCE_ID]);
+    await login(page);
+    const day = queryResponse(page, windowSpan(DAY)); await chooseWindow(page, '24');
+    const body = await (await day).json() as any;
+    expect(body.metrics[0].state).toBe('not_covered');
+    expect(body.metrics[0].series[0].buckets).toHaveLength(1440);
+    expect(body.history_context.snapshots[0].rules[0].problem.threshold.value).toBe(90);
+    expect(body.history_context.events.map((e: any) => e.event_id)).toContain(eventId);
+    const metrics = page.locator('semantic-metrics');
+    const chart = metrics.locator('metric-chart').first();
+    expect(await chart.evaluate((el: any) => el.series.some((s: any) => s.name.includes('问题阈值') && s.data.includes(90)))).toBe(true);
+    expect(await chart.evaluate((el: any) => el.regions.some((r: any) => r.name.includes('问题')))).toBe(true);
+    await metrics.locator('summary', { hasText: '当时阈值、事件与保留策略' }).click();
+    await metrics.locator('summary', { hasText: `事件 ${eventId} ·` }).click();
+    await expect(metrics.locator('template-event-evidence')).toContainText('模板事件事实');
+    await expect(metrics.locator('template-event-evidence')).toContainText('max240-uptime');
+    await page.screenshot({ path: `${output}/unbound-threshold-event.png`, fullPage: true, animations: 'disabled' });
+  } finally {
+    await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute('INSERT INTO metric_policy_bindings(resource_key,group_id,payload,capabilities) VALUES(?,?,?,?)',
+      [bindings[0].resource_key,bindings[0].group_id,JSON.stringify(bindings[0].payload),JSON.stringify(bindings[0].capabilities)]);
+    for (const r of rollouts) await pool.execute('UPDATE metric_rollout SET source=?,read_mode=?,generation=?,published_revision=?,applied_revision=? WHERE series_hash=?',
+      [r.source,r.read_mode,r.generation,r.published_revision,r.applied_revision,r.series_hash]);
+  }
+});
+
+async function authenticatedToken(request: APIRequestContext) {
+  if (!apiToken) {
+    const login = await request.post(`http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}/api/auth/login`, { data: { username: 'max240-owner', password } });
+    expect(login.status()).toBe(200);
+    apiToken = (await login.json()).token;
+  }
+  return apiToken!;
+}
+
+test('a selected history series opens an authorized workspace draft with the same immutable context', async ({ page }) => {
+  if (!browserState) await login(page);
+  else {
+    await page.addInitScript(state => { for (const [key, value] of Object.entries(state)) localStorage.setItem(key, value); }, browserState);
+    await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
+    await page.getByRole('tab', { name: '指标与趋势' }).click();
+  }
+  const metrics = page.locator('semantic-metrics');
+  const link = metrics.getByRole('link', { name: '以此指标维度打开调查草案' }).first();
+  await expect(link).toBeVisible();
+  const href = await link.getAttribute('href');
+  const context = JSON.parse(new URL(href!, origin).searchParams.get('entry')!);
+  expect(context.resourceRefs).toEqual([{ type: 'instance', id: RESOURCE_ID, role: 'primary' }]);
+  expect(context.metric).toEqual({ id: 'db.uptime_seconds', semantic_version: '1.0.0' });
+  expect(context.dimensions).toEqual({});
+  expect(context.sourceEventIds).toEqual([]);
+  expect(context.returnTo).toContain(`/instance-detail?id=${RESOURCE_ID}`);
+  const facts = page.waitForResponse(r => r.url().endsWith('/api/investigations/entry-facts'), { timeout: 15000 });
+  await link.click();
+  await writeFile(`${output}/workspace-navigation.json`, JSON.stringify({ href, url: page.url(), text: (await page.locator('body').innerText()).slice(-6000) }, null, 2));
+  const response = await facts;
+  expect(response.status()).toBe(200);
+  expect((await response.json()).context).toEqual(context);
+  await expect(page.locator('investigation-entry')).toContainText('草案');
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n)).toBe(0);
+  expect(modelCalls).toBe(0);
+  const entry = page.locator('investigation-entry');
+  await entry.getByRole('button', { name: '保存调查草案', exact: true }).click();
+  await expect(page).toHaveURL(/investigation=[a-f0-9-]+/);
+  await expect(entry.getByRole('link', { name: '返回来源' })).toHaveAttribute('href', context.returnTo);
+  const saved = Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n);
+  expect(saved).toBe(1);
+  await page.reload();
+  await expect(page.locator('investigation-entry table')).toBeVisible();
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n)).toBe(saved);
+  await page.locator('investigation-entry').getByRole('link', { name: '返回来源' }).click();
+  await expect(page).toHaveURL(origin + context.returnTo);
+  expect(modelCalls).toBe(0);
+  await writeFile(`${output}/history-workspace-context.json`, JSON.stringify({ context, factsStatus: response.status(), createdOnOpen: 0, saved, refreshDuplicate: false, exactReturn: true, modelCalls }, null, 2));
+});
+
+test('old sampling settings survive a current-period change through production history APIs', async ({ request }) => {
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  const token = await authenticatedToken(request), headers = { Authorization: `Bearer ${token}` };
+  const body = { resource: { type: 'instance', id: RESOURCE_ID }, history: true, metric_ids: ['db.uptime_seconds'], from: iso(from), to: iso(to), bucket_ms: MINUTE };
+  const read = async () => {
+    const response = await request.post(`${api}/api/metrics/query`, { headers, data: body });
+    expect(response.status()).toBe(200); return response.json();
+  };
+  await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)', [`instance:${RESOURCE_ID}`, JSON.stringify({ basis: 'controlled_formal_history_fixture' })]);
+  const before = await read();
+  expect(before.history_context.configurations).toEqual([expect.objectContaining({ revision: 1, state: 'effective', settings: expect.objectContaining({ interval_ms: MINUTE }) })]);
+  const [old] = await pool.query('SELECT payload,capabilities FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+  try {
+    const registry = createConfigurationRegistry();
+    const policies = new PolicyService(new MysqlPolicyStore(() => pool), registry, { exists: async () => true, inventory: async () => inventory() });
+    const pin = registry.list().find(r => r.package.id === 'mysql-basic' && r.package.version === '2.0.0')!.package;
+    await policies.changeBinding(admin as any, body.resource, { expected_revision: 1, package: { id: pin.id, version: pin.version, digest: pin.digest },
+      overrides: { interval_ms: { mode: 'set', value: 300000 }, timeout_ms: { mode: 'set', value: 5000 }, stale_after_ms: { mode: 'set', value: 900000 }, max_counter_gap_ms: { mode: 'set', value: 900000 } } }, true);
+    const oldConfiguration = await request.get(`${api}/api/metrics/configuration-history/instance/${RESOURCE_ID}/1`, { headers });
+    expect(oldConfiguration.status()).toBe(200);
+    expect(await oldConfiguration.json()).toMatchObject({ revision: 1, state: 'effective', settings: { interval_ms: MINUTE } });
+    const after = await read();
+    expect(after.configuration_revision).toBe(2);
+    expect(after.history_context.configurations).toEqual(before.history_context.configurations);
+    expect(after.metrics[0].series).toEqual(before.metrics[0].series);
+    await writeFile(`${output}/historical-settings.json`, JSON.stringify({ currentRevision: after.configuration_revision, historicalConfigurations: after.history_context.configurations, sameHistoricalSeries: true }, null, 2));
+  } finally {
+    await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute('UPDATE metric_policy_bindings SET payload=?,capabilities=? WHERE resource_key=?', [typeof old[0].payload === 'string' ? old[0].payload : JSON.stringify(old[0].payload), typeof old[0].capabilities === 'string' ? old[0].capabilities : JSON.stringify(old[0].capabilities), `instance:${RESOURCE_ID}`]); }
+});
+
+test('internal server report reads remain available without a user session identity', async ({ request }) => {
+  await pool.query("INSERT INTO servers(id,host,label,os_type,credential_type,credential_encrypted,collection_enabled) VALUES(8402,'report.fixture.invalid','MAX240 internal report','linux','password','unused',0)");
+  try {
+    const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+    const token = await authenticatedToken(request);
+    const response = await request.get(`${api}/api/servers/reports?format=md`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(response.status()).toBe(200);
+    expect(await response.text()).toContain('report.fixture.invalid');
+    await writeFile(`${output}/internal-report.json`, JSON.stringify({ status: response.status(), taskServerIncluded: true, modelCalls }));
+  } finally { await pool.query('DELETE FROM servers WHERE id=8402'); }
+});
+
+test('maintenance revisions from real HTTP remain half-open and visible in the same history context', async ({ page, request }) => {
+  await page.addInitScript(state => { for (const [key,value] of Object.entries(state)) localStorage.setItem(key,value); }, browserState!);
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  const headers = {Authorization:`Bearer ${await authenticatedToken(request)}`};
+  const now = Date.now(), start = new Date(now - HOUR).toISOString(), end = new Date(now + HOUR).toISOString();
+  const value = {name:'维护历史验收',reason:'原维护原因',resources:[{type:'instance',id:RESOURCE_ID}],starts_at:start,ends_at:end,timezone:'Asia/Shanghai'};
+  const created = await request.post(`${api}/api/maintenance-windows`,{headers,data:{operation_key:randomUUID(),expected_revision:0,value}});
+  expect(created.status()).toBe(200); const first = (await created.json()).window;
+  const changed = await request.put(`${api}/api/maintenance-windows/${first.id}`,{headers,data:{operation_key:randomUUID(),expected_revision:1,value:{...value,reason:'修订维护原因'}}});
+  expect(changed.status()).toBe(200);
+  const windowEnd = new Date().toISOString();
+  const returned = `/instance-detail?id=${RESOURCE_ID}&tab=metrics&metricResource=instance:${RESOURCE_ID}&metricFrom=${encodeURIComponent(iso(from))}&metricTo=${encodeURIComponent(windowEnd)}`;
+  await page.goto(origin+returned); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  const section=page.locator('semantic-metrics').getByRole('region',{name:'维护历史'});
+  await expect(section).toContainText('原维护原因'); await expect(section).toContainText('修订维护原因');
+  await expect(section).toContainText('旧周期维护历史未覆盖');
+  const read=async()=>{const r=await request.get(`${api}/api/maintenance-windows/intervals/instance/${RESOURCE_ID}?${new URLSearchParams({from:iso(from),to:end})}`,{headers});expect(r.status()).toBe(200);return r.json();};
+  const before=await read(); expect(before.intervals).toHaveLength(2);
+  expect(before.intervals[0].effective_to).toBe(before.intervals[1].effective_from);
+  const cancelled=await request.delete(`${api}/api/maintenance-windows/${first.id}`,{headers,data:{operation_key:randomUUID(),expected_revision:2,cancel:true}});expect(cancelled.status()).toBe(200);
+  const after=await read(); expect(after.intervals[0]).toEqual(before.intervals[0]);
+  expect(Date.parse(after.intervals[1].effective_to)).toBeLessThan(Date.parse(end));
+  await page.reload(); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
+  // Real storage failure, not a mocked empty maintenance response.
+  await pool.query('RENAME TABLE maintenance_interval_history TO maintenance_interval_history_unavailable');
+  try {
+    await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
+    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('维护历史查询失败，状态未知');
+    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).not.toContainText('没有已记录');
+  } finally { await pool.query('RENAME TABLE maintenance_interval_history_unavailable TO maintenance_interval_history'); }
+  await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
+  await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
+  for (const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
+    await page.setViewportSize({width,height});
+    await page.screenshot({path:`${output}/maintenance-${width}.png`,fullPage:true});
+  }
+  await writeFile(`${output}/maintenance-history.json`,JSON.stringify({before,after,storageFailureUnknown:true,modelCalls},null,2));
+});
+
+test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  for (const revoked of ['permission', 'metric_permission', 'session'] as const) {
+    const token = await authenticatedToken(request);
+    const locker = await pool.getConnection();
+    let pending: ReturnType<typeof request.get> | undefined;
+    try {
+      await locker.query('LOCK TABLES metric_attempts WRITE');
+      pending = request.get(`${api}/api/metrics/${RESOURCE_ID}`, { headers: { Authorization: `Bearer ${token}` } });
+      // Observe the production handler blocked on its actual metric SQL; the
+      // revocation is committed only after preHandler and initial access checks.
+      await expect.poll(async () => {
+        const [rows] = await adminPool.query("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE DB=? AND INFO LIKE '%SELECT payload FROM metric_attempts%' AND STATE LIKE '%lock%'", [schema]);
+        return Number(rows[0].n);
+      }).toBeGreaterThan(0);
+      if (revoked === 'permission') await pool.query('DELETE FROM role_permissions WHERE role_id=8401');
+      else if (revoked === 'metric_permission') await pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=8401 AND (p.code='*' OR p.code LIKE 'metric:%')");
+      else await pool.query('UPDATE users SET session_version=session_version+1 WHERE id=8401');
+      await locker.query('UNLOCK TABLES');
+      const response = await pending;
+      expect(response.status()).toBe(revoked === 'session' ? 401 : 403);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('semantic_metrics');
+      expect(body).not.toHaveProperty('metrics');
+      await writeFile(`${output}/legacy-${revoked}-revocation.json`, JSON.stringify({ path: `/api/metrics/${RESOURCE_ID}`, status: response.status(), body, waitObserved: true }, null, 2));
+    } finally {
+      await locker.query('UNLOCK TABLES'); locker.release();
+      if (pending) await pending.catch(() => undefined);
+      await pool.query('INSERT IGNORE INTO role_permissions (role_id,permission_id) SELECT 8401,id FROM permissions');
+    }
+  }
+});
+
+test('revoking resource permission clears protected history immediately and rejects stale responses', async ({ page }) => {
+  await login(page);
+  const metrics = page.locator('semantic-metrics');
+  await expect(metrics).toContainText('最近时间桶');
+  await pool.query('DELETE FROM role_permissions WHERE role_id = 8401');
+  const denied = page.waitForResponse(r => r.url().endsWith('/api/metrics/query') && r.status() === 403);
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  await denied;
+  await expect(metrics).toContainText('没有此资源的查看权限');
+  await expect(metrics).not.toContainText('最近时间桶');
+  await page.screenshot({ path: `${output}/permission-revoked.png`, fullPage: true, animations: 'disabled' });
+});

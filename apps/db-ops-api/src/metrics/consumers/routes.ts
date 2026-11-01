@@ -1,17 +1,20 @@
+import { ActorAuthenticationError } from '../../auth/actor-context.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { PolicyError, RefSchema, rule } from '../policy/model.js';
-import { metricConsumerService } from './runtime.js';
+import { authenticatedMetricConsumerService } from './runtime.js';
 import { ConsumerAlertPolicySchema, scoreMetrics } from './evaluation.js';
 const EvaluateSchema = z.strictObject({ query: z.unknown(), policies: z.array(ConsumerAlertPolicySchema).max(32) });
-export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = metricConsumerService) {
-  for (const op of ['query', 'discover', 'inventory', 'evaluate'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
+export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = authenticatedMetricConsumerService) {
+  for (const op of ['query', 'discover', 'inventory', 'evaluate', 'observations'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
     const actor = (request as unknown as { user?: ActorContext }).user;
     if (!actor) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
     try {
       if (op === 'discover') return await service.discover(actor, RefSchema.parse(request.body));
       if (op === 'inventory') return await service.inventory(actor, RefSchema.parse(request.body));
+      if (op === 'observations') return await service.observations(actor, request.body);
       if (op === 'evaluate') {
         const body = EvaluateSchema.parse(request.body), result = await service.query(actor, body.query);
         rule(body.policies.every(p => result.metrics.some(m => m.definition.id === p.metric_id)), 'UNKNOWN_METRIC');
@@ -19,6 +22,7 @@ export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyT
       }
       return await service.query(actor, request.body);
     } catch (e) {
+      if (e instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
       if (e instanceof PolicyError) return reply.code(e.status).send({ error: e.code });
       if (e instanceof z.ZodError) return reply.code(400).send({ error: 'QUERY_INPUT_INVALID' });
       if (e instanceof Error && e.message === 'QUERY_FORBIDDEN') return reply.code(403).send({ error: e.message });

@@ -3,6 +3,7 @@ import { collectDatabase } from './collector.js';
 import { diagnosticReads } from './diagnostics.js';
 import { implementationId } from './catalog.js';
 import { createConfigurationRegistry } from '../config/registry.js';
+import { RegisteredCapabilityCatalog } from '../templates/catalog.js';
 import { resolvePolicy } from '../policy/resolver.js';
 
 const read = diagnosticReads.find(r => r.name === 'diagnostic_ratios')!;
@@ -25,6 +26,23 @@ describe('diagnostic definitions and exact scalar decoding', () => {
     const [row]=await collectDatabase(implementationId(gauge),{method:'sql',pool:{query:async()=>[[{Variable_name:'Threads_running',Value:'9007199254740993'},{Variable_name:'Open_files',Value:9007199254740992}],[]]}},{},1000);
     expect(row.fields.Threads_running).toEqual({encoding:'uint64',value:'9007199254740993'});
     expect(row.fields.Open_files).toBeUndefined();
+  });
+  it('MAX-237 connection percentage keeps NULL and selects the additive fixed snapshot', async () => {
+    const read = diagnosticReads.find(r => r.name === 'connection_utilization')!;
+    const transport = (current: unknown, used: unknown) => ({ method: 'sql' as const, pool: {
+      query: async (): Promise<[unknown, unknown]> => [[{ current_connections: current, used_percent: used }], []],
+    } });
+    expect((await collectDatabase(implementationId(read), transport('3', '2.5'), {}, 1000))[0].fields)
+      .toEqual({ current_connections: { encoding: 'uint64', value: '3' }, used_percent: { encoding: 'float64', value: 2.5 } });
+    expect((await collectDatabase(implementationId(read), transport(null, null), {}, 1000))[0].fields)
+      .toEqual({ current_connections: null, used_percent: null });
+    const registry = createConfigurationRegistry();
+    const releases = registry.list().filter(r => r.package.id === 'mysql-diagnostics');
+    const release = releases.find(r => r.package.version === '1.2.0')!;
+    expect(new RegisteredCapabilityCatalog(registry).autofill({ package: release.package, metric: { id: 'mysql.connections.used_percent', semantic_version: '1.0.0' } }))
+      .toMatchObject({ raw_field: 'used_percent', unit: '%', implementation_id: implementationId(read) });
+    for (const release of releases) expect(release.package.collectors.some(c => c.implementation_ref === implementationId(read)))
+      .toBe(release.package.version === '1.2.0');
   });
   it('every recommended package resolves within its default series budget', () => {
     const registry=createConfigurationRegistry(),at=new Date().toISOString();

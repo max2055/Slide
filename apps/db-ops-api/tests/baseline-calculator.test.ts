@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ execute: vi.fn(), discover: vi.fn() }));
 vi.mock('../src/db-connection.js', () => ({ dbConnection: { getPool: () => ({ execute: mocks.execute }) } }));
-vi.mock('../src/metrics/consumers/runtime.js', () => ({ metricConsumerService: { discover: mocks.discover } }));
+vi.mock('../src/metrics/consumers/runtime.js', () => ({ internalMetricConsumerService: { discover: mocks.discover } }));
 import { SemanticBaselineService } from '../src/metrics/consumers/baseline.js';
 
 const sample = (value: string, quality = 'good') => ({ payload: {value: {encoding:'uint64',value},quality:{status:quality},accuracy:'exact'} });

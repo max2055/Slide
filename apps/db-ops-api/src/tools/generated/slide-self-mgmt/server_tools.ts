@@ -90,7 +90,7 @@ export const getServerMetricsTool: AnyAgentTool = {
     if (range !== undefined && !(RANGES as readonly string[]).includes(range)) return { success: false, error: 'range 无效', errorCode: 'TIME_RANGE_INVALID' };
     if (args.metricName !== undefined && (typeof args.metricName !== 'string' || !/^[a-z][a-z0-9_]{1,80}$/.test(args.metricName))) return { success: false, error: 'metricName 无效', errorCode: 'METRIC_NAME_INVALID' };
     try {
-      const result = await serverDiagnosticService.getMetricData(id, { metricName: args.metricName as string | undefined, range: range as any, maxRows: maxRows! });
+      const result = await serverDiagnosticService.getMetricData(id, { metricName: args.metricName as string | undefined, range: range as any, maxRows: maxRows! }, context!.actor);
       return { success: true, data: result, summary: `服务器 #${id} 指标数据`, details: { server_id: id, freshness: result.freshness, gaps: result.gaps } };
     } catch (error: any) {
       return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'GET_METRICS_FAILED' };
@@ -141,7 +141,7 @@ export const analyzeServerHealthTool: AnyAgentTool = {
     const id = serverId(args);
     if (id === null) return { success: false, error: 'serverId 必须为正整数', errorCode: 'INVALID_PARAMETER' };
     try {
-      const data = await serverDiagnosticService.analyzeHealth(id);
+      const data = await serverDiagnosticService.analyzeHealth(id, context!.actor);
       return { success: true, data, summary: `服务器 #${id} 健康状态：${String(data.overall_health)}`, details: { server_id: id, freshness: data.freshness, gaps: data.gaps } };
     } catch (error: any) {
       return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'HEALTH_ANALYSIS_FAILED' };

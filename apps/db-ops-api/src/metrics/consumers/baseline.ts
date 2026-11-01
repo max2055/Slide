@@ -3,7 +3,7 @@ import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { mean, standardDeviation } from 'simple-statistics';
 import { dbConnection } from '../../db-connection.js';
 import type { BaselineResult } from '../../baseline-calculator.js';
-import { metricConsumerService } from './runtime.js';
+import { internalMetricConsumerService as metricConsumerService } from './runtime.js';
 import { migrateReference } from './migration.js';
 import { MysqlFormalMetricStore } from '../rollout/formal-store.js';
 import { rule } from '../policy/model.js';

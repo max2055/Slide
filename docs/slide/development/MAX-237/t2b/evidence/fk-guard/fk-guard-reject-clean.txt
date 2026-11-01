@@ -1,0 +1,2 @@
+stopping recorded container 265b545d9a15ba3604509b5cef0af4785ef7b5c2f9976a2329702a6c8babe260
+clean: recorded container/volume removed; handle and throwaway credentials deleted

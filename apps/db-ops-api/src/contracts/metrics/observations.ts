@@ -47,13 +47,20 @@ export const CounterEvidenceSchema = z.strictObject({
 export const ObservationRefSchema = z.strictObject({
   id: IdSchema, stage: z.enum(['raw', 'normalized']),
 });
+export const ObservationSourceRecord = z.strictObject({
+  binding_id: IdSchema, metric_binding_id: IdSchema, collector_id: IdSchema, attempt_id: IdSchema,
+});
+export const ObservationVersionsRecord = z.strictObject({
+  contract: VersionSchema, package_id: IdSchema, package_version: VersionSchema, transform_version: VersionSchema,
+  config_revision: z.number().int().positive(),
+});
 const identity = {
   id: IdSchema, resource_type: ResourceTypeSchema, resource_id: IdSchema,
   metric: MetricRefSchema, dimensions: DimensionsSchema,
   observed_at: TimestampSchema, collected_at: TimestampSchema, stored_at: TimestampSchema.nullable(),
   quality: QualitySchema, accuracy: AccuracySchema, production: ProductionSchema,
-  source: z.strictObject({ binding_id: IdSchema, metric_binding_id: IdSchema, collector_id: IdSchema, attempt_id: IdSchema }),
-  versions: z.strictObject({ contract: VersionSchema, package_id: IdSchema, package_version: VersionSchema, transform_version: VersionSchema, config_revision: z.number().int().positive() }),
+  source: ObservationSourceRecord,
+  versions: ObservationVersionsRecord,
   counter: CounterEvidenceSchema.optional(),
 };
 export const RawObservationSchema = z.strictObject({

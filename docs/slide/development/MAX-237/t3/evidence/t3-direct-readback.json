@@ -1,0 +1,260 @@
+{
+  "captured_at": "2026-10-27T14:00:22.316Z",
+  "target": [
+    {
+      "id": 1,
+      "name": "mysql3306",
+      "db_type": "mysql",
+      "port": 3306,
+      "database_name": "db_ops_ai",
+      "status": "active"
+    }
+  ],
+  "database": {
+    "db": "db_ops_ai"
+  },
+  "tables": [
+    {
+      "name": "metric_template_drafts",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T21:54:39.000Z"
+    },
+    {
+      "name": "metric_template_item_versions",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T21:54:39.000Z"
+    },
+    {
+      "name": "metric_template_items",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T21:54:39.000Z"
+    },
+    {
+      "name": "metric_template_versions",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T21:54:39.000Z"
+    },
+    {
+      "name": "metric_templates_v2",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T21:54:39.000Z"
+    }
+  ],
+  "templates": [
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "name": "Huawei VRP by SNMP",
+      "status": "active",
+      "current_published_version": 1,
+      "revision": 2,
+      "created_by": null,
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z"
+    },
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "name": "MySQL by ODBC",
+      "status": "active",
+      "current_published_version": 1,
+      "revision": 2,
+      "created_by": null,
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "name": "Linux by Zabbix agent",
+      "status": "active",
+      "current_published_version": 1,
+      "revision": 2,
+      "created_by": null,
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z"
+    }
+  ],
+  "versions": [
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "version": 1,
+      "status": "published",
+      "content_hash": "sha256:2ea6fdc9888139eec02bb9968d3655efd1a1787e413d2d69dfe79ee3181c7f92",
+      "published_at": "2026-10-27T13:54:39.881Z"
+    },
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "version": 1,
+      "status": "published",
+      "content_hash": "sha256:4db4800495801f3993cfd5a21eda672bdd7bccbbb535bc8224cd57be7fbb107a",
+      "published_at": "2026-10-27T13:54:39.881Z"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "version": 1,
+      "status": "published",
+      "content_hash": "sha256:bfdc5171f43a78f5b3595b38543270be986dea837d0f64ed8446876d094c7c21",
+      "published_at": "2026-10-27T13:54:39.881Z"
+    }
+  ],
+  "item_counts": [
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_count": 9
+    },
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "item_count": 1
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_count": 5
+    }
+  ],
+  "item_versions": [
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "1659d815112945478585fceef9318e68",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Operational status",
+      "canonical_metric_id": "network.interface.oper_up",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "1"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "9291e8cfc58a4c029ff339bae4892faf",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets with errors",
+      "canonical_metric_id": "snmp.interface.tx_errors_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "count"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "998389bdf381441e92ddd597272002fa",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Bits sent",
+      "canonical_metric_id": "snmp.interface.tx_octets_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "By"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "c45208952a8f43e7a4ac90dbc9bf2eac",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Speed",
+      "canonical_metric_id": "snmp.interface.speed_bits_per_second",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "bit/s"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "c5bc13495caf4a208b21bcd0a515a19d",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Outbound packets discarded",
+      "canonical_metric_id": "snmp.interface.tx_discards_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "count"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "d21e9fec64c54fd19605f8a8ba230211",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets with errors",
+      "canonical_metric_id": "snmp.interface.rx_errors_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "count"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "e5323fadbfbe4773ab450312a2c29164",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Bits received",
+      "canonical_metric_id": "snmp.interface.rx_octets_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "By"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "e5972a8dce67488cb6119c4f49d59a12",
+      "version": 1,
+      "display_name": "Interface {#IFNAME}({#IFALIAS}): Inbound packets discarded",
+      "canonical_metric_id": "snmp.interface.rx_discards_total",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "count"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "item_id": "e9dd0d849aaa499da9e2ef9e21ccd50e",
+      "version": 1,
+      "display_name": "Uptime (network)",
+      "canonical_metric_id": "snmp.agent.uptime_seconds",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "s"
+    },
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "item_id": "8fbad224ebdf46e7b25a0be015f21972",
+      "version": 1,
+      "display_name": "Uptime",
+      "canonical_metric_id": "db.uptime_seconds",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "s"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_id": "403cebed115441369e94d35d070ca7b8",
+      "version": 1,
+      "display_name": "Memory utilization",
+      "canonical_metric_id": "linux.memory.used_percent",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "%"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_id": "48528aa936a04c8189375a6eae4033da",
+      "version": 1,
+      "display_name": "Load average (1m avg)",
+      "canonical_metric_id": "linux.load.one_minute",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "1"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_id": "8537f6c6ac6b438c80caf227946df891",
+      "version": 1,
+      "display_name": "System uptime",
+      "canonical_metric_id": "linux.uptime.seconds",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "s"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_id": "a6d90e0bc5ef4fb7acee8682687c485f",
+      "version": 1,
+      "display_name": "FS [{#FSNAME}]: Space: Total",
+      "canonical_metric_id": "host.filesystem.size_bytes",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "By"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "item_id": "efee06a191aa4e5c8faa2762988b6955",
+      "version": 1,
+      "display_name": "FS [{#FSNAME}]: Space: Used",
+      "canonical_metric_id": "host.filesystem.used_bytes",
+      "canonical_semantic_version": "1.0.0",
+      "unit": "By"
+    }
+  ],
+  "business_counts": {
+    "users": 5,
+    "database_instances": 5,
+    "servers": 1,
+    "metric_templates_legacy": 5
+  }
+}

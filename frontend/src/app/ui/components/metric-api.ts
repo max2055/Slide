@@ -58,6 +58,20 @@ export function coverageAvailability(status: CollectionStatus, data: Recommendat
       ? { ...c, state: 'unsupported', reason: 'VERSION_UNSUPPORTED' } : c;
   }) };
 }
+/** Status strip only: recommendations are a separate product column and must not gate history. */
+export const readCollectionSummary = (type: string, id: number) => metricRequest<CollectionStatus>(`${collectionRoot(type, id)}/status`);
+/** Wire contract: MAX-189 CollectionAttemptSchema, newest first (LIMIT 20). */
+export interface CollectionAttempt {
+  status: 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
+  started_at: string; ended_at?: string;
+  error: 'timeout' | 'permission_denied' | 'connection_error' | 'parse_error' | 'cancelled' | null;
+  evidence_code?: string;
+}
+export async function readCollectionAttempts(type: string, id: number): Promise<CollectionAttempt[]> {
+  const rows = await metricRequest<CollectionAttempt[]>(`${collectionRoot(type, id)}/attempts`);
+  if (!Array.isArray(rows)) throw new Error('METRIC_ATTEMPT_CONTRACT');
+  return rows;
+}
 export async function readCollectionStatus(type: string, id: number): Promise<CollectionStatus> {
   const status = await metricRequest<CollectionStatus>(`${collectionRoot(type, id)}/status`);
   // Capacity is a separate product column. Preserve verified binding state when

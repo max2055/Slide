@@ -4,7 +4,7 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import { compileAlertRule } from '../../alerts/compiled-rule.js';
 import { policyService } from '../policy/service.js';
 import { PolicyError, type Ref } from '../policy/model.js';
-import { metricConsumerService, operationalSource } from './runtime.js';
+import { internalMetricConsumerService as metricConsumerService, operationalSource } from './runtime.js';
 import { migrateReference } from './migration.js';
 import { evaluateMetric } from './evaluation.js';
 const actorFor = (ref: Ref): ActorContext => ({ userId: 0, username: 'metric-policy-evaluator', roles: [],
