@@ -1,3 +1,4 @@
+import { publicationAuditCount } from './audit-test-support.js';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -67,8 +68,7 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
     Number((await one('SELECT COUNT(*) AS n FROM metric_policy_bindings WHERE resource_key = ?', [key]))!.n);
   const storedRevision = async (key: string) =>
     Number((await one("SELECT JSON_EXTRACT(payload, '$.binding.revision') AS revision FROM metric_policy_bindings WHERE resource_key = ?", [key]))!.revision);
-  const auditCount = async (key: string) =>
-    Number((await one('SELECT COUNT(*) AS n FROM metric_policy_audit WHERE target = ?', [key]))!.n);
+  const auditCount = (key: string) => publicationAuditCount(pool, key);
   /** Migration 121 renames the metric v2 alert tables; count whichever name exists. */
   const alertTableNames = [
     { requested: 'metric_v2_alert_state', renamed: 'metric_alert_state' },

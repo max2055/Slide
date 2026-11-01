@@ -1,3 +1,4 @@
+import { publicationAuditCount } from './audit-test-support.js';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +37,7 @@ describe.skipIf(!port)('MAX-238 R2 lifecycle on a disposable MySQL schema', () =
   let pin: { id: string; version: string; digest: string };
   let poolSpy: ReturnType<typeof vi.spyOn>;
   const rows = async (sql: string, values: unknown[] = []) => (await pool.query<RowDataPacket[]>(sql, values as never))[0];
-  const count = async (sql: string, values: unknown[] = []) => Number((await rows(sql, values))[0]!.n);
-  const audits = (ref: Ref) => count('SELECT COUNT(*) AS n FROM metric_policy_audit WHERE target = ?', [refKey(ref)]);
+  const audits = (ref: Ref) => publicationAuditCount(pool, refKey(ref));
   const journal = async (key: string) => (await rows(`SELECT operation_key, resource_key, actor_id, target_revision,
     intent_digest, configuration_digest, state, claimed_at, committed_at FROM metric_policy_apply_operations
     WHERE operation_key = ?`, [key]))[0] ?? null;

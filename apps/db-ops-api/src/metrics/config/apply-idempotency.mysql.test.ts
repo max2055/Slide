@@ -1,3 +1,4 @@
+import { publicationAuditCount } from './audit-test-support.js';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +56,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
   const rows = async (sql: string, values: unknown[] = []) =>
     (await pool.query<RowDataPacket[]>(sql, values as never))[0];
   const count = async (sql: string, values: unknown[] = []) => Number((await rows(sql, values))[0]!.n);
-  const audits = (ref: Ref) => count('SELECT COUNT(*) AS n FROM metric_policy_audit WHERE target = ?', [refKey(ref)]);
+  const audits = (ref: Ref) => publicationAuditCount(pool, refKey(ref));
   const operations = () => count('SELECT COUNT(*) AS n FROM metric_policy_apply_operations');
   const bindingPayload = async (ref: Ref) => String((await rows('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]))[0]?.payload ?? '');
   const operationRow = async (key: string) => (await rows(`SELECT operation_key, resource_key, actor_id, target_revision,
@@ -139,13 +140,13 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
 
   it('replays the same intent without a second revision, publication or audit row', () => step('replay the same intent', async () => {
     const input = { expected_revision: 0, package: pin, operation_key: 'apply-intent-1' };
-    const before = { payload: await bindingPayload(ref1), publishedAt: await count('SELECT COUNT(*) AS n FROM metric_policy_audit WHERE target = ?', [refKey(ref1)]) };
+    const before = { payload: await bindingPayload(ref1), audits: await audits(ref1) };
     const replay = await policies.changeBinding(admin, ref1, input, true);
     const first = await operationRow('apply-intent-1');
     expect(replay.published).toBe(true); expect(replay.resources[0].binding.revision).toBe(1);
     expect(replay.resources[0].published_at).toBe(first!.committed_at);
     expect(await bindingPayload(ref1)).toBe(before.payload);
-    expect(await audits(ref1)).toBe(before.publishedAt);
+    expect(await audits(ref1)).toBe(before.audits);
     expect(await operations()).toBe(1);
     evidence.replay = { replay_revision: replay.resources[0].binding.revision, replay_published_at: replay.resources[0].published_at,
       binding_unchanged: true, audits: await audits(ref1), operation_rows: await operations() };
