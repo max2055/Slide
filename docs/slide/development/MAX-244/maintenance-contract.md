@@ -39,3 +39,14 @@
 `pnpm --filter slide-api exec tsx e2e/max244-maintenance.ts` 创建独占容器（随机nonce标签）、记录确切容器ID/端口/PID/cwd/schema，再运行完整迁移、生产HTTP registrar与真实Lit。输出在 `outputs/max244-<nonce>`，含生命周期、结果、清理确认和三尺寸截图。清理只核验该nonce和确切ID/schema；未知返回非零并保留句柄，不扫描邻居。
 
 数值95/85/缺测/60和时钟由fixture控制，使用现有纯evaluator与唯一事件持久writer、真实MySQL；不声称该fixture测试物理SQL/SSH/SNMP传输、正式scheduler全部链路或外部通知。既有采集链未改动，其已接受证据按准确上游源码复用；本fixture验证维护没有向collector写停用配置。安全权限独立复核由终态Chief完成。
+
+
+## R1/R2 兼容修复（2026-11-01）
+
+公开告警 tags 中 maintenance 仅保留 state/at；新 writer 不再复制全范围，历史 mapper、通知及 RCA 读取同样裁剪。完整不可变维护关联仍在 maintenance_event_links，授权区间接口继续按请求资源投影。当前 GET /api/alerts 的 items DTO 本来就未包含 tags，真实 JWT 验收也覆盖该生产 registrar；不把 mapper 单测称作 HTTP 验收。
+
+Migration141 保留原 maintenance_windows 每周重复/时区/跨日/抑制配置，新增 revision=0 和升级快照 maintenance_weekly_history，不删除或转换成一次性区间。原入口 GET 同时返回 kind=weekly、数字字符串 ID 的旧窗口，PUT/DELETE 接受旧 ID；新建仍只创建有限期限窗口。周期编辑 value 为 name/reason/resources（单个 instance 或 null 全局）/timezone/day_of_week（1=周日）/start_time/end_time。取消只禁用 enabled，不删除原配置；已取消不可编辑。周期列表保留已取消状态。
+
+周期管理复用 maintenance_scope_lock、maintenance_operations、锁后及提交可信实时权限；修改前后资源均授权，revision 冲突返回409，未知响应按原键查询/重放，noop 不新增审计。完整保留 legacy suppress_evaluation 字段，问题事实记录仍按已有修复继续。历史区间接口仍提供有限期限维护生产契约；旧周期配置由兼容管理和独立周期修订审计保全，不伪造有限期限历史。
+
+新增真实 fixture 先安装截至140的原始迁移，种入 enabled 旧周期，再执行141；经实际 Lit/Fastify/MySQL 查看/修改/取消、响应丢失恢复、撤权锁等待/越权、版本冲突、审计与运行时抑制解除。所有 MySQL 使用 nonce 独占非3306实例；无正式 worker、物理 collector 传输或外部通知。

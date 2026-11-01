@@ -15,7 +15,7 @@ export async function registerMaintenanceRoutes(app:FastifyInstance,verify:preHa
     if(op==='list')return await service.list(req.user);
     if(op==='operation')return await service.operation(req.user,req.params.key);
     if(op==='history')return await service.history(req.user,RefSchema.parse({type:req.params.type,id:Number(req.params.id)}),req.query.from,req.query.to);
-    if(op!=='create')z.string().uuid().parse(req.params.id);
+    if(op!=='create')z.union([z.string().uuid(),z.string().regex(/^[1-9]\d*$/).refine(v=>Number.isSafeInteger(Number(v)))]).parse(req.params.id);
     return await service.change(req.user,op==='create'?null:req.params.id,req.body);
    }catch(e){
     if(e instanceof ActorAuthenticationError)return reply.code(401).send({error:'MAINTENANCE_AUTH'});

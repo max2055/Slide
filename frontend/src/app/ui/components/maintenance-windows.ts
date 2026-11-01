@@ -107,13 +107,19 @@ export class MaintenanceWindows extends LitElement {
       if (saved) {
         try {
           const intent = JSON.parse(saved);
-          if (!intent || !intent.body || typeof intent.body.operation_key !== 'string' ||
-              !Number.isSafeInteger(intent.body.expected_revision) ||
-              !(intent.id === null || typeof intent.id === 'string')) throw Error('invalid intent');
+          if (
+            !intent ||
+            !intent.body ||
+            typeof intent.body.operation_key !== "string" ||
+            !Number.isSafeInteger(intent.body.expected_revision) ||
+            !(intent.id === null || typeof intent.id === "string")
+          )
+            throw Error("invalid intent");
           this.pending = intent;
         } catch {
           this.pending = { corrupt: true };
-          this.error = '本地操作记录损坏，无法确认上次结果，已停止写入。请保留记录并联系管理员核对。';
+          this.error =
+            "本地操作记录损坏，无法确认上次结果，已停止写入。请保留记录并联系管理员核对。";
         }
       } else this.pending = null;
     } catch (e) {
@@ -155,14 +161,25 @@ export class MaintenanceWindows extends LitElement {
       this.impact = true;
       return;
     }
-    const value = {
-      name: row.name,
-      reason: row.reason,
-      resources: row.resources,
-      timezone: row.timezone,
-      starts_at: row.starts_at,
-      ends_at: row.ends_at,
-    };
+    const value =
+      row.kind === "weekly"
+        ? {
+            name: row.name,
+            reason: row.reason,
+            resources: row.resources,
+            timezone: row.timezone,
+            day_of_week: row.day_of_week,
+            start_time: row.start_time,
+            end_time: row.end_time,
+          }
+        : {
+            name: row.name,
+            reason: row.reason,
+            resources: row.resources,
+            timezone: row.timezone,
+            starts_at: row.starts_at,
+            ends_at: row.ends_at,
+          };
     const intent = {
       id: row.id ?? null,
       body: {
@@ -240,6 +257,8 @@ export class MaintenanceWindows extends LitElement {
   }
   render() {
     const d = this.draft;
+    const choices =
+      d?.kind === "weekly" ? this.resources.filter((r) => r.type === "instance") : this.resources;
     return html` <h3>维护窗口</h3>
       <p>
         维护期间继续采集并记录问题，仅抑制通知。结束后按当前事实重新评估，不补发维护期间的问题通知。
@@ -275,10 +294,10 @@ export class MaintenanceWindows extends LitElement {
                   ${r.resources ? r.resources.map((ref: any) => this.resources.find((v) => v.type === ref.type && v.id === ref.id)?.name ?? `${ref.type}:${ref.id}`).join("、") : "全局"}
                 </td>
                 <td>
-                  ${new Date(r.starts_at).toLocaleString("zh-CN", { timeZone: r.timezone, hour12: false })}<br />${new Date(r.ends_at).toLocaleString("zh-CN", { timeZone: r.timezone, hour12: false })}<br />${r.timezone}
+                  ${r.kind === "weekly" ? html`每周（1=周日）：${r.day_of_week}<br />${r.start_time} — ${r.end_time}` : html`${new Date(r.starts_at).toLocaleString("zh-CN", { timeZone: r.timezone, hour12: false })}<br />${new Date(r.ends_at).toLocaleString("zh-CN", { timeZone: r.timezone, hour12: false })}`}<br />${r.timezone}
                 </td>
                 <td>
-                  ${r.cancelled_at ? "已取消" : Date.parse(r.ends_at) <= Date.now() ? "已结束" : Date.parse(r.starts_at) > Date.now() ? "待开始" : "维护中"}
+                  ${r.cancelled_at ? "已取消" : r.kind === "weekly" ? "周期启用" : Date.parse(r.ends_at) <= Date.now() ? "已结束" : Date.parse(r.starts_at) > Date.now() ? "待开始" : "维护中"}
                 </td>
                 <td>
                   <button
@@ -339,7 +358,7 @@ export class MaintenanceWindows extends LitElement {
                         Array.from(e.target.selectedOptions).map((o: any) => JSON.parse(o.value)),
                       )}
                   >
-                    ${this.resources.map((r) => html`<option .selected=${d.resources?.some((v: any) => v.type === r.type && v.id === r.id) ?? false} .value=${JSON.stringify({ type: r.type, id: r.id })}>${r.name} (${r.type})</option>`)}
+                    ${choices.map((r) => html`<option .selected=${d.resources?.some((v: any) => v.type === r.type && v.id === r.id) ?? false} .value=${JSON.stringify({ type: r.type, id: r.id })}>${r.name} (${r.type})</option>`)}
                   </select></label
                 >
                 <label
@@ -351,25 +370,51 @@ export class MaintenanceWindows extends LitElement {
                     @change=${(e: any) => this.field("resources", e.target.checked ? null : [])}
                   />全局范围（需要全局管理权限）</label
                 >
-                <label
-                  >开始时间（含 UTC 偏移）<input
-                    aria-label="开始时间"
-                    .value=${d.starts_at}
-                    @input=${(e: any) => this.field("starts_at", e.target.value)}
-                /></label>
-                <label
-                  >结束时间（含 UTC 偏移）<input
-                    aria-label="结束时间"
-                    .value=${d.ends_at}
-                    @input=${(e: any) => this.field("ends_at", e.target.value)}
-                /></label>
+                ${
+                  d.kind === "weekly"
+                    ? html`<p>升级前周期维护：保留每周重复、跨日及时区语义。</p>
+                        <label
+                          >星期（1=周日，逗号分隔；* 为每天）<input
+                            aria-label="星期"
+                            .value=${d.day_of_week}
+                            @input=${(e: any) => this.field("day_of_week", e.target.value)}
+                        /></label>
+                        <label
+                          >周期开始<input
+                            aria-label="周期开始"
+                            type="time"
+                            step="1"
+                            .value=${d.start_time}
+                            @input=${(e: any) => this.field("start_time", e.target.value)}
+                        /></label>
+                        <label
+                          >周期结束<input
+                            aria-label="周期结束"
+                            type="time"
+                            step="1"
+                            .value=${d.end_time}
+                            @input=${(e: any) => this.field("end_time", e.target.value)}
+                        /></label>`
+                    : html`<label
+                          >开始时间（含 UTC 偏移）<input
+                            aria-label="开始时间"
+                            .value=${d.starts_at}
+                            @input=${(e: any) => this.field("starts_at", e.target.value)}
+                        /></label>
+                        <label
+                          >结束时间（含 UTC 偏移）<input
+                            aria-label="结束时间"
+                            .value=${d.ends_at}
+                            @input=${(e: any) => this.field("ends_at", e.target.value)}
+                        /></label>`
+                }
                 <label
                   >时区<select
                     aria-label="时区"
                     .value=${d.timezone}
                     @change=${(e: any) => this.field("timezone", e.target.value)}
                   >
-                    ${["Asia/Shanghai", "UTC", "America/New_York", "Europe/London"].map((t) => html`<option value=${t}>${t}</option>`)}
+                    ${Array.from(new Set([d.timezone, "Asia/Shanghai", "UTC", "America/New_York", "Europe/London"])).map((t) => html`<option value=${t}>${t}</option>`)}
                   </select></label
                 >
                 ${this.impact ? html`<p role="status">影响：${d.resources?.length ?? "全部"} 个资源；继续采集并记录问题，抑制通知。${d.cancelling ? "取消后立即重新评估，原问题不会被关闭。" : "请核对以上范围和期限后确认。"}</p>` : ""}

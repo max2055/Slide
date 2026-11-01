@@ -45,7 +45,7 @@ class AlertEventService {
         title: `模板触发器：${next.rule_id}`, message: `指标 ${next.opened.metric.id} = ${next.opened.value ?? '未知'} ${evidence.unit}`,
         source: 'template-trigger', metric_name: next.opened.metric.id,
         metric_value: next.opened.value === null ? undefined : String(next.opened.value),
-        tags: { maintenance, template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
+        tags: { maintenance: {state:maintenance.state,at:maintenance.at}, template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
       }, connection);
       if (!result.success || !result.alertId) throw new Error('TRIGGER_ALERT_WRITE_FAILED');
       const [inserted] = await connection.execute<mysql.ResultSetHeader>(`INSERT INTO alert_events

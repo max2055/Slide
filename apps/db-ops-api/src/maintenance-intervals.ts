@@ -16,6 +16,21 @@ export const MaintenanceInput = z.strictObject({
  try { new Intl.DateTimeFormat('en',{timeZone:v.timezone}); } catch { c.addIssue({code:'custom',message:'MAINTENANCE_TIMEZONE'}); }
  if(v.resources && new Set(v.resources.map(r=>`${r.type}:${r.id}`)).size!==v.resources.length) c.addIssue({code:'custom',message:'MAINTENANCE_DUPLICATE_RESOURCE'});
 });
+export const WeeklyInput = z.strictObject({
+ name:z.string().trim().min(1).max(100), reason:z.string().max(1000),
+ resources:z.array(RefSchema).length(1).nullable(), timezone:z.string().max(50),
+ day_of_week:z.string().max(50).transform(v=>v.split(',').map(d=>d.trim()).join(',')).pipe(z.string().regex(/^(\*|[1-7](,[1-7])*)$/)),
+ start_time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+ end_time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+}).superRefine((v,c)=>{
+ try{new Intl.DateTimeFormat('en',{timeZone:v.timezone});}catch{c.addIssue({code:'custom',message:'MAINTENANCE_TIMEZONE'});}
+ if(v.resources?.some(r=>r.type!=='instance'))c.addIssue({code:'custom',message:'MAINTENANCE_WEEKLY_INSTANCE'});
+ if(v.start_time.padEnd(8,':00')===v.end_time.padEnd(8,':00'))c.addIssue({code:'custom',message:'MAINTENANCE_DURATION'});
+});
+function weekly(row:any){return {kind:'weekly',id:String(row.id),revision:Number(row.revision),name:row.name,
+ reason:row.description??'',resources:row.instance_id==null?null:[{type:'instance',id:Number(row.instance_id)}],
+ day_of_week:row.day_of_week,start_time:row.start_time,end_time:row.end_time,timezone:row.timezone,
+ cancelled_at:row.enabled?null:new Date(row.updated_at).toISOString()};}
 export type Interval = z.infer<typeof MaintenanceInput> & {id:string;revision:number;cancelled_at:string|null;changed_at:string;actor_id:number};
 const decode = (v:any) => typeof v==='string'?JSON.parse(v):v;
 export function intervalContains(v:Interval, ref:Ref, at:number) {
@@ -40,6 +55,7 @@ export class MaintenanceIntervals {
   } catch(e){try{await c.rollback();reusable=true;}catch{/* Unknown transaction state must not return to the pool. */}throw e;} finally {if(reusable)c.release();else c.destroy();}
  }
  async change(actor:ActorContext,id:string|null,raw:unknown){
+  if(id && /^[1-9]\d*$/.test(id))return this.changeWeekly(actor,id,raw);
   const input=z.strictObject({operation_key:OperationKeySchema,expected_revision:z.number().int().nonnegative(),value:MaintenanceInput.optional(),cancel:z.boolean().optional()}).parse(raw);
   rule(input.cancel===true ? !!id&&!input.value : !!input.value,'MAINTENANCE_INPUT');
   const fingerprint=createHash('sha256').update(stable({id,...input})).digest('hex');
@@ -71,9 +87,40 @@ export class MaintenanceIntervals {
    return result;
   });
  }
+ private async changeWeekly(actor:ActorContext,id:string,raw:unknown){
+  const input=z.strictObject({operation_key:OperationKeySchema,expected_revision:z.number().int().nonnegative(),value:WeeklyInput.optional(),cancel:z.boolean().optional()}).parse(raw);
+  rule(input.cancel===true?!input.value:!!input.value,'MAINTENANCE_INPUT');
+  const fingerprint=createHash('sha256').update(stable({id,...input})).digest('hex');
+  return this.transaction(actor,async(c,live)=>{
+   const [ops]=await c.execute<RowDataPacket[]>('SELECT fingerprint,payload FROM maintenance_operations WHERE actor_id=? AND operation_key=?',[actor.userId,input.operation_key]);
+   if(ops.length){rule(ops[0].fingerprint===fingerprint,'MAINTENANCE_KEY_REUSED',409);const stored=decode(ops[0].payload);const current=await live();for(const v of stored.required)this.access(current,v,true);return stored.result;}
+   const [rows]=await c.execute<RowDataPacket[]>('SELECT * FROM maintenance_windows WHERE id=? FOR UPDATE',[id]);
+   rule(rows.length===1,'MAINTENANCE_NOT_FOUND',404);const previous=weekly(rows[0]);
+   this.access(await live(),previous as any,true);
+   rule(previous.revision===input.expected_revision,'MAINTENANCE_REVISION',409);
+   rule(input.cancel||!previous.cancelled_at,'MAINTENANCE_CANCELLED',409);
+   const value=input.cancel?previous:input.value!;
+   this.access(await live(),value as any,true);
+   const assets=new MysqlResourceRelationStore(()=>c as any);
+   for(const ref of value.resources??[])rule(await assets.exists(ref as Ref),'MAINTENANCE_RESOURCE_MISSING',404);
+   const normalize=(v:any)=>({name:v.name,reason:v.reason,resources:v.resources,timezone:v.timezone,day_of_week:v.day_of_week,start_time:v.start_time.length===5?v.start_time+':00':v.start_time,end_time:v.end_time.length===5?v.end_time+':00':v.end_time});
+   const noop=input.cancel?!!previous.cancelled_at:stable(normalize(previous))===stable(normalize(value));
+   if(!noop){
+    const v=normalize(value);
+    await c.execute('UPDATE maintenance_windows SET name=?,description=?,instance_id=?,day_of_week=?,start_time=?,end_time=?,timezone=?,enabled=?,revision=revision+1 WHERE id=?',[v.name,v.reason,v.resources?.[0].id??null,v.day_of_week,v.start_time,v.end_time,v.timezone,input.cancel?0:1,id]);
+   }
+   const [updated]=await c.execute<RowDataPacket[]>('SELECT * FROM maintenance_windows WHERE id=?',[id]);const next=weekly(updated[0]);
+   if(!noop)await c.execute('INSERT INTO maintenance_weekly_history VALUES(?,?,?)',[id,next.revision,JSON.stringify({...updated[0],actor_id:actor.userId,changed_at:new Date(this.clock()).toISOString()})]);
+   const result={success:true,window:next,noop};
+   await c.execute('INSERT INTO maintenance_operations VALUES(?,?,?,?)',[actor.userId,input.operation_key,fingerprint,JSON.stringify({result,required:[previous,next]})]);
+   const final=await actorContextService.revalidateActorOn(c as any,actor,actor.requestId,true);this.access(final,previous as any,true);this.access(final,next as any,true);
+   return result;
+  });
+ }
  async list(actor:ActorContext){return this.transaction(actor,async(c,live)=>{
   const [rows]=await c.execute<RowDataPacket[]>('SELECT payload FROM maintenance_intervals');
-  const current=await live(); return rows.map(r=>decode(r.payload) as Interval).filter(v=>{try{this.access(current,v,false);return true;}catch{return false;}});
+  const [legacy]=await c.execute<RowDataPacket[]>('SELECT * FROM maintenance_windows');
+  const current=await live(); return [...rows.map(r=>decode(r.payload) as Interval),...legacy.map(weekly)].filter(v=>{try{this.access(current,v as any,false);return true;}catch{return false;}});
  });}
  async resources(actor:ActorContext){return this.transaction(actor,async(c,live)=>{
   const result:Array<Ref&{name:string}>=[];

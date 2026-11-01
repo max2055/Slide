@@ -1,3 +1,4 @@
+import { publicMaintenanceTags } from './maintenance-public-tags.js';
 /**
  * 告警数据库服务
  */
@@ -88,7 +89,7 @@ class AlertDatabaseService {
       metric_name: row.metric_name,
       metric_value: row.metric_value,
       threshold_value: row.threshold_value,
-      tags: row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : null,
+      tags: publicMaintenanceTags(row.tags) ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };

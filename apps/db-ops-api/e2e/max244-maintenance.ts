@@ -1,3 +1,7 @@
+import { alertDatabaseService } from '../src/alert-database-service.js';
+import { notificationDatabaseService } from '../src/notification-database-service.js';
+import { registerAlertListRoute } from '../src/alert-list-route.js';
+import { maintenanceWindowService } from '../src/maintenance-window-service.js';
 import {assetCollectionEnabled} from '../src/metrics/config/effective-state.js';
 import {baseline,portOf,near} from '../src/metrics/triggers/test-support.js';
 import {resolveTriggerRules} from '../src/metrics/triggers/resolve.js';
@@ -8,7 +12,7 @@ import {alertEventService} from '../src/alert-event-service.js';
 /** Disposable non3306 MySQL + production Fastify routes + actual Lit browser. No worker, model or external sends. */
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readdirSync,copyFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createRequire} from 'node:module';
 import mysql from 'mysql2/promise';
@@ -36,20 +40,38 @@ try{
  const deadline=Date.now()+45000;for(;;){try{await root.query('SELECT 1');break;}catch(e){if(Date.now()>deadline)throw e;await new Promise(r=>setTimeout(r,300));}}
  owned=await createOwnedDatabase(root as any,{nonce,purpose:'maintenance',handleDir:directory});handle.schema=owned.database;save();
  assert(await dbConnection.initialize({host:'127.0.0.1',port:handle.port,user:'root',password:'',database:owned.database}));pool=dbConnection.getPool()!;
+ // Install the exact old schema first, seed a real legacy periodic row, then upgrade.
+ const oldMigrations=resolve(directory,'before141');mkdirSync(oldMigrations);
+ for(const file of readdirSync(resolve('sql/migrations')))if(file.endsWith('.sql')&&file<'141_')copyFileSync(resolve('sql/migrations',file),resolve(oldMigrations,file));
+ await new MigrationRunner(pool as any,oldMigrations).run();
+ await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(703,'旧周期数据库','fixture.invalid',3307,'fixture','unused')");
+ await pool.query("INSERT INTO maintenance_windows(id,name,description,instance_id,day_of_week,start_time,end_time,timezone) VALUES(744,'升级前周期维护','保全重复语义',703,'*','00:00:00','23:59:59','UTC')");
  await new MigrationRunner(pool as any).run();
+ const [upgraded]=await pool.query<any[]>('SELECT revision,payload FROM maintenance_weekly_history WHERE id=744');assert.equal(upgraded.length,1);assert.equal(upgraded[0].revision,0);
  await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(701,'授权数据库','fixture.invalid',3307,'fixture','unused'),(702,'越权数据库','fixture.invalid',3307,'fixture','unused')");
- await pool.query("INSERT INTO users(id,username,password_hash) VALUES(701,'maintenance-user','no-login'),(702,'maintenance-other','no-login')");
+ await pool.query("INSERT INTO users(id,username,password_hash) VALUES(701,'maintenance-user','no-login'),(702,'maintenance-other','no-login'),(703,'a-only-reader','no-login')");
  await pool.query("INSERT INTO roles(id,name) VALUES(701,'maintenance-fixture')");
  await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES('maintenance:manage','维护','maintenance','manage'),('instance:manage','管理','instance','manage')");
- await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 701,id FROM permissions WHERE code IN ('maintenance:manage','instance:manage')");
- await pool.query('INSERT INTO user_roles(user_id,role_id) VALUES(701,701),(702,701)');
+ await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 701,id FROM permissions WHERE code IN ('maintenance:manage','instance:manage','alert:view')");
+ await pool.query('INSERT INTO user_roles(user_id,role_id) VALUES(701,701),(702,701),(703,701)');
  await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,701,'read-write')");
  const actor=await actorContextService.loadActiveActor(701),other=await actorContextService.loadActiveActor(702);
  const secret=randomBytes(32).toString('hex'),token=signAccessToken(actor,secret),otherToken=signAccessToken(other,secret);
  const verify=createVerifyToken(secret);
  const service=new MaintenanceIntervals(()=>pool,()=>now);
  await registerMaintenanceRoutes(app,verify,service);
+ await registerAlertListRoute(app,verify);
  const api=async(method:string,url:string,payload?:any,t=token)=>{const r=await app.inject({method:method as any,url,headers:{authorization:`Bearer ${t}`},payload});return {status:r.statusCode,body:r.json()};};
+ assert.equal((await api('PUT','/api/maintenance-windows/744',{operation_key:'weekly-forbidden',expected_revision:0,cancel:true})).status,403);
+ assert(!(await api('GET','/api/maintenance-windows',undefined,otherToken)).body.some((v:any)=>v.id==='744'));
+ await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,703,'read-write')");
+ assert.equal((await api('GET','/api/maintenance-windows')).body.find((v:any)=>v.id==='744').kind,'weekly');
+ assert.equal((await maintenanceWindowService.isActiveMaintenanceWindow(703)).active,true);
+ const weeklyLock=await pool.getConnection();await weeklyLock.beginTransaction();await weeklyLock.query('SELECT id FROM maintenance_scope_lock WHERE id=1 FOR UPDATE');
+ const weeklyWaiting=api('DELETE','/api/maintenance-windows/744',{operation_key:'weekly-revoked',expected_revision:0,cancel:true});
+ await new Promise(r=>setTimeout(r,100));await pool.query('DELETE FROM instance_permissions WHERE user_id=701 AND instance_id=703');await weeklyLock.commit();weeklyLock.release();assert.equal((await weeklyWaiting).status,403);
+ await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,703,'read-write')");
+
  const value={name:'维护',reason:'受控维护验收',resources:[{type:'instance',id:701}],starts_at:new Date(now+1000).toISOString(),ends_at:new Date(now+10000).toISOString(),timezone:'Asia/Shanghai'};
  const create={operation_key:'create-1',expected_revision:0,value};
  const created=await api('POST','/api/maintenance-windows',create);assert.equal(created.status,200,JSON.stringify(created));const id=created.body.window.id;
@@ -90,7 +112,10 @@ try{
  // This is event persistence acceptance, not a physical collector transport test.
  await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(7,'event fixture','fixture.invalid',3307,'fixture','unused')");
  await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,7,'read-write')");
- const eventValue={...value,resources:[{type:'instance',id:7}],starts_at:new Date(now).toISOString(),ends_at:new Date(now+1000).toISOString()};
+ await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(703,7,'read-only')");
+ const aOnlyToken=signAccessToken(await actorContextService.loadActiveActor(703),secret);
+ const eventValue={...value,resources:[{type:'instance',id:7},{type:'instance',id:702}],starts_at:new Date(now).toISOString(),ends_at:new Date(now+1000).toISOString()};
+ await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,702,'read-write')");
  assert.equal((await api('POST','/api/maintenance-windows',{operation_key:'event-maintenance',expected_revision:0,value:eventValue})).status,200);
  assert(await assetCollectionEnabled(pool,{type:'instance',id:7}));
  const base=await baseline({triggers:[{rule_id:'alpha-threshold',scope:'item:alpha',version:1}]});
@@ -105,6 +130,17 @@ try{
   const c=await pool.getConnection();try{await c.beginTransaction();await alertEventService.persistTemplateTransition(c,previous,next,snapshot,{sample_ids:['controlled-'+now],attempt_ids:[],unit:'1',dimensions:{},samples:value===null?[]:[{...sample,id:'controlled-'+now}]});await c.commit();}catch(e){await c.rollback();throw e;}finally{c.release();}previous=next;
  };
  await transition(95);assert.equal(previous.state,'open');
+ await pool.query('DELETE FROM instance_permissions WHERE user_id=701 AND instance_id=702');
+ const external=await api('GET','/api/alerts',undefined,aOnlyToken);
+ assert.equal((await api('GET','/api/alerts?instance_id=702',undefined,aOnlyToken)).status,403);assert.equal(external.status,200,JSON.stringify(external));
+ assert(external.body.items.length>0);assert(external.body.items.every((v:any)=>v.instance_id===7));assert(!JSON.stringify(external.body).includes('"id":702'));
+ // Also exercise pre-fix persisted tags: read sanitization must protect historical rows.
+ await pool.query("UPDATE alerts SET tags=JSON_SET(tags,'$.maintenance.intervals',CAST(? AS JSON))",[JSON.stringify([{resources:[{type:'instance',id:7},{type:'instance',id:702}],name:'B-private-name'}])]);
+ const internalPublic=await alertDatabaseService.getActiveAlerts();assert(internalPublic.length>0);assert(!JSON.stringify(internalPublic).includes('B-private-name'));assert(!JSON.stringify(internalPublic).includes('"id":702'));
+ const deliveryPublic=await notificationDatabaseService.getAlertById(internalPublic[0].id);assert(deliveryPublic);assert(!JSON.stringify(deliveryPublic).includes('"id":702'));
+ const [privateAudit]=await pool.query<any[]>('SELECT payload FROM maintenance_event_links');assert(JSON.stringify(privateAudit).includes('702'));
+ const historical=await api('GET','/api/alerts',undefined,aOnlyToken);assert.equal(historical.status,200);assert(!JSON.stringify(historical.body).includes('B-private-name'));assert(!JSON.stringify(historical.body).includes('"id":702'));
+
  const [opening]=await pool.query<any[]>('SELECT alert_id,event_id FROM metric_trigger_episodes');assert.equal(opening.length,1);
  assert.equal(await maintenanceBlocksDelivery(opening[0].alert_id),true);
  now+=1000;assert(await assetCollectionEnabled(pool,{type:'instance',id:7}));await transition(85);assert.equal(previous.state,'open');await transition(null);assert.equal(previous.state,'open');
@@ -120,6 +156,7 @@ try{
  now+=1000;await transition(95);assert.equal(previous.state,'open');
  await pool.query('RENAME TABLE maintenance_interval_history_unavailable TO maintenance_interval_history');
  const [unknownLink]=await pool.query<any[]>("SELECT payload FROM maintenance_event_links WHERE JSON_UNQUOTE(JSON_EXTRACT(payload,'$.state'))='unknown'");assert.equal(unknownLink.length,1);
+ await pool.query("INSERT IGNORE INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,703,'read-write')");
  // Browser uses the exact production route registrar above.
  const address=await app.listen({host:'127.0.0.1',port:0});
  const {createServer}=await import('../../../frontend/node_modules/vite/dist/node/index.js');
@@ -128,6 +165,25 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:900}});
  await page.addInitScript(t=>localStorage.setItem('token',t),token);
  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/e2e/fixtures/max244-maintenance.html`);
+ const weeklyRow=()=>page.getByRole('row').filter({hasText:'升级前周期维护'});
+ await weeklyRow().getByRole('button',{name:'编辑',exact:true}).click();
+ await page.getByLabel('原因',{exact:true}).fill('旧周期已修改');
+ await page.getByLabel('周期开始',{exact:true}).fill('00:00:01');
+ await page.getByRole('button',{name:'检查影响'}).click();await page.getByRole('button',{name:'确认保存'}).click();
+ await weeklyRow().getByText('旧周期已修改').waitFor();
+ assert.equal((await maintenanceWindowService.isActiveMaintenanceWindow(703)).active,true);
+ assert.equal((await api('DELETE','/api/maintenance-windows/744',{operation_key:'weekly-stale',expected_revision:0,cancel:true})).status,409);
+ // Lose a committed legacy cancellation response; the same operation key recovers it.
+ await page.route('**/api/maintenance-windows/744',async route=>{if(route.request().method()==='DELETE'){await route.fetch();await route.abort();}else await route.continue();});
+ await weeklyRow().getByRole('button',{name:'取消维护',exact:true}).click();await page.getByRole('button',{name:'确认取消',exact:true}).click();
+ await page.getByRole('button',{name:'查询操作结果'}).last().click();await weeklyRow().getByText('已取消',{exact:true}).waitFor();await page.unroute('**/api/maintenance-windows/744');
+ const weeklyNoop={operation_key:'weekly-noop',expected_revision:2,cancel:true};
+ const weeklyResult=await api('DELETE','/api/maintenance-windows/744',weeklyNoop);assert.equal(weeklyResult.body.noop,true);
+ assert.deepEqual((await api('DELETE','/api/maintenance-windows/744',weeklyNoop)).body,weeklyResult.body);
+ assert.equal((await api('GET','/api/maintenance-windows/operations/weekly-noop')).body.status,'committed');
+ assert.equal((await maintenanceWindowService.isActiveMaintenanceWindow(703)).active,false);
+ const [weeklyAudit]=await pool.query<any[]>('SELECT revision FROM maintenance_weekly_history WHERE id=744 ORDER BY revision');assert.deepEqual(weeklyAudit.map(v=>v.revision),[0,1,2]);
+ await page.screenshot({path:resolve(directory,'legacy-upgrade.png'),fullPage:true});
  await page.getByRole('button',{name:'新建维护窗口'}).click();
  await page.getByLabel('名称',{exact:true}).fill('浏览器维护');await page.getByLabel('原因',{exact:true}).fill('真实 Lit Fastify MySQL');
  await page.getByLabel('资源范围',{exact:true}).selectOption({label:'授权数据库 (instance)'});
@@ -169,7 +225,7 @@ try{
  await page.evaluate(()=>{const claims=JSON.parse(atob(localStorage.getItem('token')!.split('.')[1]));sessionStorage.setItem(`slide.maintenance.${claims.userId}.${claims.sessionVersion}`,'{broken');document.querySelector('maintenance-windows')!.remove();document.body.append(document.createElement('maintenance-windows'));});
  await page.getByText('本地操作记录损坏，无法确认上次结果，已停止写入。请保留记录并联系管理员核对。').waitFor();assert(await page.getByRole('button',{name:'新建维护窗口'}).isDisabled());
 
- writeFileSync(resolve(directory,'result.json'),JSON.stringify({nonce,handle,api:'create/replay/operation/timezone/global/forbidden/concurrent/revoked/cancel/noop/history passed',events:'controlled 95 -> 85 -> unknown -> 60 unique MySQL event/maintenance link/no backfill/no duplicate recovery passed',browser:'Lit->Fastify->MySQL create/edit/cancel/no-write draft cancel/revocation/concurrent revision/lost response recovery/principal remount and 3 desktop sizes passed',boundary:'controlled service clock; no collector transport, worker, model or external delivery'},null,2));
+ writeFileSync(resolve(directory,'result.json'),JSON.stringify({nonce,handle,regressions:'A-only JWT GET /api/alerts historical/new tags excludes B; pre141 periodic seed upgrade + Lit edit/cancel + runtime suppression exit + unauthorized passed',api:'create/replay/operation/timezone/global/forbidden/concurrent/revoked/cancel/noop/history passed',events:'controlled 95 -> 85 -> unknown -> 60 unique MySQL event/maintenance link/no backfill/no duplicate recovery passed',browser:'Lit->Fastify->MySQL create/edit/cancel/no-write draft cancel/revocation/concurrent revision/lost response recovery/principal remount and 3 desktop sizes passed',boundary:'controlled service clock; no collector transport, worker, model or external delivery'},null,2));
  console.log('MAX244 evidence',directory);
 }catch(e){failures++;console.error(e);}finally{
  try{await browser?.close();await vite?.close();await app.close();await dbConnection.close();if(owned)await owned.drop();await root?.end();
