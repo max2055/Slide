@@ -54,3 +54,15 @@ information_schema 表空间估计：observations data 1330348032 / index 391102
 3. **精确历史采样配置，owner MAX-238**：任意旧配置的 resolved sampling 设置没有本项可消费的不可变历史查询口；如需按真实旧 interval/max gap 计算，需提供 `readConfigurationAt(ref: Ref, revision: number)` 返回已解析 settings 与有效依据。当前明确使用上述采样假设，未以当前参数补历史。
 
 独立安全/跨模块复核由 Chief 承担；本实现方检查不能替代该复核。本候选不合并、不部署、不改共享 3306、不外发通知、不调用产品模型。最终准确源码 SHA、PR head/base、测试汇总、证据哈希与处置记录随任务附件交付。
+
+## Chief 复核后的 CI 回归修复与接续检查点
+
+Chief 已独立接受 `29a2029ea` 的读侧阶段证据；整单未完成。CI run `41259145415` / job `124708649600` 报 `V23_SOURCE_EXACT_ALERT_REQUIRED`。本地按原命令 `bash scripts/qualification/run-v23-source.sh` 复现相同 55 通过 / 1 失败，分类为 **本次引入**：共享 consumer 新增用户实时复验后，既有内部告警评估器的资源限定 actor（userId/sessionVersion=0）被当作用户会话拒绝；评估器捕获后返回 unknown，故无告警可供源码包准入。不是源码包 runtime、数据缺失或 CI 环境误报。
+
+修复代码提交 `fce3ff750`，RED 回归提交 `f31b3da81`，均追加于原起点。保留既有内部读服务，`registerMetricConsumerRoutes` 的默认服务明确使用 `authenticatedMetricConsumerService`，继续在所有存储等待前后实时复验用户；不根据请求中的 actor 字段选择绕过认证。回归测试同时证明内部正式告警/事件/请求路径成功，以及 HTTP 入口拒绝内部 actor。源码包运行逻辑、同步/manifest、238/242 生产者文件均未修改。
+
+同一原命令修复后 **56/56 通过**；当前代码后端 metrics/contracts/event 模块 **1100** 项、认证/资源权限 **274** 项、真实 MySQL 历史/快照 **6** 项、真实 JWT 浏览器 **5** 项通过；后端类型、契约、改动文件 lint 和 diff 检查通过。前端代码、全窗口分页/聚合/存储与容量负载代码未变，复用此前已接受的前端全量/构建与 936000 观测容量证据，不声称重新测量。原源码包测试的子进程使用本地合成 SDK HTTP 回复，没有发送真实产品模型请求。
+
+浏览器复测第一次在 schema 初始化时因任务 MySQL 容器 OOM（Docker action=oom / exit137）退出，尚未进入业务用例；保留失败日志和 Docker 事件作为环境证据。仅重建本任务容器，限制512MiB并降低 InnoDB buffer、关闭 performance_schema，等待三次 TCP 查询就绪后，单独运行同一浏览器命令，5项全部通过。未停止或修改其他任务容器；本任务测试服务和容器已清理。
+
+本轮结束前对 MAX-238/242 自 `2026-11-01T01:07:09Z` 起的新评论作一次有界核对，均无新增交付：238 run `01a194a5-46fe-7b20-948b-eaa2feb8f7b3` 仍负责持久化旧采样设置读取；242 run `01a194a5-5e7e-76e3-b378-983a7998c512` 仍负责工作空间草案上下文 helper。没有可声明已交付的准确契约/SHA，因此没有编造接口、抢改生产者文件或等待轮询。下一次由 Chief 现有终态规则接回后，先核对实际安全头及接口，再消费到本项 history service/query/API 与 semantic-metrics。维护有效区段继续由 MAX-244 生产；当前诚实显示不可用。完整流程与合并门禁仍未宣称通过。
