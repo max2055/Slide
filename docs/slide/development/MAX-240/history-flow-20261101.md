@@ -49,7 +49,7 @@ information_schema 表空间估计：observations data 1330348032 / index 391102
 
 以下仍属于完整用户流程的未完成部分，不以本候选宣称整单完成；由 Chief 独立复核并协调对应 owner 接续。
 
-1. **维护历史区段，owner MAX-239**：当前 `apps/db-ops-api/src/metrics/triggers/runtime.ts` 的 snapshot/episode 路径没有可读的持久维护有效区段。需要生产者提供 `readMaintenanceWindow(ref: Ref, from: string, to: string): Promise<Array<{id:string;from:string;to:string|null;reason:string}>>` 或等价正式契约及写入证据。本项在 `metrics/consumers/history-context.ts` 消费并在 `semantic-metrics.ts` 渲染；不能把当前静默状态推测成历史区段。
+1. **维护历史区段，owner P2/MAX-244**（Chief 2026-11-01 更正归属）：当前 `apps/db-ops-api/src/metrics/triggers/runtime.ts` 的 snapshot/episode 路径没有可读的持久维护有效区段。等待 MAX-244 的正式持久有效区段契约及写入证据；不指派 MAX-239 实现整套维护治理。本项在 `metrics/consumers/history-context.ts` 消费并在 `semantic-metrics.ts` 渲染；不能把当前静默状态推测成历史区段。
 2. **同窗口 AI 草案入口，owner MAX-242**：`frontend/src/app/ui/components/investigation-create.ts` 的资源/时间选择是内部状态，`resource-investigation-links.ts` 链接仅保留资源。需要提供公开预填入口，例如 `initialContext: {resourceRefs;timeWindow:{from;to};metric;dimensions;sourceEventIds}`，或等价路由契约。本项再传当前上下文；不得仅跳到未保留窗口的页面假称完成，也不应自动调用模型。
 3. **精确历史采样配置，owner MAX-238**：任意旧配置的 resolved sampling 设置没有本项可消费的不可变历史查询口；如需按真实旧 interval/max gap 计算，需提供 `readConfigurationAt(ref: Ref, revision: number)` 返回已解析 settings 与有效依据。当前明确使用上述采样假设，未以当前参数补历史。
 
