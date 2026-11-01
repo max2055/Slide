@@ -143,9 +143,13 @@ describe.skipIf(!port)('configuration history on owned MySQL', () => {
       const c = await pool.getConnection();
       try {
         await c.beginTransaction(); await c.query('SELECT id FROM metric_policy_lock WHERE id = 1 FOR UPDATE');
+        const [original] = await c.query<mysql.RowDataPacket[]>("SELECT payload FROM metric_policy_bindings WHERE resource_key='instance:1'");
+        // The formal writer now requires the matching live template revision.
+        await c.execute("UPDATE metric_policy_bindings SET payload=? WHERE resource_key='instance:1'", [JSON.stringify(decoded.payload)]);
         const written = await writer['writeTemplateResults'](c, { decoded, plan: decoded.pending.plan, states: new Map(), tickets: new Map() },
           [{ release: pin, result }], Date.parse('2026-11-01T00:00:01.000Z'));
         expect(written.samples.length).toBeGreaterThan(0);
+        await c.execute("UPDATE metric_policy_bindings SET payload=? WHERE resource_key='instance:1'", [typeof original[0].payload === 'string' ? original[0].payload : JSON.stringify(original[0].payload)]);
         if (rollback) await c.rollback(); else await c.commit();
         return written;
       } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
