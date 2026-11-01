@@ -97,6 +97,7 @@ test.beforeAll(async () => {
   await policy.changeBinding(admin as any, { type: 'instance', id: RESOURCE_ID }, { expected_revision: 0,
     package: { id: pin.id, version: pin.version, digest: pin.digest },
     overrides: { interval_ms: { mode: 'set', value: MINUTE }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
+  await new MysqlPolicyStore(() => pool).reportApplied({ type: 'instance', id: RESOURCE_ID }, 1, iso(Date.now()), 'applied');
   const series = { resource_type: 'instance' as const, resource_id: String(RESOURCE_ID),
     metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, dimensions: {} };
   const control = new RolloutControl(pool);
@@ -412,6 +413,34 @@ async function authenticatedToken(request: APIRequestContext) {
   }
   return apiToken!;
 }
+
+test('old sampling settings survive a current-period change through production history APIs', async ({ request }) => {
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  const token = await authenticatedToken(request), headers = { Authorization: `Bearer ${token}` };
+  const body = { resource: { type: 'instance', id: RESOURCE_ID }, history: true, metric_ids: ['db.uptime_seconds'], from: iso(from), to: iso(to), bucket_ms: MINUTE };
+  const read = async () => {
+    const response = await request.post(`${api}/api/metrics/query`, { headers, data: body });
+    expect(response.status()).toBe(200); return response.json();
+  };
+  const before = await read();
+  expect(before.history_context.configurations).toEqual([expect.objectContaining({ revision: 1, state: 'effective', settings: expect.objectContaining({ interval_ms: MINUTE }) })]);
+  const [old] = await pool.query('SELECT payload,capabilities FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+  try {
+    const registry = createConfigurationRegistry();
+    const policies = new PolicyService(new MysqlPolicyStore(() => pool), registry, { exists: async () => true, inventory: async () => inventory() });
+    const pin = registry.list().find(r => r.package.id === 'mysql-basic' && r.package.version === '2.0.0')!.package;
+    await policies.changeBinding(admin as any, body.resource, { expected_revision: 1, package: { id: pin.id, version: pin.version, digest: pin.digest },
+      overrides: { interval_ms: { mode: 'set', value: 300000 }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
+    const oldConfiguration = await request.get(`${api}/api/metrics/configuration-history/instance/${RESOURCE_ID}/1`, { headers });
+    expect(oldConfiguration.status()).toBe(200);
+    expect(await oldConfiguration.json()).toMatchObject({ revision: 1, state: 'effective', settings: { interval_ms: MINUTE } });
+    const after = await read();
+    expect(after.configuration_revision).toBe(2);
+    expect(after.history_context.configurations).toEqual(before.history_context.configurations);
+    expect(after.metrics[0].series).toEqual(before.metrics[0].series);
+    await writeFile(`${output}/historical-settings.json`, JSON.stringify({ currentRevision: after.configuration_revision, historicalConfigurations: after.history_context.configurations, sameHistoricalSeries: true }, null, 2));
+  } finally { await pool.execute('UPDATE metric_policy_bindings SET payload=?,capabilities=? WHERE resource_key=?', [typeof old[0].payload === 'string' ? old[0].payload : JSON.stringify(old[0].payload), typeof old[0].capabilities === 'string' ? old[0].capabilities : JSON.stringify(old[0].capabilities), `instance:${RESOURCE_ID}`]); }
+});
 
 test('internal server report reads remain available without a user session identity', async ({ request }) => {
   await pool.query("INSERT INTO servers(id,host,label,os_type,credential_type,credential_encrypted,collection_enabled) VALUES(8402,'report.fixture.invalid','MAX240 internal report','linux','password','unused',0)");

@@ -1,3 +1,4 @@
+import type { ConfigurationAt } from '../../contracts/metrics/configuration-history.js';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { TriggerResourceSnapshotSchema, type TriggerResourceSnapshot } from '../../contracts/metrics/triggers.js';
 import { verifyTriggerSnapshot } from '../triggers/compile.js';
@@ -5,6 +6,7 @@ import type { Ref } from '../policy/model.js';
 import { configuredRetention } from '../retention.js';
 
 export interface HistoryContext {
+  configurations?: ConfigurationAt[];
   snapshots: TriggerResourceSnapshot[];
   missing_revisions: number[];
   events: Array<{ event_id: number; rule_id: string; version: number; config_revision: number;

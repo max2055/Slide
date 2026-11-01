@@ -442,7 +442,9 @@ export class SemanticMetrics extends LitElement {
     if (!context) return nothing;
     return html`<details class="history-context"><summary>当时阈值、事件与保留策略</summary>
       <p class="hint">阈值按正式观测的配置修订取不可变快照，仅在有对应修订证据的桶绘制；缺口不外推生效时间。当前参数不回填历史。</p>
-      <p>历史采样假设：每 ${context.sampling.interval_ms / 1000} 秒，计数器最大间隔 ${context.sampling.max_gap_ms / 1000} 秒；覆盖率基于此假设，不代表已还原每个旧配置的采样周期。</p>
+      <h3>当时采样配置</h3>
+      ${(context.configurations ?? []).map(c => html`<p>修订 ${c.revision}：${c.state === 'unknown' ? '配置快照未保全，采样未知' : html`${c.state === 'effective' ? '有生效依据' : '仅已发布，生效未知'}；每 ${c.settings.interval_ms / 1000} 秒，过期界限 ${c.settings.stale_after_ms / 1000} 秒，计数器最大间隔 ${c.settings.max_counter_gap_ms / 1000} 秒；证据 ${c.evidence.map(e => `${e.basis} @ ${localTime(e.at)}`).join('、') || '无'}。依据时间不代表连续有效区间。`}</p>`)}
+      <p>仅对缺失快照或缺少生效依据的修订使用历史采样假设：每 ${context.sampling.interval_ms / 1000} 秒，计数器最大间隔 ${context.sampling.max_gap_ms / 1000} 秒；相关覆盖率为假设，不冒充已还原的周期。有依据的修订按其自身设置计算；跨修订时间桶不混算。</p>
       <p>配置保留策略：原始证据 ${context.retention.rawMs / 86400000} 天，归一化历史 ${context.retention.historyMs / 86400000} 天，采集尝试 ${context.retention.attemptMs / 86400000} 天；清理${context.retention.cleanup_enabled ? '已启用' : '未启用'}。这不是已有数据覆盖承诺。</p>
       ${context.missing_revisions.length ? html`<p>配置 ${context.missing_revisions.join('、')} 没有保留阈值快照；当时阈值未知。</p>` : nothing}
       ${context.snapshots.map(snapshot => html`<h3>配置修订 ${snapshot.config_revision}</h3>${snapshot.rules.map(rule => html`

@@ -1,3 +1,4 @@
+import { ConfigurationAtSchema } from './configuration-history.js';
 import { z } from 'zod';
 import { RefSchema } from '../../metrics/policy/model.js';
 import { TriggerResourceSnapshotSchema } from './triggers.js';
@@ -11,6 +12,7 @@ export const MetricConsumerQuerySchema = z.strictObject({
   latest_capacity: z.boolean().default(false), history: z.boolean().default(false),
 });
 export const MetricHistoryContextSchema = z.strictObject({
+  configurations: z.array(ConfigurationAtSchema).max(100).optional(),
   snapshots: z.array(TriggerResourceSnapshotSchema).max(100),
   missing_revisions: z.array(z.number().int().positive()).max(100),
   events: z.array(z.strictObject({ event_id: z.number().int().positive(), rule_id: z.string(), version: z.number().int().positive(),

@@ -1,3 +1,4 @@
+import { readConfigurationHistory } from '../policy/configuration-history.js';
 import { writeFile } from 'node:fs/promises';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
@@ -44,7 +45,7 @@ describe.skipIf(!enabled)('MAX240 650-resource persisted history measurement', (
       readHistoryWindow: (...a) => formal.readHistoryWindow(...a), historyDimensions: (...a) => formal.historyDimensions(...a),
       readObservationPage: (...a) => formal.readObservationPage(...a), dimensions: (...a) => formal.dimensions(...a),
       inventory: async () => null, attempts: async () => [], historyContext: (...a) => readHistoryContext(pool, ...a),
-    });
+    }, undefined, undefined, undefined, (_actor, ref, revision) => readConfigurationHistory(pool, ref, revision));
     app = Fastify(); await registerMetricConsumerRoutes(app, async req => { (req as any).user = admin; }, service);
     base = await app.listen({ host: '127.0.0.1', port: 0 });
   }, 120000);

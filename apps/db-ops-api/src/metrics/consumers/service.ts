@@ -1,3 +1,5 @@
+import { aggregateHistory } from './history-query.js';
+import type { ConfigurationAt } from '../../contracts/metrics/configuration-history.js';
 import { MetricConsumerQuerySchema } from '../../contracts/metrics/history.js';
 import { hasPermission } from '../../auth/require-permission.js';
 import { historySampling, type HistoryContext } from './history-context.js';
@@ -72,7 +74,8 @@ export class MetricConsumerService {
   constructor(private policy: Pick<PolicyService, 'assertAccess' | 'effective'>, private registry: PackageRegistry,
     private store: ConsumerStore, private clock = () => new Date().toISOString(),
     private readonly templateBindings?: TemplateQueryPort,
-    private readonly reloadActor?: (actor: ActorContext) => Promise<ActorContext>) {}
+    private readonly reloadActor?: (actor: ActorContext) => Promise<ActorContext>,
+    private readonly configurationAt?: (actor: ActorContext, ref: Ref, revision: number) => Promise<ConfigurationAt>) {}
   private async authorize(actor: ActorContext, ref: Ref) {
     const live = this.reloadActor ? await this.reloadActor(actor) : actor;
     await this.policy.assertAccess(live, ref, false);
@@ -154,6 +157,14 @@ export class MetricConsumerService {
     const service = new SemanticQueryService(queryStore, async s => s.resource_type === q.resource.type
       && s.resource_id === String(q.resource.id) && canReadResource(actor, q.resource)
       && definitions.some(d => metricKey(d) === metricKey(s.metric)));
+    const configurations = new Map<number, Promise<ConfigurationAt>>();
+    const configurationAt = (revision: number) => {
+      if (!configurations.has(revision)) {
+        rule(configurations.size < 100, 'QUERY_LIMIT_EXCEEDED');
+        configurations.set(revision, this.configurationAt!(actor, q.resource, revision));
+      }
+      return configurations.get(revision)!;
+    };
     const metrics: ConsumerMetric[] = [];
     for (const definition of ids.flatMap(id => visible.filter(d => d.id === id))) {
       const id = definition.id;
@@ -193,9 +204,13 @@ export class MetricConsumerService {
         for (const dimension of dimensions) {
           const series: Series = { resource_type: q.resource.type, resource_id: String(q.resource.id),
             metric: { id, semantic_version: definition.semantic_version }, dimensions: dimension };
-          metric.series.push({ dimensions: dimension, buckets: await service.query({ definition, series: [series], from, to, now,
+          const request = { definition, series: [series], from, to, now,
             interval_ms: q.history ? historySampling.interval_ms : interval, max_gap_ms: q.history ? historySampling.max_gap_ms : settings!.max_counter_gap_ms, stale_after_ms: q.history ? historySampling.max_gap_ms : settings!.stale_after_ms,
-            bucket_ms: q.bucket_ms ?? (q.history ? historySampling.interval_ms : interval), mode: definition.kind === 'counter' ? 'rate' : 'last', space: 'none' }) });
+            bucket_ms: q.bucket_ms ?? (q.history ? historySampling.interval_ms : interval), mode: definition.kind === 'counter' ? 'rate' as const : 'last' as const, space: 'none' as const };
+          const buckets = q.history && this.configurationAt
+            ? await aggregateHistory(request, await (queryStore.readWindow ? queryStore.readWindow(series, from, to) : queryStore.queryWindow(series, from, to)), configurationAt)
+            : await service.query(request);
+          metric.series.push({ dimensions: dimension, buckets });
         }
       }
       metrics.push(metric);
@@ -203,6 +218,7 @@ export class MetricConsumerService {
     const revisions = [...new Set(metrics.flatMap(m => m.series.flatMap(s => s.buckets.flatMap(b => b.sources.map(s => s.versions.config_revision)))))];
     const context = q.history && this.store.historyContext
       ? await this.store.historyContext(q.resource, from, to, revisions, hasPermission(new Set(actor.permissions), 'alert:view')) : undefined;
+    if (context) context.configurations = await Promise.all(configurations.values());
     // Recheck access after all storage waits, including the last page/context read.
     const live = await this.authorize(actor, q.resource);
     if (context && !hasPermission(new Set(live.permissions), 'alert:view')) { context.events = []; context.events_readable = false; }

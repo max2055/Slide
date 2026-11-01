@@ -108,7 +108,7 @@ async function capture(page: Page, name: string) {
   // Keep the actual observation readable even when earlier empty buckets make the table long.
   const observed = page.locator('semantic-metrics time').last();
   if (await observed.count()) {
-    if (!(await observed.isVisible())) await page.locator('semantic-metrics summary').filter({hasText:'查看原始时间桶'}).first().click();
+    if (!(await observed.isVisible())) await page.locator('semantic-metrics summary').filter({hasText:'时间桶明细（聚合值，不是原始采样）'}).first().click();
     await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
   }
 }
