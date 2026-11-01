@@ -1,3 +1,4 @@
+import { internalMetricConsumerService } from './metrics/consumers/runtime.js';
 import { instanceAccessLifecycle, cleanupDeadline } from './resources/instance-access-lifecycle.js';
 import { migrateOperationalChecks } from './metrics/consumers/operational.js';
 /**
@@ -477,7 +478,7 @@ class DatabaseService {
     const { resourceMetricRead } = await import('./metrics/consumers/resource-api.js');
     const actor = { userId: 0, username: 'database-metric-reader', roles: [], permissions: ['instance:view'],
       instanceScopes: { [id]: 'read-only' as const }, sessionVersion: 0, requestId: `database-metric-reader:${id}` };
-    return resourceMetricRead(actor, { type: 'instance', id });
+    return resourceMetricRead(actor, { type: 'instance', id }, {}, internalMetricConsumerService);
   }
 
   /**

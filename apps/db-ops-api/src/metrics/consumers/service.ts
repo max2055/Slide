@@ -79,7 +79,7 @@ export class MetricConsumerService {
     return live;
   }
   async discover(actor: ActorContext, ref: Ref) {
-    await this.policy.assertAccess(actor, ref, false);
+    actor = await this.authorize(actor, ref);
     let effective: Awaited<ReturnType<PolicyService['effective']>> | null = null;
     let template: TemplateQueryView | null = null;
     try { effective = await this.policy.effective(actor, ref); }
@@ -119,12 +119,15 @@ export class MetricConsumerService {
         plan: { binding: { package: template.releases[0] ?? null } },
       },
     } as unknown as Awaited<ReturnType<PolicyService['effective']>> : null);
+    await this.authorize(actor, ref);
     return { profile, definitions, effective: view };
   }
   async inventory(actor: ActorContext, ref: Ref) {
-    await this.policy.assertAccess(actor, ref, false);
-    return new SemanticQueryService(this.store, async () => false,
+    actor = await this.authorize(actor, ref);
+    const result = await new SemanticQueryService(this.store, async () => false,
       async (type, id) => canReadResource(actor, { type, id: Number(id) })).inventory(ref.type, String(ref.id));
+    await this.authorize(actor, ref);
+    return result;
   }
   async query(actor: ActorContext, input: unknown) {
     const q = ConsumerQuerySchema.parse(input), now = this.clock();

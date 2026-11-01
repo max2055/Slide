@@ -564,3 +564,16 @@ it('keeps event evidence lazy until the user opens its same-window record', asyn
   const evidence = el.shadowRoot!.querySelector('template-event-evidence')!;
   expect(evidence.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
 });
+it('keeps the retained observation visible beside an unknown trailing bucket', async () => {
+  const data = structuredClone(result) as any;
+  const point = data.metrics[0].series[0].buckets[0];
+  point.observed_at = '2026-10-29T01:00:00.000Z'; point.freshness = 'stale';
+  data.metrics[0].series[0].buckets.push({ ...point, value: null, observed_at: null,
+    quality: { status: 'unknown', reason: 'nodata' }, freshness: 'missing', sources: [] });
+  authFetch.mockResolvedValue({ ok: true, json: async () => data });
+  const el = await mount();
+  expect(el.shadowRoot!.querySelector('time')?.getAttribute('datetime')).toBe(point.observed_at);
+  expect(el.shadowRoot!.textContent).toContain('最近时间桶');
+  expect(el.shadowRoot!.textContent).toContain('未知');
+  expect(el.shadowRoot!.textContent).toContain('窗口内最后保留观测');
+});

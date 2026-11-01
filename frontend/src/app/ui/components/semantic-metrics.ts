@@ -304,6 +304,7 @@ export class SemanticMetrics extends LitElement {
   private renderSeries(metric: MetricResult, series: MetricResult['series'][number]) {
     const key = metric.definition.id + JSON.stringify(series.dimensions);
     const last = series.buckets.at(-1), summary = this.bucketSummary(metric, series);
+    const retained = !last?.observed_at ? [...series.buckets].reverse().find(b => b.observed_at) : undefined;
     const mismatch = unitMismatch(metric, last?.unit);
     const notes = [summary.gap ? `断点 ${summary.gap}` : '', summary.unsafe ? `超出安全数值精度 ${summary.unsafe}` : '', summary.mismatch ? `单位不符 ${summary.mismatch}` : '', summary.records ? `非标量记录 ${summary.records}` : ''].filter(Boolean);
     return html`<div>
@@ -312,6 +313,9 @@ export class SemanticMetrics extends LitElement {
         : html`<strong>${last.value && 'value' in last.value ? last.value.value : '未知'}</strong> ${last.unit} · 最近时间桶 · 覆盖率 ${(last.coverage * 100).toFixed(0)}%`}</div>
         ${observedTime(last)}${qualityBadges(last)}
         ${mismatch ? html`<p class="error" role="alert">单位不符：该时间桶单位 ${last.unit} 与指标定义 ${metric.definition.unit} 不一致，不参与数值与曲线。</p>` : nothing}` : html`<p>暂无可用观测</p>`}
+      ${retained ? html`<div class="hint">窗口内最后保留观测（不代表当前值）：
+        ${retained.value && 'value' in retained.value ? html`<strong>${retained.value.value}</strong> ${retained.unit}` : '未知'}
+        ${observedTime(retained)}${qualityBadges(retained)}</div>` : nothing}
       <p class="hint">时间桶 ${series.buckets.length} 个：良好 ${summary.good}${summary.partial ? ` · 部分覆盖 ${summary.partial}` : ''}${notes.length ? ` · ${notes.join(' · ')}` : ''}。缺失、质量未知或无效、单位不符及超出安全精度的桶保留断点，不补 0；过期但当时 good/partial 的值照常显示。${summary.partial ? '部分覆盖不代表当前健康。' : ''}</p>
       <details @toggle=${(e: Event) => {
         const next = new Set(this.bucketKeys); (e.target as HTMLDetailsElement).open ? next.add(key) : next.delete(key); this.bucketKeys = next;

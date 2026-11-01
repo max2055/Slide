@@ -1,3 +1,4 @@
+import { actorContextService } from './auth/actor-context.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alertDatabaseService } from './alert-database-service.js';
 import type { ActorContext } from './auth/actor-context.js';
@@ -8,7 +9,7 @@ import {
   instanceDiagnosticContextService,
   safeInstanceMetadataProvider,
 } from './instance-diagnostic-context-service.js';
-import { metricConsumerService } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService as metricConsumerService } from './metrics/consumers/runtime.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
 import { instanceHostService } from './resources/instance-host-service.js';
 
@@ -63,6 +64,7 @@ describe('strict diagnostic evidence reads', () => {
   });
 
   it('uses strict realtime reads in the production diagnostic context adapter', async () => {
+    vi.spyOn(actorContextService, 'revalidateActor').mockResolvedValue(actor);
     vi.spyOn(safeInstanceMetadataProvider, 'getInstance').mockResolvedValue({ id: 7, db_type: 'mysql' });
     const realtime=vi.spyOn(metricConsumerService,'query').mockRejectedValue(new Error('REALTIME_METRICS_QUERY_FAILED'));
     vi.spyOn(metricsDatabaseService, 'getHistoricalMetrics').mockResolvedValue([]);

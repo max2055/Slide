@@ -461,3 +461,11 @@ describe('SafeInstanceMetadataProvider', () => {
     expect(instanceDiagnosticContextService).toBeInstanceOf(InstanceDiagnosticContextService);
   });
 });
+
+it('rejects the full instance pack if a section swallows a read-time revocation', async () => {
+  let live = actor;
+  const service = new InstanceDiagnosticContextService(dependencies({ getRealtimeMetrics: async () => {
+    live = { ...actor, instanceScopes: {} }; throw new Error('revoked');
+  } }), { reloadActor: async () => live });
+  await expect(service.collect(actor, 7)).rejects.toThrow('POLICY_FORBIDDEN');
+});

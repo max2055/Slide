@@ -1,3 +1,4 @@
+import { internalMetricConsumerService } from './metrics/consumers/runtime.js';
 import { resourceMetricRead } from './metrics/consumers/resource-api.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
@@ -133,7 +134,7 @@ export class ServerReportService {
 
     for (const server of servers) {
       // Get latest metric values
-      const semantic=await resourceMetricRead({userId:0,username:'server-report',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-report:${server.id}`},{type:'server',id:server.id});
+      const semantic=await resourceMetricRead({userId:0,username:'server-report',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-report:${server.id}`},{type:'server',id:server.id}, {}, internalMetricConsumerService);
       const aliases:Record<string,string>={'linux.cpu.user_system_percent':'cpu_usage','linux.memory.used_percent':'memory_usage'};
       const rows=semantic.metrics.filter(r=>aliases[r.metric_id]&&Object.keys(r.dimensions).length===0&&r.quality.status==='good'&&r.freshness==='fresh')
         .flatMap(r=>r.value&&'value'in r.value?[{metric_name:aliases[r.metric_id],metric_value:r.value.value,dimensions:r.dimensions,recorded_at:r.recorded_at}]:[]);

@@ -1,3 +1,4 @@
+import { ActorAuthenticationError } from '../../auth/actor-context.js';
 /** Canonical first; proprietary extensions require explicit discovery/selection. */
 import { z } from 'zod';
 import type { AnyAgentTool } from '../types.js';
@@ -79,7 +80,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
           summary: complete ? '已获取标准指标，请按定义解释数值' : '指标证据不完整或包含估算，不能据此判断无异常',
           next_actions: complete ? [] : ['检查 capability、attempt、coverage 和 freshness；不要将缺失值补零'] };
       } catch (e) {
-        return { success: false, status: 'error', errorCode: e instanceof PolicyError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
+        return { success: false, status: 'error', errorCode: e instanceof ActorAuthenticationError ? 'AUTH_REQUIRED' : e instanceof PolicyError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
       }
     },
   };

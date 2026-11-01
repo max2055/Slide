@@ -1,3 +1,6 @@
+import { actorContextService } from '../auth/actor-context.js';
+import { hasPermission } from '../auth/require-permission.js';
+import { PolicyError } from '../metrics/policy/model.js';
 import { metricConsumerService, operationalSource } from '../metrics/consumers/runtime.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { canReadResource, resourceService } from './resource-service.js';
@@ -256,12 +259,22 @@ function isUsableMetricObservation(
 export class ResourceDiagnosticService {
   constructor(
     private readonly dependencies: ResourceDiagnosticDependencies,
-    private readonly options: { maxBytes?: number } = {},
+    private readonly options: { maxBytes?: number; reloadActor?: (actor: ActorContext) => Promise<ActorContext> } = {},
   ) {}
 
+  private async authorize(actor: ActorContext, refs: ResourceRef[] = []) {
+    if (!this.options.reloadActor) return actor;
+    const live = await this.options.reloadActor(actor);
+    if (actor.permissions.some(p => !hasPermission(new Set(live.permissions), p))
+      || refs.some(ref => !canReadResource(live, ref))) throw new PolicyError('POLICY_FORBIDDEN', 403);
+    return live;
+  }
+
   async listResources(actor: ActorContext): Promise<ResourceListResult> {
+    actor = await this.authorize(actor);
     const inventory = await this.dependencies.list(actor) as ResourceDetail[] & { unavailableTypes?: ResourceType[] };
     const items = inventory.slice(0, MAX_LIST_ITEMS);
+    await this.authorize(actor, items.map(item => item.resource));
     return {
       items,
       truncated: inventory.length >= MAX_LIST_ITEMS,
@@ -278,6 +291,7 @@ export class ResourceDiagnosticService {
    * the resource appear healthy or hiding the rest of the inventory.
    */
   async overview(actor: ActorContext, now = new Date()): Promise<ResourceOverviewResult> {
+    actor = await this.authorize(actor);
     const inventory = await this.dependencies.list(actor) as ResourceDetail[] & { unavailableTypes?: ResourceType[] };
     const resources = [...new Map(inventory.filter(item => canReadResource(actor, item.resource)).map(item => [`${item.resource.type}:${item.resource.id}`, item])).values()].slice(0, MAX_LIST_ITEMS);
     const items = await mapWithConcurrency(resources, OVERVIEW_CONCURRENCY, async (resource) => {
@@ -358,6 +372,7 @@ export class ResourceDiagnosticService {
       byType[item.resource.type] += 1;
       byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
     }
+    await this.authorize(actor, items.map(item => item.resource));
     const unresolvedAlerts = new Set(items.flatMap(item => item.alertIds)).size;
     const impactedResources = new Set(items.flatMap((item) => item.impactScope.map((ref) => `${ref.type}:${ref.id}`))).size;
     const hasGaps = items.some((item) => item.gaps.length > 0);
@@ -383,17 +398,21 @@ export class ResourceDiagnosticService {
   }
 
   async getObservations(actor: ActorContext, ref: ResourceRef, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
+    actor = await this.authorize(actor, [ref]);
     validateRef(ref);
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
     const metricIds = options.metricIds?.filter((id) => /^[a-z][a-z0-9_.]{0,127}$/.test(id)).slice(0, 32);
     if (options.metricIds && metricIds?.length !== options.metricIds.length) throw new Error('METRIC_ID_INVALID');
-    return (await this.dependencies.observations(ref, actor, {
+    const result = (await this.dependencies.observations(ref, actor, {
       metricIds,
       limit: Math.min(Math.max(options.limit ?? MAX_OBSERVATIONS, 1), MAX_OBSERVATIONS),
     })).slice(0, MAX_OBSERVATIONS);
+    await this.authorize(actor, [ref]);
+    return result;
   }
 
   async metricsSummary(actor: ActorContext, now = new Date()): Promise<ResourceMetricsSummaryResult> {
+    actor = await this.authorize(actor);
     const resources = (await this.dependencies.list(actor)).slice(0, MAX_LIST_ITEMS);
     const metricIdsByType: Record<ResourceType, string[]> = {
       instance: ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps'],
@@ -489,6 +508,7 @@ export class ResourceDiagnosticService {
         if (!current.observedAt || observedAtMs > Date.parse(current.observedAt)) current.observedAt = observedAt;
       }
     }
+    await this.authorize(actor, resources.map(item => item.resource));
     const hasValues = Object.values(scopes).some((scope) => Object.values(scope.metrics).some((metric) => metric.resourceCount > 0));
     return {
       schemaVersion: 1,
@@ -499,12 +519,16 @@ export class ResourceDiagnosticService {
   }
 
   async getRelations(actor: ActorContext, ref: ResourceRef): Promise<ResourceRelation[]> {
+    actor = await this.authorize(actor, [ref]);
     validateRef(ref);
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
-    return (await this.dependencies.relations(ref, actor)).slice(0, 128);
+    const result = (await this.dependencies.relations(ref, actor)).slice(0, 128);
+    await this.authorize(actor, [ref]);
+    return result;
   }
 
   async diagnose(actor: ActorContext, ref: ResourceRef): Promise<ResourceDiagnosticPack> {
+    actor = await this.authorize(actor, [ref]);
     validateRef(ref);
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
     const collectedAt = new Date().toISOString();
@@ -572,6 +596,7 @@ export class ResourceDiagnosticService {
       try { semanticMetrics = await this.dependencies.semantic(ref, actor); }
       catch { semanticMetrics = { status: 'unknown', error: 'METRIC_QUERY_UNAVAILABLE' }; gaps.push({ scope: 'observation', code: 'SEMANTIC_METRICS_UNAVAILABLE' }); }
     }
+    await this.authorize(actor, [ref, ...relatedEvidence.map(e => e.resource.resource)]);
     return trimPack({
       semanticMetrics,
       schemaVersion: 1,
@@ -658,4 +683,4 @@ export const resourceDiagnosticService = new ResourceDiagnosticService({
   observations: sourceControlledObservations(operationalSource, formalObservations),
   relations: async (ref, actor) => resourceService.currentRelations(actor, ref),
   alerts: defaultAlerts,
-});
+}, { reloadActor: actor => actorContextService.revalidateActor(actor, actor.requestId) });

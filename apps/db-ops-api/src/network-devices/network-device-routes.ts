@@ -1,3 +1,5 @@
+import { ActorAuthenticationError } from '../auth/actor-context.js';
+import { PolicyError } from '../metrics/policy/model.js';
 import { resourceMetricRead } from '../metrics/consumers/resource-api.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { requirePermission } from '../auth/require-permission.js';
@@ -235,7 +237,11 @@ export async function registerNetworkDeviceRoutes(
     try {
       if (!await networkDeviceDatabaseService.getDeviceById(id)) return reply.code(404).send({ error: '网络设备不存在' });
       return reply.send({ deviceId: id, ...await resourceMetricRead(actor(request), { type: 'network_device', id }) });
-    } catch { return reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' }); }
+    } catch (error) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
+      return reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
+    }
   });
 
   fastify.get('/api/network-devices/:id/interfaces', { preHandler: view }, async (request, reply) => {

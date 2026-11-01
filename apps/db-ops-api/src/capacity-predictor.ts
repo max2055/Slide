@@ -4,7 +4,7 @@
  */
 import * as ss from 'simple-statistics';
 import { dbConnection } from './db-connection.js';
-import { metricConsumerService } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService as metricConsumerService } from './metrics/consumers/runtime.js';
 import { MysqlFormalMetricStore } from './metrics/rollout/formal-store.js';
 import { migrateReference } from './metrics/consumers/migration.js';
 import { rule } from './metrics/policy/model.js';

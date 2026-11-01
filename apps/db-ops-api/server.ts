@@ -1049,6 +1049,8 @@ async function start() {
       const metrics = await resourceMetricRead((request as any).user,{type:'instance',id:Number(instanceId)});
       reply.send(metrics);
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '获取监控指标失败：' + error.message });
     }
   });
@@ -1154,6 +1156,8 @@ async function start() {
       const observation = await observationService.latest((request as any).user, { type, id: Number(id) }, metricId, { validForMs: validity });
       return reply.send({ observation });
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' || error?.message === 'OBSERVATION_RANGE_INVALID' ? 400 : 500;
       return reply.code(code).send({ error: error?.message || 'Observation lookup failed' });
     }
@@ -1673,7 +1677,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
-  const metricReadFailure = (reply: any, error: unknown) => error instanceof PolicyError
+  const metricReadFailure = (reply: any, error: unknown) => error instanceof ActorAuthenticationError
+    ? reply.code(401).send({ error: 'AUTH_REQUIRED' })
+    : error instanceof PolicyError
     ? reply.code(error.status).send({ error: error.code })
     : reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
 

@@ -193,3 +193,18 @@ describe('partial inventory', () => {
     expect(await service.listResources(actor)).toMatchObject({ dataQuality: 'partial', unavailableTypes: ['server'], items: [] });
   });
 });
+
+it('rejects the full diagnostic pack after a swallowed inner metric revocation', async () => {
+  let live = actor;
+  const service = new ResourceDiagnosticService(dependencies({ semantic: async () => {
+    live = { ...actor, permissions: [], instanceScopes: {} }; throw new Error('revoked');
+  } }), { reloadActor: async () => live });
+  await expect(service.diagnose(actor, { type: 'server', id: 3 })).rejects.toThrow('POLICY_FORBIDDEN');
+});
+it('rejects the summary after a best-effort metric read loses resource access', async () => {
+  let live = actor;
+  const service = new ResourceDiagnosticService(dependencies({ observations: async () => {
+    live = { ...actor, permissions: [], instanceScopes: {} }; throw new Error('revoked');
+  } }), { reloadActor: async () => live });
+  await expect(service.metricsSummary(actor)).rejects.toThrow('POLICY_FORBIDDEN');
+});

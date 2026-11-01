@@ -2,7 +2,7 @@ import { compileTriggerSnapshot } from '../../apps/db-ops-api/src/metrics/trigge
 import { evaluateTriggerRule } from '../../apps/db-ops-api/src/metrics/triggers/evaluate.ts';
 import { nextTriggerEpisode } from '../../apps/db-ops-api/src/metrics/triggers/episode.ts';
 import { alertEventService } from '../../apps/db-ops-api/src/alert-event-service.ts';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -39,6 +39,7 @@ const schema = `max240_ui_${randomUUID().replaceAll('-', '')}`;
 const password = ` ${randomUUID()} `;
 let adminPool: any, pool: any, backend: ChildProcess, vite: Awaited<ReturnType<typeof createServer>>;
 let origin: string, workspace: string, backendLog = '', modelCalls = 0;
+let apiToken: string | undefined;
 let modelGuard: ReturnType<typeof createHttpServer>;
 let from = 0, to = 0, eventId = 0;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -218,7 +219,7 @@ async function login(page: Page) {
   await page.getByLabel('密码', { exact: true }).fill(password);
   const authenticated = page.waitForResponse(r => r.url().endsWith('/api/auth/login') && r.status() === 200);
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  await authenticated;
+  apiToken = (await (await authenticated).json()).token;
   await expect(page.locator('.login-gate')).toHaveCount(0);
   // Open the resource only after permissions are loaded; the detail page invalidates
   // evidence that was mounted before the permission event.
@@ -403,12 +404,31 @@ test('reads frozen thresholds and same-window events after controlled unbinding 
   }
 });
 
+async function authenticatedToken(request: APIRequestContext) {
+  if (!apiToken) {
+    const login = await request.post(`http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}/api/auth/login`, { data: { username: 'max240-owner', password } });
+    expect(login.status()).toBe(200);
+    apiToken = (await login.json()).token;
+  }
+  return apiToken!;
+}
+
+test('internal server report reads remain available without a user session identity', async ({ request }) => {
+  await pool.query("INSERT INTO servers(id,host,label,os_type,credential_type,credential_encrypted,collection_enabled) VALUES(8402,'report.fixture.invalid','MAX240 internal report','linux','password','unused',0)");
+  try {
+    const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+    const token = await authenticatedToken(request);
+    const response = await request.get(`${api}/api/servers/reports?format=md`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(response.status()).toBe(200);
+    expect(await response.text()).toContain('report.fixture.invalid');
+    await writeFile(`${output}/internal-report.json`, JSON.stringify({ status: response.status(), taskServerIncluded: true, modelCalls }));
+  } finally { await pool.query('DELETE FROM servers WHERE id=8402'); }
+});
+
 test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {
   const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
   for (const revoked of ['permission', 'session'] as const) {
-    const login = await request.post(`${api}/api/auth/login`, { data: { username: 'max240-owner', password } });
-    expect(login.status()).toBe(200);
-    const { token } = await login.json();
+    const token = await authenticatedToken(request);
     const locker = await pool.getConnection();
     let pending: ReturnType<typeof request.get> | undefined;
     try {

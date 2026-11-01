@@ -1,3 +1,5 @@
+import { ActorAuthenticationError } from '../auth/actor-context.js';
+import { PolicyError } from '../metrics/policy/model.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
 import { resourceDiagnosticService, type ResourceDiagnosticService } from './resource-diagnostic-service.js';
@@ -19,6 +21,8 @@ function actor(request: any): ActorContext {
 }
 
 function errorStatus(error: unknown): number {
+  if (error instanceof ActorAuthenticationError) return 401;
+  if (error instanceof PolicyError) return error.status;
   const code = error instanceof Error ? error.message : String(error);
   if (code === 'RESOURCE_FORBIDDEN') return 403;
   if (code === 'RESOURCE_NOT_FOUND') return 404;

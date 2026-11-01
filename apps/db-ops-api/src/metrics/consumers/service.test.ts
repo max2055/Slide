@@ -107,6 +107,14 @@ describe('MAX-75 deterministic consumer contract', () => {
     await expect(guarded.observations(admin, { resource: fixture.resource, metric: rows[0].metric,
       dimensions: {}, ...fixture.window })).rejects.toThrow('POLICY_FORBIDDEN');
   });
+  it.each(['discover', 'inventory'] as const)('%s revalidates after its storage reads', async operation => {
+    let live = admin;
+    const guarded = new MetricConsumerService(policies, createConfigurationRegistry(), {
+      queryWindow: async () => [], attempts: async () => [], dimensions: async () => [],
+      inventory: async () => { live = { ...admin, permissions: [], instanceScopes: {} }; return null; },
+    }, () => now, undefined, async () => live);
+    await expect(guarded[operation](admin, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
+  });
   it('denies resource scope before reading observations or revealing extensions', async () => {
     const actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
     await expect(service.query(actor, query())).rejects.toThrow('POLICY_FORBIDDEN');

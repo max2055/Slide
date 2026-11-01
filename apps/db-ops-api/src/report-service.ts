@@ -8,7 +8,7 @@ import { metricsDatabaseService } from './metrics-database-service';
 import { databaseService } from './database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import type { ActorContext } from './auth/actor-context.js';
-import { metricConsumerService, operationalSource } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService as metricConsumerService, operationalSource } from './metrics/consumers/runtime.js';
 import ejs from 'ejs';
 import path from 'path';
 import fs from 'fs';
