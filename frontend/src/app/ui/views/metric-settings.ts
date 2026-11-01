@@ -1,3 +1,5 @@
+import '../components/template-library.js';
+import '../components/template-governance.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -282,7 +284,7 @@ export class MetricSettings extends LitElement {
     const filtered = groups.filter(g => (!this.packageType || g.primary.package.resource_type === this.packageType)
       && `${templateName(g.id)} ${g.id} ${g.versions.map(scopeLabel).join(' ')}`.toLowerCase().includes(query));
     const detail = c?.packages.find(p => p.package.digest === this.packageDetail);
-    return html`<p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
+    return html`<template-library></template-library><template-governance></template-governance><p>管理共享模板与策略组；对象绑定统一在资源编辑或批量操作中完成。</p>
       <app-card .compact=${true}><div class="filter-toolbar" role="group" aria-label="采集包筛选">
         <app-form-field label="搜索名称或标识"><input type="search" aria-label="搜索采集包" placeholder="搜索模板名称、引擎" .value=${this.packageSearch} @input=${(e: Event) => { this.packageSearch = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="采集包资源类型" .value=${this.packageType} @change=${(e: Event) => { this.packageType = (e.target as HTMLSelectElement).value; }}><option value="">全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k}>${v}</option>`)}</select></app-form-field>

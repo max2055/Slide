@@ -1,3 +1,5 @@
+import { registerTemplateGovernanceRoutes } from './src/metrics/templates/governance-routes.js';
+import { registerTemplateAuthoringRoutes } from './src/metrics/templates/authoring-routes.js';
 import { registerAlertListRoute } from './src/alert-list-route.js';
 import { registerMaintenanceRoutes } from './src/maintenance-routes.js';
 import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
@@ -5028,6 +5030,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   await registerMaintenanceRoutes(fastify, verifyToken);
+  await registerTemplateAuthoringRoutes(fastify, verifyToken);
+  await registerTemplateGovernanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---
   fastify.get('/api/silence', { preHandler: [verifyToken] }, async (request, reply) => {

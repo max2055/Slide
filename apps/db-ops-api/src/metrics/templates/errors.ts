@@ -6,6 +6,7 @@
  * API error yet: this module is not mounted on a route or process.
  */
 export const TEMPLATE_ERROR_STATUS = {
+  TEMPLATE_INHERITANCE_INVALID:422,
   TEMPLATE_INVALID_INPUT: 400,
   TEMPLATE_FORBIDDEN: 403,
   TEMPLATE_NOT_FOUND: 404,
