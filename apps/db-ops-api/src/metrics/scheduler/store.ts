@@ -1,4 +1,4 @@
-import { appendConfigurationHistory, templateHistoryPayload } from '../policy/configuration-history.js';
+import { appendConfigurationHistory } from '../policy/configuration-history.js';
 import { validSourceSnapshot } from '../rollout/source-history.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { validateBindings, type Resource } from '../../contracts/metrics/index.js';
@@ -561,7 +561,9 @@ export class MysqlScheduleStore {
       }
     }
     if (sampleIds.length) {
-      await appendConfigurationHistory(c, templateHistoryPayload(decoded), 'formal_observation_commit', new Date(now).toISOString(), sampleIds);
+      // Preserve the validated envelope, including a prior formal commit proof.
+      // Re-encoding an applied revision as pending rejects the next normal sample.
+      await appendConfigurationHistory(c, decoded.payload, 'formal_observation_commit', new Date(now).toISOString(), sampleIds);
       await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
         ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
       [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);

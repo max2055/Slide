@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(import.meta.dirname, '../../server.ts'), 'utf8')
   + readFileSync(resolve(import.meta.dirname, '../cron/cron-routes.ts'), 'utf8');
+const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
 
 function routeBlocks(prefix: string): Array<{ method: string; path: string; block: string }> {
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -85,6 +86,11 @@ describe('server instance authorization coverage', () => {
     expect(eventReads).toContain('allowed_instance_ids: getAccessibleInstanceIds(actor)');
     expect(eventReads).toContain('canReadResource(actor, RefSchema.parse(');
     expect(routeBlocks('/api/alerts/events').find(r => r.method === 'post' && r.path === '/api/alerts/events')?.block).toContain("hasInstanceAccess((request as any).user, instanceId, 'read-write')");
+    expect(eventReads).toContain("for (const path of ['', '/stats', '/mttr', '/search', '/:id', '/:id/logs'])");
+    expect(eventReads).toContain('allowed_event_ids: ids');
+    expect(eventReads).toContain('await scope(actor)');
+    expect(eventReads).toContain('await requireEventAccess(req, reply, Number(req.params.id))');
+
   });
 
   it('checks instance ownership before reading or mutating alert event records', () => {

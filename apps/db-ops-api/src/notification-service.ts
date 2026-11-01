@@ -1,3 +1,4 @@
+import { maintenanceBlocksDelivery } from './maintenance-notification.js';
 /**
  * 通知推送服务
  * 每 10 秒轮询 alerts 表，发现未推送的告警，匹配通知渠道，格式化消息并发送
@@ -14,7 +15,6 @@ import { validateEmailChannelConfig } from './notification-channel-config.js';
 import { decryptData } from './db-connection';
 import { exchangeMicrosoftSmtpRefreshToken } from './smtp-oauth2.js';
 import { signFeishuWebhookPayload } from './feishu-webhook.js';
-import { maintenanceWindowService } from './maintenance-window-service';
 import { resolveOutboundTarget, OutboundPolicyError } from './security/outbound-policy.js';
 import { isAlertEligibleForChannel } from './workflows/notification-dispatch.js';
 
@@ -127,14 +127,10 @@ export class NotificationService {
           continue;
         }
 
-        // 维护窗口检查：抑制通知
-        if (alert.instance_id) {
-          const mw = await maintenanceWindowService.isActiveMaintenanceWindow(alert.instance_id);
-          if (mw.active && mw.window?.suppress_evaluation) {
-            console.log(`🔇 维护窗口抑制通知: ${alert.title} (窗口: ${mw.window.name})`);
-            await notificationDatabaseService.markAlertAsNotified(alert.id);
-            continue;
-          }
+        // Same durable maintenance decision as the workflow delivery path.
+        if (await maintenanceBlocksDelivery(alert.id)) {
+          await notificationDatabaseService.markAlertAsNotified(alert.id);
+          continue;
         }
 
         for (const channel of matchedChannels) {

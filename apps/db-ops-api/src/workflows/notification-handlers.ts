@@ -1,3 +1,4 @@
+import { maintenanceBlocksDelivery } from '../maintenance-notification.js';
 import type { JobRegistry } from './job-registry.js';
 import type { notificationDatabaseService as NotificationDatabase } from '../notification-database-service.js';
 import type { NotificationService } from '../notification-service.js';
@@ -60,6 +61,9 @@ export function registerNotificationHandlers(
       try {
         signal.throwIfAborted();
         const publish = async () => {
+          if (identity.kind === 'notification' && await maintenanceBlocksDelivery(identity.sourceId)) {
+            throw new Error('MAINTENANCE_SUPPRESSED');
+          }
           transportStarted = true;
           // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
           const sendSignal = claim.retryDeadline === undefined ? signal
@@ -77,6 +81,10 @@ export function registerNotificationHandlers(
         }
         await gate.finish(job, context, claim, 'sent');
       } catch (error) {
+        if (error instanceof Error && error.message === 'MAINTENANCE_SUPPRESSED') {
+          await gate.finish(job, context, claim, 'skipped', 'MAINTENANCE_SUPPRESSED');
+          return;
+        }
         // Failures before transport are retryable; after invocation the receiver outcome is uncertain.
         if (!signal.aborted) await gate.finish(job, context, claim, transportStarted ? 'unknown' : 'retryable',
           transportStarted ? 'DELIVERY_OUTCOME_UNCERTAIN' : 'ROLLOUT_ALERT_FENCE_UNAVAILABLE').catch(() => {});

@@ -1,3 +1,4 @@
+import { maintenanceAt } from './maintenance-intervals.js';
 import type { ActorContext } from './auth/actor-context.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
@@ -31,6 +32,11 @@ class AlertEventService {
     evidence: { sample_ids: string[]; attempt_ids: string[]; unit: string; dimensions: Record<string,string>; samples: Array<TriggerSample & {id:string}> }) {
     const key = `${next.resource.type}:${next.resource.id}`;
     if (!previous || previous.episode_id !== next.episode_id) {
+      let maintenance: {state:'active'|'inactive'|'unknown'; at:string; intervals?:unknown[]} = {state:'unknown',at:next.opened_at};
+      try {
+        const intervals = await maintenanceAt(connection,{type:next.resource.type,id:Number(next.resource.id)},Date.parse(next.opened_at));
+        maintenance = {state:intervals.length?'active':'inactive',at:next.opened_at,intervals};
+      } catch { /* Preserve problem facts; unknown suppresses delivery. */ }
       const result = await alertDatabaseService.createAlert({
         ...(next.resource.type === 'instance' ? { instance_id: Number(next.resource.id) }
           : next.resource.type === 'server' ? { server_id: Number(next.resource.id) }
@@ -39,7 +45,7 @@ class AlertEventService {
         title: `模板触发器：${next.rule_id}`, message: `指标 ${next.opened.metric.id} = ${next.opened.value ?? '未知'} ${evidence.unit}`,
         source: 'template-trigger', metric_name: next.opened.metric.id,
         metric_value: next.opened.value === null ? undefined : String(next.opened.value),
-        tags: { template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
+        tags: { maintenance: {state:maintenance.state,at:maintenance.at}, template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
       }, connection);
       if (!result.success || !result.alertId) throw new Error('TRIGGER_ALERT_WRITE_FAILED');
       const [inserted] = await connection.execute<mysql.ResultSetHeader>(`INSERT INTO alert_events
@@ -47,6 +53,7 @@ class AlertEventService {
         VALUES(?,?,?,?,?,'warning','open')`, [randomUUID(), `模板事件：${next.opened.metric.id}`,
         '问题与恢复由固定模板规则判定；确认仅代表处理。', next.resource.type === 'instance' ? Number(next.resource.id) : null, 'template-trigger']);
       const eventId = inserted.insertId;
+      await connection.execute('INSERT INTO maintenance_event_links(alert_id,payload) VALUES(?,?)', [result.alertId,JSON.stringify({alert_id:result.alertId,event_id:eventId,episode_id:next.episode_id,resource:next.resource,...maintenance})]);
       await connection.execute("UPDATE alerts SET tags=JSON_SET(tags,'$.template_event_id',?) WHERE id=?",[eventId,result.alertId]);
       await connection.execute("INSERT INTO alert_event_members(event_id,alert_id,role) VALUES(?,?,'triggered')", [eventId,result.alertId]);
       await connection.execute(`INSERT INTO metric_trigger_episodes
@@ -59,7 +66,7 @@ class AlertEventService {
       const [channels] = await connection.execute<mysql.RowDataPacket[]>('SELECT id,config,delivery_start_at FROM notification_channels WHERE enabled=1');
       const deliveryChannels = channels.map(row => ({ ...row, config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config }));
       const alert = { id: result.alertId, level:'warning', created_at: new Date(next.opened_at) };
-      await new NotificationDispatchScheduler({ getPendingAlerts: async () => [alert],
+      if(maintenance.state === 'inactive') await new NotificationDispatchScheduler({ getPendingAlerts: async () => [alert],
         getEnabledChannels: async () => deliveryChannels as any },
       { routeAlert: (a, cs) => notificationService.routeAlert(a as any, cs as any) },
       new MysqlWorkflowStore(() => connection as any)).enqueuePending();

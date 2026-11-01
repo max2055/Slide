@@ -80,3 +80,35 @@ it("keeps compound semantics when reopened and cannot silently collapse to the f
   ).toBe(true);
   expect(e.shadowRoot.querySelectorAll("fieldset fieldset").length).toBe(2);
 });
+
+it("changes AND/OR without dropping nested windows, parameters, recovery or nodata on publish", async () => {
+  const leaf = (aggregation: string, value: number) => ({
+    node: "compare", select: { aggregation, ...(aggregation === "last" ? {} : { window_ms: 30000 }) },
+    operator: ">", threshold: { kind: "constant", value },
+  });
+  const rule = {
+    scope: "item:item", parameters: { schema: {}, defaults: {} },
+    problem: { node: "all", children: [leaf("min", 90), { node: "any", children: [leaf("max", 95), leaf("avg", 92)] }] },
+    recovery: { ...leaf("last", 70), operator: "<" },
+    quality: { accepted_quality: ["good"], min_coverage: 1, allow_estimated: false },
+    clock: { stale_after_ms: 120000, nodata: { enabled: true, after_ms: 300000 } },
+  };
+  authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ rules: [rule] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ template_id: "tpl", version: 3 }) });
+  const e = document.createElement("template-trigger-editor") as any;
+  e.template = { template_id: "tpl", version: 2, content_hash: "sha256:" + "a".repeat(64), items: [{ item_id: "item", display_name: "test", unit: "count" }] };
+  document.body.append(e);
+  await settle();
+  const mode = e.shadowRoot.querySelector('select[aria-label="problem组合"]');
+  mode.value = "any";
+  mode.dispatchEvent(new Event("change"));
+  await settle();
+  mode.value = "all";
+  mode.dispatchEvent(new Event("change"));
+  await settle();
+  e.shadowRoot.querySelector("button.btn-primary").click();
+  await settle();
+  const body = JSON.parse(authFetch.mock.calls[1][1].body);
+  for (const key of ["problem", "recovery", "parameters", "quality", "clock"])
+    expect(body[key]).toEqual(rule[key as keyof typeof rule]);
+});

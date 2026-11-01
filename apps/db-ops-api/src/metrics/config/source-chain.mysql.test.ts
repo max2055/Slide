@@ -1,3 +1,4 @@
+import { publicationAuditCount } from './audit-test-support.js';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -55,8 +56,7 @@ describe.skipIf(!port)('MAX-238 combined metric items and the parameter source c
   const one = async (sql: string, values: unknown[] = []) => (await rows(sql, values))[0];
   const bindingRows = async (key: string) =>
     Number((await one('SELECT COUNT(*) AS n FROM metric_policy_bindings WHERE resource_key = ?', [key]))!.n);
-  const auditCount = async (key: string) =>
-    Number((await one('SELECT COUNT(*) AS n FROM metric_policy_audit WHERE target = ?', [key]))!.n);
+  const auditCount = (key: string) => publicationAuditCount(pool, key);
   const pinOf = (id: string, version: string) => {
     const release = packages.list().find(candidate => candidate.package.id === id && candidate.package.version === version);
     expect(release, `${id}@${version} must be installed`).toBeTruthy();

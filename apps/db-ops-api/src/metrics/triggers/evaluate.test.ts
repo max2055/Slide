@@ -51,6 +51,23 @@ function evaluate(
 const windowAt = (from: string, to: string) => ({ from, to });
 
 describe('pure trigger evaluation', () => {
+  it.each(['min', 'max'] as const)('uses %s across the covered window and keeps an open problem on gaps', async (aggregation) => {
+    const rule = averageRule({
+      problem: { node: 'compare', select: { aggregation, window_ms: 60000 }, operator: '>', threshold: { kind: 'constant', value: 90 } },
+      recovery: { node: 'compare', select: { aggregation, window_ms: 60000 }, operator: '<', threshold: { kind: 'constant', value: 70 } },
+    });
+    const snapshot = await snapshotOf({ rules: [rule], triggers: [{ rule_id: rule.rule_id, scope: rule.scope, version: 1 }] });
+    const key = { rule_id: rule.rule_id, scope: rule.scope };
+    const samples = (a: number, b: number, gap = false) => [
+      near(a, { window: windowAt('2026-10-29T11:59:00.000Z', '2026-10-29T11:59:30.000Z'), observed_at: '2026-10-29T11:59:30.000Z' }),
+      near(b, { window: windowAt(gap ? '2026-10-29T11:59:45.000Z' : '2026-10-29T11:59:30.000Z', '2026-10-29T12:00:00.000Z'), observed_at: '2026-10-29T12:00:00.000Z' }),
+    ];
+    expect(evaluate(snapshot, { samples: samples(95, 85) }, undefined, key).business).toBe(aggregation === 'max' ? 'problem' : 'healthy');
+    expect(evaluate(snapshot, { samples: samples(60, 85), previous: 'problem' }, undefined, key).recovery).toBe(aggregation === 'min');
+    expect(evaluate(snapshot, { samples: samples(60, 60, true), previous: 'problem' }, undefined, key))
+      .toMatchObject({ business: 'unknown', reason: 'gap', recovery: false, problem_open: true });
+  });
+
   it('evaluates 95 → problem, 85 → keeps the problem, 60 → recovers', async () => {
     const snapshot = await snapshotOf();
 
