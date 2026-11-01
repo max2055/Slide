@@ -5841,6 +5841,149 @@
         ],
         "type": "object"
       },
+      "InvestigationDraftResponse": {
+        "$id": "InvestigationDraftResponse",
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$id": "InvestigationEntryContext",
+            "additionalProperties": false,
+            "properties": {
+              "dimensions": {
+                "maxProperties": 20,
+                "patternProperties": {
+                  "^(.*)$": {
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "from": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "metric": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "pattern": "^[a-z][a-z0-9_.]{0,127}$",
+                    "type": "string"
+                  },
+                  "semantic_version": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "semantic_version"
+                ],
+                "type": "object"
+              },
+              "resourceRefs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "maximum": 4294967295,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "role": {
+                      "anyOf": [
+                        {
+                          "const": "primary",
+                          "type": "string"
+                        },
+                        {
+                          "const": "related",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "role"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 20,
+                "minItems": 1,
+                "type": "array"
+              },
+              "returnTo": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^/",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "sourceEventIds": {
+                "items": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxItems": 20,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "to": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "resourceRefs",
+              "from",
+              "to",
+              "sourceEventIds",
+              "returnTo"
+            ],
+            "type": "object"
+          },
+          "id": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          },
+          "modelInvoked": {
+            "const": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "context",
+          "modelInvoked"
+        ],
+        "type": "object"
+      },
       "InvestigationEffectiveBudgetView": {
         "additionalProperties": false,
         "properties": {
@@ -6301,6 +6444,273 @@
           "provider",
           "capabilityVerified",
           "admission"
+        ],
+        "type": "object"
+      },
+      "InvestigationEntryContext": {
+        "$id": "InvestigationEntryContext",
+        "additionalProperties": false,
+        "properties": {
+          "dimensions": {
+            "maxProperties": 20,
+            "patternProperties": {
+              "^(.*)$": {
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "from": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "metric": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[a-z][a-z0-9_.]{0,127}$",
+                "type": "string"
+              },
+              "semantic_version": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "semantic_version"
+            ],
+            "type": "object"
+          },
+          "resourceRefs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "maximum": 4294967295,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "role": {
+                  "anyOf": [
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "related",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": {
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "id",
+                "role"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          "returnTo": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^/",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "sourceEventIds": {
+            "items": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "to": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "resourceRefs",
+          "from",
+          "to",
+          "sourceEventIds",
+          "returnTo"
+        ],
+        "type": "object"
+      },
+      "InvestigationEntryFacts": {
+        "$id": "InvestigationEntryFacts",
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$id": "InvestigationEntryContext",
+            "additionalProperties": false,
+            "properties": {
+              "dimensions": {
+                "maxProperties": 20,
+                "patternProperties": {
+                  "^(.*)$": {
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "from": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "metric": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "pattern": "^[a-z][a-z0-9_.]{0,127}$",
+                    "type": "string"
+                  },
+                  "semantic_version": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "semantic_version"
+                ],
+                "type": "object"
+              },
+              "resourceRefs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "maximum": 4294967295,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "role": {
+                      "anyOf": [
+                        {
+                          "const": "primary",
+                          "type": "string"
+                        },
+                        {
+                          "const": "related",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "anyOf": [
+                        {
+                          "const": "instance",
+                          "type": "string"
+                        },
+                        {
+                          "const": "server",
+                          "type": "string"
+                        },
+                        {
+                          "const": "network_device",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "role"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 20,
+                "minItems": 1,
+                "type": "array"
+              },
+              "returnTo": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^/",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 1,
+                "type": "number"
+              },
+              "sourceEventIds": {
+                "items": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxItems": 20,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "to": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "resourceRefs",
+              "from",
+              "to",
+              "sourceEventIds",
+              "returnTo"
+            ],
+            "type": "object"
+          },
+          "facts": {
+            "items": {},
+            "maxItems": 20,
+            "type": "array"
+          },
+          "modelInvoked": {
+            "const": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "context",
+          "facts",
+          "modelInvoked"
         ],
         "type": "object"
       },
@@ -34557,6 +34967,55 @@
         ]
       }
     },
+    "/api/investigations/{id}/context-facts": {
+      "get": {
+        "description": "Reads the immutable creation entry context and current authorized formal facts; revalidates complete Investigation and source-event scope after storage waits. No model or writes. Private/no-store.",
+        "operationId": "getInvestigationContextFacts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationEntryFacts"
+                }
+              }
+            },
+            "description": "Exact context and facts"
+          },
+          "400": {
+            "description": "No entry context or invalid query"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "403": {
+            "description": "Read denied"
+          },
+          "404": {
+            "description": "Investigation/resource/event no longer visible"
+          },
+          "503": {
+            "description": "Read unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/investigations/{id}/events": {
       "get": {
         "description": "Durable per-investigation sequence, no-store and current all-scope authorization. Expired/future cursor returns replay_required; reconnect with investigation.watch receives a snapshot watermark plus its live suffix. Disconnect never cancels Run.",
@@ -35046,6 +35505,121 @@
           },
           "503": {
             "description": "Rolled back; no message/job/outbox orphan"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/drafts": {
+      "post": {
+        "description": "Explicit idempotent Investigation draft only. Existing Session/store; no admission, Run, workflow or model. Exact immutable entry context; live resource and event authorization on every retry. Private/no-store.",
+        "operationId": "createInvestigationDraft",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationEntryContext"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationDraftResponse"
+                }
+              }
+            },
+            "description": "Draft saved or original recovered"
+          },
+          "400": {
+            "description": "Invalid context/window/metric/dimensions or source mismatch"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "403": {
+            "description": "Metric/event grant denied"
+          },
+          "404": {
+            "description": "Resource/event not visible"
+          },
+          "409": {
+            "description": "Idempotency payload mismatch"
+          },
+          "503": {
+            "description": "Unavailable; recover original key before resubmitting"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/entry-facts": {
+      "post": {
+        "description": "Read authorized facts at the exact resource/window/metric semantic version/dimensions. No persistence, queue or model; live authorization before and after reads. Private/no-store.",
+        "operationId": "previewInvestigationEntryFacts",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationEntryContext"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationEntryFacts"
+                }
+              }
+            },
+            "description": "Authorized facts, possibly empty or paginated"
+          },
+          "400": {
+            "description": "Invalid context/window/metric/dimensions or source mismatch"
+          },
+          "401": {
+            "description": "JWT required"
+          },
+          "403": {
+            "description": "Metric/event grant denied"
+          },
+          "404": {
+            "description": "Resource/event not visible"
+          },
+          "409": {
+            "description": "Idempotency payload mismatch"
+          },
+          "503": {
+            "description": "Unavailable; recover original key before resubmitting"
           }
         },
         "security": [
