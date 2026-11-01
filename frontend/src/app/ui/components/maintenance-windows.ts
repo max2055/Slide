@@ -104,7 +104,18 @@ export class MaintenanceWindows extends LitElement {
       this.rows = rows;
       this.resources = inventory;
       const saved = sessionStorage.getItem(this.storageKey());
-      this.pending = saved ? JSON.parse(saved) : null;
+      if (saved) {
+        try {
+          const intent = JSON.parse(saved);
+          if (!intent || !intent.body || typeof intent.body.operation_key !== 'string' ||
+              !Number.isSafeInteger(intent.body.expected_revision) ||
+              !(intent.id === null || typeof intent.id === 'string')) throw Error('invalid intent');
+          this.pending = intent;
+        } catch {
+          this.pending = { corrupt: true };
+          this.error = '本地操作记录损坏，无法确认上次结果，已停止写入。请保留记录并联系管理员核对。';
+        }
+      } else this.pending = null;
     } catch (e) {
       if (this.current(g, s)) this.error = (e as Error).message;
     } finally {
@@ -194,7 +205,9 @@ export class MaintenanceWindows extends LitElement {
         this.pending = null;
       }
       if (this.current(g, s))
-        this.error = `结果待核对：${(e as Error).message}。请查询操作结果，勿重复新建。`;
+        this.error = this.pending
+          ? `结果待核对：${(e as Error).message}。请查询操作结果，勿重复新建。`
+          : `保存未提交：${(e as Error).message}。请刷新当前权限和版本后重试。`;
     } finally {
       if (this.current(g, s)) this.busy = false;
     }
@@ -203,7 +216,7 @@ export class MaintenanceWindows extends LitElement {
     const intent = this.pending,
       g = this.generation,
       s = this.session;
-    if (!intent) return;
+    if (!intent || intent.corrupt) return;
     this.busy = true;
     try {
       const result = await this.json(

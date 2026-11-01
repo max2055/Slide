@@ -92,11 +92,11 @@ export class MaintenanceIntervals {
   return this.transaction(actor,async(c,live)=>{
    rule(canReadResource(await live(),ref),'MAINTENANCE_FORBIDDEN',403);
    const [rows]=await c.execute<RowDataPacket[]>('SELECT payload FROM maintenance_interval_history ORDER BY id,revision');
-   const values=rows.map(r=>decode(r.payload) as Interval).filter(v=>(!v.resources||v.resources.some(r=>r.type===ref.type&&r.id===ref.id)));
+   const values=rows.map(r=>decode(r.payload) as Interval);
    const [links]=await c.execute<RowDataPacket[]>('SELECT payload FROM maintenance_event_links');
    const event_links=links.map(row=>decode(row.payload)).filter(v=>v.resource?.type===ref.type&&Number(v.resource?.id)===ref.id&&Date.parse(v.at)>=Date.parse(from)&&Date.parse(v.at)<Date.parse(to)).map(v=>({...v,intervals:v.intervals?.map((interval:any)=>({...interval,resources:[ref]}))}));
    rule(canReadResource(await live(),ref),'MAINTENANCE_FORBIDDEN',403);
-   return {resource:ref,from,to,intervals:effectiveIntervals(values).filter(v=>Date.parse(v.effective_from)<Date.parse(to)&&Date.parse(v.effective_to)>Date.parse(from)).map(v=>({...v,resources:[ref]})),event_links};
+   return {resource:ref,from,to,intervals:effectiveIntervals(values).filter(v=>(!v.resources||v.resources.some(r=>r.type===ref.type&&r.id===ref.id))&&Date.parse(v.effective_from)<Date.parse(v.effective_to)&&Date.parse(v.effective_from)<Date.parse(to)&&Date.parse(v.effective_to)>Date.parse(from)).map(v=>({...v,resources:[ref]})),event_links};
   });
  }
 }
