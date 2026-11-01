@@ -92,7 +92,7 @@ try {
       mappings.push(catalog.autofill({ package: pin, metric: selected.item.canonical_metric }));
     }
     const draft = (await repository.getDraft(template.template_id))!;
-    const aggregate = { ...draft.aggregate, items, parameters: { schema: { interval_ms: { type: 'integer' as const, min: 1000, max: 86400000 } }, defaults: { interval_ms: spec.interval_ms } } };
+    const aggregate = { ...draft.aggregate, items: items.sort((a, b) => a.item_id.localeCompare(b.item_id)), parameters: { schema: { interval_ms: { type: 'integer' as const, min: 1000, max: 86400000 } }, defaults: { interval_ms: spec.interval_ms } } };
     await service.updateDraft(actor, template.template_id, { expected_draft_revision: draft.revision, aggregate });
     evidence.templates[engine] = { template_id: template.template_id, mappings, applicability: release.package.applicability, published: false };
     if (engine !== 'postgresql') {
