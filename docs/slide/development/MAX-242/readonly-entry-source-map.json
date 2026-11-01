@@ -1,0 +1,102 @@
+{
+  "safeBase": "29a2029eaa05d827a2c11b58a2f95a1a05ebe4b9",
+  "testedSource": "3f2192f3fbd175a3a4c8220392ba8df0be1d7517",
+  "policy": "Only listed current blobs on accepted safe base; exclude original task ancestry and prototype evidence. Source task retains f5aa78eca.",
+  "paths": [
+    {
+      "path": "apps/db-ops-api/src/contracts/generate-public-api.ts",
+      "mode": "100644",
+      "sourceBlob": "18d2c326b6ea7fe2c1b60fa70fd3702629fd4d8e"
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/public-api.test.ts",
+      "mode": "100644",
+      "sourceBlob": "1e1149c61f56157e1c0ec56c5c78ba974ae22be7"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/entry-contracts.test.ts",
+      "mode": "100644",
+      "sourceBlob": "5558386a3aab513b0c05d0733fb541a376388061"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/entry-contracts.ts",
+      "mode": "100644",
+      "sourceBlob": "21faf4c0c17e328e4f27a0b7120bfce5566e6942"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/entry-routes.test.ts",
+      "mode": "100644",
+      "sourceBlob": "4830c7c788334fd17b5290b056fc784e8ae72583"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/entry-routes.ts",
+      "mode": "100644",
+      "sourceBlob": "7b090d65f0f7a5e3b9fba468bdca2ca90136dad2"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/http-contracts.ts",
+      "mode": "100644",
+      "sourceBlob": "9525bd9f914215c91e157079018021f901c82bb7"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/routes.ts",
+      "mode": "100644",
+      "sourceBlob": "bd47cb4eb2147401d76c773165d896583f662093"
+    },
+    {
+      "path": "apps/db-ops-api/src/investigations/store.ts",
+      "mode": "100644",
+      "sourceBlob": "73f5c9d6f183a77ffda7009ae29cc9c7dbae8b76"
+    },
+    {
+      "path": "docs/slide/development/MAX-242/readonly-entry-20261101.md",
+      "mode": "100644",
+      "sourceBlob": "0f36568b064a45184eeceef8de87553046d09f21"
+    },
+    {
+      "path": "docs/slide/openapi.json",
+      "mode": "100644",
+      "sourceBlob": "95526a80fe0bfba08311fc7a26ed1d569f81138c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-11-01-max242-readonly-entry.md",
+      "mode": "100644",
+      "sourceBlob": "6b2b36fd6e0cedea839dc35eb756c0b116d9d15a"
+    },
+    {
+      "path": "frontend/e2e/MAX-242-entry.spec.ts",
+      "mode": "100644",
+      "sourceBlob": "35616d16a08eded91215d34ff868c065ba725911"
+    },
+    {
+      "path": "frontend/src/api/generated/public-api.ts",
+      "mode": "100644",
+      "sourceBlob": "91266033992606a6d14b89dd6845601574dc90e2"
+    },
+    {
+      "path": "frontend/src/app/ui/components/investigation-entry.test.ts",
+      "mode": "100644",
+      "sourceBlob": "b34a91170ff01ec97fa3162e4eea390e56f60f61"
+    },
+    {
+      "path": "frontend/src/app/ui/components/investigation-entry.ts",
+      "mode": "100644",
+      "sourceBlob": "32f4007039cdb3f024abc522be266b6209e41d94"
+    },
+    {
+      "path": "frontend/src/app/ui/controllers/investigation-entry.test.ts",
+      "mode": "100644",
+      "sourceBlob": "4682dd820a422556267611e15b9c5fe7e2347767"
+    },
+    {
+      "path": "frontend/src/app/ui/controllers/investigation-entry.ts",
+      "mode": "100644",
+      "sourceBlob": "e6b582ba17fb73127737495098cbdb4fdcc5c808"
+    },
+    {
+      "path": "frontend/src/app/ui/views/investigations.ts",
+      "mode": "100644",
+      "sourceBlob": "e2fb08e9ed55404303a029b7d2dc1e8e4846ca79"
+    }
+  ]
+}

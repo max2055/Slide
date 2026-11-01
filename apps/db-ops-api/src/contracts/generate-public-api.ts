@@ -84,6 +84,19 @@ export function buildOpenApiDocument() {
           '403': { description: 'Live AI settings read permission absent' },
         },
       } },
+      ...Object.fromEntries(['drafts', 'entry-facts'].map(op => [`/api/investigations/${op}`, { post: {
+        operationId: op === 'drafts' ? 'createInvestigationDraft' : 'previewInvestigationEntryFacts', security: [{ bearerAuth: [] }],
+        description: op === 'drafts' ? 'Explicit idempotent Investigation draft only. Existing Session/store; no admission, Run, workflow or model. Exact immutable entry context; live resource and event authorization on every retry. Private/no-store.' : 'Read authorized facts at the exact resource/window/metric semantic version/dimensions. No persistence, queue or model; live authorization before and after reads. Private/no-store.',
+        parameters: op === 'drafts' ? [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } }] : [],
+        requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationEntryContext) } } },
+        responses: { '200': { description: op === 'drafts' ? 'Draft saved or original recovered' : 'Authorized facts, possibly empty or paginated', content: { 'application/json': { schema: refSchema(op === 'drafts' ? PublicApiSchemas.InvestigationDraftResponse : PublicApiSchemas.InvestigationEntryFacts) } } },
+          '400': { description: 'Invalid context/window/metric/dimensions or source mismatch' }, '401': { description: 'JWT required' }, '403': { description: 'Metric/event grant denied' }, '404': { description: 'Resource/event not visible' }, '409': { description: 'Idempotency payload mismatch' }, '503': { description: 'Unavailable; recover original key before resubmitting' } },
+      } }])),
+      '/api/investigations/{id}/context-facts': { get: {
+        operationId: 'getInvestigationContextFacts', security: [{ bearerAuth: [] }], parameters: [investigationId()],
+        description: 'Reads the immutable creation entry context and current authorized formal facts; revalidates complete Investigation and source-event scope after storage waits. No model or writes. Private/no-store.',
+        responses: { '200': { description: 'Exact context and facts', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationEntryFacts) } } }, '400': { description: 'No entry context or invalid query' }, '401': { description: 'JWT required' }, '403': { description: 'Read denied' }, '404': { description: 'Investigation/resource/event no longer visible' }, '503': { description: 'Read unavailable' } },
+      } },
       '/api/investigations': {
         post: { operationId: 'createInvestigation', security: [{ bearerAuth: [] }],
           description: 'Atomic creation plus first admission/message/job/outbox. Server-owned actor and Profile version; all scopes revalidated even on retry. Same actor/key/command recovers the original investigation and Session. No executor registered by this API.',
