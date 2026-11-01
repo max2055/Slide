@@ -38,7 +38,7 @@ CI `41318880479`：已完成日志定位。MAX-238 JSON 为测试输出，缺失
 | 原始字段→语义→item→序列→规则逐项追踪 | 原 PG5项映射证据继续有效；本次 PG 原始/规范化15样本、配置 revision、规则 snapshot、同一 episode、历史 API sources/configurations 联查；MySQL 新映射通过注册选择断言及实际原始值计算 |
 | 注册选择自动填充及非法配置阻断 | 复用已接受的完整原生流程负例；本次新增 `%`/used_percent/固定 implementation 自动填充回归；指标模块完整 gate 通过 |
 | MySQL 使用率/速率、Linux MemAvailable、SNMP 速率边界 | MySQL 使用真实 SQL 快照与 uint64 delta/观测时间校验，真实 FLUSH STATUS/reset、凭据撤销；VM 真实 /proc/meminfo 与进程内命令不可用故障；SNMP 复用已接受真实 UDP 证据。零分母/缺字段采用受控边界，不冒充目标实际发生 |
-| 数据库/服务器/网络三类采集→最新/历史→事件 | 复用已接受 MySQL、VM、受控 SNMP 正常 writer/历史事件证据；本次 PG 再补真实条件 open/hold/recover 及最新/历史 API。网络物理设备仍按成员决定部署后验收；Oracle/达梦不计通过 |
+| 数据库/服务器/网络三类采集→最新/历史→事件 | 复用已接受 MySQL、VM、受控 SNMP 正常 writer/历史事件证据；本次 PG 再补真实条件 open/hold/recover 及最新/历史 API。按父项最新成员决定，受控 SNMP 足够，不列物理硬件阻塞；Oracle/达梦不计通过 |
 | 共享读取、凭据隔离、只读/超时/限额/脱敏 | 模块 gate 包含实现共享读取与凭据指纹隔离回归；PG 真实 25006/57014/撤销 CONNECT，私有 session 清理；MySQL 独占用户凭据撤销；安全测试 35文件336项及 secret scan 通过。不将 mock 权限测试当成实际目标验证 |
 
 ## 本次具体改动与复现
