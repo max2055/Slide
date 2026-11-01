@@ -41,7 +41,9 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     admin = mysql.createPool(options); await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ ...options, database }); store = new AnalysisDispatchStore(() => pool); jobs = new MysqlWorkflowStore(() => pool as any);
     await pool.query(`CREATE TABLE ai_analysis (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, analysis_type VARCHAR(32), target_type VARCHAR(32), instance_id INT, server_id INT, network_device_id INT, related_id INT, status ENUM('pending','running','completed','failed') DEFAULT 'pending', trigger_type VARCHAR(16), cache_key VARCHAR(255), session_key VARCHAR(255), result JSON, analysis_envelope JSON, envelope_backfill_status VARCHAR(32), execution_trace JSON, \`usage\` JSON, error_message TEXT, duration_ms INT, ttl_minutes INT DEFAULT 1440, cache_ttl_minutes INT, started_at DATETIME, completed_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)`);
-    for (const file of ['032_workflow_outbox_jobs.sql', '109_analysis_dispatch_recovery.sql']) {
+    // Shared queue recovery ordering requires the real delivery-state migration.
+    await pool.query('CREATE TABLE report_configs (id INT PRIMARY KEY, format VARCHAR(32))');
+    for (const file of ['032_workflow_outbox_jobs.sql', '036_notification_delivery_audit.sql', '041_report_notification_delivery.sql', '093_delivery_recovery.sql', '109_analysis_dispatch_recovery.sql']) {
       for (const sql of splitSqlStatements(readFileSync(new URL(`../../sql/migrations/${file}`, import.meta.url), 'utf8'))) await pool.query(sql);
     }
     for (const sql of [
@@ -91,6 +93,9 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     const [a, b] = await Promise.all([enqueue(), enqueue()]); expect(a.analysisId).toBe(b.analysisId);
     for (const table of ['ai_analysis', 'analysis_dispatches', 'outbox_events', 'workflow_jobs']) expect(await rows(`SELECT * FROM ${table}`)).toHaveLength(1);
     expect((await rows('SELECT * FROM outbox_events'))[0].published_at).not.toBeNull();
+    expect((await jobs.observeQueue()).types).toEqual([
+      expect.objectContaining({ jobType: 'analysis.dispatch', queued: 1, ready: 1 }),
+    ]);
   });
   it('rolls back analysis when durable intent fails', async () => {
     await pool.query("CREATE TRIGGER fail_analysis_intent BEFORE INSERT ON outbox_events FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'INJECTED_INTENT_FAILURE'");
