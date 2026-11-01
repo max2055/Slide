@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { historicalTemplatePayload as payload } from './configuration-history.fixture.js';
-import { configurationHistoryRecord, readConfigurationHistory } from './configuration-history.js';
+import { configurationHistoryRecord, readConfigurationHistory, templateHistoryPayload } from './configuration-history.js';
+import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 const at = '2026-11-01T00:00:00.000Z';
 const ref = { type: 'instance' as const, id: 1 };
 const reader = (records: unknown[]) => ({ execute: async () => [records.map(payload => ({ payload })), []] }) as never;
 describe('immutable historical configuration decoding', () => {
+  it('revalidates the stored envelope instead of reconstructing a valid snapshot from decoded fields', () => {
+    const decoded = decodeBindingPayload(payload());
+    if (decoded.kind !== 'template_pending') throw new Error('fixture');
+    const snapshot = templateHistoryPayload(decoded);
+    expect(snapshot).toEqual(decoded.payload);
+    expect(snapshot).not.toBe(decoded.payload);
+    decoded.payload.envelope = 'unrecognized';
+    expect(() => templateHistoryPayload(decoded)).toThrow();
+  });
   it('does not promote publication and reports missing as unknown', async () => {
     const result = await readConfigurationHistory(reader([configurationHistoryRecord(payload(), 'publication', at)]), ref, 1);
     expect(result).toMatchObject({ state: 'published', settings: { interval_ms: 60000 }, evidence: [] });

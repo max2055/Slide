@@ -3,7 +3,7 @@ import { HistoricalSettingsSchema, ConfigurationAtSchema, type ConfigurationAt }
 import { createHash } from 'node:crypto';
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
-import { decodeBindingPayload, encodeTemplatePendingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
+import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import { stable } from '../packages/model.js';
 import { PolicyError, refKey, type Ref } from './model.js';
 
@@ -29,13 +29,10 @@ export function configurationHistoryRecord(payload: unknown, basis: z.infer<type
 }
 
 export function templateHistoryPayload(decoded: DecodedTemplateBindingPayload): unknown {
-  return JSON.parse(encodeTemplatePendingPayload({ binding: decoded.binding,
-    base_revision: decoded.pending.base_revision, target_revision: decoded.pending.target_revision,
-    resolution_identity: decoded.pending.resolution_identity, plan: decoded.pending.plan,
-    decided_at: decoded.pending.decided_at, operation_key: decoded.pending.operation_key,
-    applied_revision: decoded.application.applied_revision,
-    previous_resolution_identity: decoded.application.resolution_identity,
-    previous_effective: decoded.effective, published_at: decoded.published_at }));
+  // Preserve the original envelope, including its applied revision and formal proof.
+  const current = decodeBindingPayload(decoded.payload);
+  if (current.kind !== 'template_pending') throw new PolicyError('CONFIGURATION_HISTORY_INVALID', 409);
+  return structuredClone(current.payload);
 }
 
 export async function appendConfigurationHistory(c: Pick<PoolConnection, 'execute'>, payload: unknown,
