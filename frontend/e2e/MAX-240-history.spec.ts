@@ -421,7 +421,7 @@ async function authenticatedToken(request: APIRequestContext) {
   return apiToken!;
 }
 
-test('a selected history series opens an authorized workspace draft with the same immutable context', async ({ page, request }) => {
+test('a selected history series opens an authorized workspace draft with the same immutable context', async ({ page }) => {
   if (!browserState) await login(page);
   else {
     await page.addInitScript(state => { for (const [key, value] of Object.entries(state)) localStorage.setItem(key, value); }, browserState);
