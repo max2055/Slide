@@ -233,6 +233,24 @@ function maxProcessMemory(stdout: string): number | null {
   return rows.length ? Math.max(...rows.map((row) => row.memoryPercent)) : null;
 }
 
+/** Linux memory pressure uses MemAvailable; absent fields are unknown, never free(1) fallbacks. */
+export function parseMemoryUsage(output: string): number | null {
+  const values = new Map<string, number>();
+  for (const line of output.split('\n')) {
+    const match = /^(MemTotal|MemAvailable):\s+(\d+) kB\s*$/.exec(line);
+    if (!match) {
+      if (/^(MemTotal|MemAvailable):/.test(line)) return null;
+      continue;
+    }
+    const value = Number(match[2]);
+    if (values.has(match[1]) || !Number.isSafeInteger(value)) return null;
+    values.set(match[1], value);
+  }
+  const total = values.get('MemTotal'), available = values.get('MemAvailable');
+  if (total === undefined || available === undefined || total <= 0 || available > total) return null;
+  return (total - available) / total * 100;
+}
+
 const baseDefinitions = (osType: string): MetricDefinition[] => [
   {
     name: 'cpu_usage',
@@ -241,8 +259,8 @@ const baseDefinitions = (osType: string): MetricDefinition[] => [
   },
   {
     name: 'memory_usage',
-    command: 'LC_ALL=C LANG=C free | grep Mem | awk \'{print $3/$2 * 100.0}\'',
-    parse: percent, osType, unit: '%', aggregation: 'avg', higherIsWorse: true,
+    command: 'LC_ALL=C LANG=C cat /proc/meminfo',
+    parse: parseMemoryUsage, osType, unit: '%', aggregation: 'avg', higherIsWorse: true,
   },
   {
     name: 'memory_used',

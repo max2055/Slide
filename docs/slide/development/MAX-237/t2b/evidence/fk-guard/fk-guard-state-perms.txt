@@ -1,0 +1,3 @@
+drwx------ .max237-t2b
+-rw------- .max237-t2b/handle.json
+-rw------- .max237-t2b/credentials.env

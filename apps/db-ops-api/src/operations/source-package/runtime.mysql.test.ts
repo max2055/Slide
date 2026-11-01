@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
+import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { dbConnection } from '../../db-connection.js';
@@ -95,6 +96,18 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
       // An equally firing metric on a different mount cannot admit an event.
       await serverAlertEvaluator.evaluateServerRules(new Map([[1, { ...config().alertRules[0].dimensions, mount: '/not-the-pilot' }]]));
       expect(await rows('SELECT id FROM alerts')).toHaveLength(0);
+      // MAX-240: the scheduler's internal reader must not disable user revalidation
+      // at the HTTP entry. An internal actor is never a valid HTTP principal.
+      const { registerMetricConsumerRoutes } = await import('../../metrics/consumers/routes.js');
+      const app = Fastify();
+      try {
+        await registerMetricConsumerRoutes(app, async request => {
+          (request as any).user = { ...admin, userId: 0, sessionVersion: 0 };
+        });
+        const denied = await app.inject({ method: 'POST', url: '/api/metrics/query',
+          payload: { resource: { type: 'server', id: 3 }, metric_ids: ['host.filesystem.used_bytes'] } });
+        expect(denied.statusCode).toBe(401);
+      } finally { await app.close(); }
       const result = await evaluateSource(e);
       expect(result.alertId).toBeGreaterThan(0);
       expect(result.eventId).toBeTruthy(); expect(result.investigationId).toBeTruthy(); expect(result.requestId).toBeTruthy();

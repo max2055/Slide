@@ -22,6 +22,14 @@ export async function configurationInventory(ref: Ref): Promise<Resource> {
     const os = rows[0]?.os_type;
     delete resource.attributes['os.family'];
     if (normalizeServerOs(os)) add('os.family', 'linux');
+  } else if (ref.type === 'network_device') {
+    // Match the collector's credential precedence, without reading secret columns.
+    // A stale observation must not supply today's configured protocol version.
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      'SELECT protocol FROM network_device_credentials WHERE device_id = ? ORDER BY protocol LIMIT 1', [ref.id]);
+    delete resource.attributes['snmp.version'];
+    const protocol = rows[0]?.protocol;
+    if (protocol === 'snmpv2c' || protocol === 'snmpv3') add('snmp.version', protocol === 'snmpv2c' ? '2' : '3');
   }
   return resource;
 }

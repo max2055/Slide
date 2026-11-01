@@ -1,3 +1,4 @@
+import { registerInvestigationEntryRoutes } from './entry-routes.js';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import { Value } from '@sinclair/typebox/value';
@@ -54,6 +55,7 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
   bridge = new InvestigationSessionBridge(() => dbConnection.getPool()),
   observation = bridge.observationServices(),
   legacy = new LegacyAnalysisBridge(() => dbConnection.getPool(), undefined, bridge)): Promise<void> {
+  await registerInvestigationEntryRoutes(app, verifyToken, bridge);
   // Read expiry is immediate; unattended SQL purge is bounded and independently
   // removes raw bodies while preserving all historical metadata/hash bindings.
   let purge: Promise<unknown> | undefined;

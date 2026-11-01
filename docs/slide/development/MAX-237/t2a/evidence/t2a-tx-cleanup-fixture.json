@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-10-27",
+  "package": "MAX237-T2A-TX-CLEANUP",
+  "fixture": {
+    "container_id": "69d31a8085b2d1cb9277fb962cc874a3eac6ad4d79770a1def22579e087cded3",
+    "container_name": "max237-t2a-15coder1-20261027",
+    "created_at": "2026-10-27T04:43:12Z",
+    "image_ref": "mysql:8.4",
+    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+    "server_version": "8.4.10",
+    "hostname_prefix": "69d31a8085b2",
+    "database": "max237_t2a",
+    "database_charset": "utf8mb4",
+    "database_collation": "utf8mb4_bin",
+    "table_collations": {
+      "metric_templates_v2": "utf8mb4_bin",
+      "metric_template_drafts": "utf8mb4_bin",
+      "metric_template_items": "utf8mb4_bin",
+      "metric_template_item_versions": "utf8mb4_bin",
+      "metric_template_versions": "utf8mb4_bin"
+    },
+    "labels": {
+      "max237.owner": "15coder1-t2a",
+      "max237.phase": "T2A-20261027"
+    },
+    "loopback_port": 60935,
+    "volume": {
+      "name": "max237-t2a-15coder1-20261027-data",
+      "destination": "/var/lib/mysql",
+      "labels": { "max237.owner": "15coder1-t2a", "max237.phase": "T2A-20261027" }
+    },
+    "mounts": "volume only; no host path, no shared volume",
+    "network_objects_created": [],
+    "app_user": "max237_t2a_app",
+    "app_user_rights": "SELECT, INSERT, UPDATE, DELETE on max237_t2a only; no DDL/GRANT",
+    "credentials": "random per-run values in a 0600 private file under the untracked state directory; not written to the repository or evidence and deleted with the fixture",
+    "setup": "docs/slide/development/MAX-237/t2a/env-start.sh",
+    "stale_object_check": "container max237-t2a-15coder1-20261027, volume max237-t2a-15coder1-20261027-data and the state directory were all absent before this run; the Chief's review object was already cleaned"
+  },
+  "ddl": {
+    "path": "docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql",
+    "tables": 5,
+    "changed": false
+  }
+}

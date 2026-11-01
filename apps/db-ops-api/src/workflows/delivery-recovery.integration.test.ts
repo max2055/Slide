@@ -1,3 +1,5 @@
+// This suite isolates delivery leases/fences; real maintenance persistence is exercised by e2e/max244-maintenance.ts.
+vi.mock('../maintenance-notification.js', () => ({ maintenanceBlocksDelivery: async () => false }));
 import { readFileSync } from 'node:fs';
 import * as https from 'node:https';
 import * as http from 'node:http';

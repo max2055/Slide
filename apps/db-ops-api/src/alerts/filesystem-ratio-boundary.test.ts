@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi
 vi.mock('../db-connection.js', () => ({ dbConnection: { isConnected: mocks.connected } }));
 vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
 vi.mock('../metrics/consumers/runtime.js', () => ({
-  metricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
 }));
 vi.mock('../server-database-service.js', () => ({ serverDatabaseService: { getCollectionEnabledServers: mocks.getServers } }));
 vi.mock('../alert-database-service.js', () => ({ alertDatabaseService: {

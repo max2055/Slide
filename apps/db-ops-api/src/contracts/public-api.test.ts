@@ -23,6 +23,8 @@ import {
   LLMModelDiscoveryRequestSchema,
 } from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
+import { registerTemplateAuthoringRoutes } from '../metrics/templates/authoring-routes.js';
+import { registerMetricTemplateRoutes } from '../metrics/templates/routes.js';
 
 describe('generated public API contract', () => {
   it('documents protected observations with durable gauges and process-local timings', () => {
@@ -102,6 +104,7 @@ describe('generated public API contract', () => {
       '/api/investigation-usage',
       '/api/investigations',
       '/api/investigations/{id}',
+      '/api/investigations/{id}/context-facts',
       '/api/investigations/{id}/events',
       '/api/investigations/{id}/evidence/{eid}',
       '/api/investigations/{id}/facts',
@@ -110,6 +113,8 @@ describe('generated public API contract', () => {
       '/api/investigations/{id}/requests/{requestId}/cancel',
       '/api/investigations/{id}/results',
       '/api/investigations/{id}/runs',
+      '/api/investigations/drafts',
+      '/api/investigations/entry-facts',
       '/api/llm/models',
       '/api/llm/test',
       '/api/metrics/config/bulk',
@@ -120,9 +125,36 @@ describe('generated public API contract', () => {
       '/api/metrics/config/bulk/preview',
       '/api/metrics/config/resources/{type}/{id}/activate',
       '/api/metrics/config/resources/{type}/{id}/migration',
+      '/api/metrics/config/resources/{type}/{id}/operations/{key}',
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
+      '/api/metrics/configuration-history/{type}/{id}/{revision}',
+      '/api/metrics/observations',
       '/api/metrics/policy/groups',
+      '/api/metrics/template-bindings/{type}/{id}',
+      '/api/metrics/template-bindings/{type}/{id}/apply',
+      '/api/metrics/template-bindings/{type}/{id}/collect',
+      '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/preview',
+      '/api/metrics/template-bindings/{type}/{id}/probe',
+      '/api/metrics/template-bindings/{type}/{id}/trial',
+      '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
+      '/api/metrics/template-events/{eventId}',
+      '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/templates',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
+      '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/triggers',
+      '/api/metrics/templates/{templateId}/versions/{version}',
+      '/api/metrics/templates/{templateId}/versions/{version}/triggers',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
       '/api/network-devices',
       '/api/network-devices/{id}',
       '/api/network-devices/{id}/backup-schedule',
@@ -176,6 +208,14 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
+    const operationLookup = document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}'].get;
+    expect(operationLookup.operationId).toBe('getMetricConfigurationOperation');
+    expect(operationLookup.security).toEqual([{ bearerAuth: [] }]);
+    expect(operationLookup.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual([['type', 'path', true], ['id', 'path', true], ['key', 'path', true]]);
+    expect(operationLookup.parameters[2].schema.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+    expect(operationLookup.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/MetricOperationState');
+    expect(Object.keys(operationLookup.responses)).toEqual(['200', '400', '401', '403', '404', '503']);
     expect(document.paths['/api/operations/knowledge'].post.security).toEqual([{ bearerAuth: [] }]);
     expect(document.paths['/api/operations/knowledge'].post.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/OperationsCaseCandidate');
     expect(document.paths['/api/operations/actions/execute']).toBeUndefined();
@@ -195,6 +235,127 @@ describe('generated public API contract', () => {
     expect(buildClientTypes()).toContain('export interface LLMConnectionTestRequest');
     expect(buildClientTypes()).toContain('export interface LLMModelDiscoveryRequest');
     expect(buildClientTypes()).toBe(buildClientTypes());
+  });
+
+  it('documents every registered native-template route and loses none', async () => {
+    const document = buildOpenApiDocument() as any;
+    // Derive the surface from the real registration, not from a second list: a
+    // route that exists but is undocumented (or the reverse) fails here.
+    const app = Fastify();
+    // Fastify also exposes an implicit HEAD route for every GET; only the
+    // documented methods count.
+    const registered = new Set<string>();
+    app.addHook('onRoute', route => {
+      if (route.method === 'GET' || route.method === 'POST') registered.add(route.url.replace(/:(\w+)/g, '{$1}'));
+    });
+    await registerMetricTemplateRoutes(app, async () => undefined);
+    await registerTemplateAuthoringRoutes(app, async () => undefined);
+    const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
+    await registerTemplateTriggerRoutes(app,async()=>undefined);
+    await app.ready();
+    await app.close();
+    expect([...registered].sort()).toEqual([
+      '/api/metrics/configuration-history/{type}/{id}/{revision}',
+      '/api/metrics/template-bindings/{type}/{id}',
+      '/api/metrics/template-bindings/{type}/{id}/apply',
+      '/api/metrics/template-bindings/{type}/{id}/collect',
+      '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/preview',
+      '/api/metrics/template-bindings/{type}/{id}/probe',
+      '/api/metrics/template-bindings/{type}/{id}/trial',
+      '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
+      '/api/metrics/template-events/{eventId}',
+      '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/templates',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
+      '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/triggers',
+      '/api/metrics/templates/{templateId}/versions/{version}',
+      '/api/metrics/templates/{templateId}/versions/{version}/triggers',
+    ]);
+    const documented = Object.keys(document.paths).filter(path => (path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/'))).sort();
+    expect(documented).toEqual([...registered].sort());
+
+    const operation = (path: string, method: 'get' | 'post') => document.paths[path][method];
+    const resourceParameters = ['type', 'id'].map(name => [name, 'path', true]);
+    const catalog = operation('/api/metrics/templates', 'get');
+    expect(catalog.operationId).toBe('listMetricTemplates');
+    expect(catalog.security).toEqual([{ bearerAuth: [] }]);
+    expect(catalog.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCatalog');
+    expect(catalog.responses).toHaveProperty('403');
+
+    const version = operation('/api/metrics/templates/{templateId}/versions/{version}', 'get');
+    expect(version.operationId).toBe('getMetricTemplateVersion');
+    expect(version.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual([['templateId', 'path', true], ['version', 'path', true]]);
+    expect(version.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateVersionDetail');
+    expect(version.responses).toHaveProperty('404');
+
+    const repin = operation('/api/metrics/templates/{templateId}/repin', 'post');
+    expect(repin.operationId).toBe('repinMetricTemplateVersion');
+    expect(repin.security).toEqual([{ bearerAuth: [] }]);
+    expect(repin.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateRepinBody');
+    expect(repin.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateRepinResponse');
+    expect(repin.responses).toHaveProperty('422');
+
+    const status = operation('/api/metrics/template-bindings/{type}/{id}', 'get');
+    expect(status.operationId).toBe('getMetricTemplateBinding');
+    expect(status.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual(resourceParameters);
+    expect(status.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateBindingStatus');
+
+    const flow: Array<[string, string, string]> = [
+      ['preview', 'previewMetricTemplateBinding', 'TemplateBindingRequest'],
+      ['trial', 'trialMetricTemplateBinding', 'TemplateTrialRequest'],
+      ['apply', 'applyMetricTemplateBinding', 'TemplateBindingApplyRequest'],
+    ];
+    for (const [suffix, operationId, request] of flow) {
+      const route = operation(`/api/metrics/template-bindings/{type}/{id}/${suffix}`, 'post');
+      expect(route.operationId).toBe(operationId);
+      expect(route.security).toEqual([{ bearerAuth: [] }]);
+      expect(route.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+        .toEqual(resourceParameters);
+      expect(route.requestBody.content['application/json'].schema.$ref).toBe(`#/components/schemas/${request}`);
+      expect(route.responses).toHaveProperty('403');
+      expect(route.responses).toHaveProperty('422');
+      // Preview takes no resource lock, so it has no busy collision.
+      expect(route.responses['409'] !== undefined, suffix).toBe(suffix !== 'preview');
+    }
+    expect(operation('/api/metrics/template-bindings/{type}/{id}/preview', 'post')
+      .responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateBindingPreview');
+    expect(operation('/api/metrics/template-bindings/{type}/{id}/trial', 'post')
+      .responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateTrialResponse');
+    expect(operation('/api/metrics/template-bindings/{type}/{id}/apply', 'post')
+      .responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateBindingApplyResponse');
+
+    const collect = operation('/api/metrics/template-bindings/{type}/{id}/collect', 'post');
+    expect(collect.operationId).toBe('collectMetricTemplateBindingNow');
+    expect(collect.security).toEqual([{ bearerAuth: [] }]);
+    expect(collect.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectRequest');
+    expect(collect.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectResponse');
+    expect(collect.responses).toHaveProperty('409');
+    const collectTask = operation('/api/metrics/template-bindings/{type}/{id}/collect/{key}', 'get');
+    expect(collectTask.operationId).toBe('getMetricTemplateCollectionTask');
+    expect(collectTask.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
+      .toEqual([['type', 'path', true], ['id', 'path', true], ['key', 'path', true]]);
+    expect(collectTask.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/TemplateCollectResponse');
+
+    // The generated client carries the same shapes a UI would import.
+    const client = buildClientTypes();
+    for (const name of ['TemplateCatalog', 'TemplateVersionDetail', 'TemplateRepinResponse', 'TemplateBindingStatus',
+      'TemplateBindingPreview', 'TemplateTrialResponse', 'TemplateBindingApplyResponse',
+      'TemplateBindingRequest', 'TemplateTrialRequest', 'TemplateBindingApplyRequest',
+      'TemplateCollectRequest', 'TemplateCollectResponse']) {
+      expect(client, name).toContain(`export type ${name} = `);
+    }
   });
 
   it('documents LLM management permission, saved destination binding and probe limits', () => {
@@ -276,6 +437,69 @@ describe('generated public API contract', () => {
     const missingFreshness = structuredClone(response);
     delete (missingFreshness.hosts[0].evidence.systemLogs as any).collectedAt;
     expect(Value.Check(InstanceHostEvidenceResponseSchema, missingFreshness)).toBe(false);
+  });
+
+  it('serializes the template flow responses without dropping a documented field', async () => {
+    // A response schema that strips fields would silently break the page; a real
+    // registration plus one representative payload proves the round trip.
+    const status = {
+      source: 'template', revision: 5,
+      application: { status: 'pending', applied_revision: 4, reported_at: '2026-10-29T15:00:00.000Z', error_code: null },
+      template_pins: [{ template_id: 'tpl', version: 2, content_hash: `sha256:${'a'.repeat(64)}` }],
+      pending: { base_revision: 4, target_revision: 5, resolution_identity: `sha256:${'d'.repeat(64)}`,
+        plan: { kind: 'template_collection_plan',
+          settings: { enabled: true, interval_ms: 300000, timeout_ms: 5000, stale_after_ms: 900000,
+            max_counter_gap_ms: 900000, max_rows: 1000, max_concurrency: 1, max_series_per_resource: 100 },
+          parameters: [], releases: [{ nested: [1, 2] }], excluded: [] },
+        decided_at: '2026-10-29T15:00:00.000Z', operation_key: 'contract-pending' },
+      configuration: { overrides: { interval_ms: { mode: 'set', value: 30000 }, metrics: { 'db.uptime_seconds@1.0.0': 'disable' } }, group_id: null },
+      effective: { revision: 4, resolution_identity: `sha256:${'b'.repeat(64)}` },
+      published_at: '2026-10-29T15:00:00.000Z',
+    };
+    const preview = {
+      template: true, resource: { type: 'instance', id: 1 }, revision: 4,
+      resolution_identity: `sha256:${'a'.repeat(64)}`, executable: true,
+      settings: { enabled: true, interval_ms: 300000, timeout_ms: 5000, stale_after_ms: 900000,
+        max_counter_gap_ms: 900000, max_rows: 1000, max_concurrency: 1, max_series_per_resource: 100 },
+      parameters: [{ pin: { template_id: 'tpl', version: 1, content_hash: `sha256:${'a'.repeat(64)}` },
+        parameters: [{ name: 'interval_ms', type: 'integer', default: 300000, override: null, effective: 300000, source: 'default' }] }],
+      releases: [{ release: { id: 'mysql-basic', version: '2.0.0', digest: `sha256:${'c'.repeat(64)}` },
+        release_ref: 'mysql-basic@2.0.0', interval_ms: 300000, timeout_ms: 5000, collector_ids: ['status'],
+        metric_keys: ['db.uptime_seconds@1.0.0'], requests_per_hour_estimate: 12,
+        applicability: [{ attribute: 'db.version', value: '9.6.0', supported_values: ['9.6.0'], status: 'supported' }] }],
+      items: [{ template_id: 'tpl', item_id: 'uptime', item_version: 1,
+        canonical_metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', dimensions: {},
+        release: { id: 'mysql-basic', version: '2.0.0', digest: `sha256:${'c'.repeat(64)}` },
+        release_ref: 'mysql-basic@2.0.0', collector_id: 'status', implementation_id: 'mysql-status',
+        enabled: true, decision: 'collect', capability: 'supported' }],
+      excluded: [], budget: { estimate: true, request_unit: 'logical_reads', estimated_series_upper_bound: 1,
+        max_series_per_resource: 100, requests_per_hour_estimate: 12 },
+      plan: { kind: 'template_collection_plan', internal: true, persisted: false, applied: false, executable: true,
+        identity: `sha256:${'a'.repeat(64)}`, resource: { type: 'instance', id: '1' }, revision: 4,
+        settings: { enabled: true, interval_ms: 300000, timeout_ms: 5000, stale_after_ms: 900000,
+          max_counter_gap_ms: 900000, max_rows: 1000, max_concurrency: 1, max_series_per_resource: 100 },
+        parameters: [], releases: [{ steps: [{ items: [{ nested: 'kept' }] }] }], excluded: [],
+        budget: { estimate: true, request_unit: 'logical_reads', estimated_series_upper_bound: 1,
+          max_series_per_resource: 100, requests_per_hour_estimate: 12 } },
+    };
+    const stubs = { status: async () => status, preview: async () => preview, trial: async () => ({}), apply: async () => ({}) };
+    const app = Fastify();
+    await registerMetricTemplateRoutes(app, async request => {
+      // The pre-handler is the only place the platform attaches the authenticated actor.
+      (request as unknown as { user?: unknown }).user = {
+        userId: 1, username: 'contract', roles: ['admin'], permissions: ['*'], sessionVersion: 1,
+        instanceScopes: {}, requestId: 'contract-test',
+      };
+    }, stubs as never);
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual(status);
+      const body = { expected_revision: 4, template_pins: [{ template_id: 'tpl', version: 1, content_hash: `sha256:${'a'.repeat(64)}` }] };
+      const previewed = await app.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/preview', payload: body });
+      expect(previewed.statusCode).toBe(200);
+      expect(previewed.json()).toEqual(preview);
+    } finally { await app.close(); }
   });
 
   it('compiles all response schemas in Fastify', async () => {

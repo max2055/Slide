@@ -1,3 +1,4 @@
+import { publicMaintenanceTags } from './maintenance-public-tags.js';
 import type { ActorContext } from './auth/actor-context.js';
 import type { PoolConnection } from 'mysql2/promise';
 import { assertWorkflowActive } from './workflows/execution-context.js';
@@ -170,7 +171,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
         instance_id: row.instance_id,
         server_id: row.server_id,
         network_device_id: row.network_device_id,
-        tags: row.tags,
+        tags: publicMaintenanceTags(row.tags),
         updated_at: row.updated_at,
         alert_type: row.alert_type,
         level: row.level,

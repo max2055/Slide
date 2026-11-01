@@ -55,7 +55,7 @@ describe.skipIf(process.env.MYSQL96_TEST !== 'true')('MySQL 9.6 real SQL, HTTP, 
     app = Fastify();
     const auth = async (request: any) => { request.user = request.headers.authorization === 'Bearer reader'
       ? { ...admin, permissions: ['instance:view'], instanceScopes: { 1: 'read-only' } } : admin; };
-    await registerMetricPolicyRoutes(app, auth, policy); await registerMetricConfigurationRoutes(app, auth, service);
+    await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
     base = await app.listen({ host: '127.0.0.1', port: 0 });
     vite = await createServer({ configFile: false, root: fileURLToPath(new URL('../../../../../frontend', import.meta.url)), server: { host: '127.0.0.1', port: 0, proxy: { '/api': base } }, logLevel: 'error' });
     await vite.listen(); web = `http://127.0.0.1:${(vite.httpServer!.address() as { port: number }).port}`;

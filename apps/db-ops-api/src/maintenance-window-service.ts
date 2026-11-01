@@ -1,3 +1,4 @@
+import { MaintenanceIntervals } from './maintenance-intervals.js';
 /**
  * 维护窗口服务
  * 在维护窗口期间抑制告警通知，支持按实例/全局配置、按星期几过滤、时间段匹配。
@@ -19,7 +20,32 @@ interface MaintenanceWindow {
   enabled: boolean;
 }
 
+/** Weekly windows use the local start day; the end boundary is exclusive. */
+export function matchesMaintenanceTime(
+  window: Pick<MaintenanceWindow, 'day_of_week' | 'start_time' | 'end_time' | 'timezone'>,
+  at: Date,
+): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: window.timezone, weekday: 'short', hour: '2-digit', minute: '2-digit',
+    second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(at);
+  const part = (type: string) => parts.find(p => p.type === type)!.value;
+  const time = `${part('hour')}:${part('minute')}:${part('second')}`;
+  const start = window.start_time.length === 5 ? `${window.start_time}:00` : window.start_time;
+  const end = window.end_time.length === 5 ? `${window.end_time}:00` : window.end_time;
+  let day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(part('weekday')) + 1;
+  if (start > end && time < end) day = day === 1 ? 7 : day - 1;
+  const days = window.day_of_week.split(',').map(d => d.trim());
+  return (days.includes('*') || days.includes(String(day))) &&
+    (start < end ? time >= start && time < end : start > end && (time >= start || time < end));
+}
+
 class MaintenanceWindowService {
+  readonly intervals = new MaintenanceIntervals(() => {
+    const pool = this.getPool();
+    if (!pool) throw new Error('MAINTENANCE_STATE_UNAVAILABLE');
+    return pool;
+  });
   private cache: MaintenanceWindow[] = [];
   private lastCacheRefresh: Date | null = null;
   private refreshJob: CronJob | null = null;
@@ -35,7 +61,7 @@ class MaintenanceWindowService {
     instanceId: number
   ): Promise<{ active: boolean; window?: MaintenanceWindow }> {
     const pool = this.getPool();
-    if (!pool) return { active: false };
+    if (!pool) throw new Error('MAINTENANCE_STATE_UNAVAILABLE');
 
     try {
       // MySQL DAYOFWEEK: 1=Sunday, 7=Saturday
@@ -46,10 +72,7 @@ class MaintenanceWindowService {
          FROM maintenance_windows
          WHERE enabled = 1
            AND (instance_id IS NULL OR instance_id = ?)
-           AND FIND_IN_SET(DAYOFWEEK(NOW()), day_of_week) > 0
-           AND TIME(NOW()) BETWEEN start_time AND end_time
-         ORDER BY instance_id DESC
-         LIMIT 1`,
+         ORDER BY instance_id DESC, id`,
         [instanceId]
       ) as any;
 
@@ -57,7 +80,8 @@ class MaintenanceWindowService {
         return { active: false };
       }
 
-      const row = rows[0];
+      const row = rows.find((candidate: MaintenanceWindow) => matchesMaintenanceTime(candidate, new Date()));
+      if (!row) return { active: false };
       return {
         active: true,
         window: {
@@ -75,13 +99,13 @@ class MaintenanceWindowService {
       };
     } catch (error) {
       console.error('检查维护窗口失败:', error);
-      return { active: false };
+      throw new Error('MAINTENANCE_STATE_UNAVAILABLE', { cause: error });
     }
   }
 
   async getMaintenanceWindows(enabled?: boolean, allowedInstanceIds: readonly number[] | null = null): Promise<MaintenanceWindow[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw new Error('MAINTENANCE_STATE_UNAVAILABLE');
 
     try {
       let sql = 'SELECT * FROM maintenance_windows';
@@ -106,7 +130,7 @@ class MaintenanceWindowService {
       return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) }));
     } catch (error) {
       console.error('获取维护窗口失败:', error);
-      return [];
+      throw new Error('MAINTENANCE_STATE_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -131,6 +155,9 @@ class MaintenanceWindowService {
   }): Promise<{ success: boolean; id?: number; error?: string }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
+
+    try { new Intl.DateTimeFormat('en', { timeZone: data.timezone || 'Asia/Shanghai' }); }
+    catch { return { success: false, error: '无效的时区' }; }
 
     // 验证 day_of_week 值范围
     if (!data.day_of_week) {
@@ -185,6 +212,7 @@ class MaintenanceWindowService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
+      if (data.timezone !== undefined) new Intl.DateTimeFormat('en', { timeZone: data.timezone });
       const updates: string[] = [];
       const values: any[] = [];
       if (data.name !== undefined) { updates.push('name = ?'); values.push(data.name); }

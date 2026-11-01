@@ -1,0 +1,36 @@
+{
+  "container_id": "f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36",
+  "volume": "max237-t2b-15coder1-20261027-data",
+  "container_inspect": {
+    "exit": 1,
+    "stdout": "[]",
+    "stderr": "Error response from daemon: No such container: f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36"
+  },
+  "volume_inspect": {
+    "exit": 1,
+    "stdout": "[]",
+    "stderr": "Error response from daemon: get max237-t2b-15coder1-20261027-data: no such volume"
+  },
+  "owned_containers": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "owned_volumes": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "named_containers": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "named_volumes": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "state_dir_exists": false,
+  "clean": true
+}

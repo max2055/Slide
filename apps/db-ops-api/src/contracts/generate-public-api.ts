@@ -84,6 +84,19 @@ export function buildOpenApiDocument() {
           '403': { description: 'Live AI settings read permission absent' },
         },
       } },
+      ...Object.fromEntries(['drafts', 'entry-facts'].map(op => [`/api/investigations/${op}`, { post: {
+        operationId: op === 'drafts' ? 'createInvestigationDraft' : 'previewInvestigationEntryFacts', security: [{ bearerAuth: [] }],
+        description: op === 'drafts' ? 'Explicit idempotent Investigation draft only. Existing Session/store; no admission, Run, workflow or model. Exact immutable entry context; live resource and event authorization on every retry. Private/no-store.' : 'Read authorized facts at the exact resource/window/metric semantic version/dimensions. No persistence, queue or model; live authorization before and after reads. Private/no-store.',
+        parameters: op === 'drafts' ? [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1, maxLength: 255 } }] : [],
+        requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationEntryContext) } } },
+        responses: { '200': { description: op === 'drafts' ? 'Draft saved or original recovered' : 'Authorized facts, possibly empty or paginated', content: { 'application/json': { schema: refSchema(op === 'drafts' ? PublicApiSchemas.InvestigationDraftResponse : PublicApiSchemas.InvestigationEntryFacts) } } },
+          '400': { description: 'Invalid context/window/metric/dimensions or source mismatch' }, '401': { description: 'JWT required' }, '403': { description: 'Metric/event grant denied' }, '404': { description: 'Resource/event not visible' }, '409': { description: 'Idempotency payload mismatch' }, '503': { description: 'Unavailable; recover original key before resubmitting' } },
+      } }])),
+      '/api/investigations/{id}/context-facts': { get: {
+        operationId: 'getInvestigationContextFacts', security: [{ bearerAuth: [] }], parameters: [investigationId()],
+        description: 'Reads the immutable creation entry context and current authorized formal facts; revalidates complete Investigation and source-event scope after storage waits. No model or writes. Private/no-store.',
+        responses: { '200': { description: 'Exact context and facts', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InvestigationEntryFacts) } } }, '400': { description: 'No entry context or invalid query' }, '401': { description: 'JWT required' }, '403': { description: 'Read denied' }, '404': { description: 'Investigation/resource/event no longer visible' }, '503': { description: 'Read unavailable' } },
+      } },
       '/api/investigations': {
         post: { operationId: 'createInvestigation', security: [{ bearerAuth: [] }],
           description: 'Atomic creation plus first admission/message/job/outbox. Server-owned actor and Profile version; all scopes revalidated even on retry. Same actor/key/command recovers the original investigation and Session. No executor registered by this API.',
@@ -533,32 +546,37 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 
 // New contracts are rendered from the backend schemas, not hand-maintained
 // string copies. Fail closed if the baseline starts using an unsupported kind.
-function schemaType(schema: TSchema): string {
+function schemaType(schema: TSchema, refs: Record<string,string> = {}): string {
+  if (typeof schema.$ref === 'string') {
+    const target = refs[schema.$ref];
+    if (!target) throw new Error('Unsupported client schema reference');
+    return target;
+  }
   if (schema[Kind] === 'Never') return 'never';
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
   if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((v: unknown) => JSON.stringify(v)).join(' | ');
-  if (Array.isArray(schema.type)) return schema.type.map((type: string) => schemaType({ ...schema, type })).join(' | ');
-  if (schema.oneOf) return `(${(schema.oneOf as TSchema[]).map(schemaType).join(' | ')})`;
-  if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(schemaType).join(' | ')})`;
+  if (Array.isArray(schema.type)) return schema.type.map((type: string) => schemaType({ ...schema, type }, refs)).join(' | ');
+  if (schema.oneOf) return `(${(schema.oneOf as TSchema[]).map(value => schemaType(value, refs)).join(' | ')})`;
+  if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(value => schemaType(value, refs)).join(' | ')})`;
   if (schema.type === 'string') return 'string';
   if (schema.type === 'number' || schema.type === 'integer') return 'number';
   if (schema.type === 'boolean') return 'boolean';
   if (schema.type === 'null') return 'null';
-  if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema)}>`;
+  if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema, refs)}>`;
   if (schema.type === 'object') {
     if (schema.additionalProperties && typeof schema.additionalProperties === 'object' && !schema.properties) {
-      return `Record<string, ${schemaType(schema.additionalProperties as TSchema)}>`;
+      return `Record<string, ${schemaType(schema.additionalProperties as TSchema, refs)}>`;
     }
     if (schema.patternProperties) {
       const values = Object.values(schema.patternProperties) as TSchema[];
       if (values.length !== 1) throw new Error('Unsupported investigation record schema');
-      return `Record<string, ${schemaType(values[0])}>`;
+      return `Record<string, ${schemaType(values[0], refs)}>`;
     }
     const required = new Set(schema.required as string[] ?? []);
     return `{ ${Object.entries(schema.properties ?? {}).map(([key, value]) =>
-      `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema)};`).join(' ')} }`;
+      `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema, refs)};`).join(' ')} }`;
   }
   if (Object.keys(schema).length === 0) return 'unknown';
   throw new Error('Unsupported investigation client schema');
@@ -570,7 +588,12 @@ function buildInvestigationClientTypes(): string {
 }
 
 export function buildClientTypes(): string {
-  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema as unknown as TSchema)};\n`).join('')
+  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => {
+    const definitions = Object.entries((schema as any).$defs ?? {}) as [string,TSchema][];
+    const refs = Object.fromEntries(definitions.map(([key]) => [`#/$defs/${key}`, `${name}_${key}`]));
+    return definitions.map(([key, value]) => `export type ${refs[`#/$defs/${key}`]} = ${schemaType(value, refs)};\n`).join('')
+      + `export type ${name} = ${schemaType(schema as unknown as TSchema, refs)};\n`;
+  }).join('')
     + buildInvestigationClientTypes() + buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
   jobType: string; queued: number; retry: number; scheduled: number; ready: number;

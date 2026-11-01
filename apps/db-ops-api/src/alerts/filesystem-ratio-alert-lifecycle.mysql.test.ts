@@ -6,8 +6,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, t
 // running against a disposable, fully migrated MySQL.
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn() }));
 vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
-vi.mock('../metrics/consumers/runtime.js', () => ({
-  metricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+vi.mock('../metrics/consumers/runtime.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../metrics/consumers/runtime.js')>(),
+  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
 }));
 vi.mock('../workflows/execution-context.js', () => ({ assertWorkflowActive: () => {} }));
 

@@ -1,0 +1,90 @@
+{
+  "issue": "MAX-237",
+  "github_issue": 261,
+  "package": "MAX237-T1-internal-template-domain",
+  "generated_at": "2026-10-27",
+  "authorization": {
+    "ref": "56121dc31:docs/slide/development/MAX-235/gate-intervention-20261027.md",
+    "scope": "Only new files under apps/db-ops-api/src/metrics/templates/** and docs/slide/development/MAX-237/**; no route, process, DDL, DB, real resource, notification, model call, subagent or self-dispatched wakeup.",
+    "release": "none — internal implementation package, not a production approval"
+  },
+  "branch": "agent/15coder1/max-237",
+  "base_head": "06cca0ca8d522f433cd035f14b597d983514bde3",
+  "code_commit": "ac9270324",
+  "input_baseline": {
+    "commit": "afa5b3d25d1bf4f72d017a8cf6a952d7591356b0",
+    "files": [
+      "docs/slide/development/MAX-236/08-d1-d8-contract-draft.md",
+      "docs/slide/development/MAX-236/14-contract-source-candidate.md",
+      "apps/db-ops-api/src/contracts/metrics/templates.ts"
+    ],
+    "merged": false,
+    "note": "Read-only input; the MAX-236 branch was not merged and its files were not modified."
+  },
+  "files": [
+    { "path": "apps/db-ops-api/src/metrics/templates/errors.ts", "lines": 55, "sha256": "2ac869e712f3017cf01187f39a4aced2adeccb94078d223c0b7478a0a152bfb7" },
+    { "path": "apps/db-ops-api/src/metrics/templates/model.ts", "lines": 404, "sha256": "c1222df8eb37a872c1fb804a98bc2f19a3e9aa3c0d3c8b3a537c8f82ff750cf3" },
+    { "path": "apps/db-ops-api/src/metrics/templates/catalog.ts", "lines": 239, "sha256": "371ac1648425eeead47ace8a2f467a388a83a74b7a1b90f829e4a2f74a45174d" },
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.ts", "lines": 325, "sha256": "e9c70b629b6d1549ff0ec055b7d11bbdb625977f8e88c5c52623958b53bcf608" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.ts", "lines": 585, "sha256": "ddcfdae1a0d3eaa919cf168572bf22119870f40cebe86633d905e5589f2faa5f" },
+    { "path": "apps/db-ops-api/src/metrics/templates/index.ts", "lines": 14, "sha256": "b63c556b9e9e393541cb8c25cccd6aa37f5afd18c2d865c98c454947b2a7097c" },
+    { "path": "apps/db-ops-api/src/metrics/templates/catalog.test.ts", "lines": 142, "sha256": "854c62626334a5c6c8a85428e02cc3d9c99d254694993378fe2aa1630e0b7e05" },
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.test.ts", "lines": 177, "sha256": "87715b2304bbe90cac8fbf358ff12e80200777a8926a613a67e0c8833ec051d9" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.test.ts", "lines": 478, "sha256": "a62c7fb48e222b83f4d2d42207e60c2d0b58fe9b4e4d6883788a6059cea6ca2c" }
+  ],
+  "allowlist_check": {
+    "new_files_only": true,
+    "modified_existing_files": [],
+    "outside_allowlist": []
+  },
+  "reuse": {
+    "registry": "apps/db-ops-api/src/metrics/packages/model.ts (PackageRegistry.get/catalog/list), packages/builtins.ts (canonicalDefinitions, builtinReleases)",
+    "canonicalization": "apps/db-ops-api/src/metrics/packages/model.ts#stable",
+    "permissions": "apps/db-ops-api/src/auth/require-permission.ts#hasPermission with existing metric:view/metric:manage",
+    "not_rebuilt": ["catalog", "collector", "rate engine", "OS parser", "policy/resolver", "scheduler", "evaluator"]
+  },
+  "field_decisions": {
+    "implemented": [
+      "stable template_id / item_id (rename keeps identity)",
+      "immutable (template_id, item_id, version) and (template_id, version)",
+      "revision CAS for template and draft",
+      "canonical_metric {id, semantic_version} explicit mapping",
+      "unit equality with canonical definition",
+      "dimensions key-set equality with canonical definition",
+      "collector_ref {package_release id@version#digest, implementation_id}",
+      "template parameters with interval_ms cadence bounds 1000..86400000",
+      "source_chain (actor_id / request_id / namespaced base / migration_ref)",
+      "capabilities discovery+graphs placeholders with executable=false",
+      "content_hash = sha256(stable(published aggregate))",
+      "package_composition derived from pinned releases"
+    ],
+    "stopped_on_purpose": [
+      "base inheritance merge (D1 does not freeze how base content combines) — publish rejects TEMPLATE_BASE_INHERITANCE_UNAVAILABLE",
+      "derived metric selection (no frozen reference kind) — TEMPLATE_METRIC_NOT_COLLECTABLE",
+      "trigger rule versions and execution (MAX-239)",
+      "resource bindings and multi-pin resolution (MAX-238)",
+      "retire version / impact preview / public routes"
+    ]
+  },
+  "checks": [
+    { "command": "npx vitest run src/metrics/templates", "cwd": "apps/db-ops-api", "result": "34 passed / 34 (catalog 6, repository 8, service 20)", "exit": 0 },
+    { "command": "npx vitest run src/metrics", "cwd": "apps/db-ops-api", "result": "47 files passed, 24 skipped; 476 tests passed, 121 skipped", "exit": 0 },
+    { "command": "npx tsc --noEmit", "cwd": "apps/db-ops-api", "result": "no diagnostics", "exit": 0 },
+    { "command": "npx oxlint apps/db-ops-api/src/metrics/templates", "cwd": "repo root", "result": "0 warnings, 0 errors", "exit": 0 },
+    { "command": "grep -rn \"metrics/templates\" apps/db-ops-api --include=*.ts", "cwd": "repo root", "result": "no references outside apps/db-ops-api/src/metrics/templates/", "exit": 0 }
+  ],
+  "not_run": [
+    "pnpm contracts:check — no public contract file changed; the generator cannot see this unmounted directory",
+    "real MySQL/persistence, DDL, routes, browser/UAT — out of this package's admitted scope",
+    "real collection, history, triggers, notifications, AI evidence — dependent packages"
+  ],
+  "issue_acceptance": {
+    "name_change_keeps_history": "partial — template rename and item rename proven in the domain; version retirement and binding continuation are not implemented",
+    "raw_output_to_rule_trace": "partial — raw field → canonical → item → template version proven; series and rule references belong to MAX-239/240",
+    "registered_metric_selection_and_rejections": "implemented for the template domain",
+    "real_rate/usage/memavailable/snmp_boundaries": "not done",
+    "three_real_templates_end_to_end": "not done",
+    "shared_read_credential_isolation_redaction": "not done"
+  },
+  "status": "in_progress — this package does not complete MAX-237"
+}

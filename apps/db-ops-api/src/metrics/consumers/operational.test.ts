@@ -3,7 +3,7 @@ import { PolicyError } from '../policy/model.js';
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn(), connected: vi.fn() }));
 vi.mock('../../db-connection.js', () => ({ dbConnection: { isConnected: mocks.connected } }));
 vi.mock('../policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
-vi.mock('./runtime.js', () => ({ metricConsumerService: { query: mocks.query }, operationalSource: mocks.source }));
+vi.mock('./runtime.js', () => ({ internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source }));
 import { evaluateOperationalRule, migrateOperationalChecks } from './operational.js';
 const rule = { metric_name: 'connections', operator: '>' as const, threshold: 50, severity: 'warning' as const, duration_seconds: 60 };
 beforeEach(() => { vi.resetAllMocks(); mocks.connected.mockReturnValue(true); mocks.source.mockResolvedValue('semantic'); mocks.effective.mockResolvedValue({ resolved: { plan: { binding: { package: { id: 'mysql-representative' } } }, settings: { interval_ms: 60000 } } }); });

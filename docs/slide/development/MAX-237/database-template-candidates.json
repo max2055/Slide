@@ -1,0 +1,37 @@
+{
+  "postgresql": {
+    "name": "PostgreSQL 16.4 原生只读基础模板",
+    "package_id": "postgresql-representative",
+    "package_version": "1.0.0",
+    "interval_ms": 60000,
+    "items": [
+      { "id": "activity", "name": "集群后台活动数（含后台及空闲进程）", "metric": "postgresql.activity.count" },
+      { "id": "capacity", "name": "客户端连接配置上限", "metric": "postgresql.connections.limit" },
+      { "id": "commits", "name": "当前数据库累计提交事务", "metric": "postgresql.transactions.commit_total" },
+      { "id": "rollbacks", "name": "当前数据库累计回滚事务", "metric": "postgresql.transactions.rollback_total" },
+      { "id": "disk", "name": "当前数据库物理文件大小", "metric": "postgresql.database.disk_bytes" }
+    ]
+  },
+  "oracle": {
+    "name": "Oracle 19.3 原生模板候选（未实测，不可应用）",
+    "package_id": "oracle-representative",
+    "package_version": "1.0.0",
+    "interval_ms": 60000,
+    "items": [
+      { "id": "sessions", "name": "容器内会话数（含后台及空闲）", "metric": "oracle.sessions.count" },
+      { "id": "processes", "name": "进程配置上限（不是会话上限）", "metric": "oracle.processes.limit" },
+      { "id": "commits", "name": "容器内累计用户提交", "metric": "oracle.transactions.commit_total" }
+    ]
+  },
+  "dameng": {
+    "name": "达梦 8.1 原生模板候选（未实测，不可应用）",
+    "package_id": "dameng-representative",
+    "package_version": "1.0.0",
+    "interval_ms": 60000,
+    "items": [
+      { "id": "sessions", "name": "数据库会话数", "metric": "dameng.sessions.count" },
+      { "id": "capacity", "name": "会话配置上限", "metric": "dameng.sessions.limit" },
+      { "id": "commits", "name": "数据库累计提交事务", "metric": "dameng.transactions.commit_total" }
+    ]
+  }
+}

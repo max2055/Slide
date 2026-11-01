@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./metrics/consumers/runtime.js', () => ({
   operationalSource: mocks.source,
-  metricConsumerService: { query: mocks.query },
+  internalMetricConsumerService: { query: mocks.query },
 }));
 vi.mock('./report-database-service', () => ({
   reportDatabaseService: {

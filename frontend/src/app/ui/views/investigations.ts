@@ -1,3 +1,5 @@
+import '../components/investigation-entry.ts';
+import { readInvestigationEntry } from '../controllers/investigation-entry.ts';
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
@@ -110,9 +112,11 @@ export class InvestigationsPage extends LitElement {
   }
   render() {
     const c = this.controller;
+    let entry; let entryError = '';
+    try { entry = readInvestigationEntry(location.search); } catch (e) { entryError = (e as Error).message; }
     const filtered = !!(this.query.trim() || this.lifecycle || this.profile || this.resources.length || this.resource.trim());
     const advancedCount = Number(!!this.profile) + this.resources.length + Number(!!this.resource.trim());
-    const firstUse = c.listLoaded && !c.loading && !c.listError && !c.error && !c.list.items.length && !filtered && !c.detail && !c.detailLoading;
+    const firstUse = !entry && !entryError && c.listLoaded && !c.loading && !c.listError && !c.error && !c.list.items.length && !filtered && !c.detail && !c.detailLoading;
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles}
       investigations-page { display:block; min-width:0; }
       investigations-page .workspace { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr) minmax(240px, 320px); gap:var(--space-md); align-items:start; }
@@ -179,6 +183,10 @@ export class InvestigationsPage extends LitElement {
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
       <div class="workspace-header"><div><h1>AI 工作空间</h1><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
       ${c.error ? html`<div class="workspace-error" role="alert">${c.error}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
+      ${entryError ? html`<p role="alert">${entryError}</p>` : entry || (c.detail as any)?.context?.entry ? html`<investigation-entry
+        .context=${entry ?? null} .investigationId=${entry ? '' : c.detail!.id}
+        @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}
+        @investigation-draft-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id, false); void this.filter(false); }}></investigation-entry>` : nothing}
       <form class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
         <div class="workspace-filter-common">
           <label class="workspace-search"><span class="workspace-filter-label">搜索调查</span><input aria-label="搜索调查" placeholder="按调查名称查找" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></label>

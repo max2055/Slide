@@ -692,6 +692,24 @@ class InstanceDatabaseService {
   }
 
   /**
+   * 记录连接目标实际报告的版本；未连上或读不到版本时保持未知，不猜测。
+   */
+  async recordDetectedVersion(id: number, version: string | null): Promise<void> {
+    const pool = this.getPool();
+    const value = version?.trim();
+    if (!pool || !value || value.length > 64) return;
+    try {
+      await pool.execute(
+        "UPDATE database_instances SET db_version = ? WHERE id = ? AND lifecycle_state = 'available' AND (db_version IS NULL OR db_version <> ?)",
+        [value, id, value]
+      );
+    } catch (error) {
+      // Version metadata must not fail the connection it was read from.
+      console.warn('记录数据库版本失败:', error);
+    }
+  }
+
+  /**
    * 更新健康状态
    */
   async updateHealthStatus(

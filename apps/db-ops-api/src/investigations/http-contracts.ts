@@ -1,3 +1,4 @@
+import { InvestigationEntryContextSchema, InvestigationDraftResponseSchema, InvestigationEntryFactsSchema } from './entry-contracts.js';
 import { Type, type Static } from '@sinclair/typebox';
 import { InvestigationSubjectSchema, InvestigationLifecycleSchema } from './contracts.js';
 
@@ -20,7 +21,7 @@ export const InvestigationPatchRequestSchema = Type.Object({ expectedVersion: ve
 }, { $id: 'InvestigationPatchRequest', ...strict });
 export const InvestigationAcceptedSchema = Type.Object({ id: text(36), investigationId: text(36), sessionId: text(100),
   requestId: text(36), jobId: text(36), version }, { $id: 'InvestigationAccepted', ...strict });
-export const InvestigationHttpSchemas = { InvestigationCreateRequest: InvestigationCreateRequestSchema,
+export const InvestigationHttpSchemas = { InvestigationEntryContext: InvestigationEntryContextSchema, InvestigationDraftResponse: InvestigationDraftResponseSchema, InvestigationEntryFacts: InvestigationEntryFactsSchema, InvestigationCreateRequest: InvestigationCreateRequestSchema,
   InvestigationRequest: InvestigationRequestSchema, InvestigationPatchRequest: InvestigationPatchRequestSchema,
   InvestigationAccepted: InvestigationAcceptedSchema };
 export type InvestigationCreateRequest = Static<typeof InvestigationCreateRequestSchema>;
