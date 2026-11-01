@@ -51,7 +51,13 @@ export const templateQueryPort: TemplateQueryPort = {
     };
   },
 };
+// Existing scheduler/report adapters construct resource-scoped internal actors;
+// they are not authenticated user sessions. Keep their reader inside the server.
 export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
+  () => new Date().toISOString(), templateQueryPort);
+// HTTP callers always use live user authentication before and after storage waits.
+// Never select between these readers by trusting an actor field from a request.
+export const authenticatedMetricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
   () => new Date().toISOString(), templateQueryPort, actor => actorContextService.revalidateActor(actor, actor.requestId));
 
 export const operationalSource = (ref: Ref) => new MysqlFormalMetricStore(pool()).sourceState(ref);
