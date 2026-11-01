@@ -197,6 +197,7 @@ import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.j
 import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
+import { registerTemplateAuthoringRoutes } from './src/metrics/templates/authoring-routes.js';
 import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
 import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
@@ -488,6 +489,7 @@ async function start() {
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
     await registerMetricTemplateRoutes(app, verifyToken);
+    await registerTemplateAuthoringRoutes(app, verifyToken);
     await registerTemplateTriggerRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
