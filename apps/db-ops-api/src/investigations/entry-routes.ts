@@ -7,7 +7,7 @@ import { hasPermission } from '../auth/require-permission.js';
 import { alertEventService } from '../alert-event-service.js';
 import { eventResourceAccess } from '../alert-event-access.js';
 import { dbConnection } from '../db-connection.js';
-import { metricConsumerService } from '../metrics/consumers/runtime.js';
+import { authenticatedMetricConsumerService } from '../metrics/consumers/runtime.js';
 import { PolicyError } from '../metrics/policy/model.js';
 import { parseEntryContext, type InvestigationEntryContext } from './entry-contracts.js';
 import { InvestigationStoreError } from './store.js';
@@ -32,7 +32,7 @@ export async function checkEntryEvents(actor: ActorContext, context: Investigati
 }
 /** Existing Investigation persistence, no admission, queue, Run or provider. */
 export async function registerInvestigationEntryRoutes(app: FastifyInstance, verify: preHandlerHookHandler,
-  bridge: InvestigationSessionBridge, metrics = metricConsumerService, events = checkEntryEvents) {
+  bridge: InvestigationSessionBridge, metrics = authenticatedMetricConsumerService, events = checkEntryEvents) {
   const actorKey = (a: ActorContext) => ({ kind: a.principalKind ?? 'user', id: a.userId });
   async function scope(actor: ActorContext, context: InvestigationEntryContext) {
     await bridge.storeFor(actor).transaction(async connection => {
