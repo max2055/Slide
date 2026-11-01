@@ -45,3 +45,42 @@ it('HTTP revocation clears facts and notifies the workspace to erase its detail'
   await (view as any).load(); await view.updateComplete;
   expect(view.querySelector('a')).toBeNull(); expect(denied).toHaveBeenCalledOnce();
 });
+
+it('CHIEF same-context parent rerender during save must preserve completion and release saving', async () => {
+  const view = await mounted();
+  let release!: (v: any) => void;
+  vi.mocked(investigationApi).mockImplementation(path => path === '/drafts' ? new Promise(resolve => release = resolve) : Promise.resolve(value()));
+  const created = vi.fn(); view.addEventListener('investigation-draft-created', created);
+  const saving = (view as any).save();
+  while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+  view.context = structuredClone(context); await view.updateComplete;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  release({id:'00000000-0000-4000-8000-000000000001',context,modelInvoked:false});
+  await saving; await view.updateComplete;
+  expect({saving:(view as any).saving, completed:created.mock.calls.length}).toEqual({saving:false,completed:1});
+});
+
+it('a different absolute window invalidates a pending save and releases the new scope', async () => {
+  const view = await mounted(); let release!: (v: any) => void;
+  vi.mocked(investigationApi).mockImplementation(path => path === '/drafts'
+    ? new Promise(resolve => release = resolve) : Promise.resolve(value()));
+  const created = vi.fn(); view.addEventListener('investigation-draft-created', created);
+  const saving = (view as any).save();
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  view.context = { ...context, from: '2026-10-30T00:30:00.000Z' }; await view.updateComplete;
+  release({ id: '00000000-0000-4000-8000-000000000001' }); await saving; await view.updateComplete;
+  expect(created).not.toHaveBeenCalled();
+  expect((view as any).saving).toBe(false); expect((view as any).pendingKey).toBe('');
+});
+
+it('a live read rejection during save prevents late success from reopening denied content', async () => {
+  const view = await mounted(); let release!: (v: any) => void;
+  vi.mocked(investigationApi).mockImplementation(path => path === '/drafts'
+    ? new Promise(resolve => release = resolve) : Promise.reject(new InvestigationApiError(404, 'INVESTIGATION_NOT_FOUND')));
+  const created = vi.fn(); view.addEventListener('investigation-draft-created', created);
+  const saving = (view as any).save(); await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  await (view as any).load();
+  release({ id: '00000000-0000-4000-8000-000000000001' }); await saving; await view.updateComplete;
+  expect(created).not.toHaveBeenCalled(); expect(view.querySelector('a')).toBeNull();
+  expect(view.textContent).not.toContain('db.uptime_seconds'); expect((view as any).saving).toBe(false);
+});

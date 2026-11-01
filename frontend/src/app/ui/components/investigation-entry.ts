@@ -19,6 +19,8 @@ export class InvestigationEntry extends LitElement {
   @state() private unknown = false;
   @state() private denied = false;
   private epoch = 0;
+  private readOrdinal = 0;
+  private scopeSignature = '';
   private pendingKey = '';
   private pendingContext: InvestigationEntryContext | null = null;
   createRenderRoot() { return this; }
@@ -37,33 +39,37 @@ export class InvestigationEntry extends LitElement {
   }
   private focusRead = () => { if (!this.denied && !this.saving) void this.load(); };
   private visibilityRead = () => { if (document.visibilityState === 'visible') this.focusRead(); };
-  private erase = () => { this.epoch++; this.value = null; this.context = null; this.pendingContext = null; this.pendingKey = ''; this.unknown = false; this.loading = false; this.saving = false; this.denied = true; this.error = '权限已变化，请返回来源重新确认。'; };
+  private erase = () => { this.epoch++; this.readOrdinal++; this.value = null; this.context = null; this.pendingContext = null; this.pendingKey = ''; this.unknown = false; this.loading = false; this.saving = false; this.denied = true; this.error = '权限已变化，请返回来源重新确认。'; };
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('context') || changed.has('investigationId')) {
-      if (this.denied) return;
-      if (changed.has('context') && JSON.stringify(this.context) !== JSON.stringify(this.pendingContext)) {
-        this.pendingKey = ''; this.pendingContext = null; this.unknown = false;
-      }
-      void this.load();
-    }
+    if (!changed.has('context') && !changed.has('investigationId') || this.denied) return;
+    const signature = JSON.stringify([this.investigationId, this.context]);
+    // Lit parents may reparse the same URL on every list update. Only a real
+    // scope change invalidates a save; reads have their own response ordering.
+    if (signature === this.scopeSignature) return;
+    this.scopeSignature = signature;
+    this.epoch++; this.readOrdinal++;
+    this.pendingKey = ''; this.pendingContext = null; this.unknown = false;
+    this.saving = false; this.loading = false; this.value = null;
+    void this.load();
   }
   private fail(e: unknown) {
     this.value = null; this.error = investigationErrorText(e);
     if (e instanceof InvestigationApiError && [401, 403, 404].includes(e.status)) {
+      this.epoch++; this.readOrdinal++; this.saving = false; this.loading = false;
       this.denied = true; this.context = null; this.pendingContext = null; this.pendingKey = ''; this.unknown = false;
       this.dispatchEvent(new CustomEvent('investigation-entry-denied', { bubbles: true, composed: true }));
     }
   }
   private async load() {
     if (this.denied) return;
-    const epoch = ++this.epoch; this.value = null; this.loading = true; this.error = '';
+    const epoch = this.epoch, ordinal = ++this.readOrdinal; this.value = null; this.loading = true; this.error = '';
     try {
       const value = this.investigationId
         ? await investigationApi<EntryFacts>(`/${encodeURIComponent(this.investigationId)}/context-facts`)
         : await investigationApi<EntryFacts>('/entry-facts', { method: 'POST', body: JSON.stringify(this.context ?? readInvestigationEntry(location.search)) });
-      if (epoch === this.epoch) this.value = value;
-    } catch (e) { if (epoch === this.epoch) this.fail(e); }
-    finally { if (epoch === this.epoch) this.loading = false; }
+      if (epoch === this.epoch && ordinal === this.readOrdinal) this.value = value;
+    } catch (e) { if (epoch === this.epoch && ordinal === this.readOrdinal) this.fail(e); }
+    finally { if (epoch === this.epoch && ordinal === this.readOrdinal) this.loading = false; }
   }
   private async storageKey(context: InvestigationEntryContext) {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
