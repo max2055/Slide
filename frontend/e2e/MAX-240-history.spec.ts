@@ -529,7 +529,20 @@ test('maintenance revisions from real HTTP remain half-open and visible in the s
   expect(Date.parse(after.intervals[1].effective_to)).toBeLessThan(Date.parse(end));
   await page.reload(); await page.getByRole('tab',{name:'指标与趋势'}).click();
   await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
-  await writeFile(`${output}/maintenance-history.json`,JSON.stringify({before,after,modelCalls},null,2));
+  // Real storage failure, not a mocked empty maintenance response.
+  await pool.query('RENAME TABLE maintenance_interval_history TO maintenance_interval_history_unavailable');
+  try {
+    await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
+    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('维护历史查询失败，状态未知');
+    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).not.toContainText('没有已记录');
+  } finally { await pool.query('RENAME TABLE maintenance_interval_history_unavailable TO maintenance_interval_history'); }
+  await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
+  await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
+  for (const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
+    await page.setViewportSize({width,height});
+    await page.screenshot({path:`${output}/maintenance-${width}.png`,fullPage:true});
+  }
+  await writeFile(`${output}/maintenance-history.json`,JSON.stringify({before,after,storageFailureUnknown:true,modelCalls},null,2));
 });
 
 test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {

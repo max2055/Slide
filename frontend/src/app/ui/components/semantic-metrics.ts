@@ -124,7 +124,7 @@ export class SemanticMetrics extends LitElement {
   @state() result: SemanticResult | null = null;
   @state() error = '';
   @state() busy = false;
-  @state() private maintenance: { intervals: Array<{id:string;revision:number;name:string;reason:string;timezone:string;effective_from:string;effective_to:string}>; event_links: Array<{event_id?:string;alert_id?:number;state:string;at:string}> } | null = null;
+  @state() private maintenance: { intervals: Array<{id:string;revision:number;name:string;reason:string;timezone:string;effective_from:string;effective_to:string}>; event_links: Array<{event_id?:string;alert_id?:number;state:string;at:string;intervals?:Array<{id:string;revision:number;reason:string}>}> } | null = null;
   @state() private maintenanceError = '';
   private generation = 0;
   @state() private accessInvalidated = false;
@@ -598,7 +598,7 @@ export class SemanticMetrics extends LitElement {
       ${this.maintenanceError ? html`<p role="status">${this.maintenanceError}</p>` : nothing}
       ${this.maintenance?.intervals.length === 0 ? html`<p>该窗口没有已记录的有限期限维护区段。</p>` : nothing}
       ${(this.maintenance?.intervals ?? []).map(v => html`<p>${v.name} · 修订 ${v.revision} · ${v.reason} · [${localTime(v.effective_from)}, ${localTime(v.effective_to)}) · 定义时区 ${v.timezone}</p>`)}
-      ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'}</p>`)}
+      ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'} · ${(v.intervals ?? []).map(i => `${i.id} 修订 ${i.revision}：${i.reason}`).join('；')}</p>`)}
     </section>
     ${this.renderHistoryContext()}
     ${this.renderRaw(metrics)}
