@@ -1,3 +1,4 @@
+import { registerMaintenanceRoutes } from './src/maintenance-routes.js';
 import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
 import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
@@ -5050,89 +5051,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // --- 维护窗口 (5 条) ---
-  async function requireMaintenanceWindowAccess(request: any, reply: any, windowId: number) {
-    const window = await maintenanceWindowService.getMaintenanceWindowById(windowId);
-    const allowed = window && (window.instance_id == null
-      ? hasUnrestrictedInstanceAccess(request.user)
-      : hasInstanceAccess(request.user, Number(window.instance_id), 'read-write'));
-    if (!allowed) {
-      reply.code(404).send({ error: '维护窗口不存在' });
-      return null;
-    }
-    return window;
-  }
-
-  fastify.get('/api/maintenance-windows', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const windows = await maintenanceWindowService.getMaintenanceWindows(
-        undefined,
-        getAccessibleInstanceIds((request as any).user),
-      );
-      reply.send(windows);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.post('/api/maintenance-windows', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const body = request.body as any;
-      if (body.instance_id == null) {
-        if (!hasUnrestrictedInstanceAccess((request as any).user)) {
-          return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
-        }
-      } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
-        return reply.code(403).send({ error: '无权以读写级别访问该实例' });
-      }
-      const result = await maintenanceWindowService.createMaintenanceWindow(body);
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.put('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
-      const body = request.body as any;
-      if (body.instance_id !== undefined) {
-        if (body.instance_id == null) {
-          if (!hasUnrestrictedInstanceAccess((request as any).user)) {
-            return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
-          }
-        } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
-          return reply.code(403).send({ error: '无权以读写级别访问该实例' });
-        }
-      }
-      const result = await maintenanceWindowService.updateMaintenanceWindow(Number(id), body);
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.delete('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
-      const result = await maintenanceWindowService.deleteMaintenanceWindow(Number(id));
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.get('/api/maintenance-windows/check/:instanceId', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { instanceId } = request.params as any;
-      const result = await maintenanceWindowService.isActiveMaintenanceWindow(Number(instanceId));
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+  await registerMaintenanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---
   fastify.get('/api/silence', { preHandler: [verifyToken] }, async (request, reply) => {

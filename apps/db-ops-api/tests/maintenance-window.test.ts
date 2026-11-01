@@ -19,13 +19,20 @@ describe('maintenance-window-service.ts', () => {
   it('isActiveMaintenanceWindow returns active with window details', async () => {
     vi.mocked(mockPool.execute).mockResolvedValueOnce([[{
       id: 1, name: 'DB Maintenance', description: null, instance_id: 1,
-      day_of_week: '1,2,3,4,5', start_time: '02:00:00', end_time: '06:00:00',
+      day_of_week: '*', start_time: '00:00:00', end_time: '23:59:59',
       timezone: 'Asia/Shanghai', suppress_evaluation: 1, enabled: 1,
     }]]);
     const { maintenanceWindowService } = await import('../src/maintenance-window-service');
     const result = await maintenanceWindowService.isActiveMaintenanceWindow(1);
     expect(result.active).toBe(true);
     expect(result.window?.suppress_evaluation).toBe(true);
+  });
+
+  it('MAX244 database failure remains unknown instead of allowing notification', async () => {
+    vi.mocked(mockPool.execute).mockRejectedValueOnce(new Error('unavailable'));
+    const { maintenanceWindowService } = await import('../src/maintenance-window-service');
+    await expect(maintenanceWindowService.isActiveMaintenanceWindow(1))
+      .rejects.toThrow('MAINTENANCE_STATE_UNAVAILABLE');
   });
 
   it('createMaintenanceWindow rejects invalid day_of_week', async () => {
@@ -46,7 +53,14 @@ describe('maintenance-window-service.ts', () => {
     expect(result.success).toBe(true);
   });
 
+  it('MAX244 failed list is unknown rather than an empty list', async () => {
+    vi.mocked(mockPool.execute).mockRejectedValueOnce(new Error('unavailable'));
+    const { maintenanceWindowService } = await import('../src/maintenance-window-service');
+    await expect(maintenanceWindowService.getMaintenanceWindows()).rejects.toThrow('MAINTENANCE_STATE_UNAVAILABLE');
+  });
+
   it('getMaintenanceWindows returns all windows', async () => {
+    vi.mocked(mockPool.execute).mockResolvedValueOnce([[]]);
     const { maintenanceWindowService } = await import('../src/maintenance-window-service');
     const windows = await maintenanceWindowService.getMaintenanceWindows();
     expect(Array.isArray(windows)).toBe(true);

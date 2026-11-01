@@ -222,12 +222,10 @@ class AlertEngine {
 
     // 1. 检查维护窗口
     assertWorkflowActive();
-    const mwCheck = await maintenanceWindowService.isActiveMaintenanceWindow(instanceId);
-    if (mwCheck.active && mwCheck.window?.suppress_evaluation) {
-      console.log(`🔇 维护窗口跳过评估: ${rule.name} on instance ${instanceName} (${mwCheck.window.name})`);
-      this.skippedByMaintenance++;
-      return;
-    }
+    let mwCheck: Awaited<ReturnType<typeof maintenanceWindowService.isActiveMaintenanceWindow>> = { active: false };
+    let maintenanceUnknown = false;
+    try { mwCheck = await maintenanceWindowService.isActiveMaintenanceWindow(instanceId); }
+    catch { maintenanceUnknown = true; }
 
     // 2. 检查静默期
     assertWorkflowActive();
@@ -280,6 +278,8 @@ class AlertEngine {
       rule_name: rule.name,
       auto_generated: true,
     };
+
+    tags.maintenance_unknown = maintenanceUnknown;
 
     // 6. 标记维护窗口抑制的告警（评估但不通知）
     if (mwCheck.active) {
