@@ -403,6 +403,40 @@ test('reads frozen thresholds and same-window events after controlled unbinding 
   }
 });
 
+test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  for (const revoked of ['permission', 'session'] as const) {
+    const login = await request.post(`${api}/api/auth/login`, { data: { username: 'max240-owner', password } });
+    expect(login.status()).toBe(200);
+    const { token } = await login.json();
+    const locker = await pool.getConnection();
+    let pending: ReturnType<typeof request.get> | undefined;
+    try {
+      await locker.query('LOCK TABLES metric_attempts WRITE');
+      pending = request.get(`${api}/api/metrics/${RESOURCE_ID}`, { headers: { Authorization: `Bearer ${token}` } });
+      // Observe the production handler blocked on its actual metric SQL; the
+      // revocation is committed only after preHandler and initial access checks.
+      await expect.poll(async () => {
+        const [rows] = await adminPool.query("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE DB=? AND INFO LIKE '%SELECT payload FROM metric_attempts%' AND STATE LIKE '%lock%'", [schema]);
+        return Number(rows[0].n);
+      }).toBeGreaterThan(0);
+      if (revoked === 'permission') await pool.query('DELETE FROM role_permissions WHERE role_id=8401');
+      else await pool.query('UPDATE users SET session_version=session_version+1 WHERE id=8401');
+      await locker.query('UNLOCK TABLES');
+      const response = await pending;
+      expect(response.status()).toBe(revoked === 'permission' ? 403 : 401);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('semantic_metrics');
+      expect(body).not.toHaveProperty('metrics');
+      await writeFile(`${output}/legacy-${revoked}-revocation.json`, JSON.stringify({ path: `/api/metrics/${RESOURCE_ID}`, status: response.status(), body, waitObserved: true }, null, 2));
+    } finally {
+      await locker.query('UNLOCK TABLES'); locker.release();
+      if (pending) await pending.catch(() => undefined);
+      await pool.query('INSERT IGNORE INTO role_permissions (role_id,permission_id) SELECT 8401,id FROM permissions');
+    }
+  }
+});
+
 test('revoking resource permission clears protected history immediately and rejects stale responses', async ({ page }) => {
   await login(page);
   const metrics = page.locator('semantic-metrics');
