@@ -1,0 +1,153 @@
+{
+  "started_at": "2026-10-29T20:38:51.052Z",
+  "viewports": {
+    "1366": {
+      "text_ok": true
+    },
+    "1440": {
+      "text_ok": true
+    },
+    "1920": {
+      "text_ok": true
+    }
+  },
+  "scenarios": {
+    "entry_and_lossless": {
+      "legacy_editor_default": true,
+      "explicit_entry_visible": true,
+      "seeded": {
+        "selected": [],
+        "settings": {
+          "max_rows": {
+            "mode": "set",
+            "value": 50
+          },
+          "interval_ms": {
+            "mode": "set",
+            "value": 45000
+          }
+        },
+        "metricToggles": {},
+        "parameters": {},
+        "groupId": "",
+        "binding_source": "package"
+      },
+      "preview_request": {
+        "expected_revision": 3,
+        "template_pins": [
+          {
+            "template_id": "tpl-f307f4d1ecb24aea",
+            "version": 1,
+            "content_hash": "sha256:2c32b65f1ea4424ce3cba8a34036fbef281dbf7df50521f6857ff0e875b44140"
+          }
+        ],
+        "overrides": {
+          "max_rows": {
+            "mode": "set",
+            "value": 50
+          },
+          "interval_ms": {
+            "mode": "set",
+            "value": 45000
+          }
+        },
+        "group_id": null
+      },
+      "trial": "attempted",
+      "applied": {
+        "revision": 4,
+        "replayed": false
+      },
+      "binding_after": {
+        "source": "template",
+        "revision": 4,
+        "configuration": {
+          "overrides": {
+            "max_rows": {
+              "mode": "set",
+              "value": 50
+            },
+            "interval_ms": {
+              "mode": "set",
+              "value": 45000
+            }
+          },
+          "group_id": null
+        }
+      },
+      "replies": [
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3/preview"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3/trial"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3/apply"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3"
+        },
+        {
+          "status": 200,
+          "path": "/api/metrics/template-bindings/instance/3/operations/apply-mvu0aho0-syjd5nqb"
+        }
+      ]
+    },
+    "cancel": {
+      "selected": [],
+      "config_writes": [],
+      "other_posts": 3,
+      "config_writes_count": 0,
+      "binding": "unbound"
+    },
+    "unknown": {
+      "revision_before": 4,
+      "unknown_shown": true,
+      "stored_before_reload": {
+        "key": "slide.metric.native.apply.3.instance:3",
+        "value": [
+          {
+            "key": "apply-mvu0aplp-c8ck02f9",
+            "intent": "{\"resource\":\"instance:3\",\"body\":{\"expected_revision\":4,\"template_pins\":[{\"template_id\":\"tpl-f307f4d1ecb24aea\",\"version\":1,\"content_hash\":\"sha256:2c32b65f1ea4424ce3cba8a34036fbef281dbf7df50521f6857ff0e875b44140\"}],\"overrides\":{\"max_rows\":{\"mode\":\"set\",\"value\":50},\"interval_ms\":{\"mode\":\"set\",\"value\":45000}},\"group_id\":null}}",
+            "pending": true
+          }
+        ]
+      },
+      "revision_after_apply": 4,
+      "stored_after_reload": {
+        "key": "slide.metric.native.apply.3.instance:3",
+        "value": [
+          {
+            "key": "apply-mvu0aplp-c8ck02f9",
+            "intent": "{\"resource\":\"instance:3\",\"body\":{\"expected_revision\":4,\"template_pins\":[{\"template_id\":\"tpl-f307f4d1ecb24aea\",\"version\":1,\"content_hash\":\"sha256:2c32b65f1ea4424ce3cba8a34036fbef281dbf7df50521f6857ff0e875b44140\"}],\"overrides\":{\"max_rows\":{\"mode\":\"set\",\"value\":50},\"interval_ms\":{\"mode\":\"set\",\"value\":45000}},\"group_id\":null}}",
+            "pending": false
+          }
+        ]
+      },
+      "unresolved_after_reload": [],
+      "journal_queries": [
+        "/api/metrics/template-bindings/instance/3/operations/apply-mvu0aplp-c8ck02f9",
+        "/api/metrics/template-bindings/instance/3/operations/apply-mvu0aplp-c8ck02f9"
+      ],
+      "revision_after_reload": 5
+    },
+    "late_response": {
+      "preview_on_new_resource": null,
+      "error": "",
+      "selected": []
+    }
+  }
+}

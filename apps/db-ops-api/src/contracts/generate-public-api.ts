@@ -533,32 +533,37 @@ export interface CollectServerDiagnosticsResponse { success: true; diagnostics: 
 
 // New contracts are rendered from the backend schemas, not hand-maintained
 // string copies. Fail closed if the baseline starts using an unsupported kind.
-function schemaType(schema: TSchema): string {
+function schemaType(schema: TSchema, refs: Record<string,string> = {}): string {
+  if (typeof schema.$ref === 'string') {
+    const target = refs[schema.$ref];
+    if (!target) throw new Error('Unsupported client schema reference');
+    return target;
+  }
   if (schema[Kind] === 'Never') return 'never';
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
   if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((v: unknown) => JSON.stringify(v)).join(' | ');
-  if (Array.isArray(schema.type)) return schema.type.map((type: string) => schemaType({ ...schema, type })).join(' | ');
-  if (schema.oneOf) return `(${(schema.oneOf as TSchema[]).map(schemaType).join(' | ')})`;
-  if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(schemaType).join(' | ')})`;
+  if (Array.isArray(schema.type)) return schema.type.map((type: string) => schemaType({ ...schema, type }, refs)).join(' | ');
+  if (schema.oneOf) return `(${(schema.oneOf as TSchema[]).map(value => schemaType(value, refs)).join(' | ')})`;
+  if (schema.anyOf) return `(${(schema.anyOf as TSchema[]).map(value => schemaType(value, refs)).join(' | ')})`;
   if (schema.type === 'string') return 'string';
   if (schema.type === 'number' || schema.type === 'integer') return 'number';
   if (schema.type === 'boolean') return 'boolean';
   if (schema.type === 'null') return 'null';
-  if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema)}>`;
+  if (schema.type === 'array') return `Array<${schemaType(schema.items as TSchema, refs)}>`;
   if (schema.type === 'object') {
     if (schema.additionalProperties && typeof schema.additionalProperties === 'object' && !schema.properties) {
-      return `Record<string, ${schemaType(schema.additionalProperties as TSchema)}>`;
+      return `Record<string, ${schemaType(schema.additionalProperties as TSchema, refs)}>`;
     }
     if (schema.patternProperties) {
       const values = Object.values(schema.patternProperties) as TSchema[];
       if (values.length !== 1) throw new Error('Unsupported investigation record schema');
-      return `Record<string, ${schemaType(values[0])}>`;
+      return `Record<string, ${schemaType(values[0], refs)}>`;
     }
     const required = new Set(schema.required as string[] ?? []);
     return `{ ${Object.entries(schema.properties ?? {}).map(([key, value]) =>
-      `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema)};`).join(' ')} }`;
+      `${JSON.stringify(key)}${required.has(key) ? '' : '?'}: ${schemaType(value as TSchema, refs)};`).join(' ')} }`;
   }
   if (Object.keys(schema).length === 0) return 'unknown';
   throw new Error('Unsupported investigation client schema');
@@ -570,7 +575,12 @@ function buildInvestigationClientTypes(): string {
 }
 
 export function buildClientTypes(): string {
-  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema as unknown as TSchema)};\n`).join('')
+  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => {
+    const definitions = Object.entries((schema as any).$defs ?? {}) as [string,TSchema][];
+    const refs = Object.fromEntries(definitions.map(([key]) => [`#/$defs/${key}`, `${name}_${key}`]));
+    return definitions.map(([key, value]) => `export type ${refs[`#/$defs/${key}`]} = ${schemaType(value, refs)};\n`).join('')
+      + `export type ${name} = ${schemaType(schema as unknown as TSchema, refs)};\n`;
+  }).join('')
     + buildInvestigationClientTypes() + buildLegacyClientTypes()
     .replace('export interface HealthResponse {', `export interface QueueTypeObservation {
   jobType: string; queued: number; retry: number; scheduled: number; ready: number;

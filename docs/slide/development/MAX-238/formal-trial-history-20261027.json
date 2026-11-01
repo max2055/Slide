@@ -1,0 +1,2031 @@
+{
+  "readonly": {
+    "pre": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1,
+        "host": "192.168.49.130",
+        "port": 22
+      },
+      "bindings": [
+        {
+          "resource_key": "instance:1",
+          "revision": 4
+        },
+        {
+          "resource_key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "unchanged": true
+  },
+  "results": {
+    "instance:1": {
+      "package": "mysql-diagnostics",
+      "trial": {
+        "persisted": false,
+        "decision": "attempted",
+        "error": null,
+        "lifecycle_evidence": "unavailable",
+        "samples": [
+          {
+            "metric": {
+              "id": "mysql.processlist.count",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "13"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.connections.limit",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "151"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.transaction_commands.commit_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "973820"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.transaction_commands.rollback_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "32"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.tables.estimated_allocated_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2117304320"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "mysql.queries.total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "17507678"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.slow_queries.total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.protocol.received_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1771051099"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "mysql.protocol.sent_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "84399510349"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "mysql.handler.read_next_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "13922927"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.connections.aborted_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "32"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.buffer_pool.pages_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 96.875
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "db.uptime_seconds",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 147104
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "s"
+          },
+          {
+            "metric": {
+              "id": "mysql.threads.running",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.threads.connected",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "12"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.files.open",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "10"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.key_cache.used_blocks",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.key_cache.unused_blocks",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "6698"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.buffer_pool.read_hit_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 99.66
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "mysql.table_cache.hit_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 99.9912
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "mysql.key_cache.used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "mysql.innodb.row_lock_average_ms",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "7"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "ms"
+          },
+          {
+            "metric": {
+              "id": "mysql.innodb.deadlocks_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "source_error"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.temporary.disk_tables_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4134"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.thread_cache.hit_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 99.96
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "mysql.transactions.active",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "mysql.transaction_commands.commit_rate",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "unit": "count/s"
+          },
+          {
+            "metric": {
+              "id": "mysql.transaction_commands.rollback_rate",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "unit": "count/s"
+          },
+          {
+            "metric": {
+              "id": "mysql.transaction_commands.completed_rate",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "unit": "count/s"
+          },
+          {
+            "metric": {
+              "id": "mysql.queries.per_second",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "counter_baseline"
+            },
+            "unit": "count/s"
+          }
+        ],
+        "attempts": [
+          {
+            "collector_id": "diagnostics_connections",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.753Z"
+          },
+          {
+            "collector_id": "diagnostics_limit",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.781Z"
+          },
+          {
+            "collector_id": "diagnostics_transactions",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.799Z"
+          },
+          {
+            "collector_id": "diagnostics_size",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.818Z"
+          },
+          {
+            "collector_id": "diagnostics_queries",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.835Z"
+          },
+          {
+            "collector_id": "diagnostic_counters",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.853Z"
+          },
+          {
+            "collector_id": "buffer_pages",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.872Z"
+          },
+          {
+            "collector_id": "uptime_diagnostics",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.889Z"
+          },
+          {
+            "collector_id": "diagnostic_gauges",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.906Z"
+          },
+          {
+            "collector_id": "diagnostic_ratios",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.923Z"
+          },
+          {
+            "collector_id": "innodb_diagnostics",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.939Z"
+          },
+          {
+            "collector_id": "thread_cache",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.955Z"
+          },
+          {
+            "collector_id": "active_transactions",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.972Z"
+          },
+          {
+            "collector_id": "replication_channels",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:55.729Z",
+            "ended_at": "2026-10-27T16:31:55.988Z"
+          }
+        ]
+      },
+      "formal_rows_after_trial": {
+        "normalized_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0,
+        "metric_v2_alert_state": 0,
+        "metric_v2_alert_transitions": 0
+      },
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "collection": {
+        "state": "pending",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    },
+    "server:3": {
+      "package": "linux-host",
+      "trial": {
+        "persisted": false,
+        "decision": "attempted",
+        "error": null,
+        "lifecycle_evidence": "unavailable",
+        "samples": [
+          {
+            "metric": {
+              "id": "linux.uptime.seconds",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 219144
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "s"
+          },
+          {
+            "metric": {
+              "id": "linux.load.one_minute",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.01
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.cpu.user_system_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.memory.used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 31.5
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "7963447296"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "21416116224"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4194304"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1427353600"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4194304"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "33730"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "262128"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "57032704"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "570941440"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "16384"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1427353600"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "372379648"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1006632960"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "7421952"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "627900416"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "12288"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "285470720"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4096"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.filesystem.size_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "285470720"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.network.bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "47903777"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "host.network.bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "66616196"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.read_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "965485568"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.write_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "334418432"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.io_time_ms_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2160"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "ms"
+          },
+          {
+            "metric": {
+              "id": "linux.block.read_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "929768448"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.write_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "256798720"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.io_time_ms_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2250"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "ms"
+          },
+          {
+            "metric": {
+              "id": "linux.block.read_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2269184"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.write_bytes_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.block.io_time_ms_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "ms"
+          },
+          {
+            "metric": {
+              "id": "linux.memory.used_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "898605056"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.memory.total_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "2854707200"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.load.five_minutes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.01
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.load.fifteen_minutes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.swap.used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.processes.count",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "215"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "linux.processes.sample_max_cpu_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1.1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.processes.cpu_sample_max_memory_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 8.3
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "13452668928"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 2
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4194304"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1427353600"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "4194304"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 2
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "228398"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "not_applicable"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "513908736"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "1427337216"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "634253312"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "620478464"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": null,
+            "quality": {
+              "status": "unknown",
+              "reason": "not_applicable"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "285458432"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.available_bytes",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "285466624"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "By"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.inode_used_percent",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 1
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "%"
+          },
+          {
+            "metric": {
+              "id": "linux.network.events_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "linux.network.events_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "linux.network.events_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "linux.network.events_total",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "uint64",
+              "value": "0"
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "count"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.37184367196680373
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0
+            },
+            "quality": {
+              "status": "good",
+              "reason": "none"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.12867759262650308
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.09989238826314657
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000011478585264366167
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.3699259440104167
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.01182026928295585
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000043044694741373124
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          },
+          {
+            "metric": {
+              "id": "linux.filesystem.used_ratio",
+              "semantic_version": "1.0.0"
+            },
+            "value": {
+              "encoding": "float64",
+              "value": 0.000014348231580457709
+            },
+            "quality": {
+              "status": "partial",
+              "reason": "precision_loss"
+            },
+            "unit": "1"
+          }
+        ],
+        "attempts": [
+          {
+            "collector_id": "linux-basic",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:56.556Z"
+          },
+          {
+            "collector_id": "linux-host-gauges",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:57.052Z"
+          },
+          {
+            "collector_id": "linux-filesystem",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:57.488Z"
+          },
+          {
+            "collector_id": "linux-network",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:57.623Z"
+          },
+          {
+            "collector_id": "linux-block",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:57.772Z"
+          },
+          {
+            "collector_id": "linux-diagnostic-gauges-v1",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:58.755Z"
+          },
+          {
+            "collector_id": "linux-filesystem-diagnostics-v1",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:59.198Z"
+          },
+          {
+            "collector_id": "linux-network-diagnostics-v1",
+            "status": "succeeded",
+            "error": null,
+            "evidence_code": null,
+            "started_at": "2026-10-27T16:31:56.052Z",
+            "ended_at": "2026-10-27T16:31:59.334Z"
+          }
+        ]
+      },
+      "formal_rows_after_trial": {
+        "normalized_observations": 0,
+        "alerts": 0,
+        "alert_events": 0,
+        "notification_records": 0,
+        "metric_publications": 0,
+        "metric_v2_alert_state": 0,
+        "metric_v2_alert_transitions": 0
+      },
+      "resource": {
+        "type": "server",
+        "id": 3
+      },
+      "collection": {
+        "state": "pending",
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "in_flight": false
+      },
+      "formal_visibility": {
+        "state": "pending",
+        "source": "none",
+        "last_observed_at": null,
+        "generation": null,
+        "freshness": "unknown"
+      },
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "formal_rows": {
+    "before": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "after_trials": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    },
+    "zero": {
+      "normalized_observations": 0,
+      "alerts": 0,
+      "alert_events": 0,
+      "notification_records": 0,
+      "metric_publications": 0,
+      "metric_v2_alert_state": 0,
+      "metric_v2_alert_transitions": 0
+    }
+  },
+  "tables": {
+    "alert_tables": {
+      "metric_v2_alert_state": "metric_alert_state",
+      "metric_v2_alert_transitions": "metric_alert_transitions"
+    },
+    "formal_tables": [
+      "alerts",
+      "alert_events",
+      "notification_records",
+      "metric_publications"
+    ],
+    "note": "migration 121 renames metric_v2_alert_state/metric_v2_alert_transitions; the resolved post-migration names were counted"
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "396cb45fe32a6db9cad2478e7b675877000dd49d",
+    "test": "formal-trial-history.mysql.test.ts",
+    "disposable_schema": "max238_formal_trial_history_26979 on 127.0.0.1:13306, dropped by afterAll"
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22
+    }
+  }
+}

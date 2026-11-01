@@ -1,0 +1,210 @@
+{
+  "package": "MAX238-COLLECTION-DISPLAY-E2E-R1",
+  "date": "2026-10-29",
+  "target": {
+    "type": "instance",
+    "id": 1,
+    "name": "mysql3306",
+    "host": "localhost:3306",
+    "version": "9.6.0",
+    "database": "db_ops_ai",
+    "collection": "read-only"
+  },
+  "platform": {
+    "mysql": "8.4.10",
+    "port": 13306,
+    "database": "slide_max238_r1",
+    "migrations": "full set including 135_metric_template_binding_storage.sql",
+    "isolated": true
+  },
+  "template": {
+    "template_id": "e19c120027e04da69b130e0f6cea29fc",
+    "name": "MySQL by ODBC",
+    "upstream": {
+      "version": "7.0.21",
+      "commit": "6542e21fe6adc8ab7bf903c2a9d1df80e80366cd"
+    },
+    "versions": [
+      {
+        "version": 1,
+        "content_hash": "sha256:4db4800495801f3993cfd5a21eda672bdd7bccbbb535bc8224cd57be7fbb107a",
+        "retained": true
+      },
+      {
+        "version": 2,
+        "content_hash": "sha256:1f9bd5626c774543b1db166c6f836ae3986f145fbffb62c1ef3dfdf85d95077e",
+        "current": true
+      }
+    ],
+    "item_versions": [
+      {
+        "item_id": "8fbad224ebdf46e7b25a0be015f21972",
+        "version": 1,
+        "metric": "db.uptime_seconds@1.0.0",
+        "unit": "s",
+        "release": "mysql-basic@1.0.0#sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+        "implementation": "builtin:mysql.status.v1"
+      },
+      {
+        "item_id": "8fbad224ebdf46e7b25a0be015f21972",
+        "version": 2,
+        "metric": "db.uptime_seconds@1.0.0",
+        "unit": "s",
+        "release": "mysql-basic@2.0.0#sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322",
+        "implementation": "builtin:mysql.status.v2"
+      }
+    ],
+    "repin": {
+      "from_version": 1,
+      "to_version": 2,
+      "reason": "target_version_incompatible",
+      "db_version_supported_by_v1": [
+        "5.7",
+        "8.0",
+        "8.4"
+      ],
+      "target_db_version": "9.6.0"
+    }
+  },
+  "flow": {
+    "preview_v1": {
+      "executable": false,
+      "db_version_status": "unsupported",
+      "item_decision": "unsupported"
+    },
+    "preview_v2": {
+      "executable": true,
+      "resolution_identity": "sha256:6484c2c3739e2e8755d9fbd59f980afe65cb79389119fae8960747eea3a1d8cd",
+      "release": "mysql-basic@2.0.0#sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322",
+      "collector_ids": [
+        "mysql-status"
+      ],
+      "metric_keys": [
+        "db.uptime_seconds@1.0.0"
+      ],
+      "applicability": "supported"
+    },
+    "trial": {
+      "receipt_id": "max238-r1-trial-c2b4694c",
+      "decision": "attempted",
+      "value": 77878,
+      "unit": "s",
+      "phases": {
+        "read": true,
+        "transform": true,
+        "unit": true
+      }
+    },
+    "apply": {
+      "caller_key": "max238-r1-apply-2",
+      "status": "committed",
+      "revision": 5,
+      "operation_key": "instance:1#5@sha256:97d8d06b1817dcee7560d12d77f35bff7d36fc41b3a8d3fb16248acba3b1b48d",
+      "binding_envelope": "templates-v1"
+    }
+  },
+  "binding_row": {
+    "resource_key": "instance:1",
+    "envelope": "templates-v1",
+    "binding_revision": 5,
+    "application_status": "pending",
+    "applied_revision": 4,
+    "resolution_identity": "sha256:e9b63696fdaaeccfb4b8703eb12e5aea88dd1e7fb6c9528b58077adba132194a",
+    "note": "accepted codec keeps applied_revision <= base; the pending plan is the configuration this schedule executes"
+  },
+  "formal": {
+    "observation_id": "sha256:64529ebfec667e98f7407f3cc6532ac181d65952a02a6603cb311785bbbc5526",
+    "observed_at": "2026-10-29T15:15:15.334Z",
+    "metric": "db.uptime_seconds@1.0.0",
+    "value": 78602,
+    "unit": "s",
+    "quality": "good",
+    "package_id": "mysql-basic",
+    "package_version": "2.0.0",
+    "config_revision": 5,
+    "publications_at_revision_5": 8,
+    "rollout": {
+      "published_revision": 5,
+      "applied_revision": 5,
+      "source": "semantic",
+      "read_mode": "semantic",
+      "generation": 2,
+      "package_pin": "mysql-basic@2.0.0"
+    },
+    "source_acceptance": {
+      "revision": 5,
+      "generation": 2,
+      "template_binding": true,
+      "sample_count": 1
+    },
+    "schedule_events": {
+      "committed": 15
+    }
+  },
+  "latest_data_api": {
+    "endpoint": "POST /api/metrics/query",
+    "configuration_revision": 5,
+    "state": "available",
+    "enabled": true,
+    "capability": "supported",
+    "bucket": {
+      "request": {
+        "resource": {
+          "type": "instance",
+          "id": 1
+        },
+        "view": "core",
+        "latest_capacity": true
+      },
+      "observed_at": "2026-10-29T15:15:15.334Z",
+      "value": {
+        "encoding": "float64",
+        "value": 78602
+      },
+      "unit": "s",
+      "quality": {
+        "status": "good",
+        "reason": "none"
+      },
+      "versions": {
+        "contract": "1.0.0",
+        "package_id": "mysql-basic",
+        "config_revision": 5,
+        "package_version": "2.0.0",
+        "transform_version": "1.0.0"
+      },
+      "configuration_revision": 5
+    }
+  },
+  "page": {
+    "url": "http://127.0.0.1:5173 (Vite) -> /api proxy to http://127.0.0.1:3001",
+    "route": "Databases -> mysql3306 -> 指标与趋势",
+    "rendered": {
+      "label": "数据库运行时长 · db.uptime_seconds",
+      "state": "可用",
+      "value": "78602",
+      "unit": "s",
+      "observed_local": "2026/10/29 23:15:15",
+      "timezone": "Asia/Shanghai",
+      "badges": [
+        "良好",
+        "新鲜",
+        "精确"
+      ]
+    },
+    "shadow_dom_piercing": true,
+    "screenshots": [
+      "max238-r1-metrics.png",
+      "max238-r1-databases.png",
+      "max238-r1-instance.png"
+    ],
+    "same_observation_as_api": true
+  },
+  "environment_limits": {
+    "server3": "unreachable this round; mysql3306 instance 1 used instead",
+    "shared_3306_writes": "none; all bindings/history written in the isolated platform database",
+    "multi_release_templates": "not executed on a real object",
+    "application_applied_display": "not implemented; codec forbids promoting pending to applied",
+    "template_status_api_in_ui": "not used by the page yet"
+  }
+}

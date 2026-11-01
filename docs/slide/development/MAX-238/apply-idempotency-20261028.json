@@ -1,0 +1,152 @@
+{
+  "first_publish": {
+    "pin": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "tested_digest": "sha256:3d13046c453639e90533c180000ec124318e40e40ddc1f7bbbc7ba60816b2711",
+    "stored_operation": {
+      "operation_key": "apply-intent-1",
+      "resource_key": "instance:1",
+      "actor_id": 1,
+      "target_revision": 1,
+      "configuration_digest": "sha256:3d13046c453639e90533c180000ec124318e40e40ddc1f7bbbc7ba60816b2711",
+      "committed_at": "2026-10-28T14:25:07.886Z"
+    },
+    "audits": 1,
+    "status": {
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "effective_enabled.policy_enabled": true
+    }
+  },
+  "replay": {
+    "replay_revision": 1,
+    "replay_published_at": "2026-10-28T14:25:07.886Z",
+    "binding_unchanged": true,
+    "audits": 1,
+    "operation_rows": 1
+  },
+  "collisions": {
+    "other_resource": {
+      "name": "Error",
+      "code": "POLICY_OPERATION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_OPERATION_CONFLICT"
+    },
+    "other_revision": {
+      "name": "Error",
+      "code": "POLICY_OPERATION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_OPERATION_CONFLICT"
+    },
+    "other_configuration": {
+      "name": "Error",
+      "code": "POLICY_OPERATION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_OPERATION_CONFLICT"
+    },
+    "binding_unchanged": true,
+    "audits": 1,
+    "operation_rows": 1
+  },
+  "concurrent_duplicates": {
+    "revisions": [
+      1,
+      1
+    ],
+    "same_published_at": true,
+    "audits": 1
+  },
+  "restart": {
+    "replay_revision": 1,
+    "lookup": {
+      "state": "committed",
+      "operation": {
+        "resource": {
+          "type": "instance",
+          "id": 1
+        },
+        "target_revision": 1,
+        "configuration_digest": "sha256:3d13046c453639e90533c180000ec124318e40e40ddc1f7bbbc7ba60816b2711",
+        "committed_at": "2026-10-28T14:25:07.886Z"
+      }
+    },
+    "absent_lookup": {
+      "state": "absent",
+      "operation": null
+    },
+    "audits": 1
+  },
+  "revoked": {
+    "replay": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "replay_activation": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "unscoped_lookup": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "audits": 1
+  },
+  "rejected_intent": {
+    "error": {
+      "name": "Error",
+      "code": "POLICY_REVISION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_REVISION_CONFLICT"
+    },
+    "audits": 1,
+    "operation_rows": 2,
+    "lookup": "absent"
+  },
+  "legacy": {
+    "revision": 2,
+    "audits": 2,
+    "operation_rows": 2,
+    "stale_error": {
+      "name": "Error",
+      "code": "POLICY_REVISION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_REVISION_CONFLICT"
+    },
+    "status": {
+      "binding.published_revision": 2,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "effective_enabled.policy_enabled": false
+    }
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "57cea5013663e183bc3555f440cf92dad03b2913",
+    "test": "apply-idempotency.mysql.test.ts",
+    "disposable_schema": "max238_apply_idempotency_27763 on 127.0.0.1:13306, dropped by afterAll",
+    "boundaries": {
+      "activate_called": false,
+      "trial_called": false,
+      "worker_started": false,
+      "target_connection_opened": false
+    }
+  }
+}

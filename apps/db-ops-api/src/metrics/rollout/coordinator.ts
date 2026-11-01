@@ -3,6 +3,7 @@ import type { NormalizedObservation } from '../../contracts/metrics/index.js';
 import { validSourceSnapshot } from './source-history.js';
 import { z } from 'zod';
 import { RefSchema, refKey, type Ref } from '../policy/model.js';
+import { readLegacyPublished } from '../bindings/package-reader.js';
 import { rolloutAlertLockName } from './alert-publication-fence.js';
 
 const PackagePinSchema = z.strictObject({
@@ -129,7 +130,9 @@ export class MysqlRolloutCoordinator {
       [refKey(ref)],
     );
     check(rows[0], 'ROLLOUT_POLICY_NOT_FOUND');
-    const published = decode<PublishedPolicy>(rows[0].payload);
+    // The shared fence rejects a template row; this single-package coordinator
+    // never treats it as a policy it can pin, shadow, cut over or formalize.
+    const published = readLegacyPublished(decode(rows[0].payload));
     const resource = RefSchema.parse(published.binding.resource);
     check(refKey(resource) === refKey(ref), 'ROLLOUT_POLICY_IDENTITY');
     PackagePinSchema.parse(published.binding.package);

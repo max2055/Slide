@@ -74,7 +74,8 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
       snmp = preserveDiscovery ? discovery.get(ref.id, [device.host, device.snmpPort, credentials]) : new SnmpDiscovery();
     }
     const reference = `credential:asset-${ref.type}-${ref.id}`;
-    const evidence = snmp ? { snmp } : ref.type === 'server' && preserveDiscovery
+    // Trial and production each own separate caches; counter collectors need the lifecycle evidence on both paths.
+    const evidence = snmp ? { snmp } : ref.type === 'server'
       ? { host_blocks: hostBlocks.get(ref.id, initialIdentity), host_interfaces: hostInterfaces.get(ref.id, initialIdentity) } : {};
     return { resource, credential_ref: reference, evidence, assertCurrent,
       resolve: async (credential, target, method) => {

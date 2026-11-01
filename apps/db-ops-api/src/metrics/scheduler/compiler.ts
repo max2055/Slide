@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CollectionPlanSchema, type MetricBinding } from '../../contracts/metrics/index.js';
+import { CollectionPlanSchema, type CollectorDefinition, type MetricBinding } from '../../contracts/metrics/index.js';
 import { type PackageRegistry, stable } from '../packages/model.js';
 import { type Resolved, metricKey, rule } from '../policy/model.js';
 
@@ -15,6 +15,44 @@ export interface CollectorPlan {
   queries: Array<{ implementation: string; collectors: string[]; cost: string; logicalReads: number }>;
   requestsPerHour: number;
 }
+
+/** The collector facts the existing query grouping reads; no release identity is part of the key. */
+export interface QueryCollector {
+  id: string;
+  method: CollectorDefinition['method'];
+  implementation_ref: string;
+  estimated_cost: CollectorDefinition['estimated_cost'];
+  /** An explicit merge key for a caller that must isolate further than `method:implementation`. */
+  group_key?: string;
+}
+
+/**
+ * Existing query grouping: one query per `method:implementation`, collectors in
+ * the supplied order, cost from the first collector and fixed logical reads
+ * (Linux/SSH two, otherwise one). Extracted unchanged from `compilePlan`; a
+ * caller may widen the key (for example with resolved parameters) without
+ * changing the single-package default.
+ */
+export function groupQueries(collectors: QueryCollector[]): CollectorPlan['queries'] {
+  const groups = new Map<string, CollectorPlan['queries'][number]>();
+  for (const c of collectors) {
+    const key = c.group_key ?? `${c.method}:${c.implementation_ref}`;
+    const group = groups.get(key) ?? { implementation: c.implementation_ref, collectors: [], cost: c.estimated_cost, logicalReads: c.method === 'ssh' ? 2 : 1 };
+    group.collectors.push(c.id); groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+/** The existing request estimate unit: logical reads per hour, never a load or SLO figure. */
+export function requestsPerHour(queries: CollectorPlan['queries'], intervalMs: number): number {
+  return queries.reduce((n, g) => n + g.logicalReads, 0) * 3600000 / intervalMs;
+}
+
+/** The existing stable per-resource jitter within the cadence (capped at 10s). */
+export function jitterFor(resourceType: string, resourceId: string | number, packageId: string, intervalMs: number): number {
+  return parseInt(hash(`${resourceType}:${resourceId}:${packageId}`).slice(0, 8), 16) % Math.min(intervalMs, 10000);
+}
+
 /** A resource policy has one cadence. Never coalesce across resources, pins or cadences. */
 export function compilePlan(registry: PackageRegistry, resolved: Resolved): CollectorPlan {
   const plan = CollectionPlanSchema.parse(resolved.plan), binding = plan.binding;
@@ -49,15 +87,10 @@ export function compilePlan(registry: PackageRegistry, resolved: Resolved): Coll
     if (t.enabled && !['disabled', 'unsupported'].includes(t.decision)) visit(key);
   }
   const collectors = release.package.collectors.filter(c => c.mappings.some(m => keys.has(metricKey(m.metric))));
-  const groups = new Map<string, CollectorPlan['queries'][number]>();
-  for (const c of collectors) {
-    const key = `${c.method}:${c.implementation_ref}`;
-    const group = groups.get(key) ?? { implementation: c.implementation_ref, collectors: [], cost: c.estimated_cost, logicalReads: c.method === 'ssh' ? 2 : 1 };
-    group.collectors.push(c.id); groups.set(key, group);
-  }
+  const queries = groupQueries(collectors);
   const intervalMs = resolved.settings.interval_ms;
-  const jitterMs = parseInt(hash(`${binding.resource_type}:${binding.resource_id}:${binding.package.id}`).slice(0, 8), 16) % Math.min(intervalMs, 10000);
+  const jitterMs = jitterFor(binding.resource_type, binding.resource_id, binding.package.id, intervalMs);
   return { revision: binding.config_revision, resource: { type: binding.resource_type, id: Number(binding.resource_id) },
     intervalMs, timeoutMs: resolved.settings.timeout_ms, jitterMs, collectorIds: collectors.map(c => c.id), metricKeys: [...keys],
-    queries: [...groups.values()], requestsPerHour: [...groups.values()].reduce((n, g) => n + g.logicalReads, 0) * 3600000 / intervalMs };
+    queries, requestsPerHour: requestsPerHour(queries, intervalMs) };
 }

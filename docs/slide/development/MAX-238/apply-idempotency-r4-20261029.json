@@ -1,0 +1,127 @@
+{
+  "package": "MAX238-APPLY-IDEMPOTENCY-R4",
+  "date": "2026-10-29",
+  "branch": "agent/15coder1/max-238",
+  "base": "4fe1e9b1800e119cb4182ac7b60cba8c06b99b57",
+  "implementation_commit": "0e08cdc47",
+  "scope": [
+    "fixture cleanup reports only a daemon-verified absence and exits non-zero for unknown, wrong owner, failed delete and unverifiable post-delete check",
+    "teardown identity comes from a run-start handle file, with the live API cross-checked only",
+    "API fixture shutdown delegates to the same harness cleanup and reports failure"
+  ],
+  "not_changed": [
+    "apps/db-ops-api/src/metrics production code and tests",
+    "MAX240-owned read paths (metrics/query.ts, storage.ts readers, rollout/formal-store.ts readers, consumers/*)",
+    "activation predicates, required-metric list, policy/config contracts"
+  ],
+  "file_sha256": {
+    ".gitignore": "540f23317e2822ae47f91a762a67c431853d78c4549e8ae81f3ba01e3d142275",
+    "apps/db-ops-api/e2e/max238-real-api-server.ts": "fbdacdd22b4b48502877cd3da498dc29c106ccf847689103923ca19705e02830",
+    "frontend/e2e/max238-idempotency-real-api.spec.ts": "bf58006b54e8cada2ba28953f61db341faf31fce1d7221ed640449984b55057e",
+    "frontend/e2e/max238-real-api.sh": "134e86d6ccae65f245949280facbbaa3cf93474a83f989201dc85cbbc55c8138",
+    "frontend/e2e/max238-fixture-cleanup.test.sh": "4950b9fd5cec7ecd452543fba51e2dbcfe55ad5540b1393a5d893ab067aa19eb",
+    "frontend/playwright.MAX-238.config.ts": "d55d37197f897db32a0cb70f3c70a2476090ddd9291883174fb8fcaaf832fb8f"
+  },
+  "cleanup_contract": {
+    "present": "docker info answers and docker inspect --type container succeeds",
+    "proven_absent": "docker info answers and docker inspect reports no such container; the only state reported as removed",
+    "unknown": "docker info or the query fails; non-zero, handle kept, no claim of removal",
+    "wrong_owner": "the exact container id's slide.max238.owner label differs from this run's nonce; refused, non-zero",
+    "delete_failure": "docker rm -f on the exact id fails and the id still exists; FAILED to remove, non-zero",
+    "post_delete_unverifiable": "the post-delete check cannot reach the daemon; FAILED to verify removal, non-zero",
+    "success": "a successfully verified absence deletes the handle file; every failure keeps it"
+  },
+  "run_handle": {
+    "default_path": "frontend/e2e/.max238-handle-<api_port>.json (MAX238_HANDLE_FILE override)",
+    "written_before": "docker run",
+    "fields": ["nonce", "container", "owner_label", "api_port", "mysql_port", "launcher_pid", "cwd", "command", "harness", "harness_sha", "handle_file", "logs"],
+    "api_cross_check": "GET /__test/handle is compared, never used as the identity; mismatch is an anomaly that still cleans only the run-start handle"
+  },
+  "checks": [
+    {
+      "command": "bash frontend/e2e/max238-fixture-cleanup.test.sh",
+      "result": "31 passed, 0 failed (controlled fake docker/curl, no real container touched)"
+    },
+    {
+      "command": "bash -n frontend/e2e/max238-real-api.sh && bash -n frontend/e2e/max238-fixture-cleanup.test.sh",
+      "result": "exit 0"
+    },
+    {
+      "command": "apps/db-ops-api tsc --noEmit",
+      "result": "exit 0"
+    },
+    {
+      "command": "frontend tsc --noEmit",
+      "result": "exit 0"
+    },
+    {
+      "command": "pnpm contracts:check",
+      "result": "exit 0, public contract unchanged"
+    },
+    {
+      "command": "playwright test --config playwright.MAX-238.config.ts",
+      "result": "4 passed (chromium, real component -> Vite proxy -> real Fastify -> disposable MySQL journal)"
+    }
+  ],
+  "controlled_fault_injection": {
+    "tool": "frontend/e2e/max238-fixture-cleanup.test.sh",
+    "cases": [
+      "owned handle removed (exit 0, container gone)",
+      "repeat cleanup proven absent (exit 0, verified absent)",
+      "wrong owner (exit 1, container survives)",
+      "daemon unreachable (exit 1, UNKNOWN, container survives)",
+      "delete failure (exit 1, FAILED to remove, container survives)",
+      "post-delete check failure (exit 1, FAILED to verify removal)",
+      "parallel same-prefix neighbour survives own cleanup",
+      "handle-file teardown with API unreachable (exit 0, container removed)",
+      "handle-file teardown with matching API (exit 0)",
+      "handle-file teardown with a different API handle (exit 1, ANOMALY, own container removed)",
+      "missing handle file (exit 1)",
+      "unreadable handle file (exit 1)"
+    ],
+    "real_docker_used": false
+  },
+  "real_docker_evidence": {
+    "playwright_suite": {
+      "container": "max238-e2e-20261028T170419Z-65773-1692911137",
+      "mysql": "127.0.0.1:59540 (random loopback, never 3306)",
+      "result": "4 passed; afterAll removed the exact id; no container and no handle file left"
+    },
+    "repeat_cleanup_same_handle": {
+      "exit": 0,
+      "message": "verified absent"
+    },
+    "wrong_owner_then_own": {
+      "created": "max238-e2e-r4check1793207083 and max238-e2e-r4peer1793207083 via docker create with labels",
+      "wrong_owner_exit": 1,
+      "wrong_owner_message": "refusing to remove ... label slide.max238.owner is 'r4check...', not 'not-r4check...'",
+      "own_cleanup_exit": 0,
+      "peer_survived_own_cleanup": true,
+      "peer_cleanup_exit": 0,
+      "residue": 0
+    },
+    "api_shutdown_success": {
+      "api_port": 51849,
+      "mysql": "127.0.0.1:59712",
+      "signal": "SIGTERM to the fixture server only",
+      "server_cleanup": "removed ... (id ... owner ...)",
+      "launcher": "verified absent; exit 0; handle file removed",
+      "residue": 0
+    },
+    "api_shutdown_failure": {
+      "api_port": 51850,
+      "mysql": "127.0.0.1:59736",
+      "injection": "controlled docker wrapper delegates to the real docker until a marker file exists, then reports daemon unavailable; no real daemon was stopped",
+      "server": "logged 'cleanup ... failed with 1' and exited 1",
+      "launcher": "UNKNOWN, exit 1, handle file kept, container still present",
+      "after": "the exact handle was removed with the real docker afterwards; residue 0"
+    }
+  },
+  "limits": [
+    "harness lifecycle only; production protocol/DB/module/frontend results from R3 are reused, not re-verified here",
+    "trial boundary remains a controlled fixture; no real target, collector, notification or formal history/event chain",
+    "controlled fault injection proves the script's decision and exit codes; the real Docker service was not stopped",
+    "no kill at the commit instant; remote exactly-once is not claimed",
+    "MAX238/MAX235 remain in_progress; this package is not whole-issue acceptance"
+  ]
+}

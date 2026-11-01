@@ -29,7 +29,7 @@ export class ActorAuthenticationError extends Error {
   }
 }
 
-interface QueryExecutor {
+export interface QueryExecutor {
   execute(sql: string, values?: unknown[]): Promise<any>;
 }
 
@@ -179,6 +179,19 @@ export async function applyActorSecuritySchema(pool: Pick<Pool, 'getConnection'>
   }
 }
 
+/**
+ * Freeze the server-owned delegation ceiling before an asynchronous live grant
+ * read: revalidation must never turn a delegated actor into an unrestricted one.
+ */
+function frozenBoundaryOf(actor: ActorContext): ActorContext['resourceBoundary'] {
+  const boundary = actor.resourceBoundary;
+  return boundary ? Object.freeze({
+    instanceIds: Object.freeze([...boundary.instanceIds]),
+    serverIds: Object.freeze([...boundary.serverIds]),
+    networkDeviceIds: Object.freeze([...boundary.networkDeviceIds]),
+  }) : undefined;
+}
+
 export class ActorContextService {
   constructor(
     private readonly poolProvider: () => ActorPool | null = () => dbConnection.getPool() as ActorPool | null,
@@ -220,21 +233,51 @@ export class ActorContextService {
     return this.loadActorFrom(executor, userId, expectedSessionVersion, requestId, kind, true);
   }
 
+  /** The same live session read on a connection the caller already holds. */
+  async loadActiveActorOn(
+    executor: QueryExecutor,
+    userId: number,
+    expectedSessionVersion?: number,
+    requestId: string = randomUUID(),
+    locking = false,
+  ): Promise<ActorContext> {
+    try {
+      return await this.loadActorFrom(executor, userId, expectedSessionVersion, requestId, 'user', locking);
+    } catch (error) {
+      throw asAuthenticationError(error);
+    }
+  }
+
   async revalidateActor(actor: ActorContext, requestId: string = randomUUID()): Promise<ActorContext> {
-    // Snapshot the server-owned ceiling before the asynchronous live grant read.
-    // Revalidation must never turn a delegated actor into an unrestricted one.
-    const boundary = actor.resourceBoundary;
-    const resourceBoundary = boundary ? Object.freeze({
-      instanceIds: Object.freeze([...boundary.instanceIds]),
-      serverIds: Object.freeze([...boundary.serverIds]),
-      networkDeviceIds: Object.freeze([...boundary.networkDeviceIds]),
-    }) : undefined;
+    const resourceBoundary = frozenBoundaryOf(actor);
     const servicePool = actor.principalKind === 'service' ? this.poolProvider() : undefined;
     if (actor.principalKind === 'service' && !servicePool) throw new PlatformUnavailableError();
     const current = actor.principalKind === 'service'
       ? await this.loadInvestigationActorFrom(servicePool!,
         actor.userId, 'service', actor.sessionVersion, requestId)
       : await this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
+    return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
+  }
+
+  /**
+   * The same live re-read on an executor the caller already holds — normally the
+   * connection of the transaction that is about to persist. It issues a plain
+   * current read (READ COMMITTED), so a revocation that committed after the
+   * transaction opened is seen, without `FOR SHARE` holding grant-table locks
+   * until the caller commits. Callers must run the transaction at READ
+   * COMMITTED, and never need a second pool connection while they hold one.
+   */
+  async revalidateActorOn(
+    executor: QueryExecutor,
+    actor: ActorContext,
+    requestId: string = randomUUID(),
+    locking = false,
+  ): Promise<ActorContext> {
+    const resourceBoundary = frozenBoundaryOf(actor);
+    const current = actor.principalKind === 'service'
+      ? await this.loadInvestigationActorFrom(executor,
+        actor.userId, 'service', actor.sessionVersion, requestId)
+      : await this.loadActorFrom(executor, actor.userId, actor.sessionVersion, requestId, 'user', locking);
     return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
   }
 
