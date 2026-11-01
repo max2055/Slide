@@ -1,6 +1,6 @@
 # MAX239 最终集成验收映射
 
-本矩阵对应唯一 PR570；实际 source/head/base、逐对象审计、执行输出与附件哈希由最终交付包固定。产品运行代码以已接受 source `c33712d9fe263a1873b92d6e6524119cb15894fe` 为基准，本次只补选择器和编辑模式回归及证据映射。历史文档中的实机/通知待验证结论按成员最新决定及本矩阵解释，不重新启动已接受阶段。
+本矩阵对应唯一 PR570；实际 source/head/base、逐对象审计、执行输出与附件哈希由最终交付包固定。产品运行代码以已接受 source `c33712d9fe263a1873b92d6e6524119cb15894fe` 为基准，本次只补选择器、编辑模式、历史导航回归和相关旧事件测试夹具及证据映射。历史文档中的实机/通知待验证结论按成员最新决定及本矩阵解释，不重新启动已接受阶段。
 
 ## 用户入口与适用验收
 
@@ -20,7 +20,7 @@
 | 事务与中断回滚 | `alert-event-service.ts`、scheduler store；`trigger-flow.mysql.test.ts` | 正式观测/applied/episode/event/workflow_jobs 同连接事务，故障注入均回滚；没有第二 writer/账本 |
 | 90→95 历史仍90 | `template-event-evidence.ts`；browser `business-evidence.json` | source `1f4b8554` config1→2，opening阈值90/当前95；原 sample/metric/unit/time/版本不改 |
 | 活动/聚合/投递/异常四标签 | `views/event-center.ts`、`event-center.test.ts` | 真正 event-center 浏览器入口；旧 rules 导航兼容，不删除旧规则合法运行 |
-| 详情事实/当时版本/当前配置跳转 | `template-event-evidence.ts`；`event-management.ts` | MySQL/VM/SNMP Lit 展示；原版本 drawer 与当前配置导航分开，真实 sample/attempt、单位、UTC、规则模板/config版本回读 |
+| 详情事实/当时版本/当前配置跳转 | `template-event-evidence.ts`；`event-management.ts` | MySQL/VM/SNMP Lit 展示；原版本展开与当前配置导航分开（新三类资源 DOM 回归检查准确 URL；不冒称完整 app 跳转浏览器新执行），真实 sample/attempt、单位、UTC、规则模板/config版本回读 |
 | 确认只更新处理状态 | `template-events/:id/acknowledge`；正常 writer 集成 + browser | 同 episode保持 open、不执行操作、不创建投递；确认幂等审计；通用手工恢复拒绝模板事件 |
 | 历史不可删除断链 | `alert-event-service.ts`、告警清理路径及回归 | 事务锁后拒绝模板来源或 episode 关联删除；非模板行为保留；不做真实对象删除 |
 | 三类资源实时权限 | 生产共用 `server.ts` → `alert-event-access.ts` | Chief 六读取入口 Fastify+SQL-stub 独立负例；真实 JWT/MySQL/浏览器范围限制与 session撤权；NULL instance_id 不公开 |
@@ -38,10 +38,12 @@
 | --- | --- | --- |
 | 混合窗口、边界、持久化、浏览器、历史/确认 | `1f4b85549a0d3ad31e2150cbd4f02a6f5583b086` / `0a7c2543568409cb8468c258a23b4b1cbace0941` | [报告](https://multica.ai/api/attachments/01a19278-c266-7bc2-9267-197157d00f34/download)、[证据包](https://multica.ai/api/attachments/01a19279-00a8-7195-8931-71de3be90ccd/download) |
 | MySQL真实collector | `18d3dafb507a0ebb471f5bdd6efaffb91ed68bfd` / `0a9eec2e13b03c7665c025080fce799f769247fe` | [报告](https://multica.ai/api/attachments/01a1928b-1d95-704b-901c-7fd0827d145a/download)、[证据包](https://multica.ai/api/attachments/01a1928b-26fb-7410-9d7c-d088c39f5874/download) |
-| VM真实collector、SNMP受控协议 | 同上 / `c33712d9fe263a1873b92d6e6524119cb15894fe`、`60c08bed178655957dd708101718d569b2588970` | 本任务已接受评论及各自附件；最终矩阵附件索引固定精确ID和哈希 |
+| VM真实collector、SNMP受控协议 | 同上 / `c33712d9fe263a1873b92d6e6524119cb15894fe`、`60c08bed178655957dd708101718d569b2588970` | [VM证据](https://multica.ai/api/attachments/01a19476-c15e-7c75-8deb-8dff3a2dd0d1/download)、[SNMP证据](https://multica.ai/api/attachments/01a194d3-61f2-7946-92a1-a3e9fc1f1026/download)；最终附件索引固定哈希 |
 
 ## 集成与范围
 
 PR570仍堆叠在MAX238安全基线b5c140c1。公开契约由生成器检查，配置历史正式writer继续传严格校验原envelope；MAX240 query/storage/formal-store读方法不修改。PR567先于570合并，不能仅切base掩盖冲突。main保护要求 `ci-gate`；当前 workflow 只自动响应main PR，堆叠PR checks为空不代表通过。最终包记录实际门禁结果，未完成门禁不得标通过。
 
 本项没有授权生产部署/worker、共享3306写、实际解绑、目标运维或产品模型请求。通知豁免、网络受控协议验收是成员范围决定，不保留虚构外部阻塞。独立复核/验收/合并由Chief承接；开发方不merge、不标done。
+
+本次全量门禁发现并修正两项直接相关测试适配：旧事件 mock 对模板证据返回404，避免伪成功列表结构导致异步渲染异常；安全源码断言跟随已抽取的共用事件读取入口，继续检查六入口、实例/事件范围与详情授权。未放宽生产权限或数据解析。新增历史组件测试检查三类资源准确当前配置URL、展开原规则和确认禁用状态；它是DOM层证据，完整业务浏览器证据仍复用已接受阶段。

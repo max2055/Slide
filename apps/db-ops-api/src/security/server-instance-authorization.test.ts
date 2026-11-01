@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(import.meta.dirname, '../../server.ts'), 'utf8')
   + readFileSync(resolve(import.meta.dirname, '../cron/cron-routes.ts'), 'utf8');
+const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
 
 function routeBlocks(prefix: string): Array<{ method: string; path: string; block: string }> {
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -79,7 +80,14 @@ describe('server instance authorization coverage', () => {
     expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/reports/stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/alerts')[0]?.block).toContain('getAccessibleInstanceIds(');
-    expect(routeBlocks('/api/alerts/events')[0]?.block).toContain('getAccessibleInstanceIds(');
+    // MAX239 moved all six reads to the production/browser shared registrar.
+    // The first remaining inline route is POST, not the scoped GET list.
+    expect(source).toContain('await registerEventReadRoutes(fastify,verifyToken)');
+    expect(eventReads).toContain("for (const path of ['', '/stats', '/mttr', '/search', '/:id', '/:id/logs'])");
+    expect(eventReads).toContain('allowed_instance_ids: getAccessibleInstanceIds(actor)');
+    expect(eventReads).toContain('allowed_event_ids: ids');
+    expect(eventReads).toContain('await scope(actor)');
+    expect(eventReads).toContain('await requireEventAccess(req, reply, Number(req.params.id))');
   });
 
   it('checks instance ownership before reading or mutating alert event records', () => {
