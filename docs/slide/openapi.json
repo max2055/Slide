@@ -580,6 +580,733 @@
         ],
         "type": "object"
       },
+      "AlertDependency": {
+        "$id": "AlertDependency",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "changed_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "downstream": {
+            "additionalProperties": false,
+            "properties": {
+              "resource": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": {
+                    "enum": [
+                      "instance",
+                      "server",
+                      "network_device"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "type": "object"
+              },
+              "rule_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource",
+              "rule_id"
+            ],
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "upstream": {
+            "additionalProperties": false,
+            "properties": {
+              "resource": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "type": {
+                    "enum": [
+                      "instance",
+                      "server",
+                      "network_device"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "type": "object"
+              },
+              "rule_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource",
+              "rule_id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "upstream",
+          "downstream",
+          "id",
+          "revision",
+          "disabled",
+          "actor_id",
+          "changed_at"
+        ],
+        "type": "object"
+      },
+      "AlertDependencyCatalog": {
+        "$id": "AlertDependencyCatalog",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "rules": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "instance",
+                "server",
+                "network_device"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "name",
+            "rules"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "AlertDependencyChange": {
+        "$id": "AlertDependencyChange",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "disabled": {
+            "const": true,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_key": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": false,
+            "properties": {
+              "downstream": {
+                "additionalProperties": false,
+                "properties": {
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "rule_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "rule_id"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "upstream": {
+                "additionalProperties": false,
+                "properties": {
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "rule_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "rule_id"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "upstream",
+              "downstream"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation_key",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "AlertDependencyList": {
+        "$id": "AlertDependencyList",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "changed_at": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "type": "string"
+            },
+            "disabled": {
+              "type": "boolean"
+            },
+            "downstream": {
+              "additionalProperties": false,
+              "properties": {
+                "resource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "enum": [
+                        "instance",
+                        "server",
+                        "network_device"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "rule_id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resource",
+                "rule_id"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "revision": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "upstream": {
+              "additionalProperties": false,
+              "properties": {
+                "resource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "type": {
+                      "enum": [
+                        "instance",
+                        "server",
+                        "network_device"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "rule_id": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resource",
+                "rule_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "name",
+            "upstream",
+            "downstream",
+            "id",
+            "revision",
+            "disabled",
+            "actor_id",
+            "changed_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "AlertDependencyOperation": {
+        "$id": "AlertDependencyOperation",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "absent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "result": {
+                "additionalProperties": false,
+                "properties": {
+                  "dependency": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "actor_id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "changed_at": {
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                        "type": "string"
+                      },
+                      "disabled": {
+                        "type": "boolean"
+                      },
+                      "downstream": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "resource": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "enum": [
+                                  "instance",
+                                  "server",
+                                  "network_device"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "type": "object"
+                          },
+                          "rule_id": {
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource",
+                          "rule_id"
+                        ],
+                        "type": "object"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "name": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "revision": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "upstream": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "resource": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "type": "integer"
+                              },
+                              "type": {
+                                "enum": [
+                                  "instance",
+                                  "server",
+                                  "network_device"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "type": "object"
+                          },
+                          "rule_id": {
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "resource",
+                          "rule_id"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "upstream",
+                      "downstream",
+                      "id",
+                      "revision",
+                      "disabled",
+                      "actor_id",
+                      "changed_at"
+                    ],
+                    "type": "object"
+                  },
+                  "noop": {
+                    "type": "boolean"
+                  },
+                  "success": {
+                    "const": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "success",
+                  "dependency",
+                  "noop"
+                ],
+                "type": "object"
+              },
+              "status": {
+                "const": "committed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AlertDependencyResult": {
+        "$id": "AlertDependencyResult",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "dependency": {
+            "additionalProperties": false,
+            "properties": {
+              "actor_id": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "changed_at": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "type": "string"
+              },
+              "disabled": {
+                "type": "boolean"
+              },
+              "downstream": {
+                "additionalProperties": false,
+                "properties": {
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "rule_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "rule_id"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "upstream": {
+                "additionalProperties": false,
+                "properties": {
+                  "resource": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "type": {
+                        "enum": [
+                          "instance",
+                          "server",
+                          "network_device"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "rule_id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "rule_id"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "upstream",
+              "downstream",
+              "id",
+              "revision",
+              "disabled",
+              "actor_id",
+              "changed_at"
+            ],
+            "type": "object"
+          },
+          "noop": {
+            "type": "boolean"
+          },
+          "success": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "dependency",
+          "noop"
+        ],
+        "type": "object"
+      },
       "AlertInvestigationResponse": {
         "$id": "AlertInvestigationResponse",
         "additionalProperties": false,
@@ -20507,6 +21234,232 @@
         ],
         "type": "object"
       },
+      "NotificationDeliveryList": {
+        "$id": "NotificationDeliveryList",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "alert_id": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "attempts": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "attempt_number": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string"
+                  },
+                  "error_code": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "finished_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "workflow_job_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "workflow_job_id",
+                  "attempt_number",
+                  "status",
+                  "error_code",
+                  "created_at",
+                  "finished_at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "channel_id": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "decisions": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "actor_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "created_at": {
+                    "type": "string"
+                  },
+                  "decision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "reconciliation": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "state_version": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "actor_id",
+                  "reason",
+                  "state_version",
+                  "decision",
+                  "reconciliation",
+                  "created_at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "delivery": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempt_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "business_key": {
+                      "type": "string"
+                    },
+                    "channel_id": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "idempotent_until": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "kind": {
+                      "const": "notification",
+                      "type": "string"
+                    },
+                    "request_digest": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "source_id": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "updated_at": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    },
+                    "workflow_job_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "business_key",
+                    "kind",
+                    "source_id",
+                    "channel_id",
+                    "state",
+                    "version",
+                    "workflow_job_id",
+                    "attempt_id",
+                    "request_digest",
+                    "idempotent_until",
+                    "error_code",
+                    "updated_at"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "job_state": {
+              "type": "string"
+            },
+            "phase": {
+              "enum": [
+                "problem",
+                "recovery",
+                "escalation"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "alert_id",
+            "channel_id",
+            "phase",
+            "job_state",
+            "error_code",
+            "delivery",
+            "attempts",
+            "decisions"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
       "OkResponse": {
         "$id": "OkResponse",
         "additionalProperties": false,
@@ -40124,6 +41077,130 @@
         ]
       }
     },
+    "/api/alerts/dependencies": {
+      "get": {
+        "operationId": "alertDependencyList",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDependencyList"
+                }
+              }
+            },
+            "description": "AlertDependencyList"
+          }
+        }
+      },
+      "post": {
+        "operationId": "alertDependencyCreate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertDependencyChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDependencyResult"
+                }
+              }
+            },
+            "description": "AlertDependencyResult"
+          }
+        }
+      }
+    },
+    "/api/alerts/dependencies/{id}": {
+      "put": {
+        "operationId": "alertDependencyChange",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertDependencyChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDependencyResult"
+                }
+              }
+            },
+            "description": "AlertDependencyResult"
+          }
+        }
+      }
+    },
+    "/api/alerts/dependencies/operations/{key}": {
+      "get": {
+        "operationId": "alertDependencyOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDependencyOperation"
+                }
+              }
+            },
+            "description": "AlertDependencyOperation"
+          }
+        }
+      }
+    },
+    "/api/alerts/dependencies/resources": {
+      "get": {
+        "operationId": "alertDependencyResources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertDependencyCatalog"
+                }
+              }
+            },
+            "description": "AlertDependencyCatalog"
+          }
+        }
+      }
+    },
     "/api/alerts/events/{id}/close": {
       "post": {
         "description": "Requires resolved state and recorded recovery confirmation; legacy verification_* records remain readable. Requires alert:manage and current instance read-write access. Duplicate/late/conflicting requests return 409 and cannot overwrite the first audit. Writes and audit use one locked transaction.",
@@ -45700,6 +46777,23 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/api/notification/deliveries": {
+      "get": {
+        "operationId": "notificationDeliveries",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDeliveryList"
+                }
+              }
+            },
+            "description": "NotificationDeliveryList"
+          }
+        }
       }
     },
     "/api/operations/action-executions/{id}": {

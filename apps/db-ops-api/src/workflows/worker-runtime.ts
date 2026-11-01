@@ -69,7 +69,8 @@ export class MysqlWorkflowStore implements WorkflowStore {
        AND NOT EXISTS (SELECT 1 FROM notification_delivery_states d
          WHERE d.business_key = CONCAT(IF(workflow_jobs.job_type = 'notification.deliver', 'notification:', 'report:'),
            JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload, IF(workflow_jobs.job_type = 'notification.deliver', '$.alertId', '$.reportId'))),
-           ':', JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload, '$.channelId')))
+           ':', JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload, '$.channelId')),
+           IF(JSON_EXTRACT(workflow_jobs.payload,'$.transition.id') IS NULL,'',CONCAT(':',JSON_UNQUOTE(JSON_EXTRACT(workflow_jobs.payload,'$.transition.id')))))
          AND d.state IN ('sending', 'unknown'))`, [jobId],
     );
     return Number(result.affectedRows) === 1;

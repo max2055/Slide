@@ -1,3 +1,5 @@
+import { actorContextService,type ActorContext } from './auth/actor-context.js';
+import { canReadResource } from './resources/resource-service.js';
 import { publicMaintenanceTags } from './maintenance-public-tags.js';
 /**
  * 通知数据库服务
@@ -515,15 +517,6 @@ class NotificationDatabaseService {
     );
   }
 
-  async recordReplay(jobId: string, actorId: number, reason: string): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) throw new Error('NOTIFICATION_AUDIT_UNAVAILABLE');
-    await pool.execute(
-      'INSERT INTO notification_delivery_replays (workflow_job_id, actor_id, reason) VALUES (?, ?, ?)',
-      [jobId, actorId, reason.slice(0, 512)],
-    );
-  }
-
   /**
    * 标记告警为已处理（用于维护窗口抑制等场景）
    */
@@ -553,26 +546,24 @@ class NotificationDatabaseService {
     status?: string;
     limit?: number;
     offset?: number;
-  }): Promise<NotificationRecord[]> {
+  },actor?:ActorContext): Promise<NotificationRecord[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw Error('DELIVERY_QUERY_UNAVAILABLE');
 
     try {
       let sql = `
-        SELECT id, alert_id, channel_id, status, error, sent_at, created_at
-        FROM notification_records
+        SELECT n.id, n.alert_id, n.channel_id, n.status, n.error, n.sent_at, n.created_at, a.instance_id,a.server_id,a.network_device_id
+        FROM notification_records n JOIN alerts a ON a.id=n.alert_id
         WHERE 1=1
       `;
       const params: any[] = [];
 
       if (filters?.alert_id !== undefined) {
-        sql += ' AND alert_id = ?';
+        sql += ' AND n.alert_id = ?';
         params.push(filters.alert_id);
       }
       if (filters?.channel_id !== undefined) {
-        sql += ' AND channel_id = ?';
+        sql += ' AND n.channel_id = ?';
         params.push(filters.channel_id);
       }
       if (filters?.status) {
@@ -581,11 +572,11 @@ class NotificationDatabaseService {
           // 使用 throw 让上层 catch 捕获（与 pool.execute 失败的处理一致）
           throw new Error(`Invalid status filter: ${filters.status}. Valid values: ${VALID_STATUSES.join(', ')}`);
         }
-        sql += ' AND status = ?';
+        sql += ' AND n.status = ?';
         params.push(filters.status);
       }
 
-      sql += ' ORDER BY created_at DESC';
+      sql += ' ORDER BY n.created_at DESC';
 
       if (filters?.limit !== undefined) {
         sql += ' LIMIT ?';
@@ -597,10 +588,11 @@ class NotificationDatabaseService {
       }
 
       const [rows] = await pool.execute(sql, params) as any;
-      return rows;
+      if(!actor)return rows.map(({instance_id,server_id,network_device_id,...r}:any)=>r);
+      const live=await actorContextService.revalidateActor(actor);
+      return rows.filter((r:any)=>{const ref=r.instance_id?{type:'instance' as const,id:Number(r.instance_id)}:r.server_id?{type:'server' as const,id:Number(r.server_id)}:r.network_device_id?{type:'network_device' as const,id:Number(r.network_device_id)}:null;return ref?canReadResource(live,ref):live.permissions.includes('*')&&!live.resourceBoundary;}).map(({instance_id,server_id,network_device_id,...r}:any)=>r);
     } catch (error) {
-      console.error('获取通知记录失败:', error);
-      return [];
+      throw Error('DELIVERY_QUERY_UNAVAILABLE');
     }
   }
 

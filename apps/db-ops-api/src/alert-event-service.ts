@@ -1,3 +1,4 @@
+import { enqueueNotificationTransition } from './notification-transition.js';
 import { maintenanceAt } from './maintenance-intervals.js';
 import type { ActorContext } from './auth/actor-context.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
@@ -80,6 +81,7 @@ class AlertEventService {
       await connection.execute("UPDATE alert_events SET status='resolved',resolved_at=? WHERE id=?", [new Date(next.closed_at!),rows[0].event_id]);
       await connection.execute("INSERT INTO alert_event_logs(event_id,action,details) VALUES(?,'resolved',?)", [rows[0].event_id,
         JSON.stringify({ action:'trigger_recovered', episode_id:next.episode_id, ...evidence, at:next.closed_at, value:next.last.value })]);
+      await enqueueNotificationTransition(connection,Number(rows[0].alert_id),{id:'recovery',phase:'recovery',at:next.closed_at!});
     }
   }
   private getPool(): mysql.Pool | null {

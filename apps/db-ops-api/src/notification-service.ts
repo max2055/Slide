@@ -1,3 +1,5 @@
+import { dbConnection } from './db-connection.js';
+import { enqueueNotificationTransition } from './notification-transition.js';
 import { maintenanceBlocksDelivery } from './maintenance-notification.js';
 /**
  * 通知推送服务
@@ -580,171 +582,16 @@ export class NotificationService {
 
   /**
    * 发送升级通知到所有已启用的通知渠道
-   * 失败时记录日志但不抛出异常，确保不阻断升级流程
+   * 兼容入口：只写入现有持久工作流，不直接调用外部传输
    */
   async sendEscalationNotification(alertId: number, fromLevel: string, toLevel: string): Promise<void> {
-    try {
-      // 通过 database service 查询告警详情（含实例信息）
-      const alert = await notificationDatabaseService.getAlertById(alertId);
-      if (!alert) {
-        console.log(`⚠️ 升级通知：告警 ${alertId} 不存在`);
-        return;
-      }
-      const channels = await notificationDatabaseService.getEnabledChannels();
-      if (channels.length === 0) return;
-
-      // 复用已有的路由逻辑（按升级后的级别匹配渠道）
-      const matchedChannels = this.routeAlert(alert, channels);
-      if (matchedChannels.length === 0) {
-        console.log(`⚠️ 升级通知：告警 ${alertId} 没有匹配的通知渠道`);
-        return;
-      }
-
-      for (const channel of matchedChannels) {
-        try {
-          // 为每个渠道独立构建消息（各渠道格式不同）
-          const message = this.buildEscalationMessage(
-            channel.type,
-            alert,
-            fromLevel,
-            toLevel
-          );
-          const result = await this.sendWithRetry(channel, message);
-          if (result.success) {
-            console.log(`🔺 升级通知已发送 [${channel.name}]: 告警 #${alertId} ${fromLevel} → ${toLevel}`);
-          } else {
-            console.error(`⚠️ 升级通知发送失败 [${channel.name}]: 告警 #${alertId} - ${result.error}`);
-          }
-        } catch (error: any) {
-          console.error(`⚠️ 升级通知发送异常 [${channel.name}]: 告警 #${alertId} - ${error.message}`);
-        }
-      }
-    } catch (error: any) {
-      console.error(`升级通知发送异常: 告警 #${alertId} - ${error.message}`);
-    }
-  }
-
-  /**
-   * 构建升级通知消息（复用已有 buildMessage 的模板风格）
-   */
-  private buildEscalationMessage(
-    channelType: string,
-    alert: any,
-    fromLevel: string,
-    toLevel: string
-  ): any {
-    const instanceName = alert.instance_name || '未知实例';
-    const instanceHost = alert.instance_host || 'N/A';
-    const timeStr = alert.created_at instanceof Date
-      ? alert.created_at.toISOString()
-      : String(alert.created_at);
-
-    switch (channelType) {
-      case 'dingtalk': {
-        const title = `[升级] [${toLevel.toUpperCase()}] ${alert.title}`;
-        const text = `### [升级] [${toLevel.toUpperCase()}] ${alert.title}\n\n` +
-          `- **实例**: ${instanceName} (${instanceHost})\n` +
-          `- **类型**: ${alert.alert_type}\n` +
-          `- **等级**: ${fromLevel} → **${toLevel}**\n` +
-          `- **指标**: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
-          `- **阈值**: ${alert.threshold_value || 'N/A'}\n` +
-          `- **时间**: ${timeStr}\n\n` +
-          `告警已自动升级，请及时处理。\n` +
-          `${alert.message}`;
-        return {
-          msgtype: 'markdown',
-          markdown: { title, text },
-          at: { isAtAll: false },
-        };
-      }
-
-      case 'wecom': {
-        const content = `### [升级] [${toLevel.toUpperCase()}] ${alert.title}\n\n` +
-          `> **实例**: ${instanceName}\n` +
-          `> **主机**: ${instanceHost}\n` +
-          `> **类型**: ${alert.alert_type}\n` +
-          `> **等级**: ${fromLevel} → **${toLevel}**\n` +
-          `> **指标**: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
-          `> **阈值**: ${alert.threshold_value || 'N/A'}\n` +
-          `> **时间**: ${timeStr}\n\n` +
-          `告警已自动升级，请及时处理。\n` +
-          `${alert.message}`;
-        return {
-          msgtype: 'markdown',
-          markdown: { content },
-        };
-      }
-
-      case 'feishu': {
-        const colorMap: Record<string, string> = {
-          info: 'blue',
-          warning: 'orange',
-          error: 'red',
-          critical: 'red',
-        };
-        return {
-          msg_type: 'interactive',
-          card: {
-            header: {
-              title: {
-                tag: 'plain_text',
-                content: `[升级] [${toLevel.toUpperCase()}] ${alert.title}`,
-              },
-              template: colorMap[toLevel] || 'red',
-            },
-            elements: [
-              {
-                tag: 'div',
-                text: {
-                  tag: 'lark_md',
-                  content: `**实例**: ${instanceName} (${instanceHost})\n` +
-                    `**类型**: ${alert.alert_type}\n` +
-                    `**等级**: ${fromLevel} → **${toLevel}**\n` +
-                    `**指标**: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
-                    `**阈值**: ${alert.threshold_value || 'N/A'}\n` +
-                    `**时间**: ${timeStr}`,
-                },
-              },
-              {
-                tag: 'content',
-                content: [[{ tag: 'plain_text', content: '告警已自动升级，请及时处理。' }]],
-              },
-            ],
-          },
-        };
-      }
-
-      case 'email':
-        return {
-          subject: `[升级] [${toLevel.toUpperCase()}] ${alert.title}`,
-          text: `告警已自动升级，请及时处理。\n\n` +
-            `实例: ${instanceName} (${instanceHost})\n` +
-            `类型: ${alert.alert_type}\n` +
-            `等级: ${fromLevel} → ${toLevel}\n` +
-            `指标: ${alert.metric_name || 'N/A'} = ${alert.metric_value || 'N/A'}\n` +
-            `阈值: ${alert.threshold_value || 'N/A'}\n` +
-            `时间: ${timeStr}\n\n` +
-            `${alert.message}`,
-        };
-
-      case 'webhook':
-      default: {
-        return {
-          alert_id: alert.id,
-          instance_name: instanceName,
-          instance_host: instanceHost,
-          alert_type: alert.alert_type,
-          from_level: fromLevel,
-          to_level: toLevel,
-          title: alert.title,
-          message: `告警已从 ${fromLevel} 升级到 ${toLevel}`,
-          metric_value: alert.metric_value,
-          threshold_value: alert.threshold_value,
-          created_at: timeStr,
-          escalation: true,
-        };
-      }
-    }
+    const pool = dbConnection.getPool();
+    if (!pool) throw Error('DELIVERY_STORE_UNAVAILABLE');
+    const c = await pool.getConnection();
+    try { await c.beginTransaction();
+      await enqueueNotificationTransition(c,alertId,{id:`escalation-${toLevel}`,phase:'escalation',at:new Date().toISOString(),from_level:fromLevel,to_level:toLevel});
+      await c.commit();
+    } catch(e) { await c.rollback();throw e; } finally {c.release();}
   }
 
   /**

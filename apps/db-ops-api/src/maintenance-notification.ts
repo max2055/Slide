@@ -3,7 +3,7 @@ import { dbConnection } from './db-connection.js';
 import { maintenanceAt } from './maintenance-intervals.js';
 import { maintenanceWindowService } from './maintenance-window-service.js';
 /** Rechecked immediately before transport, including replay of a saved delivery request. */
-export async function maintenanceBlocksDelivery(alertId:number):Promise<boolean>{
+export async function maintenanceBlocksDelivery(alertId:number, transitionAt?:string):Promise<boolean>{
  const pool=dbConnection.getPool();if(!pool)throw Error('MAINTENANCE_STATE_UNKNOWN');
  const [rows]=await pool.execute<RowDataPacket[]>('SELECT instance_id,server_id,network_device_id,tags,created_at FROM alerts WHERE id=?',[alertId]);
  if(rows.length!==1)throw Error('MAINTENANCE_ALERT_UNKNOWN');
@@ -13,6 +13,7 @@ export async function maintenanceBlocksDelivery(alertId:number):Promise<boolean>
  const ref=a.instance_id?{type:'instance' as const,id:Number(a.instance_id)}:a.server_id?{type:'server' as const,id:Number(a.server_id)}:a.network_device_id?{type:'network_device' as const,id:Number(a.network_device_id)}:null;
  if(!ref)return false;
  const windows=[...await maintenanceAt(pool as unknown as PoolConnection,ref,new Date(a.created_at).getTime()),...await maintenanceAt(pool as unknown as PoolConnection,ref,Date.now())];
+ if(transitionAt)windows.push(...await maintenanceAt(pool as unknown as PoolConnection,ref,Date.parse(transitionAt)));
  if(windows.length)return true;
  return ref.type==='instance'&&(await maintenanceWindowService.isActiveMaintenanceWindow(ref.id)).active;
 }
