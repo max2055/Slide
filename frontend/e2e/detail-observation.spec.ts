@@ -106,9 +106,8 @@ async function capture(page: Page, name: string) {
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' });
   // Keep the actual observation readable even when earlier empty buckets make the table long.
-  const observed = page.locator('semantic-metrics time').last();
+  const observed = page.locator('semantic-metrics time:visible').first();
   if (await observed.count()) {
-    if (!(await observed.isVisible())) await page.locator('semantic-metrics summary').filter({hasText:'时间桶明细（聚合值，不是原始采样）'}).first().click();
     await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
   }
 }
@@ -140,7 +139,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, theme] of
   await page.route(path, async route => { await new Promise<void>(resolve => release = resolve); await route.fulfill({ status: 500, body: '{}' }); });
   await page.clock.fastForward(2000); await refresh.click(); await expect(refresh).toBeDisabled();
   await expect(header).toHaveText(successfulRead!); await capture(page, `${kind}-loading-${width}-${theme}`);
-  release(); await expect(view.getByRole('alert')).toContainText('成功读取时间未更新'); await expect(refresh).toBeEnabled();
+  release(); await expect(view.getByRole('alert').filter({ hasText: '成功读取时间未更新' })).toContainText('成功读取时间未更新'); await expect(refresh).toBeEnabled();
   await expect(header).toHaveText(successfulRead!); await capture(page, `${kind}-detail-failed-${width}-${theme}`);
   await page.unroute(path);
   // New accepted evidence changes observed_at and freshness together; server values are controlled, not SSH acceptance.
@@ -151,7 +150,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, theme] of
   await refresh.click(); await expect(refresh).toBeEnabled(); await expect(times).toHaveCount(0);
   await expect(metrics).toContainText('未知'); await capture(page, `${kind}-unknown-${width}-${theme}`);
   await page.route('**/api/metrics/query', route => route.fulfill({ status: 403, body: '{}' }));
-  await metrics.getByRole('button', { name: '刷新标准指标' }).click(); await expect(metrics.getByRole('alert')).toContainText('权限');
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click(); await expect(metrics.getByRole('alert').filter({ hasText: '权限' })).toContainText('权限');
   await expect(times).toHaveCount(0); await capture(page, `${kind}-metrics-forbidden-${width}-${theme}`);
   await page.unroute('**/api/metrics/query');
   await page.route(path, route => route.fulfill({ status: 403, body: '{}' }));

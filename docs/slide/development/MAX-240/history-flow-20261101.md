@@ -1,5 +1,7 @@
 # MAX-240 历史读侧候选与验收边界
 
+当前结论以文末“9b6 复核后完整流程候选”为准；此前章节是保留的历史证据，不代表当前权限拆分或依赖状态。
+
 日期：2026-11-01。任务起点 `902ea13c06d287171575d45fa2ad362d55c08f77`，PR #568；保留原 RAW-PAGE 实现。整合 MAX-239 PR #570 实际安全头 `0a9eec2e13b03c7665c025080fce799f769247fe`（其 base `88fc15e2bce814218ff2f1836a33d57ff236eef6`），合并提交 `24d078bc6`。该依赖已有持久化 episode、事件 writer 和配置快照；不能继续按“episode 仅内存”判断。
 
 ## 实现与可验证行为
@@ -66,3 +68,21 @@ Chief 已独立接受 `29a2029ea` 的读侧阶段证据；整单未完成。CI r
 浏览器复测第一次在 schema 初始化时因任务 MySQL 容器 OOM（Docker action=oom / exit137）退出，尚未进入业务用例；保留失败日志和 Docker 事件作为环境证据。仅重建本任务容器，限制512MiB并降低 InnoDB buffer、关闭 performance_schema，等待三次 TCP 查询就绪后，单独运行同一浏览器命令，5项全部通过。未停止或修改其他任务容器；本任务测试服务和容器已清理。
 
 本轮结束前对 MAX-238/242 自 `2026-11-01T01:07:09Z` 起的新评论作一次有界核对，均无新增交付：238 run `01a194a5-46fe-7b20-948b-eaa2feb8f7b3` 仍负责持久化旧采样设置读取；242 run `01a194a5-5e7e-76e3-b378-983a7998c512` 仍负责工作空间草案上下文 helper。没有可声明已交付的准确契约/SHA，因此没有编造接口、抢改生产者文件或等待轮询。下一次由 Chief 现有终态规则接回后，先核对实际安全头及接口，再消费到本项 history service/query/API 与 semantic-metrics。维护有效区段继续由 MAX-244 生产；当前诚实显示不可用。完整流程与合并门禁仍未宣称通过。
+
+## 9b6 复核后完整流程候选（2026-11-01）
+
+本轮起点 `9b6c7ab4523b1627fc2860611d0fe2b66f654ba0`，保留所有起点和双方实现。Chief 的 P1 正确：此前只保护新 `/api/metrics/*`，默认内部 consumer 使旧 HTTP 在存储等待中撤权仍返回 200。RED 提交 `e65000d54` 真实 MySQL 锁等待复现；修复 `7b01fc23e` 后默认 consumer 一律实时用户认证，内部调度显式引用 `internalMetricConsumerService`。不根据 userId/sessionVersion 数值选择绕过认证。
+
+用户链审计覆盖 `resource-api` 默认调用、旧实例/服务器最新/历史/summary、网络 HTTP、resource diagnostic、实例诊断、query_metrics、用户服务器诊断和报告。`discover`/inventory/查询/原始页在存储前后重新认证；诊断聚合结束重新验证身份、权限和已返回资源范围，避免吞掉内部错误后返回旧数据。HTTP 传播 401/403；旧实例入口额外保留 metric:view 撤销检查。内部告警、基线、容量、数据库内部采集、服务器报告显式使用内部读；用户触发的报告和诊断显式传真实 actor。query_metrics 的 history 模式现传 `history:true`，消费同一完整保留窗口。
+
+MAX-238 已接受安全头 `b5c140c1d646bfb5581ff88da7498b4793e7322d`（source `50c31f186ff4ac6f8740e3dff8abaf2284d2c6d1`）通过 `b5324f51c` 整合。消费正式 `TemplateBindingService.readConfigurationAt(actor,ref,revision)`，HTTP 契约 `/api/metrics/configuration-history/{type}/{id}/{revision}`；按样本 revision 独立计算 interval、stale、counter gap。effective 才作为计算依据，published/unknown 不冒充已有效，明确回退 60s/180s 历史假设；跨 revision 同一桶保留所有来源但显示未知，不混算 counter。返回每 revision 配置与有效依据，不推断连续生效区间。当前配置变化不会覆盖旧周期、覆盖率、阈值或事件快照。
+
+MAX-242 实际交付安全候选 `955134eba1f51bdfad6467ced5319a30e26a03df`（source `4b2b322843ba25be697593c18a6de6894142db07`）通过 `8c3e2079b` 整合；不声称其已经 Chief 独立接受。semantic-metrics 消费公开 `investigationEntryHref`，由实际结果 window、资源稳定身份、metric/semantic_version、精确 dimensions、选定 eventId 和 returnTo 建链接。真实浏览器点击进入生产工作空间及授权 facts，核对相同上下文；只打开不创建调查、不发模型请求。独立组件宿主路径不是合法应用前缀时省略入口，仍正常展示历史，不伪造链接。
+
+旧成功观测保留实际时间、值、质量；最后一桶缺口仍显示未知，另标“窗口内最后保留观测（不代表当前值）”，不以旧值覆盖当前失败。原 RAW-PAGE/1440/分页/缺口峰值/身份/改名/解绑授权历史/冻结阈值证据保留；新增变更重跑受影响回归。
+
+CI 诊断：`41260387276` 的源码 qualification 已成功；browser-edge 中保留观测时间隐藏及旧测试摘要定位不匹配直接影响历史验收，已修复；investigation shard6 的重复 CLAUDE.md 来自风险祖先 `5663dc837`，main 已删除且规则合入 AGENTS，删除重复文件恢复结构门禁。release-artifact/ci-gate 是前置失败传播，不能据此声称已绿。未跳过或修改门禁。此次新入口渲染失败归本次整合，已修复并补独立宿主回归；慢查询夹具因 performance_schema 关闭无数据归环境，使用符合该测试要求的自建库重验。
+
+维护有效区段仍归 P2/MAX-244；当前诚实显示不可用，不能用静默当前状态推历史。242 生产者独立接受及当前 PR CI 结果由 Chief 汇总验收；本候选不合并、不部署。无共享3306写入、生产解绑、通知、真实模型或子代理。准确当前 SHA、最新测量和本轮门禁清单在交付附件中。
+
+本轮容量重新测量（包含逐 revision 配置读取）：真实持久化 936000 条，500服务器/100数据库/50网络设备，每资源1序列、60秒、24h；4客户端30次HTTP均200、1440槽、错误0、截断0。p50=1012.69ms、p95=1430.96ms、p99/max=1498.45ms；写入386267.14ms，测试总401.81s。MySQL8.4.10/Node24.18.0/macOS，自建768MiB限制库、64MiB InnoDB buffer，测量时主机存在其他任务负载。基准是合成契约样本、真实MySQL读侧HTTP及配置SQL，使用受控actor，不代表完整JWT身份重载容量、650个生产采集目标、多指标、更长保留或SLO。真实JWT链另以业务浏览器验收覆盖。
