@@ -124,6 +124,8 @@ export class SemanticMetrics extends LitElement {
   @state() result: SemanticResult | null = null;
   @state() error = '';
   @state() busy = false;
+  @state() private maintenance: { intervals: Array<{id:string;revision:number;name:string;reason:string;timezone:string;effective_from:string;effective_to:string}>; event_links: Array<{event_id?:string;alert_id?:number;state:string;at:string}> } | null = null;
+  @state() private maintenanceError = '';
   private generation = 0;
   @state() private accessInvalidated = false;
   @state() private collection: CollectionStatus | null = null;
@@ -135,7 +137,7 @@ export class SemanticMetrics extends LitElement {
   @state() private rawBusy = false;
   private rawGeneration = 0;
   private onAccessChanged = () => {
-    ++this.generation; this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = ''; this.busy = false;
+    ++this.generation; this.maintenance = null; this.maintenanceError = ''; this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = ''; this.busy = false;
     this.collection = null; this.attempts = []; this.statusError = '';
     this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
     this.accessInvalidated = true; this.error = '权限或登录状态已变更，请重新打开资源后读取指标';
@@ -146,6 +148,7 @@ export class SemanticMetrics extends LitElement {
     window.addEventListener('slide-session-expired', this.onAccessChanged);
   }
   private resetResult() {
+    this.maintenance = null; this.maintenanceError = '';
     this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = '';
     this.collection = null; this.attempts = []; this.statusError = '';
     this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
@@ -189,6 +192,7 @@ export class SemanticMetrics extends LitElement {
     if (this.custom && !this.range && !(this.from && this.to)) { this.error = '请选择并应用自定义时间范围'; return; }
     const generation = ++this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
     const current = () => generation === this.generation && resourceId === this.resourceId && resourceType === this.resourceType;
+    this.maintenance = null; this.maintenanceError = '维护历史正在读取，状态未知';
     this.busy = true; this.error = ''; this.baselineKey = ''; this.statusError = '';
     try {
       const now = Date.now();
@@ -202,6 +206,21 @@ export class SemanticMetrics extends LitElement {
       if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
       const result = await response.json();
       if (current()) this.result = result;
+      const maintenanceResponse = await authFetch(`/api/maintenance-windows/intervals/${resourceType}/${resourceId}?${new URLSearchParams({from,to})}`);
+      if (!current()) return;
+      if (!maintenanceResponse.ok) {
+        if ([401,403,404].includes(maintenanceResponse.status)) { this.result = null; throw new Error(statusErrors(maintenanceResponse.status)); }
+        this.maintenanceError = '维护历史查询失败，状态未知；不能据此判断无维护';
+      } else {
+        const maintenance = await maintenanceResponse.json();
+        if (!current()) return;
+        if (maintenance.resource?.type !== resourceType || Number(maintenance.resource?.id) !== resourceId || maintenance.from !== from || maintenance.to !== to
+          || !Array.isArray(maintenance.intervals) || !Array.isArray(maintenance.event_links)) throw new Error('维护历史响应上下文不匹配');
+        this.maintenance = { ...maintenance, intervals: maintenance.intervals.flatMap((v: any) => {
+          const start = Math.max(Date.parse(from), Date.parse(v.effective_from)), end = Math.min(Date.parse(to), Date.parse(v.effective_to));
+          return Number.isFinite(start) && Number.isFinite(end) && start < end ? [{...v,effective_from:new Date(start).toISOString(),effective_to:new Date(end).toISOString()}] : [];
+        }) }; this.maintenanceError = '';
+      }
     } catch (e) { if (current()) this.error = e instanceof Error ? e.message : errors(503); }
     finally { if (current()) this.busy = false; }
     if (current()) await this.loadCollection(generation, current);
@@ -289,6 +308,12 @@ export class SemanticMetrics extends LitElement {
         while (to >= 0 && Date.parse(series.buckets[to].window.from) >= end) to--;
         return from >= 0 && to >= from ? [{ name: region.name, from, to, color: region.color }] : [];
       });
+    for (const interval of this.maintenance?.intervals ?? []) {
+      const from = series.buckets.findIndex(b => Date.parse(b.window.to) > Date.parse(interval.effective_from));
+      let to = series.buckets.length - 1;
+      while (to >= 0 && Date.parse(series.buckets[to].window.from) >= Date.parse(interval.effective_to)) to--;
+      if (from >= 0 && to >= from) regions.push({name:`维护 · ${interval.name} r${interval.revision}`,from,to,color:'var(--accent)'});
+    }
     return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? metric.definition.unit}
       .regions=${regions} .timeData=${series.buckets.map(b => b.window.to)} .series=${[{ name: metricName(metric.definition.id), data, ...envelope }, ...thresholds]}></metric-chart>`;
   }
@@ -568,6 +593,13 @@ export class SemanticMetrics extends LitElement {
           ${investigation ? html`<a class="btn btn-sm" href=${investigation}>以此指标维度打开调查草案</a>` : nothing}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
           ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
       })}</div>`)}</div>` : nothing}
+    <section aria-label="维护历史"><h3>维护历史</h3>
+      <p>仅覆盖已持久化的有限期限修订；旧周期维护历史未覆盖，状态未知。区间左闭右开，按当前窗口裁剪；展示时区 ${timezone()}。</p>
+      ${this.maintenanceError ? html`<p role="status">${this.maintenanceError}</p>` : nothing}
+      ${this.maintenance?.intervals.length === 0 ? html`<p>该窗口没有已记录的有限期限维护区段。</p>` : nothing}
+      ${(this.maintenance?.intervals ?? []).map(v => html`<p>${v.name} · 修订 ${v.revision} · ${v.reason} · [${localTime(v.effective_from)}, ${localTime(v.effective_to)}) · 定义时区 ${v.timezone}</p>`)}
+      ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'}</p>`)}
+    </section>
     ${this.renderHistoryContext()}
     ${this.renderRaw(metrics)}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>

@@ -41,7 +41,6 @@ describe('server instance authorization coverage', () => {
     for (const path of [
       '/api/metrics/:instanceId',
       '/api/baseline/:instanceId/:metricName',
-      '/api/maintenance-windows/check/:instanceId',
       '/api/sql/audit/instance/:instanceId',
     ]) {
       const [route] = routeBlocks(path);
@@ -79,7 +78,8 @@ describe('server instance authorization coverage', () => {
     expect(routeBlocks('/api/dashboard/capacity-trend')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/reports/stats')[0]?.block).toContain('getAccessibleInstanceIds(');
-    expect(routeBlocks('/api/alerts')[0]?.block).toContain('getAccessibleInstanceIds(');
+    expect(source).toContain('await registerAlertListRoute(fastify,verifyToken)');
+    expect(readFileSync(resolve(import.meta.dirname, '../alert-list-route.ts'), 'utf8')).toContain('getAccessibleInstanceIds(');
     // MAX-240 integration: MAX-239 moved scoped reads into the shared registrar.
     expect(source).toContain('await registerEventReadRoutes(fastify,verifyToken)');
     const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
@@ -106,10 +106,11 @@ describe('server instance authorization coverage', () => {
   });
 
   it('scopes maintenance windows and silence records, including ID-based mutations', () => {
-    expect(routeBlocks('/api/maintenance-windows')[0]?.block).toContain('getAccessibleInstanceIds(');
-    for (const route of routeBlocks('/api/maintenance-windows/:id')) {
-      expect(route.block, `${route.method} ${route.path}`).toContain('requireMaintenanceWindowAccess(');
-    }
+    expect(source).toContain('await registerMaintenanceRoutes(fastify, verifyToken)');
+    const maintenance = readFileSync(resolve(import.meta.dirname, '../maintenance-intervals.ts'), 'utf8');
+    expect(maintenance).toContain('canReadResource(await live(),ref)');
+    expect(maintenance).toContain('this.access(final,previous');
+    expect(maintenance).toContain('this.access(final,next');
     expect(routeBlocks('/api/silence')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/silence/:id')[0]?.block).toContain('getSilenceInstanceId(');
   });

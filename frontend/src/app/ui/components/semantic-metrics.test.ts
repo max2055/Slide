@@ -289,6 +289,7 @@ const statusPayload = (overrides: { collection?: Record<string, unknown>; formal
 });
 const attemptAt = (overrides: Record<string, unknown> = {}) => ({ status: 'succeeded', started_at: instant, ended_at: instant, error: null, ...overrides });
 const serve = (query: unknown, status: unknown, attempts: unknown) => authFetch.mockImplementation(async (url: string) => {
+  if (url.includes('/maintenance-windows/intervals/')) return {ok:false,status:503};
   if (url === '/api/metrics/query') return ok(query);
   if (url.endsWith('/status')) return ok(status);
   if (url.endsWith('/attempts')) return ok(attempts);
@@ -370,7 +371,7 @@ it('reads status and attempts read-only without recommendations', async () => {
   expect(urls).toContain('/api/metrics/config/resources/instance/1/attempts');
   expect(urls.some(url => url.endsWith('/recommendations'))).toBe(false);
   expect(authFetch.mock.calls.every(call => call[1]?.method ? call[0] === '/api/metrics/query'
-    : String(call[0]).endsWith('/status') || String(call[0]).endsWith('/attempts'))).toBe(true);
+    : String(call[0]).includes('/maintenance-windows/intervals/') || String(call[0]).endsWith('/status') || String(call[0]).endsWith('/attempts'))).toBe(true);
 });
 
 // ---- MAX240-LATEST-DATA correction regressions ----
@@ -445,6 +446,7 @@ const openRaw = async (el: SemanticMetrics) => {
   return details;
 };
 const serveWithRaw = (data: unknown, raw: unknown | (() => unknown)) => authFetch.mockImplementation(async (url: string) => {
+  if (url.includes('/maintenance-windows/intervals/')) return {ok:false,status:503};
   if (url === '/api/metrics/query') return ok(data);
   if (url.endsWith('/status')) return ok(statusPayload());
   if (url.endsWith('/attempts')) return ok([]);
@@ -603,4 +605,19 @@ it('keeps metrics readable in a standalone host without an application route pre
     expect(el.shadowRoot!.textContent).toContain('9007199254740993');
     expect(el.shadowRoot!.querySelector('a[href*="entry="]')).toBeNull();
   } finally { history.replaceState(null, '', original); }
+});
+
+it('keeps failed maintenance unknown and discards a late maintenance response after principal change', async () => {
+  let finish!: (value: unknown) => void;
+  authFetch.mockImplementation(async (url: string) => {
+    if (url === '/api/metrics/query') return ok(result);
+    if (url.includes('/maintenance-windows/intervals/')) return new Promise(resolve => { finish = resolve; });
+    return {ok:false,status:503};
+  });
+  const el = await mount();
+  expect(el.shadowRoot!.textContent).toContain('维护历史正在读取，状态未知');
+  window.dispatchEvent(new Event('slide-permissions-loaded'));
+  finish(ok({resource:{type:'instance',id:1},intervals:[{reason:'迟到秘密'}],event_links:[]}));
+  await settle();
+  expect(el.result).toBeNull(); expect(el.shadowRoot!.textContent).not.toContain('迟到秘密');
 });

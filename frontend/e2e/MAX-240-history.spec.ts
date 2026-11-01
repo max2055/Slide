@@ -505,6 +505,33 @@ test('internal server report reads remain available without a user session ident
   } finally { await pool.query('DELETE FROM servers WHERE id=8402'); }
 });
 
+test('maintenance revisions from real HTTP remain half-open and visible in the same history context', async ({ page, request }) => {
+  await page.addInitScript(state => { for (const [key,value] of Object.entries(state)) localStorage.setItem(key,value); }, browserState!);
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  const headers = {Authorization:`Bearer ${await authenticatedToken(request)}`};
+  const now = Date.now(), start = new Date(now - HOUR).toISOString(), end = new Date(now + HOUR).toISOString();
+  const value = {name:'维护历史验收',reason:'原维护原因',resources:[{type:'instance',id:RESOURCE_ID}],starts_at:start,ends_at:end,timezone:'Asia/Shanghai'};
+  const created = await request.post(`${api}/api/maintenance-windows`,{headers,data:{operation_key:randomUUID(),expected_revision:0,value}});
+  expect(created.status()).toBe(200); const first = (await created.json()).window;
+  const changed = await request.put(`${api}/api/maintenance-windows/${first.id}`,{headers,data:{operation_key:randomUUID(),expected_revision:1,value:{...value,reason:'修订维护原因'}}});
+  expect(changed.status()).toBe(200);
+  const windowEnd = new Date().toISOString();
+  const returned = `/instance-detail?id=${RESOURCE_ID}&tab=metrics&metricResource=instance:${RESOURCE_ID}&metricFrom=${encodeURIComponent(iso(from))}&metricTo=${encodeURIComponent(windowEnd)}`;
+  await page.goto(origin+returned); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  const section=page.locator('semantic-metrics').getByRole('region',{name:'维护历史'});
+  await expect(section).toContainText('原维护原因'); await expect(section).toContainText('修订维护原因');
+  await expect(section).toContainText('旧周期维护历史未覆盖');
+  const read=async()=>{const r=await request.get(`${api}/api/maintenance-windows/intervals/instance/${RESOURCE_ID}?${new URLSearchParams({from:iso(from),to:end})}`,{headers});expect(r.status()).toBe(200);return r.json();};
+  const before=await read(); expect(before.intervals).toHaveLength(2);
+  expect(before.intervals[0].effective_to).toBe(before.intervals[1].effective_from);
+  const cancelled=await request.delete(`${api}/api/maintenance-windows/${first.id}`,{headers,data:{operation_key:randomUUID(),expected_revision:2,cancel:true}});expect(cancelled.status()).toBe(200);
+  const after=await read(); expect(after.intervals[0]).toEqual(before.intervals[0]);
+  expect(Date.parse(after.intervals[1].effective_to)).toBeLessThan(Date.parse(end));
+  await page.reload(); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
+  await writeFile(`${output}/maintenance-history.json`,JSON.stringify({before,after,modelCalls},null,2));
+});
+
 test('legacy HTTP rejects permission and session revocation committed during a real MySQL read wait', async ({ request }) => {
   const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
   for (const revoked of ['permission', 'metric_permission', 'session'] as const) {
