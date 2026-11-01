@@ -23,6 +23,7 @@ import {
   LLMModelDiscoveryRequestSchema,
 } from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
+import { registerTemplateAuthoringRoutes } from '../metrics/templates/authoring-routes.js';
 import { registerMetricTemplateRoutes } from '../metrics/templates/routes.js';
 
 describe('generated public API contract', () => {
@@ -142,10 +143,18 @@ describe('generated public API contract', () => {
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
       '/api/metrics/templates',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
       '/api/network-devices',
       '/api/network-devices/{id}',
       '/api/network-devices/{id}/backup-schedule',
@@ -240,6 +249,7 @@ describe('generated public API contract', () => {
       if (route.method === 'GET' || route.method === 'POST') registered.add(route.url.replace(/:(\w+)/g, '{$1}'));
     });
     await registerMetricTemplateRoutes(app, async () => undefined);
+    await registerTemplateAuthoringRoutes(app, async () => undefined);
     const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
     await registerTemplateTriggerRoutes(app,async()=>undefined);
     await app.ready();
@@ -258,6 +268,14 @@ describe('generated public API contract', () => {
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
       '/api/metrics/templates',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',

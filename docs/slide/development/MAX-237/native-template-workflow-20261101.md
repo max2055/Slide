@@ -46,8 +46,11 @@ pnpm --filter slide-api exec tsx e2e/max237-template-workflow.ts
 - 前端 `vitest run --maxWorkers=2`：155文件、1420项通过；后续仅边界文案改变，单文件2项及build/CSP复验。
 - `pnpm security:test`：35文件336项通过；`pnpm security:scan`通过。
 - API/frontend typecheck、contracts:check、build/CSP通过；生产脚本2个CSP检查通过，保留既有大chunk提示。
+- 公共API实际路由注册/确定性生成与迁移检查：8文件26项通过，3文件6项环境门控跳过。新增8条authoring路径和真实registrar均进入路由覆盖断言。
 - 新增生产文件oxlint：0警告0错误；复用清理契约47项通过；`git diff --check`通过。
 - 最终真实业务脚本绑定准确源码 `5171b1b41`，10组断言全部通过。Fastify序列化器有propertyNames strictTypes提示，但响应和全部业务断言成功；不隐藏日志。
+
+补充公共API门禁发现测试路径清单和registrar未包含新增8条路由；补齐真实注册及显式路径断言后26项通过，保留原失败日志。未修改或放宽接口契约。
 
 首轮迁移因新增日志表/列缺少仓库要求的注释失败，修正后完整迁移通过；首次组件 mock 重用已消费 Response 导致失败，修正夹具后全量通过。失败记录与最终日志一并保留；没有盲重放模型或外部写入。
 
