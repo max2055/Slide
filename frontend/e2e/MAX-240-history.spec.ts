@@ -1,3 +1,7 @@
+import { compileTriggerSnapshot } from '../../apps/db-ops-api/src/metrics/triggers/compile.ts';
+import { evaluateTriggerRule } from '../../apps/db-ops-api/src/metrics/triggers/evaluate.ts';
+import { nextTriggerEpisode } from '../../apps/db-ops-api/src/metrics/triggers/episode.ts';
+import { alertEventService } from '../../apps/db-ops-api/src/alert-event-service.ts';
 import { test, expect, type Page } from '@playwright/test';
 import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -30,13 +34,13 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 const MINUTE = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
 const RESOURCE_ID = 8401;
-const output = resolve('../docs/slide/development/MAX-240/e2e-20261029');
+const output = resolve(process.env.MAX240_BROWSER_OUTPUT ?? '../outputs/max240-browser-20261101');
 const schema = `max240_ui_${randomUUID().replaceAll('-', '')}`;
 const password = ` ${randomUUID()} `;
 let adminPool: any, pool: any, backend: ChildProcess, vite: Awaited<ReturnType<typeof createServer>>;
 let origin: string, workspace: string, backendLog = '', modelCalls = 0;
 let modelGuard: ReturnType<typeof createHttpServer>;
-let from = 0, to = 0;
+let from = 0, to = 0, eventId = 0;
 const iso = (ms: number) => new Date(ms).toISOString();
 const sqlTime = (value: string) => new Date(value).toISOString().slice(0, 23).replace('T', ' ');
 const fixture = sample('db.uptime_seconds');
@@ -111,6 +115,40 @@ test.beforeAll(async () => {
     rows.push(point(minute + 45_000, base + 2, `m${i}c`));
   }
   await seed(rows);
+
+  // Controlled read-side fixture uses the real snapshot compiler and existing event
+  // writer. It does not claim a remote collection/production binding acceptance.
+  const snapshotIdentity = `sha256:${'a'.repeat(64)}`;
+  const expression = (value: number, operator: string) => ({ node: 'compare', select: { aggregation: 'last' }, operator,
+    threshold: { kind: 'constant', value } });
+  const snapshot = compileTriggerSnapshot({ kind: 'trigger_candidate', internal: true, persisted: false, applied: false,
+    effective: false, status: 'candidate', resource: { type: 'instance', id: String(RESOURCE_ID) }, config_revision: 1,
+    plan_identity: snapshotIdentity, templates: [{ template_id: 'max240-fixture', version: 1, content_hash: snapshotIdentity }],
+    rules: [{ rule_id: 'max240-uptime', version: 1, body_hash: snapshotIdentity, scope: 'item:uptime',
+      item: { template_id: 'max240-fixture', item_id: 'uptime', item_version: 1 },
+      metric: series.metric, unit: 's', dimensions: {}, decision: 'collect', parameters: [],
+      problem: expression(90, '>'), recovery: expression(70, '<'),
+      quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 180000, nodata: { enabled: false } } }],
+  });
+  await pool.execute('INSERT INTO metric_trigger_snapshots(resource_key,config_revision,snapshot_hash,payload) VALUES(?,1,?,?)',
+    [`instance:${RESOURCE_ID}`, snapshot.snapshot_hash, JSON.stringify(snapshot)]);
+  const peak = rows.find(o => o.value && 'value' in o.value && o.value.value === 999999)!;
+  const triggerSample = { metric: peak.metric, unit: peak.unit, value: peak.value!, observed_at: peak.observed_at,
+    dimensions: {}, quality: peak.quality, accuracy: peak.accuracy, coverage: 1, window: null };
+  const rule = snapshot.rules[0];
+  const evaluation = evaluateTriggerRule(snapshot, { rule_id: rule.rule_id, scope: rule.scope }, {
+    input: { now: peak.observed_at, last_seen_at: peak.observed_at, previous: null, samples: [triggerSample] },
+    applied: { resource: { type: 'instance', id: RESOURCE_ID }, applied_revision: 1, plan_identity: snapshotIdentity, application_status: 'applied' },
+  });
+  const episode = nextTriggerEpisode({ identity: { resource: snapshot.resource, rule_id: rule.rule_id, version: rule.version,
+    body_hash: rule.body_hash, scope: rule.scope }, previous: null, evaluation })!;
+  await pool.query('UPDATE notification_channels SET enabled=0');
+  const c = await pool.getConnection();
+  try { await c.beginTransaction(); await alertEventService.persistTemplateTransition(c, null, episode, snapshot,
+    { sample_ids: [peak.id], attempt_ids: [peak.source.attempt_id], unit: peak.unit, dimensions: {}, samples: [{ ...triggerSample, id: peak.id }] });
+    await c.commit(); } catch (e) { await c.rollback(); throw e; } finally { c.release(); }
+  eventId = Number((await pool.query('SELECT event_id FROM metric_trigger_episodes WHERE episode_id=?', [episode.episode_id]))[0][0].event_id);
 
   // MAX240-LATEST-DATA: the current collection is failed while an older formal success and
   // its history stay readable. The status route derives state/blockers from these attempts.
@@ -274,14 +312,16 @@ test('the numeric and chart views stay on the same selected resource, metric, di
   const metrics = page.locator('semantic-metrics');
   const select = metrics.locator('select[aria-label="指标"]');
   await select.selectOption('db.uptime_seconds');
-  const fast = queryResponse(page, windowSpan(6 * HOUR));
+  const fast = page.waitForRequest(r => r.url().endsWith('/api/metrics/query') && r.method() === 'POST' && windowSpan(6 * HOUR)(r.postDataJSON()));
   await chooseWindow(page, '6');
+  await fast; // An intentionally superseded request may be aborted, so only require dispatch.
   const final = queryResponse(page, windowSpan(DAY));
   await chooseWindow(page, '24');
-  const body = await (await fast).json() as any;
+  const selected = await final;
+  const body = await selected.json() as any;
   const uptime = body.metrics.find((metric: any) => metric.definition.id === 'db.uptime_seconds');
   expect(uptime.series).toHaveLength(1);
-  const latest = (await final).request().postDataJSON();
+  const latest = selected.request().postDataJSON();
   expect(Date.parse(latest.to) - Date.parse(latest.from)).toBe(DAY);
   await expect(select).toHaveValue('db.uptime_seconds');
   await expect(metrics).toContainText('共 1440 个');
@@ -327,6 +367,40 @@ test('failed collection keeps the old usable value beside the real status, last 
   expect(chartData.time).toHaveLength(1440);
   expect(chartData.series[0].data.filter((v: number | null) => v !== null).length).toBeGreaterThan(1_000);
   await page.screenshot({ path: `${output}/latest-data-failed.png`, fullPage: true, animations: 'disabled' });
+});
+
+test('reads frozen thresholds and same-window events after controlled unbinding and renaming', async ({ page }) => {
+  const [bindings] = await pool.query('SELECT * FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+  const [rollouts] = await pool.query("SELECT * FROM metric_rollout WHERE resource_type='instance' AND resource_id=?", [String(RESOURCE_ID)]);
+  await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)',
+    [`instance:${RESOURCE_ID}`, JSON.stringify({ validation: 'controlled_read_fixture' })]);
+  try {
+    await pool.execute('DELETE FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute("UPDATE metric_rollout SET source='retired',read_mode='pending',generation=2,published_revision=2,applied_revision=NULL WHERE resource_type='instance' AND resource_id=?", [String(RESOURCE_ID)]);
+    await pool.execute('UPDATE database_instances SET name=? WHERE id=?', ['MAX240 已改名且解绑', RESOURCE_ID]);
+    await login(page);
+    const day = queryResponse(page, windowSpan(DAY)); await chooseWindow(page, '24');
+    const body = await (await day).json() as any;
+    expect(body.metrics[0].state).toBe('not_covered');
+    expect(body.metrics[0].series[0].buckets).toHaveLength(1440);
+    expect(body.history_context.snapshots[0].rules[0].problem.threshold.value).toBe(90);
+    expect(body.history_context.events.map((e: any) => e.event_id)).toContain(eventId);
+    const metrics = page.locator('semantic-metrics');
+    const chart = metrics.locator('metric-chart').first();
+    expect(await chart.evaluate((el: any) => el.series.some((s: any) => s.name.includes('问题阈值') && s.data.includes(90)))).toBe(true);
+    expect(await chart.evaluate((el: any) => el.regions.some((r: any) => r.name.includes('问题')))).toBe(true);
+    await metrics.locator('summary', { hasText: '当时阈值、事件与保留策略' }).click();
+    await metrics.locator('summary', { hasText: `事件 ${eventId} ·` }).click();
+    await expect(metrics.locator('template-event-evidence')).toContainText('模板事件事实');
+    await expect(metrics.locator('template-event-evidence')).toContainText('max240-uptime');
+    await page.screenshot({ path: `${output}/unbound-threshold-event.png`, fullPage: true, animations: 'disabled' });
+  } finally {
+    await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    await pool.execute('INSERT INTO metric_policy_bindings(resource_key,group_id,payload,capabilities) VALUES(?,?,?,?)',
+      [bindings[0].resource_key,bindings[0].group_id,JSON.stringify(bindings[0].payload),JSON.stringify(bindings[0].capabilities)]);
+    for (const r of rollouts) await pool.execute('UPDATE metric_rollout SET source=?,read_mode=?,generation=?,published_revision=?,applied_revision=? WHERE series_hash=?',
+      [r.source,r.read_mode,r.generation,r.published_revision,r.applied_revision,r.series_hash]);
+  }
 });
 
 test('revoking resource permission clears protected history immediately and rejects stale responses', async ({ page }) => {

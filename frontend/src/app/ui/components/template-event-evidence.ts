@@ -71,6 +71,11 @@ export class TemplateEventEvidence extends LitElement {
         `template-events/${id}${ack ? "/acknowledge" : ""}`,
         ack ? {} : undefined,
       );
+      // Event facts are optional on legacy events; a successful but incompatible
+      // response is unavailable evidence, never a render-time exception.
+      const rule = data?.snapshot?.configuration?.rules?.find((v: any) => v.rule_id === data?.episode?.rule_id);
+      if (!data?.episode?.last || !rule?.item || !data.snapshot.configuration.templates?.some((v: any) => v.template_id === rule.item.template_id))
+        throw new Error('EVENT_EVIDENCE_INVALID');
       if (g === this.generation) this.data = data;
     } catch (e) {
       if (g === this.generation && !(e instanceof MetricRequestError && e.status === 404))

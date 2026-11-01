@@ -69,6 +69,9 @@ describe.skipIf(!port)('formal 24h history window over MySQL and the real HTTP e
       package: { id: pin.id, version: pin.version, digest: pin.digest },
       overrides: { interval_ms: { mode: 'set', value: 60_000 }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
     const store: ConsumerStore = {
+      readHistoryWindow: (...args) => formal.readHistoryWindow(...args),
+      historyDimensions: (...args) => formal.historyDimensions(...args),
+      readObservationPage: (...args) => formal.readObservationPage(...args),
       readWindow: (...args) => formal.readWindow(...args),
       queryWindow: (...args) => formal.queryWindow(...args),
       dimensions: (...args) => formal.dimensions(...args),
@@ -165,6 +168,48 @@ describe.skipIf(!port)('formal 24h history window over MySQL and the real HTTP e
     await expect(bounded.readWindow(series, iso(from), iso(to))).rejects.toThrow('QUERY_LIMIT_EXCEEDED');
     expect(new Set(ids)).not.toContain(excluded[0].id);
     for (const hidden of excluded) expect(ids).not.toContain(hidden.id);
+  }, 120_000);
+
+  it('retains accepted history after configuration change, retirement and unbinding, while current reads and revoked actors stay fenced', async () => {
+    const [bindings] = await pool.query<any[]>('SELECT * FROM metric_policy_bindings WHERE resource_key=?', ['instance:1']);
+    const [rollout] = await pool.query<any[]>('SELECT * FROM metric_rollout WHERE series_hash=?', [seriesHash(series)]);
+    await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)',
+      ['instance:1', JSON.stringify({ validation: 'controlled_read_fixture', sample_ids: seeded.map(o => o.id) })]);
+    try {
+      // Controlled persisted producer state only; no real target is disabled or unbound.
+      await pool.execute("UPDATE metric_policy_bindings SET payload=JSON_SET(payload,'$.binding.overrides.enabled',CAST(? AS JSON)) WHERE resource_key=?",
+        [JSON.stringify('disable'), 'instance:1']);
+      const disabled = await request(query({ history: true }));
+      expect(disabled.status).toBe(200);
+      expect(disabled.body.metrics[0].state).toBe('disabled');
+      expect(disabled.body.metrics[0].series[0].buckets).toHaveLength(1440);
+      await pool.execute("UPDATE metric_rollout SET source='retired',read_mode='pending',generation=2,published_revision=2,applied_revision=NULL WHERE series_hash=?", [seriesHash(series)]);
+      await pool.execute('DELETE FROM metric_policy_bindings WHERE resource_key=?', ['instance:1']);
+      expect(await formal.readWindow(series, iso(from), iso(to))).toEqual([]);
+      const result = await request(query({ history: true }));
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
+      expect(result.body.metrics[0].state).toBe('not_covered');
+      const buckets = result.body.metrics[0].series[0].buckets;
+      expect(buckets).toHaveLength(1440);
+      expect(buckets[720].stats.max.value).toBe(999999);
+      expect(buckets[1400].value).toBeNull();
+      const raw = await formal.readObservationPage(series, iso(from), iso(to), { limit: 1000, after: null });
+      expect(raw.total).toBe(seeded.length);
+      expect(raw.observations.every(o => !excluded.some(e => e.id === o.id))).toBe(true);
+      actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
+      expect((await request(query({ history: true }))).status).toBe(403);
+      actor = admin;
+      // A new display label / package version never enters the series identity.
+      expect(seriesHash({ ...series, label: 'renamed', package_version: '9.0.0' } as any)).toBe(seriesHash(series));
+    } finally {
+      actor = admin;
+      await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', ['instance:1']);
+      await pool.execute('DELETE FROM metric_policy_bindings WHERE resource_key=?', ['instance:1']);
+      await pool.execute('INSERT INTO metric_policy_bindings(resource_key,group_id,payload,capabilities) VALUES(?,?,?,?)',
+        [bindings[0].resource_key, bindings[0].group_id, JSON.stringify(bindings[0].payload), JSON.stringify(bindings[0].capabilities)]);
+      await pool.execute('UPDATE metric_rollout SET source=?,read_mode=?,generation=?,published_revision=?,applied_revision=? WHERE series_hash=?',
+        [rollout[0].source,rollout[0].read_mode,rollout[0].generation,rollout[0].published_revision,rollout[0].applied_revision,seriesHash(series)]);
+    }
   }, 120_000);
 
   it('rejects a response larger than the bucket bound and a revoked reader', async () => {

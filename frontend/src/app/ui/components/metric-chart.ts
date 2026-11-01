@@ -84,6 +84,8 @@ export class MetricChart extends LitElement {
 
   @property({ type: Array }) timeData: string[] = [];
   @property({ type: Array }) series: MetricSeries[] = [];
+  /** Inclusive category indices for evidence-backed historical problem/unknown segments. */
+  @property({ attribute: false }) regions: Array<{ name: string; from: number; to: number; color: string }> = [];
   @property({ type: Array }) thresholds: ThresholdConfig[] = [];
   @property({ type: String }) title = "";
   @property({ type: String }) height = "280px";
@@ -129,7 +131,7 @@ export class MetricChart extends LitElement {
 
   override updated(changedProperties: Map<string, unknown>) {
     // Update chart when data changes
-    if (changedProperties.has("timeData") || changedProperties.has("series") || changedProperties.has("thresholds")) {
+    if (changedProperties.has("timeData") || changedProperties.has("series") || changedProperties.has("thresholds") || changedProperties.has("regions")) {
       if (this._chart) {
         this._updateChart();
         this._chart.resize();
@@ -254,6 +256,15 @@ export class MetricChart extends LitElement {
                 ]),
               }
             : undefined,
+        };
+
+        if (index === 0 && this.regions.length) base.markArea = {
+          silent: true,
+          data: this.regions.map(region => {
+            const rgba = this._resolveColor(region.color);
+            return [{ name: region.name, xAxis: region.from,
+              itemStyle: { color: rgba ? `rgba(${rgba[0]},${rgba[1]},${rgba[2]},0.12)` : undefined } }, { xAxis: region.to }];
+          }),
         };
 
         // Add markLine threshold lines only to the first series

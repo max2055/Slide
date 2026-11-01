@@ -517,3 +517,50 @@ it('keeps the curve and the previous raw page when only this page fails', async 
   expect(details.textContent).toContain('曲线与上一页原始观测保留');
   expect(el.error).toBe('');
 });
+
+it('requests history and draws only the immutable threshold matching each bucket revision, with no gap extrapolation', async () => {
+  const data: any = structuredClone(result);
+  data.window = { from: '2026-10-29T00:00:00.000Z', to: '2026-10-29T00:03:00.000Z' };
+  data.metrics[0].definition.semantic_version = '1.0.0';
+  const bucket = data.metrics[0].series[0].buckets[0];
+  bucket.value = { encoding: 'float64', value: 95 }; bucket.sources = [{ versions: { config_revision: 4 } }];
+  bucket.window = { from: data.window.from, to: '2026-10-29T00:01:00.000Z' };
+  const gap = structuredClone(bucket); gap.sources = []; gap.value = null; gap.window.to = '2026-10-29T00:02:00.000Z';
+  const changed = structuredClone(bucket); changed.sources = [{ versions: { config_revision: 5 } }]; changed.window.to = data.window.to;
+  data.metrics[0].series[0].buckets = [bucket, gap, changed];
+  const compare = (value: number) => ({ node: 'compare', select: { aggregation: 'last' }, operator: 'gt', threshold: { value } });
+  const rule = { rule_id: 'uptime-high', version: 1, metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' },
+    dimensions: {}, unit: 's', problem: compare(90), recovery: compare(70) };
+  data.history_context = { snapshots: [{ config_revision: 4, rules: [rule] }, { config_revision: 5, rules: [{ ...rule, version: 2, problem: compare(100) }] }],
+    missing_revisions: [], events: [], events_readable: false,
+    retention: { rawMs: 604800000, historyMs: 2592000000, attemptMs: 604800000, cleanup_enabled: false },
+    sampling: { interval_ms: 60000, max_gap_ms: 180000, basis: 'explicit_history_assumption' } };
+  authFetch.mockResolvedValue({ ok: true, json: async () => data }); const el = await mount();
+  expect(lastQuery().history).toBe(true);
+  const chart = el.shadowRoot!.querySelector('metric-chart') as any;
+  expect(chart.series[1].data).toEqual([90, null, null]);
+  expect(chart.series[3].data).toEqual([null, null, 100]);
+  const context = el.shadowRoot!.querySelector('.history-context')!;
+  expect(context.textContent).toContain('清理未启用');
+  expect(context.textContent).toContain('没有事件查看权限');
+  expect(context.textContent).toContain('当前参数不回填历史');
+  window.dispatchEvent(new Event('slide-permissions-loaded')); await settle();
+  expect(el.shadowRoot!.querySelector('.history-context')).toBeNull();
+});
+
+it('keeps event evidence lazy until the user opens its same-window record', async () => {
+  const data: any = structuredClone(result);
+  data.history_context = { snapshots: [], missing_revisions: [1], events_readable: true,
+    events: [{ event_id: 77, rule_id: 'fixture', version: 1, config_revision: 1,
+      from: '2026-10-29T00:00:00.000Z', to: null, unknown_segments: [] }],
+    retention: { rawMs: 604800000, historyMs: 2592000000, attemptMs: 604800000, cleanup_enabled: false },
+    sampling: { interval_ms: 60000, max_gap_ms: 180000 } };
+  authFetch.mockImplementation(async (url: string) => url.includes('template-events/')
+    ? { ok: true, json: async () => ({ incompatible: true }) } : { ok: true, json: async () => data });
+  const el = await mount();
+  expect(el.shadowRoot!.querySelector('template-event-evidence')).toBeNull();
+  const event = [...el.shadowRoot!.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent?.includes('事件 77'))!;
+  event.open = true; event.dispatchEvent(new Event('toggle')); await settle();
+  const evidence = el.shadowRoot!.querySelector('template-event-evidence')!;
+  expect(evidence.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+});

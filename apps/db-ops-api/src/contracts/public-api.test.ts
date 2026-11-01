@@ -124,6 +124,7 @@ describe('generated public API contract', () => {
       '/api/metrics/config/resources/{type}/{id}/operations/{key}',
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
+      '/api/metrics/observations',
       '/api/metrics/policy/groups',
       '/api/metrics/template-bindings/{type}/{id}',
       '/api/metrics/template-bindings/{type}/{id}/apply',

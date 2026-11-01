@@ -1,3 +1,4 @@
+import type { MetricHistoryContext as HistoryContext } from '../../../api/generated/public-api.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -8,6 +9,7 @@ import './app-data-table.js';
 import './app-empty-state.js';
 import './app-badge.js';
 import './metric-chart.js';
+import './template-event-evidence.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
 import { MetricRequestError, collectionStatusLabels, metricRequest, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
@@ -33,7 +35,11 @@ interface RawObservation {
 interface RawObservationPage {
   contract_version: string; total: number; has_more: boolean; next_cursor?: string; observations: RawObservation[];
 }
-export interface SemanticResult { profile: { columns: Array<{ key: string; label?: string; metric: { id: string } }> }; window: { from: string; to: string }; metrics: MetricResult[] }
+type HistoryExpression = HistoryContext['snapshots'][number]['rules'][number]['problem'];
+const expressionText = (n: HistoryExpression): string => n.node === 'compare'
+  ? `${n.select.aggregation}${'window_ms' in n.select ? `(${n.select.window_ms / 1000}秒)` : ''} ${n.operator} ${n.threshold.value}`
+  : `(${n.children.map(expressionText).join(n.node === 'all' ? ' 且 ' : ' 或 ')})`;
+export interface SemanticResult { history_context?: HistoryContext; profile: { columns: Array<{ key: string; label?: string; metric: { id: string } }> }; window: { from: string; to: string }; metrics: MetricResult[] }
 const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '当前模板未覆盖', not_covered: '当前模板未覆盖', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
 const qualityLabels: Record<string, string> = { good: '良好', partial: '部分', unknown: '未知', invalid: '无效', fresh: '新鲜', stale: '过期', exact: '精确', estimated: '估算' };
 const attemptLabels: Record<string, string> = { running: '进行中', succeeded: '成功', partial: '部分完成', failed: '失败', cancelled: '已取消' };
@@ -112,6 +118,7 @@ export class SemanticMetrics extends LitElement {
   private range: { from: string; to: string } | null = null;
   @state() private chartKeys = new Set<string>();
   @state() private bucketKeys = new Set<string>();
+  @state() private historyEvent = 0;
   @state() result: SemanticResult | null = null;
   @state() error = '';
   @state() busy = false;
@@ -187,7 +194,7 @@ export class SemanticMetrics extends LitElement {
       if (this.range) ({ from, to } = this.range);
       else if (this.from && this.to) { from = this.from; to = this.to; }
       else { to = new Date(now).toISOString(); from = new Date(now - this.hours * 3600000).toISOString(); }
-      const query = { resource: { type: this.resourceType, id: this.resourceId }, view: 'all', from, to, bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)) };
+      const query = { resource: { type: this.resourceType, id: this.resourceId }, view: 'all', history: true, from, to, bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)) };
       const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query) });
       if (!current()) return;
       if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
@@ -254,8 +261,34 @@ export class SemanticMetrics extends LitElement {
     const max = series.buckets.map((b, i) => data[i] === null ? null : safeNumber(b.stats?.max?.value));
     // Keep the bucket envelope so a spike inside a bucket is never flattened to the selected mode.
     const envelope = min.some((v, i) => v !== null && max[i] !== null && v !== max[i]) ? { min, max } : {};
+    const thresholds = (this.result?.history_context?.snapshots ?? []).flatMap(snapshot => snapshot.rules
+      .filter(rule => rule.metric.id === metric.definition.id && rule.metric.semantic_version === metric.definition.semantic_version
+        && rule.unit === metric.definition.unit && Object.entries(rule.dimensions).every(([k,v]) => series.dimensions[k] === v))
+      .flatMap(rule => (['problem', 'recovery'] as const).flatMap(kind => {
+        const expression = rule[kind];
+        // Only a scalar `last` comparison has a line in the same value space. Composite,
+        // nodata and window reducers remain explicit expressions in the evidence section.
+        if (expression.node !== 'compare' || expression.select.aggregation !== 'last' || metric.definition.kind === 'counter') return [];
+        return [{ name: `${kind === 'problem' ? '问题' : '恢复'}阈值 · ${rule.rule_id} v${rule.version} / 配置${snapshot.config_revision}`,
+          data: series.buckets.map(b => b.sources.some(source => (source as { versions?: { config_revision?: number } }).versions?.config_revision === snapshot.config_revision)
+            ? expression.threshold.value : null) }];
+      })));
+    const context = this.result?.history_context;
+    const regions = (context?.events ?? []).filter(event => context?.snapshots.some(snapshot => snapshot.config_revision === event.config_revision
+      && snapshot.rules.some(rule => rule.rule_id === event.rule_id && rule.metric.id === metric.definition.id
+        && rule.metric.semantic_version === metric.definition.semantic_version
+        && Object.entries(rule.dimensions).every(([k,v]) => series.dimensions[k] === v))))
+      .flatMap(event => [{ name: `问题 · 事件${event.event_id}`, from: event.from, to: event.to, color: 'var(--danger)' },
+        ...event.unknown_segments.map(segment => ({ ...segment, name: `证据未知 · ${segment.reason}`, color: 'var(--muted)' }))])
+      .flatMap(region => {
+        const from = series.buckets.findIndex(b => Date.parse(b.window.to) > Date.parse(region.from));
+        const end = region.to ? Date.parse(region.to) : Infinity;
+        let to = series.buckets.length - 1;
+        while (to >= 0 && Date.parse(series.buckets[to].window.from) >= end) to--;
+        return from >= 0 && to >= from ? [{ name: region.name, from, to, color: region.color }] : [];
+      });
     return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? metric.definition.unit}
-      .timeData=${series.buckets.map(b => b.window.to)} .series=${[{ name: metricName(metric.definition.id), data, ...envelope }]}></metric-chart>`;
+      .regions=${regions} .timeData=${series.buckets.map(b => b.window.to)} .series=${[{ name: metricName(metric.definition.id), data, ...envelope }, ...thresholds]}></metric-chart>`;
   }
   private renderBuckets(metric: MetricResult, series: MetricResult['series'][number]) {
     const shown = series.buckets.length > DETAIL_BUCKET_LIMIT ? series.buckets.slice(-DETAIL_BUCKET_LIMIT) : series.buckets;
@@ -400,6 +433,26 @@ export class SemanticMetrics extends LitElement {
       }
     } finally { if (current()) this.rawBusy = false; }
   }
+  private renderHistoryContext() {
+    const context = this.result?.history_context;
+    if (!context) return nothing;
+    return html`<details class="history-context"><summary>当时阈值、事件与保留策略</summary>
+      <p class="hint">阈值按正式观测的配置修订取不可变快照，仅在有对应修订证据的桶绘制；缺口不外推生效时间。当前参数不回填历史。</p>
+      <p>历史采样假设：每 ${context.sampling.interval_ms / 1000} 秒，计数器最大间隔 ${context.sampling.max_gap_ms / 1000} 秒；覆盖率基于此假设，不代表已还原每个旧配置的采样周期。</p>
+      <p>配置保留策略：原始证据 ${context.retention.rawMs / 86400000} 天，归一化历史 ${context.retention.historyMs / 86400000} 天，采集尝试 ${context.retention.attemptMs / 86400000} 天；清理${context.retention.cleanup_enabled ? '已启用' : '未启用'}。这不是已有数据覆盖承诺。</p>
+      ${context.missing_revisions.length ? html`<p>配置 ${context.missing_revisions.join('、')} 没有保留阈值快照；当时阈值未知。</p>` : nothing}
+      ${context.snapshots.map(snapshot => html`<h3>配置修订 ${snapshot.config_revision}</h3>${snapshot.rules.map(rule => html`
+        <p>${metricName(rule.metric.id)} · 语义版本 ${rule.metric.semantic_version} · ${rule.rule_id} v${rule.version} · ${rule.unit}<br>
+          问题：${expressionText(rule.problem)}；恢复：${expressionText(rule.recovery)}</p>`)}`)}
+      <h3>同窗口问题区段</h3>
+      ${!context.events_readable ? html`<p>没有事件查看权限。</p>` : context.events.length ? context.events.map(event => html`
+        <details @toggle=${(e: Event) => { if ((e.target as HTMLDetailsElement).open) this.historyEvent = event.event_id; }}><summary>事件 ${event.event_id} · ${localTime(event.from)} — ${event.to ? localTime(event.to) : '尚未恢复'} · 配置${event.config_revision}</summary>
+          <p>规则 ${event.rule_id} v${event.version}；未知区段 ${event.unknown_segments.length} 个。问题区段与当前查询窗口相交。</p>
+          ${this.historyEvent === event.event_id ? html`<template-event-evidence .eventId=${event.event_id}></template-event-evidence>` : nothing}
+        </details>`) : html`<p>此窗口没有可读取的问题区段。</p>`}
+      <p class="hint">维护历史暂不可用，不能据此判断没有维护。暂不支持将此窗口转入 AI 调查；查看这些事实不会调用模型。</p>
+    </details>`;
+  }
   private renderRaw(metrics: MetricResult[]) {
     if (!this.result) return nothing;
     const choices = this.rawSeries(metrics);
@@ -480,7 +533,7 @@ export class SemanticMetrics extends LitElement {
     ${this.busy && !this.result ? html`<div class="skeleton" aria-label="正在读取指标"></div>` : nothing}
     ${this.result ? this.renderLatest(metrics) : nothing}
     ${this.result && this.selectedMetric && !metrics.length ? html`<p role="status">当前窗口未返回所选指标；可刷新或选择全部指标。</p>` : nothing}
-    ${metrics.length ? html`<div class="summary-grid" aria-label="当前指标比较">${metrics.map(m => html`<div class="current"><h3 class="metric-name">${metricName(m.definition.id)}</h3>
+    ${metrics.length ? html`<div class="summary-grid" aria-label="当前指标比较">${metrics.map(m => html`<div class="current"><h3 class="metric-name">${metricName(m.definition.id)} · ${m.definition.semantic_version ?? '版本未知'}</h3>
       <details class="metric-id"><summary>指标标识</summary><code>${m.definition.id}</code><button class="btn btn-sm btn-ghost" aria-label=${`复制 ${m.definition.id}`} @click=${() => void this.copyMetric(m.definition.id)}>复制标识</button></details>
       <span>当前采集状态：${states[m.state] ?? m.state}</span>
       ${m.state !== 'available' ? html`<p class="hint">当前状态不代表历史：以下时间桶按各自窗口显示当时质量，旧值不代表当前健康。</p>` : nothing}
@@ -489,6 +542,7 @@ export class SemanticMetrics extends LitElement {
         return html`<div>${Object.values(series.dimensions).join(' / ')}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
           ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
       })}</div>`)}</div>` : nothing}
+    ${this.renderHistoryContext()}
     ${this.renderRaw(metrics)}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
       <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}

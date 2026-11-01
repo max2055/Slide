@@ -1,3 +1,4 @@
+import { ActorAuthenticationError } from '../../auth/actor-context.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
 import type { ActorContext } from '../../auth/actor-context.js';
@@ -7,6 +8,7 @@ import { ConsumerAlertPolicySchema, scoreMetrics } from './evaluation.js';
 const EvaluateSchema = z.strictObject({ query: z.unknown(), policies: z.array(ConsumerAlertPolicySchema).max(32) });
 export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = metricConsumerService) {
   for (const op of ['query', 'discover', 'inventory', 'evaluate', 'observations'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
     const actor = (request as unknown as { user?: ActorContext }).user;
     if (!actor) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
     try {
@@ -20,6 +22,7 @@ export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyT
       }
       return await service.query(actor, request.body);
     } catch (e) {
+      if (e instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
       if (e instanceof PolicyError) return reply.code(e.status).send({ error: e.code });
       if (e instanceof z.ZodError) return reply.code(400).send({ error: 'QUERY_INPUT_INVALID' });
       if (e instanceof Error && e.message === 'QUERY_FORBIDDEN') return reply.code(403).send({ error: e.message });

@@ -22,6 +22,20 @@ const formal = `FROM metric_publications p
     AND JSON_EXTRACT(b.payload, '$.binding.revision') <> r.published_revision)
   AND o.stage = 'normalized' AND o.payload IS NOT NULL`;
 
+/** An accepted publication remains history after a reconfiguration or retirement.
+ * Acceptance matches BOTH generation and observation revision. A publication alone
+ * is insufficient: shadow and unaccepted/rolled-back generations stay excluded. */
+const historical = formal.slice(0, formal.indexOf("  WHERE"));
+const history = `${historical}
+  WHERE o.stage = 'normalized' AND o.payload IS NOT NULL AND (
+    (r.read_mode = 'semantic' AND r.source = 'semantic' AND r.applied_revision = r.published_revision
+      AND p.generation = r.generation AND JSON_EXTRACT(o.payload, '$.versions.config_revision') = r.published_revision
+      AND NOT EXISTS (SELECT 1 FROM metric_policy_bindings b WHERE b.resource_key = CONCAT(r.resource_type, ':', r.resource_id)
+        AND JSON_EXTRACT(b.payload, '$.binding.revision') <> r.published_revision))
+    OR EXISTS (SELECT 1 FROM metric_source_acceptance a
+      WHERE a.resource_key = CONCAT(r.resource_type, ':', r.resource_id)
+        AND a.revision = JSON_EXTRACT(o.payload, '$.versions.config_revision') AND a.generation = p.generation))`;
+
 /** Bounded reads: `page_rows` caps one statement, `max_rows` caps the whole series window. */
 export interface WindowReadLimits { page_rows: number; max_rows: number }
 /** 31 days at the 60s default interval is 44,640 samples; denser custom windows fail closed. */
@@ -103,7 +117,8 @@ export class MysqlFormalMetricStore {
    * caller's current authorization. Exceeding max_rows fails closed instead of
    * returning a silently truncated window.
    */
-  async readWindow(series: Series, from: string, to: string): Promise<NormalizedObservation[]> {
+  readHistoryWindow(series: Series, from: string, to: string) { return this.readWindow(series, from, to, true); }
+  async readWindow(series: Series, from: string, to: string, historicalRead = false): Promise<NormalizedObservation[]> {
     const { page_rows: pageRows, max_rows: maxRows } = this.limits;
     if (!Number.isInteger(pageRows) || pageRows < 1 || !Number.isInteger(maxRows) || maxRows < pageRows
       || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
@@ -113,11 +128,8 @@ export class MysqlFormalMetricStore {
     const c = await this.pool.getConnection();
     try {
       await c.beginTransaction();
-      const [control] = await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
-      if (!control.length || control[0].read_mode !== 'semantic' || control[0].published_revision !== control[0].applied_revision) {
-        await c.commit(); return [];
-      }
-      const base = `SELECT o.payload, p.observation_id AS publication_id ${formal} AND p.series_hash = ?`;
+      await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
+      const base = `SELECT o.payload, p.observation_id AS publication_id ${historicalRead ? history : formal} AND p.series_hash = ?`;
       const [prior] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at < ?
         ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`, [key, sqlTime(from)]);
       const rows: NormalizedObservation[] = [];
@@ -163,17 +175,13 @@ export class MysqlFormalMetricStore {
     const c = await this.pool.getConnection();
     try {
       await c.beginTransaction();
-      const [control] = await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
-      if (!control.length || control[0].read_mode !== 'semantic' || control[0].published_revision !== control[0].applied_revision) {
-        await c.commit();
-        return { observations: [], total: 0, has_more: false, next: null };
-      }
-      const [counted] = await c.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${formal}
+      await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
+      const [counted] = await c.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${history}
         AND p.series_hash = ? AND p.observed_at >= ? AND p.observed_at < ?`, [key, sqlTime(from), sqlTime(to)]);
       const total = Number(counted[0]?.total);
       if (!Number.isSafeInteger(total) || total < 0) throw new Error('ROLLOUT_QUERY_COUNT');
       if (total > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
-      const base = `SELECT o.payload, p.observation_id AS publication_id ${formal} AND p.series_hash = ?
+      const base = `SELECT o.payload, p.observation_id AS publication_id ${history} AND p.series_hash = ?
         AND p.observed_at >= ? AND p.observed_at < ?`;
       const [page] = after
         ? await c.execute<RowDataPacket[]>(`${base}
@@ -192,10 +200,19 @@ export class MysqlFormalMetricStore {
     } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
   }
 
-  async dimensions(ref: Ref, d: MetricDefinition, from: string, to: string): Promise<Record<string, string>[]> {
+  async historyMetrics(ref: Ref, from: string, to: string): Promise<Array<{ id: string; semantic_version: string }>> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT DISTINCT JSON_EXTRACT(o.payload, '$.metric') AS metric ${history}
+      AND r.resource_type=? AND r.resource_id=? AND p.observed_at>=? AND p.observed_at<? LIMIT 101`,
+      [ref.type, String(ref.id), sqlTime(from), sqlTime(to)]);
+    if (rows.length > 100) throw new Error('QUERY_LIMIT_EXCEEDED');
+    return rows.map(r => decode<{ id: string; semantic_version: string }>(r.metric));
+  }
+
+  historyDimensions(ref: Ref, d: MetricDefinition, from: string, to: string) { return this.dimensions(ref, d, from, to, true); }
+  async dimensions(ref: Ref, d: MetricDefinition, from: string, to: string, historicalRead = false): Promise<Record<string, string>[]> {
     if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
       || Date.parse(to) - Date.parse(from) > 31 * 86400000) throw new Error('ROLLOUT_QUERY_RANGE');
-    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT DISTINCT JSON_EXTRACT(o.payload, '$.dimensions') AS dimensions ${formal}
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT DISTINCT JSON_EXTRACT(o.payload, '$.dimensions') AS dimensions ${historicalRead ? history : formal}
       AND r.resource_type = ? AND r.resource_id = ?
       AND JSON_UNQUOTE(JSON_EXTRACT(o.payload, '$.metric.id')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(o.payload, '$.metric.semantic_version')) = ?
       AND p.observed_at >= ? AND p.observed_at < ? LIMIT 101`, [ref.type, String(ref.id), d.id, d.semantic_version,

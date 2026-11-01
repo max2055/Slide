@@ -79,7 +79,12 @@ describe('server instance authorization coverage', () => {
     expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/reports/stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(routeBlocks('/api/alerts')[0]?.block).toContain('getAccessibleInstanceIds(');
-    expect(routeBlocks('/api/alerts/events')[0]?.block).toContain('getAccessibleInstanceIds(');
+    // MAX-240 integration: MAX-239 moved scoped reads into the shared registrar.
+    expect(source).toContain('await registerEventReadRoutes(fastify,verifyToken)');
+    const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
+    expect(eventReads).toContain('allowed_instance_ids: getAccessibleInstanceIds(actor)');
+    expect(eventReads).toContain('canReadResource(actor, RefSchema.parse(');
+    expect(routeBlocks('/api/alerts/events').find(r => r.method === 'post' && r.path === '/api/alerts/events')?.block).toContain("hasInstanceAccess((request as any).user, instanceId, 'read-write')");
   });
 
   it('checks instance ownership before reading or mutating alert event records', () => {

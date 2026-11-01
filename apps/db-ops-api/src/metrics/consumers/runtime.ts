@@ -1,3 +1,5 @@
+import { actorContextService } from '../../auth/actor-context.js';
+import { readHistoryContext } from './history-context.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from '../../db-connection.js';
 import { CollectionAttemptSchema } from '../../contracts/metrics/index.js';
@@ -11,6 +13,10 @@ import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 const pool = () => { const p = dbConnection.getPool(); rule(p, 'METRIC_STORE_UNAVAILABLE', 503); return p; };
 const decode = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v;
 export const consumerStore: ConsumerStore = {
+  historyMetrics: (...args) => new MysqlFormalMetricStore(pool()).historyMetrics(...args),
+  readHistoryWindow: (...args) => new MysqlFormalMetricStore(pool()).readHistoryWindow(...args),
+  historyDimensions: (...args) => new MysqlFormalMetricStore(pool()).historyDimensions(...args),
+  historyContext: (...args) => readHistoryContext(pool(), ...args),
   queryWindow: (...args) => new MysqlFormalMetricStore(pool()).queryWindow(...args),
   readWindow: (...args) => new MysqlFormalMetricStore(pool()).readWindow(...args),
   readObservationPage: (...args) => new MysqlFormalMetricStore(pool()).readObservationPage(...args),
@@ -46,6 +52,6 @@ export const templateQueryPort: TemplateQueryPort = {
   },
 };
 export const metricConsumerService = new MetricConsumerService(policyService, createConfigurationRegistry(), consumerStore,
-  () => new Date().toISOString(), templateQueryPort);
+  () => new Date().toISOString(), templateQueryPort, actor => actorContextService.revalidateActor(actor, actor.requestId));
 
 export const operationalSource = (ref: Ref) => new MysqlFormalMetricStore(pool()).sourceState(ref);

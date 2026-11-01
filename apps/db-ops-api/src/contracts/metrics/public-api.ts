@@ -1,3 +1,4 @@
+import { MetricConsumerQuerySchema, MetricHistoryContextSchema } from './history.js';
 import {ResourceBindingCandidateSchema} from './templates.js';
 import {TemplateTriggerPublishSchema,TriggerRuleVersionSchema,TemplateTriggerEpisodeSchema,TemplateTriggerOpeningSchema,TriggerResourceSnapshotSchema} from './triggers.js';
 import { z } from 'zod';
@@ -57,6 +58,8 @@ export const MetricOperationStateSchema = z.strictObject({
     configuration_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(), committed_at: z.iso.datetime().nullable() }).nullable(),
 });
 export const metricPublicSchemas = {
+  MetricConsumerQuery: MetricConsumerQuerySchema,
+  MetricHistoryContext: MetricHistoryContextSchema,
   TemplateEventEvidence:z.strictObject({event_id:z.number().int().positive(),alert_id:z.number().int().positive(),
     episode:TemplateTriggerEpisodeSchema,snapshot:z.strictObject({configuration:TriggerResourceSnapshotSchema,opening:TemplateTriggerOpeningSchema}),
     current:ResourceBindingCandidateSchema.nullable(),processing:z.strictObject({status:z.string(),acknowledged_at:z.iso.datetime().nullable()}),
