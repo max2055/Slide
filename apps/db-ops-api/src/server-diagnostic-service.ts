@@ -1,3 +1,5 @@
+import type { ActorContext } from './auth/actor-context.js';
+import { internalMetricConsumerService, metricConsumerService } from './metrics/consumers/runtime.js';
 import { resourceMetricRead } from './metrics/consumers/resource-api.js';
 /** Fixed-profile, read-only server diagnostics. */
 
@@ -444,7 +446,7 @@ class ServerDiagnosticService {
     metricName?: string;
     range?: '1h' | '6h' | '24h' | '7d' | '30d';
     maxRows?: number;
-  } = {}): Promise<{ latest: ServerMetricPoint[]; history: ServerMetricPoint[]; freshness: string | null; gaps: string[] }> {
+  } = {}, userActor?: ActorContext): Promise<{ latest: ServerMetricPoint[]; history: ServerMetricPoint[]; freshness: string | null; gaps: string[] }> {
     if (!Number.isSafeInteger(serverId) || serverId <= 0) throw new Error('SERVER_ID_INVALID');
     if (!['1h', '6h', '24h', '7d', '30d', undefined].includes(options.range)) throw new Error('TIME_RANGE_INVALID');
     if (options.metricName !== undefined && !/^[a-z][a-z0-9_.]{0,127}$/.test(options.metricName)) throw new Error('METRIC_NAME_INVALID');
@@ -454,7 +456,7 @@ class ServerDiagnosticService {
     const ref={type:'server' as const,id:serverId},actor={userId:0,username:'server-diagnostic',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-metrics:${serverId}`};
     const hours = options.range ? ({ '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as Record<string, number>)[options.range] : null;
     const to=new Date().toISOString(),from=hours?new Date(Date.parse(to)-hours*3600000).toISOString():undefined;
-    const result=await resourceMetricRead(actor,ref,{...(from?{from,to,bucket_ms:Math.max(60000,Math.ceil(hours!*3600000/1000))}:{}),...(options.metricName?{metric_ids:[options.metricName]}:{})});
+    const result=await resourceMetricRead(userActor ?? actor,ref,{...(from?{from,to,bucket_ms:Math.max(60000,Math.ceil(hours!*3600000/1000))}:{}),...(options.metricName?{metric_ids:[options.metricName]}:{})}, userActor ? metricConsumerService : internalMetricConsumerService);
     const history=result.metrics.filter(row=>row.quality.status==='good'&&row.freshness==='fresh'&&row.value&&'value'in row.value).flatMap(row=>{
       const value=row.value! as {encoding:string;value:string|number},n=Number(value.value);
       return Number.isFinite(n)&&(value.encoding==='float64'||Number.isSafeInteger(n))?[{metric_name:row.metric_id,metric_value:n,dimensions:row.dimensions,
@@ -503,10 +505,10 @@ class ServerDiagnosticService {
     }));
   }
 
-  async analyzeHealth(serverId: number): Promise<Record<string, unknown>> {
+  async analyzeHealth(serverId: number, userActor?: ActorContext): Promise<Record<string, unknown>> {
     const server = await this.dependencies.serverDatabaseService.getServerById(serverId);
     if (!server) throw new Error('SERVER_NOT_FOUND');
-    const metrics = await this.getMetricData(serverId, { maxRows: 100 });
+    const metrics = await this.getMetricData(serverId, { maxRows: 100 }, userActor);
     const byName = new Map(metrics.latest.map((row) => [row.metric_name, row.metric_value]));
     const ageMs = metrics.freshness ? this.dependencies.now().getTime() - new Date(metrics.freshness).getTime() : null;
     const fresh = ageMs !== null && ageMs <= SERVER_DIAGNOSTIC_TTL_MS;

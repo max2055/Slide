@@ -486,18 +486,34 @@ export const ResourceRefSchema = z.strictObject({
  * `overrides`/`group_id` are carried unchanged; this file does not redefine the
  * existing policy model or resolve configuration.
  */
-export const ResourceBindingCandidateSchema = z.strictObject({
+const bindingCandidateShape = {
   resource: ResourceRefSchema,
   package: PackagePinSchema.nullable(),
   group_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable(),
   overrides: z.record(z.string(), z.unknown()),
-  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   template_pins: TemplatePinsSchema,
-}).superRefine((binding, ctx) => {
+};
+const requireAPin = (binding: { template_pins: unknown[]; package?: unknown }, ctx: z.RefinementCtx) => {
   if (binding.template_pins.length === 0 && binding.package === null) {
     ctx.addIssue({ code: 'custom', path: ['template_pins'], message: 'BINDING_PIN_REQUIRED: multi-pin set and legacy package are both empty' });
   }
-});
+};
+/** A stored binding: every published row has a revision, so 0 is never a persisted value. */
+export const ResourceBindingCandidateSchema = z.strictObject({
+  ...bindingCandidateShape,
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).superRefine(requireAPin);
+
+/**
+ * The request-side candidate delta. It is identical to the stored shape except
+ * for the revision: an unbound resource names base revision 0, and the first
+ * application turns that into revision 1. Persisted payloads stay strictly
+ * positive — this schema never validates a stored row.
+ */
+export const ResourceBindingCandidateInputSchema = z.strictObject({
+  ...bindingCandidateShape,
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).superRefine(requireAPin);
 
 export const BindingApplicationSchema = z.strictObject({
   applied_revision: z.number().int().positive().nullable(),

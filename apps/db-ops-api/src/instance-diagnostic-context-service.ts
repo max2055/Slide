@@ -1,3 +1,5 @@
+import { actorContextService } from './auth/actor-context.js';
+import { PolicyError } from './metrics/policy/model.js';
 import type { ActorContext } from './auth/actor-context.js';
 import { hasPermission } from './auth/require-permission.js';
 import { alertDatabaseService } from './alert-database-service.js';
@@ -6,7 +8,7 @@ import { databaseStorageDiscoveryService } from './database-storage-discovery-se
 import { dbConnection } from './db-connection.js';
 import { linuxHostEvidenceService } from './linux-host-evidence-service.js';
 import { metricsDatabaseService } from './metrics-database-service.js';
-import { metricConsumerService } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService as metricConsumerService } from './metrics/consumers/runtime.js';
 import { redactSensitiveText } from './security/log-redaction.js';
 import { instanceHostService, type InstanceHostDetail } from './resources/instance-host-service.js';
 import { serverDiagnosticService } from './server-diagnostic-service.js';
@@ -149,6 +151,7 @@ const EVIDENCE_TEXT_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = Object.
 
 export interface InstanceDiagnosticContextOptions {
   maxBytes?: number;
+  reloadActor?: (actor: ActorContext) => Promise<ActorContext>;
 }
 
 function servicesForDatabaseType(databaseType: string): string[] {
@@ -378,7 +381,7 @@ export class InstanceDiagnosticContextService {
 
   constructor(
     private readonly dependencies: DiagnosticContextDependencies,
-    options: InstanceDiagnosticContextOptions = {},
+    private readonly options: InstanceDiagnosticContextOptions = {},
   ) {
     this.maxBytes = Number.isSafeInteger(options.maxBytes) && options.maxBytes! >= MIN_EVIDENCE_PACK_MAX_BYTES
       ? options.maxBytes!
@@ -386,6 +389,7 @@ export class InstanceDiagnosticContextService {
   }
 
   async collect(actor: ActorContext, instanceId: number, now = new Date()): Promise<InstanceDiagnosticContext> {
+    if (this.options.reloadActor) actor = await this.options.reloadActor(actor);
     if (!Number.isSafeInteger(instanceId) || instanceId <= 0) throw new Error('RESOURCE_REF_INVALID');
     const actorPermissions = new Set(actor.permissions);
     if (!hasPermission(actorPermissions, 'instance:view')) throw new Error('RESOURCE_FORBIDDEN');
@@ -544,6 +548,12 @@ export class InstanceDiagnosticContextService {
       hosts,
       gaps,
     } satisfies InstanceDiagnosticContext;
+    if (this.options.reloadActor) {
+      const live = await this.options.reloadActor(actor);
+      if (!hasReadOnlyInstanceAccess(live, instanceId) || actor.permissions.some(p => !hasPermission(new Set(live.permissions), p))) {
+        throw new PolicyError('POLICY_FORBIDDEN', 403);
+      }
+    }
     const sanitized = sanitizeEvidenceValue(pack) as InstanceDiagnosticContext;
     return boundEvidencePack(sanitized, this.maxBytes);
   }
@@ -585,6 +595,6 @@ export const instanceDiagnosticContextService = new InstanceDiagnosticContextSer
   discoverStorage: (instanceId) => databaseStorageDiscoveryService.discover(instanceId),
   collectHostEvidence: (serverId, request) => linuxHostEvidenceService.collectHostEvidence(serverId, request),
   collectServerDiagnostics: (serverId) => instanceServerDiagnostic(serverId),
-});
+}, { reloadActor: actor => actorContextService.revalidateActor(actor, actor.requestId) });
 
 export default instanceDiagnosticContextService;

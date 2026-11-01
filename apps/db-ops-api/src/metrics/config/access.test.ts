@@ -70,3 +70,19 @@ describe('host production discovery ownership', () => {
     await expect(first.assertCurrent!()).rejects.toThrow('permission_denied');
   });
 });
+
+describe('trial host discovery ownership', () => {
+  it('supplies host lifecycle evidence from its own cache without the production enable check', async () => {
+    mock.inventory.mockResolvedValue({ type: 'server', id: '1', attributes: {} });
+    mock.server.mockResolvedValue({ host: 'managed-host', port: 22, credential_type: 'password', host_key_fingerprint: 'fingerprint' });
+    mock.credentials.mockResolvedValue({ username: 'reader', password: 'fixture-only' });
+    const trial = createAssetCollectorAccess(), production = createAssetCollectorAccess(true), server = { type: 'server' as const, id: 1 };
+    const first = await trial.resolve(server), second = await trial.resolve(server), collected = await production.resolve(server);
+    expect(first.evidence.host_blocks).toBeDefined();
+    expect(first.evidence.host_interfaces).toBeDefined();
+    expect(second.evidence.host_blocks).toBe(first.evidence.host_blocks);
+    expect(first.evidence.host_blocks).not.toBe(collected.evidence.host_blocks);
+    expect(first.evidence.host_interfaces).not.toBe(collected.evidence.host_interfaces);
+    expect(mock.assetEnabled).toHaveBeenCalledTimes(1);
+  });
+});

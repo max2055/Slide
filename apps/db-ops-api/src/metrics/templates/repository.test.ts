@@ -283,4 +283,18 @@ describe('in-memory template repository', () => {
     expect(second.items.map(entry => entry.template_id)).toEqual(['tpl-c']);
     expect(second.next_cursor).toBeNull();
   });
+
+  it('filters the catalog by a case-insensitive name search before paging', async () => {
+    const repository = new InMemoryTemplateRepository();
+    await repository.create({ ...template('tpl-a'), name: 'MySQL 基础监控' }, draft('tpl-a'));
+    await repository.create({ ...template('tpl-b'), name: 'PostgreSQL 监控' }, draft('tpl-b'));
+    await repository.create({ ...template('tpl-c'), name: 'mysql 扩展监控' }, draft('tpl-c'));
+    const matched = await repository.listTemplates({ query: 'MySQL', limit: 1 });
+    expect(matched.items.map(entry => entry.template_id)).toEqual(['tpl-a']);
+    expect(matched.next_cursor).toBe('tpl-a');
+    const rest = await repository.listTemplates({ query: 'MySQL', limit: 1, cursor: matched.next_cursor! });
+    expect(rest.items.map(entry => entry.template_id)).toEqual(['tpl-c']);
+    expect(rest.next_cursor).toBeNull();
+    expect((await repository.listTemplates({ query: 'nothing' })).items).toEqual([]);
+  });
 });

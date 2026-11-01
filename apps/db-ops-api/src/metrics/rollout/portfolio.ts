@@ -4,7 +4,8 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import { dbConnection } from '../../db-connection.js';
 import { normalizeServerOs } from '../../server-os-profile.js';
 import { createConfigurationRegistry } from '../config/registry.js';
-import { type Ref, refKey } from '../policy/model.js';
+import { type Published, type Ref, refKey } from '../policy/model.js';
+import { readStoredBinding } from '../bindings/package-reader.js';
 import { policyService } from '../policy/service.js';
 import { MysqlRolloutCoordinator } from './coordinator.js';
 
@@ -303,6 +304,14 @@ type AssetRow = RowDataPacket & {
 
 const decode = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
 
+/**
+ * The public portfolio status can only describe a single-package policy. A
+ * template row cannot be shown as unconfigured or started by an old package, so
+ * the inventory refuses with a stable code until the product interface exists.
+ * TODO(product): expose the template binding/pending state in `PortfolioPolicyState`.
+ */
+export const PORTFOLIO_TEMPLATE_BINDING_UNSUPPORTED = 'PORTFOLIO_TEMPLATE_BINDING_UNSUPPORTED';
+
 export class MysqlPortfolioInventory implements PortfolioInventory {
   constructor(private readonly pool: Pool, private readonly packages: PortfolioPackage[]) {}
 
@@ -352,7 +361,12 @@ export class MysqlPortfolioInventory implements PortfolioInventory {
         AND BINARY series.resource_id = BINARY resources.resource_id
       GROUP BY resources.resource_key, resources.phase, resources.revision, resources.generation, resources.gate_json
       ORDER BY resources.resource_key`);
-    const policyByKey = new Map(policies.map(row => [String(row.resource_key), decode<any>(row.payload)]));
+    const policyByKey = new Map<string, Published>();
+    for (const row of policies) {
+      const stored = readStoredBinding(decode(row.payload));
+      if (stored.source === 'template') throw new Error(PORTFOLIO_TEMPLATE_BINDING_UNSUPPORTED);
+      policyByKey.set(String(row.resource_key), stored.published);
+    }
     const rolloutByKey = new Map(rollouts.map(row => [String(row.resource_key), row]));
     return assets.map(resource => {
       const key = refKey(resource.ref);

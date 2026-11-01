@@ -8,12 +8,14 @@ import { metricsDatabaseService } from './metrics-database-service';
 import { databaseService } from './database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import type { ActorContext } from './auth/actor-context.js';
-import { metricConsumerService, operationalSource } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService as metricConsumerService, authenticatedMetricConsumerService, operationalSource } from './metrics/consumers/runtime.js';
 import ejs from 'ejs';
 import path from 'path';
 import fs from 'fs';
 
 export interface ReportOptions {
+  /** Explicit authenticated caller; scheduled reports omit it. */
+  actor?: ActorContext;
   format?: ReportFormat;
   title?: string;
   includeCharts?: boolean;
@@ -486,7 +488,7 @@ class ReportService {
       });
 
       assertWorkflowActive();
-      const semantic = await metricConsumerService.query(metricReportActor(instanceId), {
+      const semantic = await (options.actor ? authenticatedMetricConsumerService : metricConsumerService).query(options.actor ?? metricReportActor(instanceId), {
         resource: { type: 'instance', id: instanceId },
         view: 'all',
       });

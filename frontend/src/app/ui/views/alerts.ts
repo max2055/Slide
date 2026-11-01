@@ -1,3 +1,4 @@
+import '../components/maintenance-windows.js';
 import { alertLevelLabel, alertLevelVariant, alertLevelOptions } from '../alert-levels.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
@@ -550,10 +551,6 @@ export class AlertsPage extends LitElement {
   @state() private editingEscalation: any = null;
 
   // Maintenance tab state
-  @state() private maintenanceWindows: any[] = [];
-  @state() private maintenanceLoading = false;
-  @state() private showMaintenanceModal = false;
-  @state() private editingMaintenance: any = null;
 
   // Silence tab state
   @state() private silencePeriods: any[] = [];
@@ -635,7 +632,6 @@ export class AlertsPage extends LitElement {
         if (this.escalationRules.length === 0 && !this.escalationLoading) this.loadEscalationRules();
         break;
       case 'maintenance':
-        if (this.maintenanceWindows.length === 0 && !this.maintenanceLoading) this.loadMaintenanceWindows();
         break;
       case 'silence':
         if (this.silencePeriods.length === 0 && !this.silenceLoading) this.loadSilencePeriods();
@@ -670,7 +666,7 @@ export class AlertsPage extends LitElement {
       case 'escalation':
         return this._renderEscalation();
       case 'maintenance':
-        return this._renderMaintenance();
+        return html`<maintenance-windows></maintenance-windows>`;
       case 'silence':
         return this._renderSilence();
       case 'baselines':
@@ -707,7 +703,7 @@ export class AlertsPage extends LitElement {
     // Keep the active editor and list pagination; read the current section.
     if (this.activeAlertTab === 'rules') await this.loadRules();
     else if (this.activeAlertTab === 'escalation') await this.loadEscalationRules();
-    else if (this.activeAlertTab === 'maintenance') await this.loadMaintenanceWindows();
+
     else if (this.activeAlertTab === 'silence') await this.loadSilencePeriods();
     else if (this.activeAlertTab === 'baselines') await this.loadBaselines();
     else if (this.activeAlertTab === 'notifications') await this.loadNotificationDeadLetters();
@@ -1611,226 +1607,6 @@ export class AlertsPage extends LitElement {
           <div slot="footer" class="form-actions">
             <button class="btn" @click=${() => this._closeEscalationModal()}>取消</button>
             <button class="btn-primary" @click=${() => this._saveEscalationRule()}>保存</button>
-          </div>
-      </app-dialog>
-    `;
-  }
-
-  // ==================== Task 3: Maintenance Windows CRUD ====================
-
-  async loadMaintenanceWindows() {
-    this.maintenanceLoading = true;
-    try {
-      const res = await authFetch("/api/maintenance-windows");
-      if (!res.ok) throw new Error("加载维护窗口失败");
-      this.maintenanceWindows = await res.json();
-    } catch (err: any) {
-      this.error = err.message;
-    } finally {
-      this.maintenanceLoading = false;
-    }
-  }
-
-  private _openMaintenanceModal(win?: any) {
-    this.editingMaintenance = win || null;
-    this.ruleForm = win ? { ...win, _days: (win.day_of_week || '').split(',').map(Number).filter((d:number)=>!isNaN(d)) } : { name: '', start_time: '02:00', end_time: '06:00', _days: [0], enabled: true };
-    this.ruleFormError = '';
-    this.showMaintenanceModal = true;
-  }
-
-  private _closeMaintenanceModal() {
-    this.showMaintenanceModal = false;
-    this.editingMaintenance = null;
-    this.ruleForm = {};
-    this.ruleFormError = '';
-  }
-
-  private async _saveMaintenanceWindow() {
-    const form = this.ruleForm;
-    if (!form.name) {
-      this.ruleFormError = '名称不能为空';
-      return;
-    }
-    try {
-      const body = {
-        name: form.name,
-        description: form.description || '',
-        start_time: form.start_time || '02:00',
-        end_time: form.end_time || '06:00',
-        day_of_week: ((Array.isArray(form._days) ? form._days : [0]) as number[]).join(','),
-        enabled: form.enabled !== false,
-      };
-      let res: Response;
-      if (this.editingMaintenance) {
-        res = await authFetch(`/api/maintenance-windows/${this.editingMaintenance.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      } else {
-        res = await authFetch('/api/maintenance-windows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      }
-      if (!res.ok) {
-        const err = await res.json();
-        this.ruleFormError = err.error || '保存失败';
-        return;
-      }
-      this._closeMaintenanceModal();
-      await this.loadMaintenanceWindows();
-    } catch (err: any) {
-      this.ruleFormError = err.message;
-    }
-  }
-
-  private async _toggleMaintenance(win: any) {
-    try {
-      const res = await authFetch(`/api/maintenance-windows/${win.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !win.enabled }),
-      });
-      if (!res.ok) throw new Error('切换失败');
-      await this.loadMaintenanceWindows();
-    } catch (err: any) {
-      this.error = err.message;
-    }
-  }
-
-  private async _deleteMaintenance(win: any) {
-    if (!confirm(`确定删除维护窗口「${win.name}」？`)) return;
-    try {
-      const res = await authFetch(`/api/maintenance-windows/${win.id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('删除失败');
-      await this.loadMaintenanceWindows();
-    } catch (err: any) {
-      this.error = err.message;
-    }
-  }
-
-  private _toggleDayOfWeek(day: number) {
-    const current = (this.ruleForm._days as number[]) || [];
-    const next = current.includes(day) ? current.filter((d:number) => d !== day) : [...current, day];
-    this._updateRuleForm('_days', next);
-  }
-
-  private _renderMaintenance() {
-    if (this.maintenanceLoading) return html`<div class="loading">加载维护窗口...</div>`;
-
-    const dayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-
-    return html`
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">维护窗口 (${this.maintenanceWindows.length})</span>
-          <button class="btn-primary" @click=${() => this._openMaintenanceModal()}>
-            ${icons['plus']} 新建窗口
-          </button>
-        </div>
-
-        ${this.maintenanceWindows.length > 0
-          ? html`
-              <div class="table-container">
-                <table class="table">
-                  <thead>
-                    <tr>
-                      <th>名称</th>
-                      <th style="width:120px;text-align:center;">时间范围</th>
-                      <th style="width:180px;text-align:center;">星期</th>
-                      <th style="width:70px;text-align:center;">状态</th>
-                      <th style="width:120px;text-align:center;">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${this.maintenanceWindows.map(win => {
-                      const days = (win.day_of_week || '').split(',').map((d: string) => dayLabels[Number(d)] || d).join(', ');
-                      return html`
-                        <tr>
-                          <td>
-                            <span style="font-weight:500;">${win.name}</span>
-                            ${win.description ? html`<br><span style="font-size:var(--text-xs);color:var(--muted);">${win.description}</span>` : ''}
-                          </td>
-                          <td style="text-align:center;">${win.start_time} - ${win.end_time}</td>
-                          <td style="font-size:var(--text-sm);text-align:center;">${days || '—'}</td>
-                          <td style="text-align:center;">
-                            <button class="status-badge-sm ${win.enabled ? 'enabled' : 'disabled'}" style="border:none;cursor:pointer;" @click=${() => this._toggleMaintenance(win)}>
-                              ${win.enabled ? '启用' : '停用'}
-                            </button>
-                          </td>
-                          <td style="text-align:center;">
-                            <div class="actions">
-                              <button class="btn-sm action-btn" @click=${() => this._openMaintenanceModal(win)}>编辑</button>
-                              <button class="btn-sm danger action-btn" @click=${() => this._deleteMaintenance(win)}>删除</button>
-                            </div>
-                          </td>
-                        </tr>
-                      `;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            `
-          : html`
-              <div class="empty" style="min-height: 200px;">
-                <div class="empty__content">
-                  <div class="empty__icon">${icons['calendar']}</div>
-                  <div class="empty__title">暂无维护窗口</div>
-                  <div class="empty__desc">创建维护窗口以在特定时段抑制告警</div>
-                </div>
-              </div>
-            `
-        }
-      </div>
-
-      ${this.showMaintenanceModal ? this._renderMaintenanceFormModal() : ''}
-    `;
-  }
-
-  private _renderMaintenanceFormModal() {
-    const form = this.ruleForm;
-    const dayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    const selectedDays = (form._days as number[]) || [];
-
-    return html`
-      <app-dialog .open=${this.showMaintenanceModal} title="${this.editingMaintenance ? '编辑维护窗口' : '新建维护窗口'}" @app-dialog-close=${() => this._closeMaintenanceModal()}>
-
-          ${this.ruleFormError ? html`<div style="color: var(--danger); font-size: var(--text-base); margin-bottom: var(--space-md);">${this.ruleFormError}</div>` : ''}
-
-          <app-form-field label="名称">
-            <input class="form-input" .value=${form.name || ''} @input=${(e: any) => this._updateRuleForm('name', e.target.value)} placeholder="例如：每周例行维护" />
-          </app-form-field>
-
-          <app-form-field label="描述">
-            <input class="form-input" .value=${form.description || ''} @input=${(e: any) => this._updateRuleForm('description', e.target.value)} placeholder="可选" />
-          </app-form-field>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md);">
-            <app-form-field label="开始时间">
-              <input type="time" class="form-input" .value=${form.start_time || '02:00'} @input=${(e: any) => this._updateRuleForm('start_time', e.target.value)} />
-          </app-form-field>
-            <app-form-field label="结束时间">
-              <input type="time" class="form-input" .value=${form.end_time || '06:00'} @input=${(e: any) => this._updateRuleForm('end_time', e.target.value)} />
-          </app-form-field>
-          </div>
-
-          <app-form-field label="星期">
-            <div class="checkbox-group">
-              ${dayLabels.map((label, i) => html`
-                <button class="checkbox-label ${selectedDays.includes(i) ? 'active' : ''}" @click=${() => this._toggleDayOfWeek(i)}>
-                  ${label}
-                </button>
-              `)}
-            </div>
-          </app-form-field>
-
-          <div slot="footer" class="form-actions">
-            <button class="btn" @click=${() => this._closeMaintenanceModal()}>取消</button>
-            <button class="btn-primary" @click=${() => this._saveMaintenanceWindow()}>保存</button>
           </div>
       </app-dialog>
     `;

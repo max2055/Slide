@@ -1,5 +1,5 @@
 import type { JobRegistry } from '../../workflows/job-registry.js';
-import { JOB_TYPE } from './store.js';
+import { COLLECT_NOW_JOB_TYPE, JOB_TYPE } from './store.js';
 
 export interface SchedulerLifecycleOptions {
   enabled: boolean;
@@ -32,7 +32,9 @@ export class MetricSchedulerLifecycle {
     this.started = true;
     if (!this.options.enabled) {
       // A restart with collection disabled must not execute durable jobs left by a previous run.
-      registry.register(JOB_TYPE, async () => { throw new Error('METRIC_COLLECTION_DISABLED'); });
+      const disabled = async () => { throw new Error('METRIC_COLLECTION_DISABLED'); };
+      registry.register(JOB_TYPE, disabled);
+      registry.register(COLLECT_NOW_JOB_TYPE, disabled);
       return;
     }
     await ready();

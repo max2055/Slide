@@ -1,3 +1,4 @@
+import '../components/template-event-evidence.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
@@ -12,6 +13,7 @@ const API_BASE = "/api";
 interface AlertEvent {
   id: string;
   title: string;
+  source_type?: string;
   status: "open" | "investigating" | "handled" | "resolved" | "closed";
   severity: string;
   instance_id: number | null;
@@ -235,7 +237,7 @@ export class EventManagementPage extends LitElement {
 
     .main-layout {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: var(--space-lg);
       flex: 1;
       min-height: 0;
@@ -297,6 +299,8 @@ export class EventManagementPage extends LitElement {
     }
 
     .detail-panel {
+      min-width: 0;
+      overflow-wrap: anywhere;
       padding: var(--space-lg);
     }
 
@@ -860,6 +864,7 @@ export class EventManagementPage extends LitElement {
     const e = this.selectedEvent!;
     return html`
       <div class="detail-panel">
+        <template-event-evidence .eventId=${e.id}></template-event-evidence>
         <div class="detail-section">
           <h4>基本信息</h4>
           <div class="detail-row"><span class="label">标题</span><span class="value">${e.title}</span></div>
@@ -921,7 +926,7 @@ export class EventManagementPage extends LitElement {
               <button class="btn" style="font-size:var(--text-xs);margin-left:var(--space-sm);padding:var(--space-xs) var(--space-sm);" @click=${this._clearRCAResult}>清除</button>
             ` : nothing}
             <button class="btn" @click=${() => { this.showPostmortemForm = !this.showPostmortemForm; }} ?disabled=${this.actionLoading}>添加复盘</button>
-            ${["open", "investigating", "handled"].includes(e.status) ? html`<button class="btn btn-primary" @click=${this._resolveEvent} ?disabled=${this.actionLoading}>标记解决</button>` : nothing}
+            ${e.source_type!=='template-trigger' && ["open", "investigating", "handled"].includes(e.status) ? html`<button class="btn btn-primary" @click=${this._resolveEvent} ?disabled=${this.actionLoading}>标记解决</button>` : nothing}
             ${e.status === "resolved" && !e.verification_passed_at ? html`
               <textarea
                 class="note-input"

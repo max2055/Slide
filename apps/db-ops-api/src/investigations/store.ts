@@ -1,3 +1,4 @@
+import type { InvestigationEntryContext } from './entry-contracts.js';
 import { assertKnownPartial, type InvestigationContinuation } from './continuation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
@@ -51,7 +52,7 @@ export interface AdmissionInvestigation {
 export interface InvestigationRecord extends AdmissionInvestigation {
   title: string;
   goal: string;
-  context?: { subject: InvestigationSubject; from?: string; to?: string };
+  context?: { subject: InvestigationSubject; from?: string; to?: string; entry?: InvestigationEntryContext };
   problemStatus: 'unconfirmed' | 'in_progress' | 'resolved' | 'not_applicable';
   activeRequestId: string | null;
   createdAt: Date;
@@ -60,7 +61,7 @@ export interface InvestigationRecord extends AdmissionInvestigation {
 export interface InvestigationCreate {
   /** Trusted HTTP command, recovered before allocating a new investigation. */
   idempotencyKey?: string;
-  context?: { subject: InvestigationSubject; from?: string; to?: string };
+  context?: { subject: InvestigationSubject; from?: string; to?: string; entry?: InvestigationEntryContext };
   actor: InvestigationActor;
   title: string;
   goal: string;

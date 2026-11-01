@@ -1,3 +1,6 @@
+import { registerAlertListRoute } from './src/alert-list-route.js';
+import { registerMaintenanceRoutes } from './src/maintenance-routes.js';
+import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
 import { excludeActionJobs } from './src/operations/actions/worker.js';
 import { createOperationsComposition } from './src/operations/composition.js';
 import { investigationBudgetConfiguration } from './src/investigations/session-bridge.js';
@@ -194,6 +197,8 @@ import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.j
 import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
+import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
+import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
 import { registerEvidenceEvaluationRoutes } from './src/evidence/evidence-evaluation-api.js';
 import { installPlatformObservation } from './src/platform/platform-observation-service.js';
@@ -408,7 +413,10 @@ async function start() {
           database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : inst.db_type === 'mysql' ? 'mysql' : undefined),
           db_type: inst.db_type,
         }), () => databaseService.removeConnection(inst.id));
-        if (ok) { recoveredConnections.add(inst.id); reconnected++; }
+        if (ok) {
+          recoveredConnections.add(inst.id); reconnected++;
+          await instanceDatabaseService.recordDetectedVersion(inst.id, await databaseService.detectVersion(inst.id));
+        }
       } catch (e: any) {
         startup.signal.throwIfAborted();
         console.warn(`  ⚠️  实例 ${inst.name} (id=${inst.id}) 重连失败: ${e.message}`);
@@ -479,6 +487,8 @@ async function start() {
     await registerMetricConfigurationRoutes(app, verifyToken);
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
+    await registerMetricTemplateRoutes(app, verifyToken);
+    await registerTemplateTriggerRoutes(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
@@ -978,32 +988,7 @@ async function start() {
   }
 
   // 告警列表
-  fastify.get('/api/alerts', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const q = request.query as any;
-      const instanceId = q.instance_id === undefined ? undefined : Number(q.instance_id);
-      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
-        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
-      }
-      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
-        return reply.code(403).send({ error: '无权访问该实例' });
-      }
-      const alerts = await alertDatabaseService.getAlerts({
-        instance_id: instanceId,
-        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
-        allowed_server_ids: hasPermission(new Set((request as any).user?.permissions ?? []), 'servers:view') ? null : [],
-        allowed_network_device_ids: hasPermission(new Set((request as any).user?.permissions ?? []), 'network_devices:view') ? null : [],
-        limit: q.limit ? parseInt(q.limit) : undefined,
-        offset: q.offset ? parseInt(q.offset) : undefined,
-        status: q.status || undefined,
-        level: q.level || undefined,
-        strict: true,
-      });
-      reply.send(alerts);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取告警列表失败：' + error.message });
-    }
-  });
+  await registerAlertListRoute(fastify,verifyToken);
 
   // 确认告警（人工确认：设置 status = 'acknowledged'）
   fastify.post('/api/alerts/:id/read', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
@@ -1039,8 +1024,12 @@ async function start() {
     const { instanceId } = request.params as any;
     try {
       const metrics = await resourceMetricRead((request as any).user,{type:'instance',id:Number(instanceId)});
+      const live = await actorContextService.revalidateActor((request as any).user, request.id);
+      if (!hasPermission(new Set(live.permissions), 'metric:view')) return reply.code(403).send({ error: 'POLICY_FORBIDDEN' });
       reply.send(metrics);
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '获取监控指标失败：' + error.message });
     }
   });
@@ -1146,6 +1135,8 @@ async function start() {
       const observation = await observationService.latest((request as any).user, { type, id: Number(id) }, metricId, { validForMs: validity });
       return reply.send({ observation });
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       const code = error?.message === 'RESOURCE_FORBIDDEN' ? 404 : error?.message === 'METRIC_ID_UNSUPPORTED' || error?.message === 'OBSERVATION_RANGE_INVALID' ? 400 : 500;
       return reply.code(code).send({ error: error?.message || 'Observation lookup failed' });
     }
@@ -1500,6 +1491,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
+        await instanceDatabaseService.recordDetectedVersion(Number(id), await databaseService.detectVersion(Number(id)));
         return reply.send({ success: true, message: '连接已建立，统一采集按当前绑定调度',
           configuration: await metricConfigurationService.status((request as any).user, { type: 'instance', id: Number(id) }) });
       } else {
@@ -1664,7 +1656,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   // ========== 服务器指标 API ==========
 
-  const metricReadFailure = (reply: any, error: unknown) => error instanceof PolicyError
+  const metricReadFailure = (reply: any, error: unknown) => error instanceof ActorAuthenticationError
+    ? reply.code(401).send({ error: 'AUTH_REQUIRED' })
+    : error instanceof PolicyError
     ? reply.code(error.status).send({ error: error.code })
     : reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
 
@@ -1772,13 +1766,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const { server_id } = request.body as { server_id?: number };
-      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined);
+      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined, (request as any).user);
       if (result.success) {
         reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
       } else {
         reply.code(500).send({ error: result.error || '生成服务器健康报告失败' });
       }
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
@@ -1788,7 +1784,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { format = 'html' } = request.query as { format?: string };
       const safeFormat = (format === 'md' || format === 'markdown') ? 'md' : 'html';
-      const reportData = await serverReportService.generateReport();
+      const reportData = await serverReportService.generateReport(undefined, (request as any).user);
 
       if (safeFormat === 'md') {
         const md = serverReportService.generateMarkdown(reportData);
@@ -1798,6 +1794,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         reply.header('Content-Type', 'text/html; charset=utf-8').send(html);
       }
     } catch (error: any) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
       reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
@@ -3033,9 +3031,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const validFormats = ['html', 'pdf', 'json', 'md', 'csv'] as const;
         const safeFormat: string = validFormats.includes(format as any) ? format : 'html';
 
-        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv' });
+        const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv', actor: (request as any).user });
         reply.send({ id: report.id, status: report.status, name: report.name });
       } catch (error: any) {
+        if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+        if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -5041,89 +5041,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // --- 维护窗口 (5 条) ---
-  async function requireMaintenanceWindowAccess(request: any, reply: any, windowId: number) {
-    const window = await maintenanceWindowService.getMaintenanceWindowById(windowId);
-    const allowed = window && (window.instance_id == null
-      ? hasUnrestrictedInstanceAccess(request.user)
-      : hasInstanceAccess(request.user, Number(window.instance_id), 'read-write'));
-    if (!allowed) {
-      reply.code(404).send({ error: '维护窗口不存在' });
-      return null;
-    }
-    return window;
-  }
-
-  fastify.get('/api/maintenance-windows', { preHandler: [verifyToken] }, async (request, reply) => {
-    try {
-      const windows = await maintenanceWindowService.getMaintenanceWindows(
-        undefined,
-        getAccessibleInstanceIds((request as any).user),
-      );
-      reply.send(windows);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.post('/api/maintenance-windows', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const body = request.body as any;
-      if (body.instance_id == null) {
-        if (!hasUnrestrictedInstanceAccess((request as any).user)) {
-          return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
-        }
-      } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
-        return reply.code(403).send({ error: '无权以读写级别访问该实例' });
-      }
-      const result = await maintenanceWindowService.createMaintenanceWindow(body);
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.put('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
-      const body = request.body as any;
-      if (body.instance_id !== undefined) {
-        if (body.instance_id == null) {
-          if (!hasUnrestrictedInstanceAccess((request as any).user)) {
-            return reply.code(403).send({ error: '创建全局维护窗口需要不受限的实例管理权限' });
-          }
-        } else if (!hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-write')) {
-          return reply.code(403).send({ error: '无权以读写级别访问该实例' });
-        }
-      }
-      const result = await maintenanceWindowService.updateMaintenanceWindow(Number(id), body);
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.delete('/api/maintenance-windows/:id', { preHandler: [verifyToken, requirePermission('maintenance:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireMaintenanceWindowAccess(request, reply, Number(id))) return;
-      const result = await maintenanceWindowService.deleteMaintenanceWindow(Number(id));
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
-
-  fastify.get('/api/maintenance-windows/check/:instanceId', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { instanceId } = request.params as any;
-      const result = await maintenanceWindowService.isActiveMaintenanceWindow(Number(instanceId));
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+  await registerMaintenanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---
   fastify.get('/api/silence', { preHandler: [verifyToken] }, async (request, reply) => {
@@ -5180,56 +5098,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
+  await registerEventReadRoutes(fastify,verifyToken);
   // --- 事件管理 (10 条) ---
   async function requireAlertEventAccess(request: any, reply: any, eventId: number, minLevel: 'read-only' | 'read-write' = 'read-only') {
-    const event = await alertEventService.getEventById(eventId);
-    if (!event || !hasInstanceAccess(request.user, Number(event.instance_id), minLevel)) {
-      reply.code(404).send({ error: '事件未找到' });
-      return null;
-    }
-    return event;
+    return requireEventAccess(request,reply,eventId,minLevel);
   }
 
-  fastify.get('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const query = request.query as any;
-      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
-      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
-        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
-      }
-      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
-        return reply.code(403).send({ error: '无权访问该实例' });
-      }
-      const events = await alertEventService.getEvents({
-        ...query,
-        instance_id: instanceId,
-        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
-      });
-      reply.send(events);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/stats', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const stats = await alertEventService.getEventStats(getAccessibleInstanceIds((request as any).user));
-      reply.send(stats);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/:id', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const event = await requireAlertEventAccess(request, reply, Number(id));
-      if (!event) return;
-      reply.send(event);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+
+
+
 
   fastify.post('/api/alerts/events', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
@@ -5387,46 +5266,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  fastify.get('/api/alerts/events/:id/logs', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id))) return;
-      const logs = await alertEventService.getEventLogs(Number(id));
-      reply.send(logs);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/mttr', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const stats = await alertEventService.getMTTRStats(getAccessibleInstanceIds((request as any).user));
-      reply.send(stats);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
 
-  fastify.get('/api/alerts/events/search', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
-    try {
-      const query = request.query as any;
-      const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
-      if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0)) {
-        return reply.code(400).send({ error: 'instance_id 必须为正整数' });
-      }
-      if (instanceId !== undefined && !hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
-        return reply.code(403).send({ error: '无权访问该实例' });
-      }
-      const result = await alertEventService.searchEvents({
-        ...query,
-        instance_id: instanceId,
-        allowed_instance_ids: getAccessibleInstanceIds((request as any).user),
-      });
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+
+
+
 
   // --- 事件聚合 (1 条) ---
   fastify.post('/api/alerts/aggregate', { preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {

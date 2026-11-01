@@ -1,3 +1,4 @@
+import { publicMaintenanceTags } from './maintenance-public-tags.js';
 /**
  * 通知数据库服务
  */
@@ -388,7 +389,7 @@ class NotificationDatabaseService {
         metric_name: row.metric_name,
         metric_value: row.metric_value,
         threshold_value: row.threshold_value,
-        tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags,
+        tags: publicMaintenanceTags(row.tags),
         created_at: row.created_at,
         instance_name: row.instance_name,
         instance_host: row.instance_host,
@@ -441,7 +442,7 @@ class NotificationDatabaseService {
         metric_name: row.metric_name,
         metric_value: row.metric_value,
         threshold_value: row.threshold_value,
-        tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags,
+        tags: publicMaintenanceTags(row.tags),
         created_at: row.created_at,
         instance_name: row.instance_name,
         instance_host: row.instance_host,

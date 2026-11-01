@@ -1,3 +1,7 @@
+import { ActorAuthenticationError, type ActorContext } from './auth/actor-context.js';
+import { PolicyError } from './metrics/policy/model.js';
+import { metricConsumerService } from './metrics/consumers/runtime.js';
+import { internalMetricConsumerService } from './metrics/consumers/runtime.js';
 import { resourceMetricRead } from './metrics/consumers/resource-api.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
@@ -118,7 +122,7 @@ export class ServerReportService {
   /**
    * Generate a health report for all servers with their latest metrics.
    */
-  async generateReport(serverIds?: readonly number[]): Promise<ReportData> {
+  async generateReport(serverIds?: readonly number[], userActor?: ActorContext): Promise<ReportData> {
     const pool = dbConnection.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
@@ -133,7 +137,7 @@ export class ServerReportService {
 
     for (const server of servers) {
       // Get latest metric values
-      const semantic=await resourceMetricRead({userId:0,username:'server-report',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-report:${server.id}`},{type:'server',id:server.id});
+      const semantic=await resourceMetricRead(userActor ?? {userId:0,username:'server-report',roles:[],permissions:['servers:view'],instanceScopes:{},sessionVersion:0,requestId:`server-report:${server.id}`},{type:'server',id:server.id}, {}, userActor ? metricConsumerService : internalMetricConsumerService);
       const aliases:Record<string,string>={'linux.cpu.user_system_percent':'cpu_usage','linux.memory.used_percent':'memory_usage'};
       const rows=semantic.metrics.filter(r=>aliases[r.metric_id]&&Object.keys(r.dimensions).length===0&&r.quality.status==='good'&&r.freshness==='fresh')
         .flatMap(r=>r.value&&'value'in r.value?[{metric_name:aliases[r.metric_id],metric_value:r.value.value,dimensions:r.dimensions,recorded_at:r.recorded_at}]:[]);
@@ -270,10 +274,10 @@ export class ServerReportService {
    * Generate and persist a server health report to the reports table.
    * Wraps generateReport() with persistence to enable report history viewing.
    */
-  async generateAndPersist(serverIds?: number[]): Promise<{ success: boolean; reportId?: number; error?: string }> {
+  async generateAndPersist(serverIds?: number[], userActor?: ActorContext): Promise<{ success: boolean; reportId?: number; error?: string }> {
     try {
       assertWorkflowActive();
-      const reportData = await this.generateReport(serverIds);
+      const reportData = await this.generateReport(serverIds, userActor);
       const htmlContent = this.generateHtml(reportData);
 
       assertWorkflowActive();
@@ -291,6 +295,7 @@ export class ServerReportService {
       return { success: true, reportId: report.id };
     } catch (error: any) {
       assertWorkflowActive();
+      if (userActor && (error instanceof ActorAuthenticationError || error instanceof PolicyError)) throw error;
       return { success: false, error: error.message };
     }
   }
