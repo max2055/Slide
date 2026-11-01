@@ -199,6 +199,11 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 if [ "$ready" = 0 ]; then log "$name was not ready within 120s"; exit 1; fi
+# Reuse the same exact owned lifecycle for the historical-configuration database gate.
+if [ "${MAX238_HISTORY_MYSQL_TEST:-0}" = 1 ]; then
+  MAX238_HISTORY_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/metrics/policy/configuration-history.mysql.test.ts
+  exit $?
+fi
 MAX238_TEST_MYSQL_PORT="$port" MAX238_API_PORT="$api_port" MAX238_E2E_CONTAINER="$container_id" MAX238_E2E_NONCE="$nonce" \
   MAX238_HANDLE_FILE="$handle_file" MAX238_HARNESS_PATH="$harness_path" \
   ../apps/db-ops-api/node_modules/.bin/tsx ../apps/db-ops-api/e2e/max238-unbind-preview-server.ts

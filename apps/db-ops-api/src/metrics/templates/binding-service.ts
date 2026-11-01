@@ -1,3 +1,4 @@
+import { readConfigurationHistory } from '../policy/configuration-history.js';
 /**
  * MAX-238 / COLLECTION-DISPLAY-E2E-R1 — production entry for a fixed-pin
  * template binding.
@@ -527,6 +528,31 @@ export class TemplateBindingService {
       parameters: resolution.templates, releases, items: this.items(resolution), excluded: resolution.excluded,
       budget: plan.budget, plan,
     };
+  }
+
+  /** Exact historical settings; pending is never reported as effective without recorded evidence. */
+  async readConfigurationAt(actor: ActorContext, ref: Ref, revision: number) {
+    RefSchema.parse(ref);
+    rule(Number.isSafeInteger(revision) && revision > 0, 'CONFIGURATION_HISTORY_REVISION', 400);
+    if (!canReadResource(actor, ref)) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
+    const connection = await this.pool().getConnection();
+    let reusable = true;
+    try {
+      await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await connection.beginTransaction();
+      const [lock] = await connection.query<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id = 1 FOR SHARE');
+      rule(lock.length === 1, 'TEMPLATE_BINDING_STORE_UNAVAILABLE', 503);
+      // Production requires the trusted current-read + actor row locks. No stale actor fallback.
+      rule(this.deps.reloadOnLocked, 'TEMPLATE_BINDING_STORE_UNAVAILABLE', 503);
+      await this.assertAccess(await this.deps.reloadOnLocked(actor, connection), ref, false, connection);
+      const result = await readConfigurationHistory(connection, ref, revision);
+      await this.assertAccess(await this.liveOn(actor, connection), ref, false, connection);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      try { await connection.rollback(); } catch { reusable = false; connection.destroy(); }
+      throw error;
+    } finally { if (reusable) connection.release(); }
   }
 
   /** Read-only impact of removing exact published pins; never changes the binding. */

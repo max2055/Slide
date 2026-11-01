@@ -1,3 +1,4 @@
+import { configurationHistoryRecord } from '../policy/configuration-history.js';
 /**
  * MAX-238 / B2E — unmounted MySQL host for the accepted atomic binding adapter.
  *
@@ -403,8 +404,9 @@ function validateIntent(intent: unknown): ValidatedIntent {
 }
 
 /** The template audit shape; deliberately not the legacy `Audit` union. */
-function auditPayloadOf(intent: ValidatedIntent, operationKey: string): string {
+function auditPayloadOf(intent: ValidatedIntent, operationKey: string, payloadText: string): string {
   return JSON.stringify({
+    configuration_history: configurationHistoryRecord(payloadText, 'publication', intent.decided_at).configuration_history,
     actor_id: intent.audit.actor_id,
     request_id: intent.audit.idempotency_key,
     action: intent.audit.action,
@@ -607,7 +609,7 @@ class MysqlTransactionHost implements BindingApplicationHost {
         previous_effective: (decoded?.effective as EffectiveSnapshot | null | undefined) ?? null,
         published_at: valid.decided_at,
       });
-      auditText = auditPayloadOf(valid, valid.operation.key);
+      auditText = auditPayloadOf(valid, valid.operation.key, payloadText);
     } catch { return this.reject('UNAVAILABLE'); }
     if (Buffer.byteLength(payloadText, 'utf8') > LIMITS.payload_bytes
       || Buffer.byteLength(auditText, 'utf8') > LIMITS.payload_bytes) {

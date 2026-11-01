@@ -278,7 +278,7 @@ const STATEMENTS: Array<[SqlKey, string]> = [
   ['saveGroup', 'INSERT INTO metric_policy_groups (id, payload) VALUES (?, ?) ON DUPLICATE KEY UPDATE payload = VALUES(payload)'],
   ['saveBinding', 'INSERT INTO metric_policy_bindings (resource_key, group_id, payload, capabilities) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE group_id = VALUES(group_id), payload = VALUES(payload)'],
   ['auditInsert', 'INSERT INTO metric_policy_audit (target, payload) VALUES (?, ?)'],
-  ['auditAll', 'SELECT payload FROM metric_policy_audit WHERE target = ? ORDER BY id DESC LIMIT 100'],
+  ['auditAll', "SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.action')) <> 'configuration.snapshot' ORDER BY id DESC LIMIT 100"],
   ['auditRequest', "SELECT payload FROM metric_policy_audit WHERE target = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.request_id')) = ? ORDER BY id DESC LIMIT 1"],
   ['scan', 'SELECT resource_key, payload FROM metric_policy_bindings ORDER BY resource_key'],
   ['receiptRead', MYSQL_BINDING_HOST_SQL.receiptRead],

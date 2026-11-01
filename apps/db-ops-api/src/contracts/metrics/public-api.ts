@@ -1,3 +1,4 @@
+import { ConfigurationAtSchema } from './configuration-history.js';
 import { z } from 'zod';
 import { metricBulkSchemas, metricBulkPaths } from './bulk.js';
 import { MetricConfigurationStatusSchema } from './configuration-status.js';
@@ -32,6 +33,7 @@ export const MetricOperationStateSchema = z.strictObject({
 });
 export const metricPublicSchemas = {
   ...metricBulkSchemas,
+  ConfigurationAt: ConfigurationAtSchema,
   MetricConfigurationStatus: MetricConfigurationStatusSchema,
   MetricConfigurationMigration: z.strictObject({resource:RefSchema,items:MetricConfigurationStatusSchema.shape.legacy_configuration.unwrap()}),
   MetricBindingChange: BindingChangeSchema,
@@ -116,6 +118,10 @@ export const metricPublicPaths = {
     security: [{ bearerAuth: [] }], parameters,
     description: 'Binding source, pending template plan, application status, effective revision and pins as independent facts. Requires read access to the resource; a failure never becomes "unbound".',
     responses: { '200': response('TemplateBindingStatus'), ...errors } } },
+  '/api/metrics/configuration-history/{type}/{id}/{revision}': { get: { operationId: 'readConfigurationAt',
+    parameters: [...parameters, { in: 'path', name: 'revision', required: true, schema: { type: 'integer', minimum: 1 } }],
+    description: 'Immutable resolved sampling settings at this exact resource revision. published is not effective. unknown means no recorded snapshot, never current defaults. Effective evidence states activation or exact formal observation commits, not continuous health. Requires current resource read access.',
+    responses: { '200': response('ConfigurationAt'), ...errors, '409': { description: 'Corrupt or conflicting historical evidence' } } } },
   '/api/metrics/template-bindings/{type}/{id}/unbind-preview': { post: { operationId: 'previewMetricTemplateUnbind',
     security: [{ bearerAuth: [] }], parameters, description: 'Read-only impact of removing exact pinned versions; no binding, history or event is modified.',
     requestBody: { required: true, content: { 'application/json': { schema: schema('TemplateUnbindPreviewRequest') } } },
