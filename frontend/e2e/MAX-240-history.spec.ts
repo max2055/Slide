@@ -447,7 +447,19 @@ test('a selected history series opens an authorized workspace draft with the sam
   await expect(page.locator('investigation-entry')).toContainText('草案');
   expect(Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n)).toBe(0);
   expect(modelCalls).toBe(0);
-  await writeFile(`${output}/history-workspace-context.json`, JSON.stringify({ context, factsStatus: response.status(), createdOnOpen: 0, modelCalls }, null, 2));
+  const entry = page.locator('investigation-entry');
+  await entry.getByRole('button', { name: '保存调查草案', exact: true }).click();
+  await expect(page).toHaveURL(/investigation=[a-f0-9-]+/);
+  await expect(entry.getByRole('link', { name: '返回来源' })).toHaveAttribute('href', context.returnTo);
+  const saved = Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n);
+  expect(saved).toBe(1);
+  await page.reload();
+  await expect(page.locator('investigation-entry table')).toBeVisible();
+  expect(Number((await pool.query('SELECT COUNT(*) AS n FROM investigations'))[0][0].n)).toBe(saved);
+  await page.locator('investigation-entry').getByRole('link', { name: '返回来源' }).click();
+  await expect(page).toHaveURL(origin + context.returnTo);
+  expect(modelCalls).toBe(0);
+  await writeFile(`${output}/history-workspace-context.json`, JSON.stringify({ context, factsStatus: response.status(), createdOnOpen: 0, saved, refreshDuplicate: false, exactReturn: true, modelCalls }, null, 2));
 });
 
 test('old sampling settings survive a current-period change through production history APIs', async ({ request }) => {
