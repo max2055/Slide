@@ -114,6 +114,18 @@ try {
     assert(baseline.observations.filter(o => spec.items.some((s: any) => s.metric === o.observation.metric.id)).every(o => o.observation.quality.status === 'good'));
     evidence.baseline = { attempts: baseline.attempts, raw: baseline.raw, observations: baseline.observations };
     assert.equal(baseline.raw!.length, 5);
+    for (const mapping of mappings) {
+      const raw = baseline.raw!.find(o => o.metric.id === mapping.metric.id)!;
+      assert(raw); assert.equal(raw.raw_field, mapping.raw_field); assert.equal(raw.unit, mapping.unit);
+      assert.equal(raw.quality.status, 'good'); assert.equal(raw.value?.encoding, 'uint64');
+      assert.deepEqual(Object.keys(raw.dimensions).sort(), mapping.dimensions.map(d => d.name).sort());
+      if (mapping.dimensions.length) assert.equal(raw.dimensions.database, 'template_target');
+      assert.equal(raw.source.collector_id, mapping.collector_id);
+    }
+    const capacity = baseline.raw!.find(o => o.metric.id === 'postgresql.connections.limit')!;
+    assert.equal((capacity.value as any).value, (await pg.query("SELECT current_setting('max_connections') AS capacity")).rows[0].capacity);
+    const disk = baseline.raw!.find(o => o.metric.id === 'postgresql.database.disk_bytes')!;
+    assert(BigInt((disk.value as any).value) > 0n);
     const beforeReset = baseline.observations.find(o => o.observation.metric.id === 'postgresql.transactions.commit_rate')!.observation;
     assert.equal(beforeReset.value, null); assert.equal(beforeReset.quality.reason, 'counter_baseline');
     const targetAdmin = new Client({ host: '127.0.0.1', port: pgPort, user: 'postgres', database: 'template_target' });
@@ -183,6 +195,8 @@ try {
       }
       assert.equal(result.state, 'completed', JSON.stringify(result));
       assert.equal(result.samples.length, spec.items.length);
+      assert.deepEqual(result.samples.map((s: any) => s.metric.id).sort(), spec.items.map((s: any) => s.metric).sort());
+      assert(result.samples.every((s: any) => s.quality.status === 'good' && s.value?.encoding === 'uint64'));
       evidence.collections.push(result);
     }
     const [stored] = await pool.query<any[]>("SELECT payload FROM metric_observations WHERE stage='normalized' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.resource_id'))='701'");
