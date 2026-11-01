@@ -6,6 +6,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { Client } from 'pg';
 import mysql from 'mysql2/promise';
+import Fastify from 'fastify';
+import jwt from 'jsonwebtoken';
+import { createVerifyToken } from '../src/auth-middleware.js';
+import { registerTemplateTriggerRoutes } from '../src/metrics/triggers/routes.js';
+import { registerMetricConsumerRoutes } from '../src/metrics/consumers/routes.js';
+import { registerEventReadRoutes } from '../src/alert-event-access.js';
 import { dbConnection, encryptData } from '../src/db-connection.js';
 import { databaseService } from '../src/database-service.js';
 import { MigrationRunner } from '../src/migrations/runner.js';
@@ -24,6 +30,7 @@ import { MysqlScheduleStore } from '../src/metrics/scheduler/store.js';
 import { MetricScheduler } from '../src/metrics/scheduler/service.js';
 import { JobRegistry } from '../src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../src/workflows/worker-runtime.js';
+import { RolloutControl } from '../src/metrics/rollout/control.js';
 import { runPackage } from '../src/metrics/packages/runner.js';
 
 const nonce = randomBytes(8).toString('hex');
@@ -44,6 +51,8 @@ const waitFor = async (fn: () => Promise<unknown>) => {
 };
 let root: mysql.Pool | undefined, owned: Awaited<ReturnType<typeof createOwnedDatabase>> | undefined;
 let pg: Client | undefined;
+let app: ReturnType<typeof Fastify> | undefined;
+const extraPg: Client[] = [];
 try {
   for (const [image, env, internal] of [
     ['postgres:16.4', 'POSTGRES_HOST_AUTH_METHOD=trust', '5432/tcp'],
@@ -167,7 +176,32 @@ try {
     const published = await service.publish(actor, template.template_id, { expected_draft_revision: 1, expected_revision: 0 });
     const record = (await repository.getTemplate(template.template_id))!;
     await repository.updateTemplate(template.template_id, record.revision, { status: 'active', updated_at: new Date().toISOString() });
-    const version = (await repository.getVersion(template.template_id, published.version))!;
+    let version = (await repository.getVersion(template.template_id, published.version))!;
+    const originalVersion = structuredClone(version);
+    app = Fastify();
+    const secret = randomBytes(32).toString('hex');
+    const token = jwt.sign({ userId: actor.userId, sessionVersion: actor.sessionVersion }, secret, { expiresIn: '1h' });
+    const auth = createVerifyToken(secret, actorContextService);
+    await registerTemplateTriggerRoutes(app, auth, () => pool);
+    await registerMetricConsumerRoutes(app, auth);
+    await registerEventReadRoutes(app, auth);
+    await app.ready();
+    const call = async (method: 'POST' | 'GET', url: string, payload?: unknown) => {
+      const response = await app!.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload ? { payload } : {}) });
+      assert.equal(response.statusCode, 200, `${url}: ${response.body}`);
+      return response.json() as any;
+    };
+    const threshold = Number((baseline.raw!.find(o => o.metric.id === 'postgresql.activity.count')!.value as any).value) + 2;
+    const trigger = await call('POST', `/api/metrics/templates/${template.template_id}/triggers`, {
+      expected_version: version.version, expected_content_hash: version.content_hash, item_id: spec.items.find((i: any) => i.metric === 'postgresql.activity.count').id,
+      parameters: { schema: { boundary: { type: 'number' } }, defaults: { boundary: threshold } },
+      problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>=', threshold: { kind: 'parameter', name: 'boundary' } },
+      recovery: { node: 'compare', select: { aggregation: 'last' }, operator: '<', threshold: { kind: 'parameter', name: 'boundary' } },
+      quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 120000, nodata: { enabled: false } },
+    });
+    version = (await repository.getVersion(template.template_id, trigger.version))!;
+    evidence.trigger = { publication: trigger, threshold, real_condition: 'three owned read-only PG sessions opened, held and closed; no seeded observations/events' };
     evidence.templates[engine].published = true; evidence.templates[engine].version = version;
     const reload = (a: ActorContext) => actorContextService.revalidateActor(a, a.requestId);
     const reloadOn = (a: ActorContext, c: any) => actorContextService.revalidateActorOn(c, a, a.requestId, true);
@@ -177,13 +211,27 @@ try {
     evidence.probe = await bindings.probe(actor, ref, body);
     evidence.trial = await bindings.trial(actor, ref, { ...body, receipt_id: 'pg-' + nonce });
     evidence.apply = await bindings.apply(actor, ref, { ...body, receipt_id: 'pg-' + nonce, caller_key: 'pg-' + nonce });
+    // A brand-new isolated target has no legacy source to migrate. Register its
+    // selected series through the existing opt-in rollout control, never by
+    // seeding publications/observations or enabling a production resource.
+    for (const item of spec.items) {
+      const raw = baseline.raw!.find(o => o.metric.id === item.metric)!;
+      await new RolloutControl(pool).initialize({ resource_type: 'instance', resource_id: '701', metric: raw.metric, dimensions: raw.dimensions },
+        { source: 'semantic', read: 'semantic', package: pin, revision: 1 });
+    }
+    evidence.formal_read_gate = { scope: 'new nonce-owned isolated PG resource only', method: 'existing RolloutControl.initialize before worker publication', seeded_observations: 0, production_activation: false };
     const collect = new CollectNowService({ pool: () => pool, registry, reload, reloadOn });
     const jobs = new JobRegistry();
     new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry, createAssetCollectorAccess(true), Date.now, undefined, undefined,
       createCollectNowAuthorizer({ loadActor: (id, v) => actorContextService.loadActiveActor(id, v), loadActorOn: (c, id, v) => actorContextService.loadActiveActorOn(c as never, id, v, undefined, true) })).register(jobs);
     const worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), 'pg-' + nonce, 30);
     evidence.collections = [];
-    for (const step of ['first', 'second']) {
+    for (let i = 0; i < 3; i++) {
+      const client = new Client({ host: '127.0.0.1', port: pgPort, user: 'template_reader', database: 'template_target' });
+      await client.connect(); extraPg.push(client);
+    }
+    for (const step of ['open', 'hold', 'recover']) {
+      if (step === 'recover') for (const client of extraPg.splice(0)) await client.end();
       const key = 'pg-' + nonce + '-' + step;
       await collect.collect(actor, ref, { caller_key: key, expected_revision: 1 });
       let result: any;
@@ -198,11 +246,32 @@ try {
       assert.deepEqual(result.samples.map((s: any) => s.metric.id).sort(), spec.items.map((s: any) => s.metric).sort());
       assert(result.samples.every((s: any) => s.quality.status === 'good' && s.value?.encoding === 'uint64'));
       evidence.collections.push(result);
+      const [episodes] = await pool.query<any[]>("SELECT event_id,payload,snapshot FROM metric_trigger_episodes WHERE resource_key='instance:701'");
+      assert.equal(episodes.length, 1);
+      const episode = typeof episodes[0].payload === 'string' ? JSON.parse(episodes[0].payload) : episodes[0].payload;
+      assert.equal(episode.state, step === 'recover' ? 'closed' : 'open');
+      assert.equal(episode.recovery_count, step === 'recover' ? 1 : 0);
+      evidence.trigger[step] = await call('GET', `/api/metrics/template-events/${episodes[0].event_id}`);
+      if (step === 'recover') {
+        evidence.trigger.event = await call('GET', `/api/alerts/events/${episodes[0].event_id}`);
+        evidence.trigger.logs = await call('GET', `/api/alerts/events/${episodes[0].event_id}/logs`);
+      }
     }
     const [stored] = await pool.query<any[]>("SELECT payload FROM metric_observations WHERE stage='normalized' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.resource_id'))='701'");
-    assert(stored.length >= 10); evidence.stored_observations = stored;
-    passed('PG16.4: real least-privilege collection → immutable publish → probe/trial/apply → two foreground collect jobs → durable samples');
-    assert.deepEqual(await repository.getVersion(template.template_id, 1), version);
+    assert(stored.length >= 15); evidence.stored_observations = stored;
+    const query = { resource: ref, metric_ids: ['postgresql.activity.count'], from: new Date(Date.now() - 60000).toISOString(), to: new Date().toISOString(), bucket_ms: 1000 };
+    evidence.latest = await call('POST', '/api/metrics/query', query);
+    evidence.history = await call('POST', '/api/metrics/query', { ...query, history: true });
+    assert(evidence.latest.metrics[0].series.some((s: any) => s.buckets.some((b: any) => b.value !== null)));
+    assert(evidence.history.metrics[0].series.some((s: any) => s.buckets.some((b: any) => b.sources.length)));
+    assert.equal(evidence.history.history_context.events.length, 1);
+    assert.equal(evidence.history.history_context.missing_revisions.length, 0);
+    assert.equal(evidence.history.history_context.configurations[0].state, 'effective');
+    assert.equal(evidence.trigger.open.episode.episode_id, evidence.trigger.recover.episode.episode_id);
+    passed('PG real session condition → one episode open/hold/recover → authenticated latest/history and immutable configuration/event context');
+    passed('PG16.4: real least-privilege collection → immutable publish → probe/trial/apply → three foreground collect jobs → durable samples');
+    assert.deepEqual(await repository.getVersion(template.template_id, originalVersion.version), originalVersion);
+    assert.deepEqual(await repository.getVersion(template.template_id, version.version), version);
     await assert.rejects(service.publish({ ...actor, permissions: ['metric:view'] }, template.template_id, { expected_draft_revision: 2, expected_revision: 2 }), { code: 'TEMPLATE_FORBIDDEN' });
     passed('published snapshot unchanged; view-only principal cannot publish');
   }
@@ -213,6 +282,8 @@ finally {
     try { await action(); evidence.cleanup[name] = true; }
     catch { evidence.cleanup[name] = false; process.exitCode = 1; }
   };
+  await clean('api', async () => app?.close());
+  await clean('extra_sessions', async () => { for (const client of extraPg.splice(0)) await client.end(); });
   await clean('asset_connection', () => databaseService.removeConnection(701));
   await clean('pg_admin', async () => pg?.end());
   await clean('platform_pool', () => dbConnection.close());
@@ -223,7 +294,7 @@ finally {
       const inspected = JSON.parse(docker('inspect', container.id))[0];
       assert.equal(inspected.Config.Labels['slide.max237.nonce'], nonce);
       docker('stop', '--time', '10', container.id);
-      assert.equal(docker('ps', '-aq', '--filter', 'id=' + container.id), '');
+      await waitFor(async () => assert.equal(docker('ps', '-aq', '--filter', 'id=' + container.id), ''));
     });
   }
   save(); console.log('Evidence: ' + directory);

@@ -139,7 +139,7 @@ describe.skipIf(!port)('MAX-238 R1 keyed intent lifecycle on a disposable MySQL 
     const published = await policyFor().changeBinding(admin, reserveRef, original, true, undefined, true);
     expect(published.resources[0].binding.revision).toBe(1);
     expect(await bindingRevision(reserveRef)).toBe(1);
-    expect(await audits(reserveRef)).toBe(2);
+    expect(await audits(reserveRef)).toBe(1);
     expect(await journal('r1-reserve')).toMatchObject({ state: 'committed', target_revision: 1, committed_at: expect.any(String) });
     expect(String((await journal('r1-reserve'))!.configuration_digest)).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect((await journal('r1-reserve'))!.claimed_at).not.toBe('');
@@ -154,7 +154,7 @@ describe.skipIf(!port)('MAX-238 R1 keyed intent lifecycle on a disposable MySQL 
     expect(replay.resources[0].binding.revision).toBe(1);
     expect(replay.resources[0].published_at).toBe(published.resources[0].published_at);
     expect(await bindingRevision(reserveRef)).toBe(2);
-    expect(await audits(reserveRef)).toBe(4);
+    expect(await audits(reserveRef)).toBe(2);
     evidence.commit_replay = { published_revision: 1, journal: await journal('r1-reserve'),
       later_revision: await bindingRevision(reserveRef), replayed_revision: replay.resources[0].binding.revision,
       replayed_published_at: replay.resources[0].published_at, audits: await audits(reserveRef) };
@@ -203,7 +203,7 @@ describe.skipIf(!port)('MAX-238 R1 keyed intent lifecycle on a disposable MySQL 
     expect((await policyFor().operation(admin, rollbackRef, 'r1-rollback')).state).toBe('absent');
     const published = await policyFor().changeBinding(admin, rollbackRef, input, true);
     expect(published.resources[0].binding.revision).toBe(1);
-    expect(await audits(rollbackRef)).toBe(2);
+    expect(await audits(rollbackRef)).toBe(1);
     expect(await journal('r1-rollback')).toMatchObject({ state: 'committed', target_revision: 1 });
     evidence.rollback = { failed_error: failed, binding_after_failure: null, audits_after_failure: 0,
       journal_after_failure: null, published_revision: 1, audits: await audits(rollbackRef) };

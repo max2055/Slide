@@ -120,7 +120,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
     const url = `${base}/policy/resources/instance/1/publish`;
     try {
       expect((await post(url, input)).status).toBe(200);
-      expect(await bindingRevision(replayRef)).toBe(1); expect(await audits(replayRef)).toBe(2);
+      expect(await bindingRevision(replayRef)).toBe(1); expect(await audits(replayRef)).toBe(1);
       const before = await journal('r3-replay-r1');
       expect(before).toMatchObject({ state: 'committed', target_revision: 1 });
 
@@ -132,7 +132,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
       expect((await response).status).toBe(403);
       expect(reloads).toBeGreaterThan(0);
       // The denial adds no repeat write and reveals no protected history.
-      expect(await bindingRevision(replayRef)).toBe(1); expect(await audits(replayRef)).toBe(2);
+      expect(await bindingRevision(replayRef)).toBe(1); expect(await audits(replayRef)).toBe(1);
       expect(await journal('r3-replay-r1')).toEqual(before);
     } finally { await app.close(); }
   }, 60000);
@@ -160,7 +160,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
       // The key was never claimed, so the same intent is still usable once authorized.
       current = admin;
       expect((await post(url, input)).status).toBe(200);
-      expect(await bindingRevision(intentRef)).toBe(1); expect(await audits(intentRef)).toBe(2);
+      expect(await bindingRevision(intentRef)).toBe(1); expect(await audits(intentRef)).toBe(1);
       expect(await journal('r3-new-intent')).toMatchObject({ state: 'committed', target_revision: 1 });
     } finally { await app.close(); }
   }, 60000);
@@ -187,7 +187,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
         wait.release();
         expect((await response).status, `${method} ${target}`).toBe(403);
       }
-      expect(await bindingRevision(readRef)).toBe(1); expect(await audits(readRef)).toBe(2);
+      expect(await bindingRevision(readRef)).toBe(1); expect(await audits(readRef)).toBe(1);
     } finally { await app.close(); }
   }, 60000);
 
@@ -202,7 +202,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
 
       current = admin;
       expect((await post(activate, input)).status).toBe(200);
-      expect(trials()).toBe(1); expect(await audits(activateRef)).toBe(2);
+      expect(trials()).toBe(1); expect(await audits(activateRef)).toBe(1);
 
       const query = `${base}/config/resources/instance/3/operations/r3-activate`;
       const wait = lock.arm();

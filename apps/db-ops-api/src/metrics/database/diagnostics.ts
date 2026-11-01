@@ -120,7 +120,17 @@ const compatibilityReads: DatabaseRead[] = [
   {engine:'dameng',name:'os_memory_bytes',shape:'array',sql:"SELECT CAST(STAT_VAL AS VARCHAR(20)) FROM V$SYSSTAT WHERE NAME='memory used bytes from os'",permissions:['SELECT V$SYSSTAT'],fields:[field('bytes','dameng.os.allocated_memory_bytes','Native memory used bytes from OS, not host total memory utilization.','By')]},
   {engine:'dameng',name:'active_sessions',shape:'array',sql:"SELECT COUNT(*) FROM V$SESSIONS WHERE STATE='ACTIVE'",permissions:['SELECT V$SESSIONS'],fields:[field('active','dameng.sessions.active','DM active sessions, not active transaction count.')]},
 ];
-export const diagnosticReads = [...frozenDiagnosticReads, ...compatibilityReads];
+// New fixed snapshot; older immutable diagnostic releases keep their exact collector lists.
+const connectionRead: DatabaseRead = {
+  engine: 'mysql', name: 'connection_utilization', shape: 'object',
+  sql: "SELECT MAX(CASE WHEN VARIABLE_NAME='Threads_connected' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END) AS current_connections, @@GLOBAL.max_connections AS connection_limit, 100e0*MAX(CASE WHEN VARIABLE_NAME='Threads_connected' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END)/NULLIF(@@GLOBAL.max_connections,0) AS used_percent FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected'",
+  permissions: ['SELECT performance_schema.global_status', 'read global max_connections'],
+  fields: [
+    field('current_connections', 'mysql.connections.current', 'Threads_connected client connections, including sleeping clients; not PROCESSLIST background rows or host processes.'),
+    field('used_percent', 'mysql.connections.used_percent', 'Threads_connected/max_connections*100 in one SQL snapshot. NULL when current or limit is missing or limit is zero.', '%', true),
+  ],
+};
+export const diagnosticReads = [...frozenDiagnosticReads, ...compatibilityReads, connectionRead];
 export const diagnosticSpecs: ImplementationSpec[] = diagnosticReads.map(read => ({
   id: implementationId(read), method: 'sql', resource_type: 'instance',
   applicability: [{ attribute: 'db.engine', values: [read.engine] }, { attribute: 'db.version', values: read.engine === 'mysql' ? [...databaseVersions.mysql, '9.6'] : databaseVersions[read.engine] }],
@@ -128,9 +138,9 @@ export const diagnosticSpecs: ImplementationSpec[] = diagnosticReads.map(read =>
   discovery: 'Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch.',
 }));
 export function diagnosticReleases(): PackageRelease[] {
-  return (Object.keys(databaseVersions) as Engine[]).flatMap(engine => ['1.0.0','1.1.0'].map(version => {
+  return (Object.keys(databaseVersions) as Engine[]).flatMap(engine => (engine === 'mysql' ? ['1.0.0','1.1.0','1.2.0'] : ['1.0.0','1.1.0']).map(version => {
     const base = databaseReleases().find(r => r.package.id === `${engine}-representative`)!;
-    const reads = version === '1.0.0' ? frozenDiagnosticReads : diagnosticReads;
+    const reads = version === '1.0.0' ? frozenDiagnosticReads : version === '1.1.0' ? [...frozenDiagnosticReads, ...compatibilityReads] : diagnosticReads;
     const specs = diagnosticSpecs.filter(s => reads.some(r => implementationId(r)===s.id) && s.applicability[0].values[0] === engine);
     return sealRelease({ ...base, package: { ...base.package, id: `${engine}-diagnostics`, version, applicability: specs[0].applicability,
       collectors: [...(engine === 'mysql' ? [] : base.package.collectors), ...specs.map(s => ({ id: s.id.split('.').at(-2)!, implementation_ref: s.id, method: 'sql' as const,

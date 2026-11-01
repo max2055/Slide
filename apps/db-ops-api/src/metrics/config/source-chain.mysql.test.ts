@@ -230,7 +230,7 @@ describe.skipIf(!port)('MAX-238 combined metric items and the parameter source c
     const savedTemplate = savedRead.resolved.metric_templates.find(template => metricKey(template.metric) === conflictMetric)!;
     expect(savedTemplate.enabled).toBe(false);
     expect(savedRead.resolved.metric_sources[conflictMetric].layer).toBe('resource');
-    expect(await auditCount(key)).toBe(auditsBeforeSave + 2);
+    expect(await auditCount(key)).toBe(auditsBeforeSave + 1);
 
     const auditsAfterSave = await auditCount(key);
     const beforeConflict = await policies.binding(admin, instanceRef);

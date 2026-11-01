@@ -51,9 +51,16 @@ test('nested dialogs restore deep focus and closable=false blocks Escape', async
 
 test('alerts shared dialogs preserve validation, submission and close behavior', async ({ page }) => {
   const writes: Array<{ url: string; body: any }> = [];
-  await page.route('http://127.0.0.1:5186/api/**', route => {
+  await page.addInitScript(() => localStorage.setItem('token', `fixture.${btoa(JSON.stringify({ userId: 1, sessionVersion: 1 }))}.signature`));
+  await page.route('**/api/**', route => {
+    if (!new URL(route.request().url()).pathname.startsWith('/api/')) return route.fallback();
     if (route.request().method() === 'POST') writes.push({ url: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
-    return route.fulfill({ json: route.request().url().includes('/database/instances') ? [{ id: 7, name: 'test-db', db_type: 'mysql' }] : [] });
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/maintenance-windows' && route.request().method() === 'POST' && !route.request().postDataJSON().value.name) {
+      return route.fulfill({ status: 400, json: { error: '名称不能为空' } });
+    }
+    return route.fulfill({ json: path === '/api/maintenance-windows/resources' ? [{ type: 'instance', id: 7, name: 'test-db' }]
+      : path.includes('/database/instances') ? [{ id: 7, name: 'test-db', db_type: 'mysql' }] : [] });
   });
   await page.route('**/alerts-dialog-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body>
     <alerts-page mode="rules"></alerts-page>
@@ -69,15 +76,24 @@ test('alerts shared dialogs preserve validation, submission and close behavior',
   expect(writes.at(-1)).toMatchObject({ url: '/api/alerts/escalation/rules', body: { trigger_value: 45, from_level: 'warning', to_level: 'error' } });
 
   await page.getByRole('button', { name: '维护窗口', exact: true }).click();
-  await page.getByRole('button', { name: '新建窗口', exact: true }).click();
-  modal = page.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: '新建维护窗口' }) });
-  await modal.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(modal.getByText('名称不能为空')).toBeVisible();
-  await modal.getByPlaceholder('例如：每周例行维护').fill('Weekly');
-  await modal.getByRole('button', { name: '周一', exact: true }).click();
-  await modal.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('dialog')).toBeHidden();
-  expect(writes.at(-1)).toMatchObject({ url: '/api/maintenance-windows', body: { name: 'Weekly', day_of_week: '0,1' } });
+  const maintenance = page.locator('maintenance-windows');
+  await maintenance.getByRole('button', { name: '新建维护窗口', exact: true }).click();
+  modal = maintenance.locator('app-dialog');
+  await modal.getByRole('button', { name: '检查影响', exact: true }).click();
+  await expect(modal.getByRole('status')).toContainText('继续采集并记录问题，抑制通知');
+  await modal.getByRole('button', { name: '确认保存', exact: true }).click();
+  await expect(modal.getByRole('alert')).toContainText('名称不能为空');
+  await modal.getByLabel('名称', { exact: true }).fill('Weekly');
+  await modal.getByLabel('原因', { exact: true }).fill('受控维护验收');
+  await modal.getByLabel('资源范围', { exact: true }).selectOption(JSON.stringify({ type: 'instance', id: 7 }));
+  await modal.getByRole('button', { name: '检查影响', exact: true }).click();
+  await modal.getByRole('button', { name: '确认保存', exact: true }).click();
+  await expect(maintenance.getByRole('dialog')).toBeHidden();
+  expect(writes.at(-1)).toMatchObject({ url: '/api/maintenance-windows', body: {
+    operation_key: expect.any(String), expected_revision: 0,
+    value: { name: 'Weekly', reason: '受控维护验收', resources: [{ type: 'instance', id: 7 }],
+      timezone: 'Asia/Shanghai', starts_at: expect.any(String), ends_at: expect.any(String) },
+  } });
 
   await page.getByRole('button', { name: '静默期', exact: true }).click();
   await page.getByRole('button', { name: '新建静默', exact: true }).click();
