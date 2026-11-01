@@ -1,4 +1,5 @@
 import { dbConnection } from './db-connection.js';
+import { ALERT_LEVELS } from './alert-levels.js';
 import { enqueueNotificationTransition } from './notification-transition.js';
 import { maintenanceBlocksDelivery } from './maintenance-notification.js';
 /**
@@ -202,12 +203,14 @@ export class NotificationService {
    * - critical → info, warning, error, critical
    */
   routeAlert(alert: PendingAlert, channels: NotificationChannel[]): NotificationChannel[] {
-    const levelOrder = ['info', 'warning', 'error', 'critical'];
+    const levelOrder = ALERT_LEVELS;
     const alertLevelIndex = levelOrder.indexOf(alert.level);
+    if (alertLevelIndex < 0) throw new Error('NOTIFICATION_LEVEL_INVALID');
 
     return channels.filter((ch) => {
-      const channelSeverity = ch.config?.severity || 'info';
+      const channelSeverity = ch.config?.severity === undefined ? 'info' : ch.config.severity;
       const channelLevelIndex = levelOrder.indexOf(channelSeverity);
+      if (channelLevelIndex < 0) throw new Error('NOTIFICATION_SEVERITY_INVALID');
 
       // 渠道的 severity 级别要能覆盖 alert 的级别
       // 例如：渠道 severity=warning 能接收 warning/error/critical

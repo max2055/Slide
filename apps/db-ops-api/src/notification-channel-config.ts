@@ -7,6 +7,8 @@
  * legacy rows and direct callers.
  */
 
+import { ALERT_LEVELS } from './alert-levels.js';
+
 export const NOTIFICATION_CHANNEL_TYPES = ['email', 'dingtalk', 'wecom', 'feishu', 'webhook'] as const;
 export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
@@ -226,6 +228,9 @@ export function validateNotificationChannelConfig(
     return invalid(undefined, '不支持的通知渠道类型', 'NOTIFICATION_CHANNEL_TYPE_INVALID');
   }
   const raw = asRecord(config);
+  if (raw && hasOwn(raw, 'severity') && !ALERT_LEVELS.includes(raw.severity as string)) {
+    return invalid('severity', 'severity 必须为 info、warning、error、critical 或 p0', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
+  }
   if (raw && (raw.idempotency_contract !== undefined || raw.idempotency_retention_seconds !== undefined)) {
     if (type !== 'webhook' || raw.idempotency_contract !== 'receiver-deduplicates'
       || !Number.isSafeInteger(raw.idempotency_retention_seconds) || Number(raw.idempotency_retention_seconds) < 1

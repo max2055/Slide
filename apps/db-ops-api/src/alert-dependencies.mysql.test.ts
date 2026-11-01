@@ -42,6 +42,7 @@ import { createOwnedDatabase } from "./testing/owned-fixture.js";
 import { registerDeliveryRoutes } from "./workflows/delivery-routes.js";
 import { JobRegistry } from "./workflows/job-registry.js";
 import { registerNotificationHandlers } from "./workflows/notification-handlers.js";
+import { NotificationDispatchScheduler } from "./workflows/notification-dispatch.js";
 import { MysqlWorkflowStore, WorkerRuntime } from "./workflows/worker-runtime.js";
 vi.mock("node:https", async (original) => {
   const actual = await original<typeof import("node:https")>();
@@ -312,11 +313,12 @@ it.skipIf(process.env.MAX244_DEPENDENCIES !== "1")(
       } as any);
       const store = new MysqlWorkflowStore(() => pool as any);
       let worker = new WorkerRuntime(store, "owned-" + nonce, 30);
+      const heldKeys = new Set<string>();
       const run = async () => {
         // The queue claims at NOW() (whole seconds), whereas immediate enqueues
         // carry milliseconds. Advance only this owned fixture's immediate
         // notification lane to the controlled ready boundary; never alter production predicates.
-        await pool.query("UPDATE workflow_jobs SET available_at=LEAST(available_at,NOW()) WHERE job_type='notification.deliver' AND state='queued'");
+        await pool.query("UPDATE workflow_jobs SET available_at=LEAST(available_at,NOW()) WHERE job_type='notification.deliver' AND state='queued'" + (heldKeys.size ? ` AND idempotency_key NOT IN (${[...heldKeys].map(() => '?').join(',')})` : ''), [...heldKeys]);
         return worker.runOnce((j,c)=>jobs.execute(j,c),Date.now());
       };
       const formal = async (id: number, key: string, value: number) => {
@@ -350,7 +352,7 @@ it.skipIf(process.env.MAX244_DEPENDENCIES !== "1")(
       };
       // Isolated receiver persists deduplication before deliberately dropping one response.
       await pool.query(
-        "CREATE TABLE max244_receiver_receipts (business_key VARCHAR(128) PRIMARY KEY,body JSON NOT NULL,requests INT NOT NULL)",
+        "CREATE TABLE max244_receiver_receipts (business_key VARCHAR(128) PRIMARY KEY,body JSON NOT NULL,requests INT NOT NULL,received_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6))",
       );
       let lose = true;
       receiver = http.createServer((req, res) => {
@@ -363,7 +365,7 @@ it.skipIf(process.env.MAX244_DEPENDENCIES !== "1")(
             const [prior]=await pool.query<any[]>('SELECT body FROM max244_receiver_receipts WHERE business_key=?',[key]);
             if(prior.length)assert.deepEqual(typeof prior[0].body==='string'?JSON.parse(prior[0].body):prior[0].body,JSON.parse(body));
             await pool.execute(
-              "INSERT INTO max244_receiver_receipts VALUES(?,?,1) ON DUPLICATE KEY UPDATE requests=requests+1",
+              "INSERT INTO max244_receiver_receipts(business_key,body,requests) VALUES(?,?,1) ON DUPLICATE KEY UPDATE requests=requests+1",
               [key, body],
             );
             if (lose) {
@@ -825,8 +827,88 @@ it.skipIf(process.env.MAX244_DEPENDENCIES !== "1")(
       await (alertEngine as any).createAlertFromRule(legacyInput);
       assert.equal(await scalar("SELECT COUNT(*) n FROM alerts WHERE metric_name='fixture_legacy_downstream'"),1);
       assert((await alertDatabaseService.resolveAlert(legacy.alertId!,701)).success);
+      // Chief R2: a durable recovery must survive a pending original, restart,
+      // and repeated closure without burning retry attempts or sending alone.
+      await formal(701, 'r2-pending-open', 95);
+      const pending = (await episodes(701)).at(-1)!, pendingKey = `notification:${pending.alert_id}:701`;
+      heldKeys.add(pendingKey);
+      await pool.execute("UPDATE workflow_jobs SET available_at='2099-01-01' WHERE idempotency_key=?", [pendingKey]);
+      await pool.execute("UPDATE notification_channels SET config=JSON_SET(config,'$.severity','p0') WHERE id=701");
+      await formal(701, 'r2-pending-recovery', 60);
+      await formal(701, 'r2-pending-repeat', 60);
+      await pool.execute("UPDATE notification_channels SET config=JSON_SET(config,'$.severity','info') WHERE id=701");
+      for (let i=0;i<7;i++) await run();
+      const [waiting] = await pool.query<any[]>('SELECT id,state,attempts FROM workflow_jobs WHERE idempotency_key=?', [pendingKey+':recovery']);
+      assert.equal(waiting.length, 1);
+      assert.equal(waiting[0].state, 'queued');
+      assert.equal(waiting[0].attempts, 0);
+      assert.equal(await scalar('SELECT COUNT(*) n FROM max244_receiver_receipts WHERE business_key IN (?,?)', [pendingKey,pendingKey+':recovery']),0);
+      worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as any), 'r2-restarted-'+nonce, 30);
+      heldKeys.delete(pendingKey);
+      await pool.execute('UPDATE workflow_jobs SET available_at=NOW() WHERE idempotency_key=?', [pendingKey]);
+      await run(); await run();
+      const assertOrderedPair = async (key:string) => {
+        const [pair] = await pool.query<any[]>('SELECT business_key,requests,received_at FROM max244_receiver_receipts WHERE business_key IN (?,?) ORDER BY received_at', [key,key+':recovery']);
+        assert.deepEqual(pair.map(r=>r.business_key),[key,key+':recovery']);
+        assert(pair.every(r=>r.requests===1));
+        assert.equal(await scalar("SELECT COUNT(*) n FROM notification_delivery_states WHERE business_key IN (?,?) AND state='sent'",[key,key+':recovery']),2);
+        return pair;
+      };
+      trace.push({r2_pending:await assertOrderedPair(pendingKey),waiting_attempts:waiting[0].attempts});
+      // Chief R1: real critical -> P0 route, stable escalation key, and P0 recovery.
+      await formal(701, 'r1-p0-open', 95); await run();
+      const p0 = (await episodes(701)).at(-1)!, p0Key=`notification:${p0.alert_id}:701`;
+      assert.equal((await api('POST',`/api/alerts/${p0.alert_id}/escalate`,{new_level:'urgent'})).status,400);
+      for (const level of ['critical','p0']) {
+        assert.equal((await api('POST',`/api/alerts/${p0.alert_id}/escalate`,{new_level:level})).body.changed,true);
+        await run();
+        assert.equal(await scalar("SELECT COUNT(*) n FROM notification_delivery_states WHERE business_key=? AND state='sent'",[p0Key+':escalation-'+level]),1);
+      }
+      await formal(701, 'r1-p0-recovery', 60); await run();
+      trace.push({r1_p0:await assertOrderedPair(p0Key)});
+      // The legacy producer can create P0 directly; exercise the same scheduler
+      // and sender with a real persisted P0 problem, without the legacy poller.
+      const directP0=await alertDatabaseService.createAlert({instance_id:701,alert_type:'performance',level:'p0',title:'受控 P0 原始问题',message:'Chief R1 direct P0 regression',source:'legacy-fixture',metric_name:'fixture_p0'});
+      assert(directP0.success&&directP0.alertId);
+      await new NotificationDispatchScheduler({
+        getPendingAlerts:async()=>(await notificationDatabaseService.getPendingAlerts()).filter(a=>a.id===directP0.alertId),
+        getEnabledChannels:()=>notificationDatabaseService.getEnabledChannels(),
+      },notificationService,store).enqueuePending();
+      await run();
+      assert((await alertDatabaseService.resolveAlert(directP0.alertId!,701)).success);
+      await run();
+      trace.push({r1_direct_p0:await assertOrderedPair(`notification:${directP0.alertId}:701`)});
+      // Chief R2: receiver committed, response lost; recover before any retry.
+      // The existing JWT reconciliation API confirms sent, then the same queue
+      // releases exactly one recovery after a worker/store restart.
+      await pool.query("INSERT INTO permissions(code,name,resource,action) VALUES('admin:*','受控核对','admin','*') ON DUPLICATE KEY UPDATE code=code");
+      await pool.query("INSERT IGNORE INTO role_permissions(role_id,permission_id) SELECT 701,id FROM permissions WHERE code='admin:*'");
+      const reconciliationToken=signAccessToken((await actorContextService.loadActiveActor(701))!,secret);
+      lose=true;
+      await formal(701, 'r2-unknown-open', 95); await run();
+      const uncertain=(await episodes(701)).at(-1)!, uncertainKey=`notification:${uncertain.alert_id}:701`;
+      heldKeys.add(uncertainKey);
+      await pool.execute("UPDATE workflow_jobs SET available_at='2099-01-01' WHERE idempotency_key=?",[uncertainKey]);
+      await formal(701,'r2-unknown-recovery',60);
+      await run();
+      assert.equal(await scalar('SELECT COUNT(*) n FROM max244_receiver_receipts WHERE business_key=?',[uncertainKey+':recovery']),0);
+      const [unknownJobs]=await pool.query<any[]>('SELECT id FROM workflow_jobs WHERE idempotency_key=?',[uncertainKey]);
+      const inspection=await api('GET',`/api/notification/jobs/${unknownJobs[0].id}/delivery`);
+      assert.equal(inspection.body.delivery.state,'unknown');
+      worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as any), 'r2-reconciled-'+nonce, 30);
+      const decision={version:inspection.body.delivery.version,decision:'sent',reason:'受控接收端持久回执核对',reconciliation:`owned receipt ${uncertainKey}`};
+      const decisions=await Promise.all([1,2].map(()=>api('POST',`/api/notification/jobs/${unknownJobs[0].id}/recover`,decision,reconciliationToken)));
+      assert.deepEqual(decisions.map(r=>r.status).sort(),[200,409]);
+      await run(); await run();
+      trace.push({r2_reconciled:await assertOrderedPair(uncertainKey),decisions:decisions.map(r=>r.status)});
+      assert.equal(await scalar("SELECT COUNT(*) n FROM notification_delivery_replays WHERE business_key=? AND decision='sent'",[uncertainKey]),1);
+      assert.equal(await scalar('SELECT COUNT(*) n FROM workflow_jobs WHERE idempotency_key=?',[uncertainKey+':recovery']),1);
+      await page.evaluate((t:string)=>{(globalThis as any).localStorage.setItem('token',t);(globalThis as any).dispatchEvent(new (globalThis as any).StorageEvent('storage',{key:'token'}));},token);
+      await page.getByRole('button',{name:'刷新投递回执',exact:true}).click();
+      await page.getByRole('cell',{name:'恢复',exact:true}).first().waitFor();
+      await page.screenshot({path:resolve(directory,'r1-r2-deliveries.png'),fullPage:true});
       const [receipts] = await pool.query<any[]>(
-        "SELECT business_key,requests FROM max244_receiver_receipts ORDER BY business_key",
+        "SELECT business_key,requests,received_at FROM max244_receiver_receipts ORDER BY received_at",
       );
       const [states] = await pool.query<any[]>(
         "SELECT business_key,state,error_code FROM notification_delivery_states ORDER BY business_key",
@@ -841,7 +923,7 @@ it.skipIf(process.env.MAX244_DEPENDENCIES !== "1")(
             receipts,
             states,
             checks:
-              "Lit create/cancel/lost-response; graph cycle/access/revision/concurrent/revoked; old/new/ack independent; normal formal writer problem/recovery/escalation; durable receiver response loss/restart dedup; maintenance facts/end/no storm; A-only delivery filtering; three desktops/focus/error/principal isolation",
+              "Lit create/cancel/lost-response; graph cycle/access/revision/concurrent/revoked; old/new/ack independent; normal formal writer problem/recovery/escalation; R1 P0 direct problem/escalation/recovery; R2 pending and unknown recovery intents, zero waiting attempts, receiver-confirmed sent/concurrent reconcile/restart/idempotence; maintenance facts/end/no storm; A-only delivery filtering; three desktops/focus/error/principal isolation",
             boundary:
               "Controlled SQL collector response; actual formal sample/event/outbox/delivery persistence. HTTPS adapter redirected only to owned loopback HTTP receiver; not real external delivery or hardware collector.",
           },

@@ -19,15 +19,16 @@ export async function enqueueNotificationTransition(
   const [rows] = await c.execute<RowDataPacket[]>(
     "SELECT * FROM notification_channels WHERE enabled=1",
   );
-  // Do not emit an orphan recovery to a recipient that never received the problem.
+  // Persist recovery even while the original is pending/unknown. The sole queue
+  // claims it only after that original is confirmed sent (also after restart).
   const channels = [];
   for (const row of rows) {
     if (transition.phase === "recovery") {
-      const [sent] = await c.execute<RowDataPacket[]>(
-        "SELECT business_key FROM notification_delivery_states WHERE business_key=? AND state='sent'",
-        [`notification:${alertId}:${row.id}`],
+      const [original] = await c.execute<RowDataPacket[]>(
+        "SELECT id FROM workflow_jobs WHERE job_type='notification.deliver' AND idempotency_key=? UNION ALL SELECT workflow_job_id FROM notification_delivery_states WHERE business_key=? AND state='sent'",
+        [`notification:${alertId}:${row.id}`, `notification:${alertId}:${row.id}`],
       );
-      if (!sent.length) continue;
+      if (!original.length) continue;
     }
     channels.push({
       ...row,
@@ -39,7 +40,9 @@ export async function enqueueNotificationTransition(
       getPendingAlerts: async () => [{ ...alerts[0], transition }] as any,
       getEnabledChannels: async () => channels as any,
     },
-    { routeAlert: (a, cs) => notificationService.routeAlert(a as any, cs as any) },
+    // Recovery follows recipients of the original problem, even if their
+    // severity threshold changed since then. New channels receive no recovery.
+    { routeAlert: (a, cs) => transition.phase === 'recovery' ? cs : notificationService.routeAlert(a as any, cs as any) },
     new MysqlWorkflowStore(() => c as any),
   ).enqueuePending();
 }

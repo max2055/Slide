@@ -4,6 +4,7 @@
  * 支持手动升级和升级规则 CRUD。
  */
 import mysql from 'mysql2/promise';
+import { ALERT_LEVELS } from './alert-levels.js';
 import { CronJob } from 'cron';
 import { dbConnection } from './db-connection';
 import { alertDatabaseService } from './alert-database-service';
@@ -124,7 +125,7 @@ class AlertEscalationService {
     catch(e) {return {success:false,error:e instanceof ActorAuthenticationError?'ESCALATION_AUTH':e instanceof Error&&e.message.startsWith('ESCALATION_')?e.message:'ESCALATION_STATE_UNKNOWN'};}
   }
   private async transition(alertId:number,newLevel:string,actor?:ActorContext,expected?:string,ruleId?:number){
-    const levels=['info','warning','error','critical','p0'];
+    const levels=ALERT_LEVELS;
     if(!levels.includes(newLevel))throw Error('ESCALATION_LEVEL');
     const pool=this.getPool();if(!pool)throw Error('ESCALATION_UNAVAILABLE');
     const c=await pool.getConnection();let reusable=false;
@@ -132,6 +133,7 @@ class AlertEscalationService {
       await c.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');await c.beginTransaction();
       const [rows]=await c.execute<any[]>('SELECT * FROM alerts WHERE id=? FOR UPDATE',[alertId]);
       if(!rows.length)throw Error('ESCALATION_NOT_FOUND');const a=rows[0];
+      if(!levels.includes(a.level))throw Error('ESCALATION_LEVEL');
       const authorize=async(lock=false)=>{
         if(!actor)return;const live=await actorContextService.revalidateActorOn(c as any,actor,actor.requestId,lock);
         const ref=a.instance_id?{type:'instance' as const,id:Number(a.instance_id)}:a.server_id?{type:'server' as const,id:Number(a.server_id)}:a.network_device_id?{type:'network_device' as const,id:Number(a.network_device_id)}:null;

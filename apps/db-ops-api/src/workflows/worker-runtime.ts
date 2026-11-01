@@ -22,11 +22,22 @@ export interface WorkflowStore {
 interface SqlPool { execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 export type WorkflowJobInput = { id: string; type: string; schemaVersion: number; payload: Record<string, unknown>; idempotencyKey: string; maxAttempts?: number; availableAt?: Date };
 
+// A recovery job is the durable intent. Waiting for the original confirmation
+// must not consume attempts or block other jobs; sent is a terminal state.
+const notificationOrder = `(job_type <> 'notification.deliver'
+  OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.transition.phase')), '') <> 'recovery'
+  OR EXISTS (SELECT 1 FROM notification_delivery_states original_delivery
+    WHERE original_delivery.business_key = CONCAT('notification:',
+      JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertId')), ':',
+      JSON_UNQUOTE(JSON_EXTRACT(payload, '$.channelId')))
+    AND original_delivery.state = 'sent'))`;
+
 export class MysqlWorkflowStore implements WorkflowStore {
   constructor(private readonly poolProvider: () => SqlPool | null) {}
   /** Durable gauges, not throughput. Eligibility matches claim, including expired leases. */
   async observeQueue(): Promise<QueueObservation> {
     const eligible = "state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())"
+      + ` AND ${notificationOrder}`
       + (process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? " AND job_type <> 'analysis.dispatch'" : '');
     const [rows] = await this.pool().execute<Array<QueueTypeObservation>>(
       `SELECT job_type AS jobType,
@@ -99,6 +110,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
     const [candidates] = await pool.execute<Array<{ id: string }>>(
       `SELECT id FROM workflow_jobs WHERE state IN ('queued', 'retry', 'running')
        AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+       AND ${notificationOrder}
        ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
        ${typeFilter} ORDER BY available_at, created_at, id LIMIT 1`, [...(filter?.types ?? [])],
     );
@@ -108,7 +120,7 @@ export class MysqlWorkflowStore implements WorkflowStore {
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = ? AND state IN ('queued', 'retry', 'running') AND available_at <= NOW()
-       AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
+       AND (lease_expires_at IS NULL OR lease_expires_at < NOW()) AND ${notificationOrder}`,
       [workerId, leaseSeconds, candidateId],
     );
     if (Number(result.affectedRows) !== 1) return null;
