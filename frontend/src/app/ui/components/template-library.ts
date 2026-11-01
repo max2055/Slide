@@ -161,6 +161,7 @@ export class NativeTemplateLibrary extends LitElement {
       && `${row.template.name} ${row.template.template_id}`.toLowerCase().includes(this.search.toLowerCase())) ?? [];
     return html`<app-card><h2 slot="header">原生监控模板</h2>
       <p>从已注册能力建设模板，保存草稿后发布不可变版本。资源绑定在资源采集配置中完成。</p>
+      <p>注册实现不代表目标已验证可采集；目标系统版本、权限与采集结果需在资源绑定时核验。</p>
       <div class="toolbar">
         <app-form-field label="搜索模板"><input aria-label="搜索模板" type="search" .value=${this.search} @input=${(e: Event) => this.search = (e.target as HTMLInputElement).value}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="资源类型" @change=${(e: Event) => this.type = (e.target as HTMLSelectElement).value}><option value="">全部类型</option>${Object.entries(labels).map(([value,label]) => html`<option value=${value}>${label}</option>`)}</select></app-form-field>

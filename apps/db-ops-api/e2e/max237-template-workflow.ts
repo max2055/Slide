@@ -120,7 +120,7 @@ try {
  const browserId=(await api('GET','library')).body.templates.find((row:any)=>row.template.name==='真实Lit全流程').template.template_id;
  const browserDraft=(await api('GET',browserId+'/editor')).body;
  const existingMetrics=new Set(browserDraft.items.map((item:any)=>item.canonical_metric.id));
- const chosen=capabilities.candidates.findIndex((candidate:any)=>candidate.resource_type==='instance'&&!existingMetrics.has(candidate.metric.id));
+ const chosen=capabilities.candidates.findIndex((candidate:any)=>candidate.resource_type==='instance'&&candidate.package.id.startsWith('mysql')&&!existingMetrics.has(candidate.metric.id));
  assert(chosen>=0);await metricSelect.selectOption(String(chosen));await page.getByRole('button',{name:'添加监控项',exact:true}).click();
  await expect(page.getByRole('status')).toContainText('已带入标识');
  await page.getByRole('button',{name:'添加监控项',exact:true}).click();await expect(page.getByRole('alert')).toContainText('重复');

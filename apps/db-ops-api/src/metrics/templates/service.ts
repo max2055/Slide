@@ -2,9 +2,9 @@
  * MAX-237 / T1 — internal template domain service (drafts, immutable versions,
  * registered-metric selection and the explicit mapping that joins them).
  *
- * Not mounted: no route, process registration, database adapter, collector,
- * scheduler, notification or model call references this module. Everything it
- * proves is proven by focused tests against the in-memory repository.
+ * Mounted by the native authoring HTTP routes and template binding services.
+ * Publication uses the existing repository; it does not start collection,
+ * scheduling, notifications or model calls.
  *
  * Permissions are the existing ones — reads need `metric:view`, writes need
  * `metric:manage` — matched with the shared wildcard matcher in
