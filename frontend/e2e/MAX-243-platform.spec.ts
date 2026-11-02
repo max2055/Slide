@@ -1,10 +1,19 @@
 import { test, expect, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { startInvestigationServer } from './fixtures/investigation-server.ts';
+import { platformLogs } from '../../apps/db-ops-api/src/platform/structured-log-evidence-adapter.ts';
 
 let env: Awaited<ReturnType<typeof startInvestigationServer>>;
-test.beforeAll(async () => { env = await startInvestigationServer({ systemPilot: true, systemAutomatic: false }); });
-test.afterAll(async () => { if (env) await env.close(); });
+const record = platformLogs.record;
+test.beforeAll(async () => {
+  // CI 41454744348: use the exact measurement that changes representation in MySQL JSON.
+  platformLogs.record = function(input) {
+    return record.call(this, input.callsite === 'api:GET:/fixture/system-failure'
+      ? { ...input, durationMs: 0.18382299999939278 } : input);
+  };
+  env = await startInvestigationServer({ systemPilot: true, systemAutomatic: false });
+});
+test.afterAll(async () => { try { if (env) await env.close(); } finally { platformLogs.record = record; } });
 async function login(page: Page) {
   await page.addInitScript(({token,actor}) => {
     localStorage.setItem('token',token);localStorage.setItem('user',JSON.stringify({id:actor.userId,username:actor.username}));
@@ -82,6 +91,13 @@ test('MAX243 real 503 → durable event → no-model System draft → three veri
   expect(first.status).toBe(200); const receipt = await first.json();
   expect(receipt.conclusion).toBe('insufficient_evidence');
   expect(await (await api(`/api/platform/system-events/${eventId}/verifications`,body,key)).json()).toEqual(receipt);
+  const [persisted] = await env.pool.query('SELECT payload FROM platform_event_verifications WHERE id=?',[receipt.id]);
+  expect(persisted).toHaveLength(1);
+  expect(persisted[0].payload.observation.durationMs).toBe(0.1838229999993928);
+  expect(persisted[0].payload).toEqual(receipt);
+  const [audit] = await env.pool.query('SELECT COUNT(*) n FROM investigation_stream_events WHERE investigation_id=? AND source_key=?',
+    [id,Buffer.from(`platform-verification:${receipt.id}`)]);
+  expect(Number(audit[0].n)).toBe(1);
   expect((await api(`/api/platform/system-events/${eventId}/verifications`,{...body,expectedVersion:1},key)).status).toBe(409);
   expect((await api(`/api/platform/system-events/${eventId}/verifications`,body,crypto.randomUUID())).status).toBe(409);
   // A second original anomaly after version restoration has a clean observation window.
