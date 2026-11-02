@@ -15,6 +15,7 @@ import { JobRegistry } from './job-registry.js';
 import { registerNotificationHandlers } from './notification-handlers.js';
 import { registerDeliveryRoutes } from './delivery-routes.js';
 import { requirePermission } from '../auth/require-permission.js';
+import { actorContextService } from '../auth/actor-context.js';
 import { NotificationService } from '../notification-service.js';
 import { splitSqlStatements } from '../migrations/runner.js';
 import { smtpRecipient, deferred } from './delivery-test-recipients.js';
@@ -41,6 +42,23 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     secondPool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '', database, connectionLimit: 8 });
     await pool.query('CREATE TABLE report_configs (id INT PRIMARY KEY, format VARCHAR(32))');
     await pool.query('CREATE TABLE notification_records (id INT AUTO_INCREMENT PRIMARY KEY, alert_id BIGINT, channel_id INT, status VARCHAR(32), sent_at DATETIME)');
+    // The HTTP routes revalidate the actor and source resource on this real pool.
+    for (const sql of [
+      "CREATE TABLE users (id INT PRIMARY KEY, username VARCHAR(100), password_hash VARCHAR(255), status VARCHAR(20), session_version BIGINT)",
+      'CREATE TABLE roles (id INT PRIMARY KEY, name VARCHAR(100))',
+      'CREATE TABLE permissions (id INT PRIMARY KEY, code VARCHAR(100))',
+      'CREATE TABLE user_roles (user_id INT, role_id INT, grant_expiry DATETIME)',
+      'CREATE TABLE role_permissions (role_id INT, permission_id INT)',
+      'CREATE TABLE instance_permissions (user_id INT, instance_id INT, access_level VARCHAR(20), grant_expiry DATETIME)',
+      'CREATE TABLE reports (id INT PRIMARY KEY, instance_id INT)',
+      "INSERT INTO users VALUES (7,'recovery-admin','not-a-login-hash','active',1),(8,'recovery-viewer','not-a-login-hash','active',1)",
+      "INSERT INTO roles VALUES (1,'recovery-admin'),(2,'recovery-viewer')",
+      "INSERT INTO permissions VALUES (1,'*'),(2,'notification:view'),(3,'instance:view')",
+      'INSERT INTO user_roles VALUES (7,1,NULL),(8,2,NULL)',
+      'INSERT INTO role_permissions VALUES (1,1),(2,2),(2,3)',
+      "INSERT INTO instance_permissions VALUES (8,9,'read-only',NULL)",
+      'INSERT INTO reports VALUES (1,9)',
+    ]) await pool.query(sql);
     for (const file of ['032_workflow_outbox_jobs.sql', '036_notification_delivery_audit.sql', '041_report_notification_delivery.sql', '093_delivery_recovery.sql', '093_delivery_recovery.sql']) {
       for (const sql of splitSqlStatements(readFileSync(new URL(`../../sql/migrations/${file}`, import.meta.url), 'utf8'))) await pool.query(sql);
     }
@@ -183,12 +201,18 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     await pool.execute("UPDATE workflow_jobs SET state = 'dead_letter', lease_expires_at = NULL WHERE id = ?", [id]);
     const app = Fastify();
     registerDeliveryRoutes(app, {
-      verifyToken: async request => { if (request.headers['x-role'] !== 'anonymous') (request as any).user = { userId: 7, permissions: request.headers['x-role'] === 'admin' ? ['admin:*', 'notification:view'] : ['notification:view'] }; },
+      verifyToken: async request => {
+        if (request.headers['x-role'] !== 'anonymous') (request as any).user = await actorContextService.revalidateActorOn(
+          pool as any, { userId: request.headers['x-role'] === 'admin' ? 7 : 8, sessionVersion: 1 } as any, request.id,
+        );
+      },
       requirePermission,
     }, gate);
     try {
       const url = `/api/notification/jobs/${id}/recover`;
-      const view = (await app.inject({ method: 'GET', url: `/api/notification/jobs/${id}/delivery` })).json();
+      const response = await app.inject({ method: 'GET', url: `/api/notification/jobs/${id}/delivery` });
+      expect(response.statusCode, response.body).toBe(200);
+      const view = response.json();
       const payload = { version: view.delivery.version, decision: 'retry', reason: 'reviewed', reconciliation: 'receiver could not confirm', acceptDuplicateRisk: true };
       expect((await app.inject({ method: 'POST', url, payload, headers: { 'x-role': 'anonymous' } })).statusCode).toBe(401);
       expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(403);
@@ -202,6 +226,8 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
       expect(next?.attemptId).not.toBe(send.attemptId);
       expect((await gate.inspect(id))?.attempts.map(a => a.attempt_number)).toEqual([2, 1]);
       expect((await gate.inspect(id))?.decisions).toHaveLength(1);
+      await pool.execute('DELETE FROM instance_permissions WHERE user_id=8');
+      expect((await app.inject({ method: 'GET', url: `/api/notification/jobs/${id}/delivery` })).statusCode).toBe(403);
     } finally { await app.close(); }
   });
 

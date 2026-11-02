@@ -7,6 +7,7 @@ import { evaluateTriggerRule } from './evaluate.js';
 import { nextTriggerEpisode, triggerEpisodeIdentityHash, type TriggerEpisodeRecord } from './episode.js';
 import { hashOf } from './model.js';
 import { stable } from '../packages/model.js';
+import { blockingDependencies } from '../../alert-dependencies.js';
 import { alertEventService } from '../../alert-event-service.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 import { rule as requireRule } from '../policy/model.js';
@@ -24,6 +25,8 @@ export async function evaluateTemplateSamples(
   clockOnly = false,
 ): Promise<void> {
   if (!binding.pending.plan.triggers.some((t) => t.refs.length)) return;
+  // Serialize dependency decisions with graph edits and other upstream transitions.
+  await c.execute('SELECT id FROM alert_dependency_lock WHERE id=1 FOR UPDATE');
   const key = keyOf(binding);
   const [rows] = await c.execute<RowDataPacket[]>(
     'SELECT payload FROM metric_trigger_snapshots WHERE resource_key=? AND config_revision=?',
@@ -163,7 +166,13 @@ export async function evaluateTemplateSamples(
       const verdict = evaluation.nodata
         ? { ...evaluation, business: 'problem' as const, problem_open: true }
         : evaluation;
-      const next = nextTriggerEpisode({ identity, previous, evaluation: verdict });
+      let next = nextTriggerEpisode({ identity, previous, evaluation: verdict });
+      if (next?.state === 'open' && previous?.state !== 'open') {
+        const blockers = await blockingDependencies(c, binding.binding.resource, rule.rule_id);
+        await c.execute('INSERT INTO alert_dependency_decisions VALUES(?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload)',
+          [hash,key,JSON.stringify({at,rule_id:rule.rule_id,blocked:!!blockers.length,dependencies:blockers})]);
+        if (blockers.length) next = previous; // Formal inputs remain; no new problem, no acknowledgement or fake recovery.
+      }
       const evidenceRows = inputs.filter((row) =>
         selected.some(
           (s) => s.observed_at === decode<{ sample: TriggerSample | null }>(row.payload).sample?.observed_at,

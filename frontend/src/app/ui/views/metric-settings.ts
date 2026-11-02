@@ -1,3 +1,5 @@
+import '../components/template-library.js';
+import '../components/template-governance.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -231,7 +233,7 @@ export class MetricSettings extends LitElement {
       small { display:block;color:var(--muted);overflow-wrap:anywhere; } :focus-visible { outline:2px solid var(--accent); }
       .metric-page-header h1 { margin:0 0 var(--space-sm); font-size:var(--text-xl); color:var(--text-strong); }
     </style><header class="metric-page-header"><h1>${({ catalog: "指标目录", packages: "指标与采集", policies: "采集策略", audit: "采集审计" } as Record<string, string>)[this.view] ?? "指标与采集"}</h1></header>${this.error ? html`<app-notice role="alert">${this.error}</app-notice>` : nothing}
-    ${['policies', 'audit'].includes(this.view) ? this.renderPolicies() : this.view === 'packages' ? this.renderPackages() : html`<app-card><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
+    ${['policies', 'audit'].includes(this.view) ? this.renderPolicies() : this.view === 'packages' ? html`<template-library></template-library><template-governance></template-governance><details><summary>采集包与兼容性详情</summary>${this.renderPackages()}</details>` : html`<app-card><p>标准指标定义只读；扩展指标由采集包提供。修改采集行为请进入资源采集策略。</p>
         <div class="filter-toolbar" role="group" aria-label="指标目录筛选">
         <app-form-field label="搜索名称或标识"><input aria-label="搜索指标" .value=${this.search} @input=${(e: Event) => { this.search = (e.target as HTMLInputElement).value; }}></app-form-field>
         <app-form-field label="资源类型"><select aria-label="指标资源类型" .value=${this.type} @change=${(e: Event) => { this.type = (e.target as HTMLSelectElement).value; }}><option value="" .selected=${!this.type}>全部</option>${Object.entries(resourceLabels).map(([k,v]) => html`<option value=${k} .selected=${this.type === k}>${v}</option>`)}</select></app-form-field>

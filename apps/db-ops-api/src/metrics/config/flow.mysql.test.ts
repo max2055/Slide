@@ -238,6 +238,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const settings = await browser.newPage();
     await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
     await browserExpect(settings.locator('metric-settings')).toBeVisible();
+    await settings.getByText('采集包与兼容性详情', { exact: true }).click();
     const mysqlPackage = settings.getByRole('row')
       .filter({ has: settings.getByText('MySQL 基础采集', { exact: true }) });
     await browserExpect(mysqlPackage).toHaveCount(1);

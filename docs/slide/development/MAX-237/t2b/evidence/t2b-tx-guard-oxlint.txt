@@ -1,0 +1,4 @@
+# command: node_modules/.bin/oxlint docs/slide/development/MAX-237/t2b (repo root)
+Found 0 warnings and 0 errors.
+Finished in 10ms on 2 files with 101 rules using 10 threads.
+exit=0

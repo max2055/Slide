@@ -1,0 +1,340 @@
+{
+  "target": {
+    "instance_id": 1,
+    "name": "mysql3306",
+    "db_type": "mysql",
+    "port": 3306,
+    "database": "db_ops_ai",
+    "instance_matches": true,
+    "database_matches": true
+  },
+  "tables": {
+    "expected": [
+      "metric_templates_v2",
+      "metric_template_drafts",
+      "metric_template_versions",
+      "metric_template_items",
+      "metric_template_item_versions"
+    ],
+    "existed_before": [
+      "metric_template_drafts",
+      "metric_template_item_versions",
+      "metric_template_items",
+      "metric_template_versions",
+      "metric_templates_v2"
+    ],
+    "created": [],
+    "missing_after": []
+  },
+  "business_counts": {
+    "before": {
+      "users": 5,
+      "database_instances": 5,
+      "servers": 1,
+      "metric_templates": 5
+    },
+    "after": {
+      "users": 5,
+      "database_instances": 5,
+      "servers": 1,
+      "metric_templates": 5
+    },
+    "preserved": true
+  },
+  "table_facts": [
+    {
+      "name": "metric_template_drafts",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T13:54:39.000Z",
+      "rows": 3
+    },
+    {
+      "name": "metric_template_item_versions",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T13:54:39.000Z",
+      "rows": 15
+    },
+    {
+      "name": "metric_template_items",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T13:54:39.000Z",
+      "rows": 15
+    },
+    {
+      "name": "metric_template_versions",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T13:54:39.000Z",
+      "rows": 3
+    },
+    {
+      "name": "metric_templates_v2",
+      "engine": "InnoDB",
+      "collation": "utf8mb4_bin",
+      "create_time": "2026-10-27T13:54:39.000Z",
+      "rows": 3
+    }
+  ],
+  "template_facts": [
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z",
+      "revision": 2,
+      "status": "active",
+      "current_published_version": 1,
+      "version_count": 1,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "content_hash": "sha256:4db4800495801f3993cfd5a21eda672bdd7bccbbb535bc8224cd57be7fbb107a"
+        }
+      ]
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z",
+      "revision": 2,
+      "status": "active",
+      "current_published_version": 1,
+      "version_count": 1,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "content_hash": "sha256:bfdc5171f43a78f5b3595b38543270be986dea837d0f64ed8446876d094c7c21"
+        }
+      ]
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "created_at": "2026-10-27T13:54:39.881Z",
+      "updated_at": "2026-10-27T13:54:39.881Z",
+      "revision": 2,
+      "status": "active",
+      "current_published_version": 1,
+      "version_count": 1,
+      "versions": [
+        {
+          "version": 1,
+          "status": "published",
+          "content_hash": "sha256:2ea6fdc9888139eec02bb9968d3655efd1a1787e413d2d69dfe79ee3181c7f92"
+        }
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "action": "noop",
+      "version": 1,
+      "content_hash": "sha256:4db4800495801f3993cfd5a21eda672bdd7bccbbb535bc8224cd57be7fbb107a",
+      "item_count": 1,
+      "mapping_trace": [
+        {
+          "item_id": "8fbad224ebdf46e7b25a0be015f21972",
+          "metric": "db.uptime_seconds@1.0.0",
+          "package_release": "mysql-basic@1.0.0#sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c",
+          "implementation_id": "builtin:mysql.status.v1",
+          "raw_field": "Uptime",
+          "unit": "s"
+        }
+      ]
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "action": "noop",
+      "version": 1,
+      "content_hash": "sha256:bfdc5171f43a78f5b3595b38543270be986dea837d0f64ed8446876d094c7c21",
+      "item_count": 5,
+      "mapping_trace": [
+        {
+          "item_id": "403cebed115441369e94d35d070ca7b8",
+          "metric": "linux.memory.used_percent@1.0.0",
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.host-gauges.v1",
+          "raw_field": "memory_usage",
+          "unit": "%"
+        },
+        {
+          "item_id": "48528aa936a04c8189375a6eae4033da",
+          "metric": "linux.load.one_minute@1.0.0",
+          "package_release": "linux-basic@1.0.0#sha256:706820e5789b1b853bb3fc5f9d96573b2edad33630acbc7f9f72561caca58dc6",
+          "implementation_id": "builtin:linux.basic.v1",
+          "raw_field": "load_1min",
+          "unit": "1"
+        },
+        {
+          "item_id": "8537f6c6ac6b438c80caf227946df891",
+          "metric": "linux.uptime.seconds@1.0.0",
+          "package_release": "linux-basic@1.0.0#sha256:706820e5789b1b853bb3fc5f9d96573b2edad33630acbc7f9f72561caca58dc6",
+          "implementation_id": "builtin:linux.basic.v1",
+          "raw_field": "uptime",
+          "unit": "s"
+        },
+        {
+          "item_id": "a6d90e0bc5ef4fb7acee8682687c485f",
+          "metric": "host.filesystem.size_bytes@1.0.0",
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.filesystem.v1",
+          "raw_field": "filesystem_size_bytes",
+          "unit": "By"
+        },
+        {
+          "item_id": "efee06a191aa4e5c8faa2762988b6955",
+          "metric": "host.filesystem.used_bytes@1.0.0",
+          "package_release": "linux-host@1.0.0#sha256:f33494b0b6ee55a9112920f4ba6be3cf878179a94744718db7537e8af9e40856",
+          "implementation_id": "builtin:linux.filesystem.v1",
+          "raw_field": "filesystem_used_bytes",
+          "unit": "By"
+        }
+      ]
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "action": "noop",
+      "version": 1,
+      "content_hash": "sha256:2ea6fdc9888139eec02bb9968d3655efd1a1787e413d2d69dfe79ee3181c7f92",
+      "item_count": 9,
+      "mapping_trace": [
+        {
+          "item_id": "1659d815112945478585fceef9318e68",
+          "metric": "network.interface.oper_up@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "ifOperStatus",
+          "unit": "1"
+        },
+        {
+          "item_id": "9291e8cfc58a4c029ff339bae4892faf",
+          "metric": "snmp.interface.tx_errors_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txErrors",
+          "unit": "count"
+        },
+        {
+          "item_id": "998389bdf381441e92ddd597272002fa",
+          "metric": "snmp.interface.tx_octets_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txOctets",
+          "unit": "By"
+        },
+        {
+          "item_id": "c45208952a8f43e7a4ac90dbc9bf2eac",
+          "metric": "snmp.interface.speed_bits_per_second@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "ifSpeed",
+          "unit": "bit/s"
+        },
+        {
+          "item_id": "c5bc13495caf4a208b21bcd0a515a19d",
+          "metric": "snmp.interface.tx_discards_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "txDiscards",
+          "unit": "count"
+        },
+        {
+          "item_id": "d21e9fec64c54fd19605f8a8ba230211",
+          "metric": "snmp.interface.rx_errors_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxErrors",
+          "unit": "count"
+        },
+        {
+          "item_id": "e5323fadbfbe4773ab450312a2c29164",
+          "metric": "snmp.interface.rx_octets_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxOctets",
+          "unit": "By"
+        },
+        {
+          "item_id": "e5972a8dce67488cb6119c4f49d59a12",
+          "metric": "snmp.interface.rx_discards_total@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.interfaces.v1",
+          "raw_field": "rxDiscards",
+          "unit": "count"
+        },
+        {
+          "item_id": "e9dd0d849aaa499da9e2ef9e21ccd50e",
+          "metric": "snmp.agent.uptime_seconds@1.0.0",
+          "package_release": "snmp-standard@1.0.0#sha256:b1c321aed084d1d778389f6832aa29de0e0d4acc2444be5de9fdad0a22fd932d",
+          "implementation_id": "builtin:snmp.system.v1",
+          "raw_field": "sysUpTime",
+          "unit": "s"
+        }
+      ]
+    }
+  ],
+  "readback": [
+    {
+      "template_id": "e19c120027e04da69b130e0f6cea29fc",
+      "name": "MySQL by ODBC",
+      "status": "active",
+      "current_published_version": 1,
+      "content_hash": "sha256:4db4800495801f3993cfd5a21eda672bdd7bccbbb535bc8224cd57be7fbb107a",
+      "expected_item_count": 1,
+      "actual_item_count": 1,
+      "item_count_matches": true,
+      "item_ids": [
+        "8fbad224ebdf46e7b25a0be015f21972"
+      ],
+      "version": 1,
+      "action": "noop"
+    },
+    {
+      "template_id": "f8f7908280354f2abeed07dc788c3747",
+      "name": "Linux by Zabbix agent",
+      "status": "active",
+      "current_published_version": 1,
+      "content_hash": "sha256:bfdc5171f43a78f5b3595b38543270be986dea837d0f64ed8446876d094c7c21",
+      "expected_item_count": 5,
+      "actual_item_count": 5,
+      "item_count_matches": true,
+      "item_ids": [
+        "403cebed115441369e94d35d070ca7b8",
+        "48528aa936a04c8189375a6eae4033da",
+        "8537f6c6ac6b438c80caf227946df891",
+        "a6d90e0bc5ef4fb7acee8682687c485f",
+        "efee06a191aa4e5c8faa2762988b6955"
+      ],
+      "version": 1,
+      "action": "noop"
+    },
+    {
+      "template_id": "ad4c3dad4b7b492685d1fd3bd3a664f9",
+      "name": "Huawei VRP by SNMP",
+      "status": "active",
+      "current_published_version": 1,
+      "content_hash": "sha256:2ea6fdc9888139eec02bb9968d3655efd1a1787e413d2d69dfe79ee3181c7f92",
+      "expected_item_count": 9,
+      "actual_item_count": 9,
+      "item_count_matches": true,
+      "item_ids": [
+        "1659d815112945478585fceef9318e68",
+        "9291e8cfc58a4c029ff339bae4892faf",
+        "998389bdf381441e92ddd597272002fa",
+        "c45208952a8f43e7a4ac90dbc9bf2eac",
+        "c5bc13495caf4a208b21bcd0a515a19d",
+        "d21e9fec64c54fd19605f8a8ba230211",
+        "e5323fadbfbe4773ab450312a2c29164",
+        "e5972a8dce67488cb6119c4f49d59a12",
+        "e9dd0d849aaa499da9e2ef9e21ccd50e"
+      ],
+      "version": 1,
+      "action": "noop"
+    }
+  ],
+  "applied_at": "2026-10-27T13:59:21.332Z"
+}

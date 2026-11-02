@@ -1,0 +1,6 @@
+# fresh check before reject fixture
+containers:
+volumes:
+name/volume lookup:
+container absent
+volume absent

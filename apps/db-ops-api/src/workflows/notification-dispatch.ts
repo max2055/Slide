@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkflowJobInput } from './worker-runtime.js';
 
-type PendingAlert = { id: number; level: string; created_at?: Date | string };
+export type NotificationTransition = { id: string; phase: 'recovery' | 'escalation'; at: string; from_level?: string; to_level?: string };
+
+type PendingAlert = { id: number; level: string; created_at?: Date | string; transition?: NotificationTransition };
 type Channel = { id: number; delivery_start_at?: Date | string | null };
 
 /** A newly enabled channel must not replay alerts that existed before activation. */
@@ -58,14 +60,14 @@ export class NotificationDispatchScheduler {
       signal?.throwIfAborted();
       for (const channel of this.router.routeAlert(alert, channels)) {
         if (!isAlertEligibleForChannel(alert, channel)) continue;
-        if (await this.source.hasSuccessfulDelivery?.(alert.id, channel.id)) continue;
+        if (!alert.transition && await this.source.hasSuccessfulDelivery?.(alert.id, channel.id)) continue;
         signal?.throwIfAborted();
         await this.workflow.enqueue({
           id: this.newId(),
           type: 'notification.deliver',
           schemaVersion: 1,
-          payload: { alertId: alert.id, channelId: channel.id },
-          idempotencyKey: `notification:${alert.id}:${channel.id}`,
+          payload: { alertId: alert.id, channelId: channel.id, ...(alert.transition ? {transition:alert.transition} : {}) },
+          idempotencyKey: `notification:${alert.id}:${channel.id}${alert.transition ? `:${alert.transition.id}` : ""}`,
           maxAttempts: 5,
         });
         enqueued++;

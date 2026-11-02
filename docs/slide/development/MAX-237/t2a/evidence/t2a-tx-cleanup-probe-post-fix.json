@@ -1,0 +1,48 @@
+{
+  "source_root": "/Users/max/multica_workspaces_desktop-api.multica.ai/helene-u0xo-f53fbd8f8fe6/max-237-25a35bb80333/worktree",
+  "fixture": "new owned max237_t2a; two real independent pools; connectionLimit 1",
+  "results": [
+    {
+      "id": "rollback-failure",
+      "pass": true,
+      "error": {
+        "name": "Error",
+        "code": null
+      },
+      "released_to_pool": 0,
+      "discarded": 1,
+      "independent_before": {
+        "parents": 0,
+        "drafts": 0
+      },
+      "same_pool_read_saw_uncommitted_parent": false,
+      "same_pool_after_unrelated_create": false,
+      "independent_after_unrelated_create": {
+        "parents": 0,
+        "drafts": 0
+      },
+      "expected": "failed/unknown transaction never returned live to pool; no pending rows visible on reuse or committed by another operation"
+    },
+    {
+      "id": "commit-not-sent-live-connection",
+      "pass": true,
+      "error": {
+        "name": "TemplateStorageUnknownCommitError",
+        "code": "TEMPLATE_STORAGE_UNKNOWN_COMMIT"
+      },
+      "released_to_pool": 0,
+      "discarded": 1,
+      "independent_before": {
+        "parents": 0,
+        "drafts": 0
+      },
+      "same_pool_read_saw_uncommitted_parent": false,
+      "same_pool_after_unrelated_create": false,
+      "independent_after_unrelated_create": {
+        "parents": 0,
+        "drafts": 0
+      },
+      "expected": "failed/unknown transaction never returned live to pool; no pending rows visible on reuse or committed by another operation"
+    }
+  ]
+}

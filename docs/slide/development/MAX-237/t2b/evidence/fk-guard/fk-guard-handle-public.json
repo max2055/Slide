@@ -1,0 +1,24 @@
+{
+  "app_user": "max237_t2b_app",
+  "candidate_schema": "max237_t2b",
+  "container_id": "265b545d9a15ba3604509b5cef0af4785ef7b5c2f9976a2329702a6c8babe260",
+  "container_name": "max237-t2b-15coder1-20261027",
+  "image": "mysql:8.4",
+  "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+  "owner": "15coder1-t2b",
+  "phase": "T2B-20261027",
+  "port": 52844,
+  "restore_schema": "max237_t2b_restore",
+  "schemas": [
+    "max237_t2b_d1",
+    "max237_t2b",
+    "max237_t2b_restore"
+  ],
+  "source_schema": "max237_t2b_d1",
+  "volume": "max237-t2b-15coder1-20261027-data",
+  "volume_destination": "/var/lib/mysql",
+  "volume_labels": {
+    "max237.owner": "15coder1-t2b",
+    "max237.phase": "T2B-20261027"
+  }
+}

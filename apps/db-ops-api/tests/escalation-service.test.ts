@@ -10,6 +10,7 @@ vi.mock('../src/alert-database-service', () => ({
 
 const mockPool = {
   execute: vi.fn().mockResolvedValue([[]]),
+  getConnection: vi.fn(),
 };
 
 describe('alert-escalation-service.ts', () => {
@@ -42,11 +43,14 @@ describe('alert-escalation-service.ts', () => {
   });
 
   it('manualEscalation returns error when alert not found', async () => {
-    mockPool.execute.mockResolvedValueOnce([[]]);
+    const c={query:vi.fn(),beginTransaction:vi.fn(),execute:vi.fn().mockResolvedValue([[]]),rollback:vi.fn(),release:vi.fn(),destroy:vi.fn()};
+    mockPool.getConnection.mockResolvedValue(c);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const result = await alertEscalationService.manualEscalation(999, 'critical');
     expect(result.success).toBe(false);
-    expect(result.error).toBe('告警不存在');
+    expect(result.error).toBe('ESCALATION_NOT_FOUND');
+    expect(c.rollback).toHaveBeenCalledOnce();
+    expect(c.release).toHaveBeenCalledOnce();
   });
 
   it('getEscalationRules returns empty when no rules in DB', async () => {

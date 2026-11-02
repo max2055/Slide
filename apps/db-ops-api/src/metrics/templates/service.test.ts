@@ -316,7 +316,7 @@ describe('publish rejections', () => {
       },
     });
     expect(await code(service.publish(manager(), based.template_id, { expected_draft_revision: 1, expected_revision: 0 })))
-      .toBe('TEMPLATE_BASE_INHERITANCE_UNAVAILABLE');
+      .toBe('TEMPLATE_INHERITANCE_INVALID');
   });
 
   it('rejects an illegal cadence when the draft is saved and again at publish', async () => {
@@ -645,5 +645,140 @@ describe('parameter types', () => {
     expect(await code(service.publish(manager(), created.template_id, { expected_draft_revision: 2, expected_revision: 0 })))
       .toBe('TEMPLATE_PARAMETER_INVALID');
     expect(await repository.listVersions(created.template_id)).toEqual([]);
+  });
+});
+
+describe('MAX244 fixed immutable inheritance', () => {
+  it('expands three edges, rejects depth four and cycles, pins origins and restores defaults', async () => {
+    const { service, repository } = setup();
+    const { created: root } = await mysqlTemplate(service);
+    await service.publish(manager(), root.template_id, {
+      expected_draft_revision: 1,
+      expected_revision: 0,
+    });
+    let parent = root.template_id;
+    const children: string[] = [];
+    for (let edge = 1; edge <= 3; edge++) {
+      const child = await service.create(manager(), { name: `depth ${edge}` });
+      children.push(child.template_id);
+      await service.updateDraft(manager(), child.template_id, {
+        expected_draft_revision: 0,
+        aggregate: {
+          ...emptyDraftAggregate(child.template_id),
+          base: { template_id: parent, version: 1 },
+        },
+      });
+      await service.publish(manager(), child.template_id, {
+        expected_draft_revision: 1,
+        expected_revision: 0,
+      });
+      const snapshot = (await repository.getVersion(child.template_id, 1))!;
+      expect(snapshot.items).toHaveLength(2);
+      expect(snapshot.items.every((i) => i.template_id === child.template_id)).toBe(true);
+      expect(snapshot.aggregate.parameters.defaults.interval_ms).toBe(60000);
+      expect(snapshot.aggregate.inheritance!.parameters.interval_ms).toEqual({
+        template_id: root.template_id,
+        version: 1,
+      });
+      parent = child.template_id;
+    }
+    const fourth = await service.create(manager(), { name: 'fourth' });
+    await service.updateDraft(manager(), fourth.template_id, {
+      expected_draft_revision: 0,
+      aggregate: {
+        ...emptyDraftAggregate(fourth.template_id),
+        base: { template_id: parent, version: 1 },
+      },
+    });
+    expect(
+      await code(
+        service.publish(manager(), fourth.template_id, {
+          expected_draft_revision: 1,
+          expected_revision: 0,
+        }),
+      ),
+    ).toBe('TEMPLATE_INHERITANCE_INVALID');
+    const rootDraft = (await repository.getDraft(root.template_id))!;
+    await service.updateDraft(manager(), root.template_id, {
+      expected_draft_revision: rootDraft.revision,
+      aggregate: { ...rootDraft.aggregate, base: { template_id: children[0]!, version: 1 } },
+    });
+    expect(
+      await code(
+        service.publish(manager(), root.template_id, {
+          expected_draft_revision: rootDraft.revision + 1,
+          expected_revision: 1,
+        }),
+      ),
+    ).toBe('TEMPLATE_INHERITANCE_INVALID');
+    const copied = await service.copy(manager(), children[2]!, { name: 'copy inherited snapshot' });
+    await service.publish(manager(), copied.template_id, {
+      expected_draft_revision: 0,
+      expected_revision: 0,
+    });
+    expect((await repository.getVersion(copied.template_id, 1))!.items).toHaveLength(2);
+    const child = children[0]!;
+    const draft = (await repository.getDraft(child))!;
+    const overridden = {
+      ...draft.aggregate,
+      parameters: {
+        schema: { interval_ms: { type: 'integer' as const, min: 1000, max: 86400000 } },
+        defaults: { interval_ms: 120000 },
+      },
+    };
+    await service.updateDraft(manager(), child, {
+      expected_draft_revision: draft.revision,
+      aggregate: overridden,
+    });
+    await service.publish(manager(), child, {
+      expected_draft_revision: draft.revision + 1,
+      expected_revision: 1,
+    });
+    expect((await repository.getVersion(child, 2))!.aggregate.parameters.defaults.interval_ms).toBe(
+      120000,
+    );
+    expect((await repository.getVersion(child, 1))!.aggregate.parameters.defaults.interval_ms).toBe(
+      60000,
+    );
+    await service.updateDraft(manager(), child, {
+      expected_draft_revision: (await repository.getDraft(child))!.revision,
+      aggregate: draft.aggregate,
+    });
+    const restored = await service.publish(manager(), child, {
+      expected_draft_revision: (await repository.getDraft(child))!.revision,
+      expected_revision: 2,
+    });
+    expect(
+      (await repository.getVersion(child, restored.version))!.aggregate.parameters.defaults
+        .interval_ms,
+    ).toBe(60000);
+  });
+  it('rejects incompatible inherited parameter schemas', async () => {
+    const { service } = setup();
+    const { created: root } = await mysqlTemplate(service);
+    await service.publish(manager(), root.template_id, {
+      expected_draft_revision: 1,
+      expected_revision: 0,
+    });
+    const child = await service.create(manager(), { name: 'conflict' });
+    await service.updateDraft(manager(), child.template_id, {
+      expected_draft_revision: 0,
+      aggregate: {
+        ...emptyDraftAggregate(child.template_id),
+        base: { template_id: root.template_id, version: 1 },
+        parameters: {
+          schema: { interval_ms: { type: 'integer', min: 2000, max: 86400000 } },
+          defaults: { interval_ms: 60000 },
+        },
+      },
+    });
+    expect(
+      await code(
+        service.publish(manager(), child.template_id, {
+          expected_draft_revision: 1,
+          expected_revision: 0,
+        }),
+      ),
+    ).toBe('TEMPLATE_INHERITANCE_INVALID');
   });
 });

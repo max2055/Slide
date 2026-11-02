@@ -1,0 +1,84 @@
+{
+  "task": "MAX237-T2B-DDL-ERROR-GUARD",
+  "container_name": "max237-t2b-15coder1-20261027",
+  "container_id": "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
+  "image": "mysql:8.4",
+  "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+  "volume": "max237-t2b-15coder1-20261027-data",
+  "port": {
+    "cmd": [
+      "docker",
+      "port",
+      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
+      "3306/tcp"
+    ],
+    "exit": 0,
+    "stdout": "127.0.0.1:55467",
+    "stderr": ""
+  },
+  "schemas": [
+    "max237_t2b_d1",
+    "max237_t2b",
+    "max237_t2b_restore"
+  ],
+  "app_user": "max237_t2b_app",
+  "container_labels": {
+    "cmd": [
+      "docker",
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{json .Config.Labels}}",
+      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
+    ],
+    "exit": 0,
+    "stdout": "{\"max237.owner\":\"15coder1-t2b\",\"max237.phase\":\"T2B-20261027\"}",
+    "stderr": ""
+  },
+  "owned_labels": {
+    "cmd": [
+      "docker",
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{index .Config.Labels \"max237.owner\"}}|{{index .Config.Labels \"max237.phase\"}}",
+      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
+    ],
+    "exit": 0,
+    "stdout": "15coder1-t2b|T2B-20261027",
+    "stderr": ""
+  },
+  "mounts": {
+    "cmd": [
+      "docker",
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}};{{end}}",
+      "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863"
+    ],
+    "exit": 0,
+    "stdout": "volume|max237-t2b-15coder1-20261027-data|/var/lib/mysql;",
+    "stderr": ""
+  },
+  "volume_labels": {
+    "cmd": [
+      "docker",
+      "volume",
+      "inspect",
+      "--format",
+      "{{index .Labels \"max237.owner\"}}|{{index .Labels \"max237.phase\"}}",
+      "max237-t2b-15coder1-20261027-data"
+    ],
+    "exit": 0,
+    "stdout": "15coder1-t2b|T2B-20261027",
+    "stderr": ""
+  },
+  "state_dir_mode": "0o700",
+  "handle_mode": "0o600",
+  "credentials_mode": "0o600",
+  "image_matches_admitted": true
+}

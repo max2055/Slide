@@ -7,6 +7,7 @@ vi.mock('./security/outbound-policy.js', async (importOriginal) => {
 
 import { createPinnedLookup, NotificationService } from './notification-service.js';
 import { resolveOutboundTarget } from './security/outbound-policy.js';
+import { validateNotificationChannelConfig } from './notification-channel-config.js';
 
 const channel = {
   id: 1,
@@ -44,6 +45,21 @@ const feishuChannel = {
 };
 
 describe('NotificationService outbound delivery', () => {
+  it('R1: routes every supported severity including P0 and rejects unknown levels/thresholds', () => {
+    const service = new NotificationService();
+    const levels = ['info', 'warning', 'error', 'critical', 'p0'];
+    const channels = levels.map((severity, id) => ({ ...channel, id, config: { ...channel.config, severity } }));
+    for (const [rank, level] of levels.entries()) {
+      expect(service.routeAlert({ level } as any, channels)).toEqual(channels.slice(0, rank + 1));
+    }
+    expect(() => service.routeAlert({ level: 'P0' } as any, channels)).toThrow('NOTIFICATION_LEVEL_INVALID');
+    for (const severity of ['', 'urgent', 'P0', null, 0]) {
+      expect(() => service.routeAlert({ level: 'p0' } as any, [{ ...channel, config: { severity } } as any]))
+        .toThrow('NOTIFICATION_SEVERITY_INVALID');
+      expect(validateNotificationChannelConfig('webhook', { ...channel.config, severity })).toMatchObject({ valid: false, field: 'severity' });
+    }
+    expect(validateNotificationChannelConfig('webhook', { ...channel.config, severity: 'p0' })).toMatchObject({ valid: true });
+  });
   it('returns a pinned address list when Node requests all DNS results', () => {
     const callback = vi.fn();
 

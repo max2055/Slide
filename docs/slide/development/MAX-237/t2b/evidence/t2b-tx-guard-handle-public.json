@@ -1,0 +1,19 @@
+{
+  "app_user": "max237_t2b_app",
+  "candidate_schema": "max237_t2b",
+  "container_name": "max237-t2b-15coder1-20261027",
+  "created_at": "2026-10-27T05:31:26Z",
+  "image": "mysql:8.4",
+  "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+  "owner": "15coder1-t2b",
+  "phase": "T2B-20261027",
+  "port": 50211,
+  "restore_schema": "max237_t2b_restore",
+  "schemas": [
+    "max237_t2b_d1",
+    "max237_t2b",
+    "max237_t2b_restore"
+  ],
+  "source_schema": "max237_t2b_d1",
+  "volume": "max237-t2b-15coder1-20261027-data"
+}

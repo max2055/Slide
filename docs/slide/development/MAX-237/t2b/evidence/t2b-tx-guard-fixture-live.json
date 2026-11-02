@@ -1,0 +1,25 @@
+{
+  "id": "f7604b63ac7d227b01fdc71de59b446bd820547815f7de677e6f4e8f9104fb36",
+  "image": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+  "image_name": "mysql:8.4",
+  "labels": {
+    "max237.owner": "15coder1-t2b",
+    "max237.phase": "T2B-20261027"
+  },
+  "mounts": [
+    {
+      "destination": "/var/lib/mysql",
+      "name": "max237-t2b-15coder1-20261027-data",
+      "type": "volume"
+    }
+  ],
+  "port_bindings": {
+    "3306/tcp": [
+      {
+        "HostIp": "127.0.0.1",
+        "HostPort": "50211"
+      }
+    ]
+  },
+  "running": true
+}

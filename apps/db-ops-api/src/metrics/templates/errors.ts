@@ -2,10 +2,11 @@
  * MAX-237 / T1 internal template domain — typed failure codes.
  *
  * These codes are the machine-readable part of every rejection. Display text is
- * never the decision input, and none of these codes is registered as a public
- * API error yet: this module is not mounted on a route or process.
+ * never the decision input. Native authoring routes expose these stable codes
+ * without returning driver messages, request bodies or stored credentials.
  */
 export const TEMPLATE_ERROR_STATUS = {
+  TEMPLATE_INHERITANCE_INVALID:422,
   TEMPLATE_INVALID_INPUT: 400,
   TEMPLATE_FORBIDDEN: 403,
   TEMPLATE_NOT_FOUND: 404,

@@ -15,7 +15,7 @@ async function snapshot(noInodes=false,malformedInodes=false){
   const execCommands=vi.fn(async (_client:Client,commands:string[])=>commands.map(command=>{
     let stdout='1\n';
     if(command.includes('top -bn1'))stdout=sample.gauges.cpu_usage;
-    else if(command.includes('free |'))stdout=sample.gauges.memory_usage;
+    else if(command.includes('/proc/meminfo'))stdout=`MemTotal: 100000 kB\nMemAvailable: ${100000 - Number(sample.gauges.memory_usage) * 1000} kB\n`;
     else if(command.includes('df -P -B1'))stdout=bytesReads++?sample.filesystem.bytes.replaceAll('400000','450000'):sample.filesystem.bytes;
     else if(command.includes('df -Pi'))stdout=malformedInodes?'Filesystem Inodes IUsed IFree IUse% Mounted on\ngarbage\n':noInodes?sample.filesystem.inodes.replace('1000 100 900 10%','- - - -'):sample.filesystem.inodes;
     else if(command.includes('findmnt'))stdout=sample.filesystem.mounts;

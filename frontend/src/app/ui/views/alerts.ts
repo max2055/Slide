@@ -1,3 +1,5 @@
+import '../components/notification-deliveries.js';
+import '../components/alert-dependencies.js';
 import '../components/maintenance-windows.js';
 import { alertLevelLabel, alertLevelVariant, alertLevelOptions } from '../alert-levels.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
@@ -523,7 +525,7 @@ export class AlertsPage extends LitElement {
   private readonly maxPollRetries = 20;  // 60 seconds max at 3s interval
 
   // Tab state
-  @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'maintenance' | 'silence' | 'baselines' | 'notifications' = 'alerts';
+  @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'dependencies' | 'maintenance' | 'silence' | 'baselines' | 'notifications' = 'alerts';
 
   // Durable notification recovery state
   @state() private notificationDeadLetters: NotificationDeadLetter[] | null = null;
@@ -593,6 +595,7 @@ export class AlertsPage extends LitElement {
     const tabs: Array<{ key: string; label: string; badge?: number }> = [
       { key: 'rules' as const, label: '告警规则' },
       { key: 'escalation' as const, label: '升级规则' },
+      { key: 'dependencies', label: '依赖治理' },
       { key: 'maintenance' as const, label: '维护窗口' },
       { key: 'silence' as const, label: '静默期' },
       { key: 'baselines' as const, label: '基线' },
@@ -665,6 +668,8 @@ export class AlertsPage extends LitElement {
         return this._renderRules();
       case 'escalation':
         return this._renderEscalation();
+      case 'dependencies':
+        return html`<alert-dependencies></alert-dependencies>`;
       case 'maintenance':
         return html`<maintenance-windows></maintenance-windows>`;
       case 'silence':
@@ -672,7 +677,7 @@ export class AlertsPage extends LitElement {
       case 'baselines':
         return this._renderBaselines();
       case 'notifications':
-        return this._renderNotificationRecovery();
+        return html`<notification-deliveries></notification-deliveries>${this._renderNotificationRecovery()}`;
       default:
         return this._renderAlertsTab();
     }

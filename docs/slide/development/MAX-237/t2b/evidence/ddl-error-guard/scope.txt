@@ -1,0 +1,15 @@
+# MAX237-T2B-DDL-ERROR-GUARD scope; base 99b9eb0ba392effed2c3df3e149656d7dc276990
+# product diff base..HEAD (apps packages frontend; must be empty)
+# working tree product diff (must be empty)
+# changed tracked files base..HEAD
+A	docs/slide/development/MAX-237/t2b/ddl-error-guard.test.ts
+M	docs/slide/development/MAX-237/t2b/drill.ts
+# read-only files identical to base
+same docs/slide/development/MAX-237/t2b/migrate.ts 5788420fbe3d64e9860c795eef7275017b672ed1
+same docs/slide/development/MAX-237/t2b/env-start.sh e14b5218553c405d9325cb7d0dfe267fdae219bc
+same docs/slide/development/MAX-237/t2b/env-clean.sh c80ab3137d1831832d424c09cf19c34dacefd759
+same docs/slide/development/MAX-237/t2b/sql/t2b_metric_template_aggregate.sql 909008383c9e194450dd29ddcb6bcb1d68d6049d
+same docs/slide/development/MAX-237/t2a/sql/140_metric_template_aggregate.sql f958ba73b719a0cf84b3546675a9701544f55a27
+same apps/db-ops-api/src/metrics/templates/mysql-repository.ts 01d2904f8d7da3dcafc7e2c815ef307625aff98c
+same apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts 261cecac629bddea5b89bd0ee3b5ea6fa9e528ac
+same apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts 7de98d51a788416b1e92b7f635d6b3b7ca2d756d

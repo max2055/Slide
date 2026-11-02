@@ -23,6 +23,7 @@ import {
   LLMModelDiscoveryRequestSchema,
 } from './public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './generate-public-api.js';
+import { registerTemplateAuthoringRoutes } from '../metrics/templates/authoring-routes.js';
 import { registerMetricTemplateRoutes } from '../metrics/templates/routes.js';
 
 describe('generated public API contract', () => {
@@ -81,11 +82,15 @@ describe('generated public API contract', () => {
       '/api/adapters/capabilities',
       '/api/ai/analysis/{id}/evidence',
       '/api/ai/analysis/{id}/investigation',
-      '/api/alerts/{id}/investigation',
+      '/api/alerts/dependencies',
+      '/api/alerts/dependencies/operations/{key}',
+      '/api/alerts/dependencies/resources',
+      '/api/alerts/dependencies/{id}',
       '/api/alerts/events/{id}/close',
       '/api/alerts/events/{id}/investigate',
       '/api/alerts/events/{id}/resolve',
       '/api/alerts/events/{id}/verify-recovery',
+      '/api/alerts/{id}/investigation',
       '/api/cron/jobs/{id}',
       '/api/cron/jobs/{id}/run',
       '/api/cron/jobs/{id}/runs',
@@ -102,6 +107,8 @@ describe('generated public API contract', () => {
       '/api/investigation-profiles',
       '/api/investigation-usage',
       '/api/investigations',
+      '/api/investigations/drafts',
+      '/api/investigations/entry-facts',
       '/api/investigations/{id}',
       '/api/investigations/{id}/context-facts',
       '/api/investigations/{id}/events',
@@ -117,11 +124,11 @@ describe('generated public API contract', () => {
       '/api/llm/models',
       '/api/llm/test',
       '/api/metrics/config/bulk',
+      '/api/metrics/config/bulk/preview',
       '/api/metrics/config/bulk/{id}',
       '/api/metrics/config/bulk/{id}/cancel',
       '/api/metrics/config/bulk/{id}/confirm',
       '/api/metrics/config/bulk/{id}/retry',
-      '/api/metrics/config/bulk/preview',
       '/api/metrics/config/resources/{type}/{id}/activate',
       '/api/metrics/config/resources/{type}/{id}/migration',
       '/api/metrics/config/resources/{type}/{id}/operations/{key}',
@@ -141,12 +148,28 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/template-governance/batches',
+      '/api/metrics/template-governance/batches/{id}',
+      '/api/metrics/template-governance/batches/{id}/{type}/{resourceId}',
+      '/api/metrics/template-governance/preview',
+      '/api/metrics/template-governance/resources',
+      '/api/metrics/template-governance/templates/{id}/diff',
+      '/api/metrics/template-governance/templates/{id}/inheritance',
       '/api/metrics/templates',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
       '/api/network-devices',
+      '/api/network-devices/test-connection',
       '/api/network-devices/{id}',
       '/api/network-devices/{id}/backup-schedule',
       '/api/network-devices/{id}/capabilities',
@@ -157,7 +180,7 @@ describe('generated public API contract', () => {
       '/api/network-devices/{id}/metrics',
       '/api/network-devices/{id}/probe',
       '/api/network-devices/{id}/relations',
-      '/api/network-devices/test-connection',
+      '/api/notification/deliveries',
       '/api/operations/action-executions/{id}',
       '/api/operations/action-executions/{id}/cancel',
       '/api/operations/action-executions/{id}/reconcile',
@@ -190,15 +213,15 @@ describe('generated public API contract', () => {
       '/api/platform/system-events',
       '/api/platform/system-events/{id}',
       '/api/resources',
+      '/api/resources/metrics/summary',
+      '/api/resources/overview',
       '/api/resources/{type}/{id}/diagnose',
       '/api/resources/{type}/{id}/diagnose-agent',
       '/api/resources/{type}/{id}/observations',
-      '/api/resources/metrics/summary',
-      '/api/resources/overview',
       '/api/servers/{id}/collect-diagnostics',
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
-    ]);
+    ].sort((a,b)=>a.localeCompare(b)));
     const operationLookup = document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}'].get;
     expect(operationLookup.operationId).toBe('getMetricConfigurationOperation');
     expect(operationLookup.security).toEqual([{ bearerAuth: [] }]);
@@ -240,6 +263,9 @@ describe('generated public API contract', () => {
       if (route.method === 'GET' || route.method === 'POST') registered.add(route.url.replace(/:(\w+)/g, '{$1}'));
     });
     await registerMetricTemplateRoutes(app, async () => undefined);
+    await registerTemplateAuthoringRoutes(app, async () => undefined);
+    const {registerTemplateGovernanceRoutes}=await import('../metrics/templates/governance-routes.js');
+    await registerTemplateGovernanceRoutes(app,async()=>undefined);
     const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
     await registerTemplateTriggerRoutes(app,async()=>undefined);
     await app.ready();
@@ -257,12 +283,27 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/template-governance/batches',
+      '/api/metrics/template-governance/batches/{id}',
+      '/api/metrics/template-governance/batches/{id}/{type}/{resourceId}',
+      '/api/metrics/template-governance/preview',
+      '/api/metrics/template-governance/resources',
+      '/api/metrics/template-governance/templates/{id}/diff',
+      '/api/metrics/template-governance/templates/{id}/inheritance',
       '/api/metrics/templates',
+      '/api/metrics/templates/capabilities',
+      '/api/metrics/templates/library',
+      '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/draft',
+      '/api/metrics/templates/{templateId}/editor',
+      '/api/metrics/templates/{templateId}/item',
+      '/api/metrics/templates/{templateId}/name',
+      '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
-    ]);
+    ].sort());
     const documented = Object.keys(document.paths).filter(path => (path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/'))).sort();
     expect(documented).toEqual([...registered].sort());
 

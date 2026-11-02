@@ -1,10 +1,11 @@
+import { inheritTemplate } from './inheritance.js';
 /**
  * MAX-237 / T1 — internal template domain service (drafts, immutable versions,
  * registered-metric selection and the explicit mapping that joins them).
  *
- * Not mounted: no route, process registration, database adapter, collector,
- * scheduler, notification or model call references this module. Everything it
- * proves is proven by focused tests against the in-memory repository.
+ * Mounted by the native authoring HTTP routes and template binding services.
+ * Publication uses the existing repository; it does not start collection,
+ * scheduling, notifications or model calls.
  *
  * Permissions are the existing ones — reads need `metric:view`, writes need
  * `metric:manage` — matched with the shared wildcard matcher in
@@ -279,7 +280,7 @@ export class MetricTemplateService {
     const at = this.now();
     const copiedItems: ItemVersionInput[] = [];
     for (const ref of sourceAggregate.items) {
-      const item = await this.repository.getItemVersion(templateId, ref.item_id, ref.version);
+      const item = sourceVersion?.items.find(item => item.item_id === ref.item_id && item.version === ref.version) ?? await this.repository.getItemVersion(templateId, ref.item_id, ref.version);
       requireTemplate(item, 'TEMPLATE_ITEM_NOT_FOUND',
         `item ${ref.item_id}@${ref.version} is referenced by ${templateId} but does not exist`);
       copiedItems.push({
@@ -303,9 +304,10 @@ export class MetricTemplateService {
       });
     }
     const copiedAggregate = structuredClone(sourceAggregate) as Record<string, unknown>;
-    // A copy starts as its own draft: composition is re-derived at publish, and the
-    // unresolved inheritance pointer is dropped because D1 has no merge rule for it.
+    // A copy flattens the immutable source snapshot under its own identity;
+    // composition and provenance are re-derived when this new draft is published.
     delete copiedAggregate.package_composition;
+    delete copiedAggregate.inheritance;
     copiedAggregate.template_id = newId;
     copiedAggregate.base = null;
     // Every copied item starts at version 1 under the new template, so the draft
@@ -353,17 +355,15 @@ export class MetricTemplateService {
       throw new TemplateError('TEMPLATE_REVISION_CONFLICT',
         `template ${templateId} is at revision ${template.revision}, expected ${request.expected_revision}`);
     }
-    const aggregate = this.parse(TemplateDraftAggregateSchema, draft.aggregate);
-    if (aggregate.base !== null) {
-      throw new TemplateError('TEMPLATE_BASE_INHERITANCE_UNAVAILABLE',
-        `template ${templateId} declares base ${aggregate.base.template_id}@${aggregate.base.version}; D1 has no frozen rule for merging base content, so this cannot be published`);
-    }
+    const local = this.parse(TemplateDraftAggregateSchema, draft.aggregate);
+    const inheritance=await inheritTemplate(this.repository,templateId,local);
+    const aggregate=inheritance.aggregate;
     if (aggregate.items.length === 0 && aggregate.triggers.length === 0) {
       throw new TemplateError('TEMPLATE_EMPTY', `template ${templateId} has no items or triggers; an empty template is not publishable`);
     }
     this.validateParameters(aggregate);
 
-    const resolved = await this.resolveItems(templateId, aggregate);
+    const resolved = await this.resolveItems(templateId, aggregate, inheritance.inherited);
     const metrics = new Set<string>();
     for (const { item } of resolved) {
       const key = canonicalKey(item.canonical_metric);
@@ -375,6 +375,7 @@ export class MetricTemplateService {
     const packageComposition = this.compositionOf(resolved);
     const published: TemplatePublishedAggregate = TemplatePublishedAggregateSchema.parse({
       ...aggregate,
+      ...(aggregate.base?{inheritance:inheritance.origins}:{}),
       package_composition: packageComposition,
     });
     const contentHash = templateContentHash(published);
@@ -473,10 +474,10 @@ export class MetricTemplateService {
   }
 
   /** Re-resolve every item against the pinned registry release; nothing is trusted from the draft. */
-  private async resolveItems(templateId: string, aggregate: TemplateDraftAggregate): Promise<ResolvedItem[]> {
+  private async resolveItems(templateId: string, aggregate: TemplateDraftAggregate, inherited=new Map<string,TemplateItemVersion>()): Promise<ResolvedItem[]> {
     const resolved: ResolvedItem[] = [];
     for (const ref of aggregate.items) {
-      const item = await this.repository.getItemVersion(templateId, ref.item_id, ref.version);
+      const item = inherited.get(ref.item_id) ?? await this.repository.getItemVersion(templateId, ref.item_id, ref.version);
       if (!item) {
         throw new TemplateError('TEMPLATE_ITEM_NOT_FOUND',
           `item ${ref.item_id}@${ref.version} does not exist in template ${templateId}`);
