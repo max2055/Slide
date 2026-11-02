@@ -11,6 +11,7 @@ import { blockingDependencies } from '../../alert-dependencies.js';
 import { alertEventService } from '../../alert-event-service.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 import { rule as requireRule } from '../policy/model.js';
+import { discoveryRows } from '../templates/discovery-store.js';
 
 const decode = <T>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
 const keyOf = (decoded: DecodedTemplateBindingPayload) =>
@@ -42,6 +43,7 @@ export async function evaluateTemplateSamples(
   };
   requireRule(checkTriggerSnapshotFence(snapshot, applied).ok, 'TRIGGER_NOT_APPLIED');
   const at = new Date(now).toISOString();
+  const discoveries = await discoveryRows(c, key);
   for (const rule of snapshot.rules) {
     if (!['collect', 'derive'].includes(rule.decision)) continue;
     const matching = observations.filter(
@@ -61,20 +63,29 @@ export async function evaluateTemplateSamples(
       }
     }
     if (!dimensions.size) dimensions.set('{}', {});
+    const discovered = discoveries.filter(row => row.template_id === rule.item.template_id && row.state.config_revision === snapshot.config_revision
+      && row.state.triggers.some(t => t.rule_id === rule.rule_id && t.scope === rule.scope));
+    if (discovered.length) {
+      const admitted = new Set(discovered.flatMap(row => row.state.members.filter(m => ['active','waiting'].includes(m.state))
+        .map(m => stable(m.dimensions))));
+      for (const dim of dimensions.keys()) if (!admitted.has(dim)) dimensions.delete(dim);
+    }
     requireRule(dimensions.size <= TRIGGER_LIMITS.max_series, 'TRIGGER_SERIES_BUDGET');
     for (const dims of dimensions.values()) {
+      const instance=discovered.flatMap(row=>row.state.members).find(m=>stable(m.dimensions)===stable(dims));
       const identity = {
         resource: snapshot.resource,
         rule_id: rule.rule_id,
         version: rule.version,
         body_hash: rule.body_hash,
         scope: rule.scope,
-        context_hash: hashOf({ snapshot: snapshot.snapshot_hash, item: rule.item, dimensions: dims }),
+        context_hash: hashOf({ snapshot: snapshot.snapshot_hash, item: rule.item,
+          ...(instance?{discovery_instance:instance.id}:{dimensions:dims}) }),
       };
       const hash = triggerEpisodeIdentityHash(identity);
       await c.execute(
         `INSERT INTO metric_trigger_heads(identity_hash,resource_key,config_revision,rule_id,dimensions) VALUES(?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE identity_hash=identity_hash`,
+        ON DUPLICATE KEY UPDATE dimensions=VALUES(dimensions)`,
         [hash, key, snapshot.config_revision, rule.rule_id, JSON.stringify(dims)],
       );
       const [locked] = await c.execute<RowDataPacket[]>(
@@ -120,7 +131,7 @@ export async function evaluateTemplateSamples(
       requireRule(inputs.length <= 4096, 'TRIGGER_INPUT_BUDGET');
       const samples = inputs
         .map((row) => decode<{ sample: TriggerSample | null }>(row.payload).sample)
-        .filter((s): s is TriggerSample => s !== null);
+        .filter((s): s is TriggerSample => s !== null && stable(s.dimensions)===stable(dims));
       const selectors = [rule.problem, rule.recovery];
       let windowMs = 0;
       while (selectors.length) {

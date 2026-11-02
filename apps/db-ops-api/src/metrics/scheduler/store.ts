@@ -15,6 +15,7 @@ import { resolvePolicy } from '../policy/resolver.js';
 import { bindingReadCode, readLegacyPublished, readStoredBinding, TEMPLATE_BINDING_UNSUPPORTED } from '../bindings/package-reader.js';
 import { decodeBindingPayload, encodeTemplateAppliedPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import { evaluateTemplateSamples } from '../triggers/runtime.js';
+import { updateFormalDiscovery } from '../templates/discovery-store.js';
 import type { TemplateCollectionPlan } from '../bindings/plan.js';
 import type { PackageResult } from '../packages/runner.js';
 import { compilePlan, hash, jitterFor, type CollectorPlan } from './compiler.js';
@@ -512,6 +513,18 @@ export class MysqlScheduleStore {
     now: number): Promise<{ samples: CollectSample[]; attempts: CollectAttempt[] }> {
     const { decoded } = snapshot;
     const ref = decoded.binding.resource, revision = decoded.binding.revision;
+    const discovered = await updateFormalDiscovery(c, decoded, results, now);
+    if (discovered.size) for (const { result } of results) {
+      result.observations = result.observations.filter(({ observation: o }) => {
+        const dimensions = discovered.get(`${o.metric.id}@${o.metric.semantic_version}`);
+        return !dimensions || dimensions.has(stable(o.dimensions));
+      });
+      const rawIds = new Set(result.observations.flatMap(o => o.observation.lineage.filter(v => v.stage === 'raw').map(v => v.id)));
+      result.raw = result.raw?.filter(o => rawIds.has(o.id));
+      const ids = new Set(result.observations.map(o => o.observation.id));
+      for (const attempt of result.attempts) attempt.observation_ids = attempt.observation_ids.filter(id => ids.has(id));
+    }
+    rule(results.reduce((sum,v)=>sum+v.result.observations.length,0)<=decoded.pending.plan.settings.max_series_per_resource,'DISCOVERY_SERIES_BUDGET');
     const storage = new MysqlMetricStorage(c as unknown as Pool, () => new Date(now));
     const sampleIds: string[] = [];
     const samples: CollectSample[] = [];

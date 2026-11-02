@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
+// Historical study has its own authenticated component regressions and real Lit/MySQL harness.
+vi.mock('./metric-study.js',()=>{
+  if(!customElements.get('metric-study'))customElements.define('metric-study',class extends HTMLElement {});
+  return {};
+});
 // jsdom cannot initialize the ECharts canvas; the chart element only needs to accept its inputs here.
 vi.mock('./metric-chart.js', () => {
   if (!customElements.get('metric-chart')) customElements.define('metric-chart', class extends HTMLElement {});
@@ -43,6 +48,16 @@ it('keeps metric cards on temporary failure, clears values on permission denial'
   expect(el.shadowRoot!.querySelectorAll('app-card')).toHaveLength(2);
   authFetch.mockResolvedValue({ ok: false, status: 403 }); await el.load(); await el.updateComplete;
   expect(el.result).toBeNull(); expect(el.error).toContain('权限');
+});
+it.each([401, 403, 404])('invalidates historical study when the production query refuses access (%s)', async status => {
+  authFetch.mockResolvedValue({ ok: true, json: async () => result });
+  const el = await mount();
+  expect((el.shadowRoot!.querySelector('metric-study') as any).resourceId).toBe(1);
+  authFetch.mockResolvedValue({ ok: false, status });
+  await el.load(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect((el.shadowRoot!.querySelector('metric-study') as any).resourceId).toBe(0);
+  expect(el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-busy]')!.disabled).toBe(true);
 });
 it('discards late data after changing resource', async () => {
   let finish!: (value: unknown) => void;

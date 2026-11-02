@@ -5,6 +5,7 @@ import { deliveryStore } from './src/workflows/delivery-store.js';
 import { registerAlertDependencyRoutes } from './src/alert-dependency-routes.js';
 import { registerTemplateGovernanceRoutes } from './src/metrics/templates/governance-routes.js';
 import { registerTemplateAuthoringRoutes } from './src/metrics/templates/authoring-routes.js';
+import { registerDiscoveryRoutes } from './src/metrics/templates/discovery-routes.js';
 import { registerAlertListRoute } from './src/alert-list-route.js';
 import { registerMaintenanceRoutes } from './src/maintenance-routes.js';
 import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
@@ -495,6 +496,8 @@ async function start() {
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
     await registerMetricTemplateRoutes(app, verifyToken);
+    await registerTemplateAuthoringRoutes(app, verifyToken);
+    await registerDiscoveryRoutes(app, verifyToken);
     await registerTemplateTriggerRoutes(app, verifyToken);
     await registerResourceTriggerRead(app, verifyToken);
   });
@@ -4969,7 +4972,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   await registerAlertDependencyRoutes(fastify, verifyToken);
   await registerMaintenanceRoutes(fastify, verifyToken);
-  await registerTemplateAuthoringRoutes(fastify, verifyToken);
   await registerTemplateGovernanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---

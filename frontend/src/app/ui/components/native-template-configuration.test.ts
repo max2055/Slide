@@ -171,6 +171,15 @@ it('a draft template cannot be selected', async () => {
   expect(element.error).toContain('没有已发布版本');
 });
 
+it('MAX245 a template with a working draft can still select its immutable published versions', async () => {
+  authFetch.mockImplementation(routes());
+  const element=await mount();
+  element.templates=element.templates.map((t:any)=>t.template_id==='tpl-mysql'?{...t,status:'draft'}:t);
+  await element.updateComplete;
+  expect(element.shadowRoot.querySelector('[aria-label="选择模板 MySQL 基础监控"]').disabled).toBe(false);
+  expect(element.versionDisabled(element.templates[0],element.templates[0].versions[1])).toBeNull();
+});
+
 it('an unbound resource can check the first binding at base revision 0', async () => {
   authFetch.mockImplementation(routes({
     '/template-bindings/instance/2': () => ({ ok: true, json: async () => binding({

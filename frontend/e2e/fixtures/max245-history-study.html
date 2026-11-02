@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MAX245 历史研究验收</title><link rel="stylesheet" href="/src/app/styles/tokens.css"></head><body>
+<label>授权历史资源 <select aria-label="授权历史资源"><option value="">请选择授权资源</option></select></label><semantic-metrics></semantic-metrics>
+<script type="module">
+import '/src/app/ui/components/semantic-metrics.ts';
+import {metricRequest} from '/src/app/ui/components/metric-api.ts';
+const select=document.querySelector('select'),metrics=document.querySelector('semantic-metrics');
+for(const r of await metricRequest('template-governance/resources')){const o=document.createElement('option');o.value=r.type+':'+r.id;o.textContent=r.name;select.append(o);}
+select.addEventListener('change',()=>{const [type,id]=select.value.split(':');metrics.resourceType=type||'instance';metrics.resourceId=Number(id)||0;});
+</script></body></html>

@@ -39,7 +39,23 @@ class ApiClient {
     this.baseURL = baseURL;
   }
 
+  private sessionGeneration = 0;
+  private sessionToken: string | null | undefined;
+
+  /** UI ownership only; authorization still belongs to the server. */
+  getSessionContext(): number {
+    const token = this.getToken();
+    if (token !== this.sessionToken) { this.sessionToken = token; this.sessionGeneration++; }
+    return this.sessionGeneration;
+  }
+
   setToken(token: string | null) {
+    this.sessionGeneration++;
+    this.storeToken(token);
+  }
+
+  private storeToken(token: string | null) {
+    this.sessionToken = token || null;
     if (token) {
       sessionExpiryInProgress = false;
       localStorage.setItem('token', token);
@@ -147,6 +163,7 @@ class ApiClient {
   }
 
   private async attemptTokenRefresh(): Promise<string | null> {
+    const session = this.getSessionContext();
     const refreshToken = this.getRefreshToken();
     if (!refreshToken) return null;
 
@@ -161,6 +178,7 @@ class ApiClient {
         body: JSON.stringify({ refreshToken }),
       });
 
+      if (session !== this.getSessionContext()) return null;
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) notifySessionExpired();
         else {
@@ -171,10 +189,13 @@ class ApiClient {
       }
 
       const data = await response.json();
-      this.setToken(data.token);
+      if (session !== this.getSessionContext()) return null;
+      // Rotation authenticated by this same refresh session preserves UI ownership.
+      this.storeToken(data.token);
       this.setRefreshToken(data.refreshToken);
       return data.token;
     } catch {
+      if (session !== this.getSessionContext()) return null;
       // The server may have committed the rotation before the response was
       // lost. Never resend that refresh token: reuse detection revokes sessions.
       sessionStorage.setItem('slide-refresh-uncertain', 'true');
@@ -202,6 +223,8 @@ class ApiClient {
     let response: Response;
     try { response = await executeFetch(this.getToken()); }
     catch (error) { if (!options.signal?.aborted) reportServiceUnavailable(); throw error; }
+    // A cancelled resource read no longer owns session recovery or expiry.
+    if (options.signal?.aborted) return response;
     if (response.status >= 500) reportServiceUnavailable();
 
     if (response.status === 401) {

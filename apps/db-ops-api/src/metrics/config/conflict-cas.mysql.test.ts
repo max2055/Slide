@@ -1,5 +1,5 @@
 import { publicationAuditCount } from './audit-test-support.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -34,7 +34,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_conflict_cas_${process.pid}`;
 const instanceRef = { type: 'instance' as const, id: 1 };
 const incompatibleCodes = ['PACKAGE_INCOMPATIBLE', 'POLICY_PACKAGE_RESOURCE'];
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/conflict-cas-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/conflict-cas-20261028.json', import.meta.url));
 
 /** Capture the existing rejection contract instead of assuming one error type. */
 const rejection = async (run: () => Promise<unknown>) => {
@@ -309,6 +309,7 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
       application_database_3306: 'not contacted',
     };
     evidence.targets = { instance: { id: 1, db_type: 'mysql', db_version: '8.0.46', credential: 'empty' } };
+    mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
     writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
   }, 180000);
 });

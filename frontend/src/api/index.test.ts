@@ -49,6 +49,37 @@ describe('API authentication response handling', () => {
     expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
   });
 
+  it('Chief R3: a cancelled old-resource 401 cannot refresh or expire the current session', async () => {
+    const controller=new AbortController();
+    const fetchMock=vi.spyOn(globalThis,'fetch').mockImplementationOnce(async()=>{
+      controller.abort();return new Response('{}',{status:401});
+    });
+    await authFetch('/api/metrics/discovery/network_device/1',{signal:controller.signal});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(apiClient.getToken()).toBe('access-token');
+  });
+
+  it('discovery ownership survives refresh but explicit login and external token writes invalidate it', async () => {
+    const session=apiClient.getSessionContext();
+    vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response('{}',{status:401}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({token:'rotated-access',refreshToken:'rotated-refresh'})))
+      .mockResolvedValueOnce(new Response('{}'));
+    await authFetch('/api/metrics/discovery/network_device/1');
+    expect(apiClient.getSessionContext()).toBe(session);
+    apiClient.setToken('rotated-access');expect(apiClient.getSessionContext()).not.toBe(session);
+    const relog=apiClient.getSessionContext();localStorage.setItem('token','external-access');expect(apiClient.getSessionContext()).not.toBe(relog);
+  });
+  it.each([200,403])('a late old-session refresh %s cannot overwrite or expire a new login', async status => {
+    let release!:(r:Response)=>void,arrived!:()=>void;const seen=new Promise<void>(r=>arrived=r);
+    const held=new Promise<Response>(r=>release=r);
+    vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response('{}',{status:401}))
+      .mockImplementationOnce(()=>{arrived();return held;});
+    const pending=authFetch('/api/metrics/discovery/network_device/1');await seen;
+    apiClient.setToken('different-login');apiClient.setRefreshToken('different-refresh');const session=apiClient.getSessionContext();
+    release(new Response(JSON.stringify({token:'obsolete-access',refreshToken:'obsolete-refresh'}),{status}));await pending;
+    expect(apiClient.getToken()).toBe('different-login');expect(apiClient.getRefreshToken()).toBe('different-refresh');expect(apiClient.getSessionContext()).toBe(session);
+  });
+
   it('refreshes and retries a raw authenticated request after a 401', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response('{}', { status: 401 }))

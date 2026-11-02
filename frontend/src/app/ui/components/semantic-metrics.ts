@@ -11,6 +11,7 @@ import './app-data-table.js';
 import './app-empty-state.js';
 import './app-badge.js';
 import './metric-chart.js';
+import './metric-study.js';
 import './template-event-evidence.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
@@ -205,13 +206,16 @@ export class SemanticMetrics extends LitElement {
       const query = { resource: { type: this.resourceType, id: this.resourceId }, view: 'all', history: true, from, to, bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)) };
       const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query) });
       if (!current()) return;
-      if (!response.ok) { if ([401, 403, 404].includes(response.status)) this.result = null; throw new Error(errors(response.status)); }
+      if (!response.ok) {
+        if ([401, 403, 404].includes(response.status)) { this.onAccessChanged(); this.error = statusErrors(response.status); return; }
+        throw new Error(errors(response.status));
+      }
       const result = await response.json();
       if (current()) this.result = result;
       const maintenanceResponse = await authFetch(`/api/maintenance-windows/intervals/${resourceType}/${resourceId}?${new URLSearchParams({from,to})}`);
       if (!current()) return;
       if (!maintenanceResponse.ok) {
-        if ([401,403,404].includes(maintenanceResponse.status)) { this.result = null; throw new Error(statusErrors(maintenanceResponse.status)); }
+        if ([401,403,404].includes(maintenanceResponse.status)) { this.onAccessChanged(); this.error = statusErrors(maintenanceResponse.status); return; }
         this.maintenanceError = '维护历史查询失败，状态未知；不能据此判断无维护';
       } else {
         const maintenance = await maintenanceResponse.json();
@@ -239,7 +243,7 @@ export class SemanticMetrics extends LitElement {
     } catch (e) {
       if (!current()) return;
       this.collection = null; this.attempts = [];
-      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.resetResult(); this.error = statusErrors(e.status); }
+      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.onAccessChanged(); this.error = statusErrors(e.status); }
       else this.statusError = '采集状态读取失败；历史查询结果保留，不能据此判断当前采集状态。';
     }
   }
@@ -474,7 +478,7 @@ export class SemanticMetrics extends LitElement {
       if (!current()) return;
       if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) {
         // Same protected clear as the status strip: a revoked or missing resource must not keep showing data.
-        this.resetResult(); this.error = statusErrors(e.status);
+        this.onAccessChanged(); this.error = statusErrors(e.status);
       } else if (e instanceof MetricRequestError && e.status === 400) {
         this.rawError = '这一页原始观测读取失败：请求、游标或窗口无效；曲线与上一页原始观测保留。';
       } else {
@@ -603,6 +607,7 @@ export class SemanticMetrics extends LitElement {
       ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'} · ${(v.intervals ?? []).map(i => `${i.id} 修订 ${i.revision}：${i.reason}`).join('；')}</p>`)}
     </section>
     ${this.renderHistoryContext()}
+    <metric-study .resourceType=${this.resourceType} .resourceId=${this.accessInvalidated?0:this.resourceId}></metric-study>
     ${this.renderRaw(metrics)}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
       <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}

@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -38,7 +38,7 @@ const instanceRef = { type: 'instance' as const, id: 1 };
 const serverRef = { type: 'server' as const, id: 3 };
 const tamperedDigest = `sha256:${'b'.repeat(64)}`;
 const incompatibleCodes = ['POLICY_PACKAGE_RESOURCE', 'PACKAGE_INCOMPATIBLE'];
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/binding-path-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/binding-path-20261028.json', import.meta.url));
 
 /** Capture the existing rejection contract instead of assuming one error type. */
 const rejection = async (run: () => Promise<unknown>) => {
@@ -264,6 +264,7 @@ describe.skipIf(!port)('MAX-238 binding path is usable and never crosses resourc
       instance: { id: 1, db_type: 'mysql', db_version: '8.0.46', credential: 'empty' },
       server: { id: 3, os_type: 'kylin', credential: 'empty' },
     };
+    mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
     writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
   }, 180000);
 });

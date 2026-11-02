@@ -75,7 +75,7 @@ type Sample = { metric: { id: string; semantic_version: string }; value: unknown
   quality: { status: 'good' | 'partial' | 'unknown' | 'invalid'; reason: string }; unit: string };
 type Trial = { persisted: boolean; decision: string; error?: string; samples: Sample[];
   attempts: { collector_id: string; status: string; error: string | null }[] };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/formal-enablement-exempt-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/formal-enablement-exempt-20261028.json', import.meta.url));
 
 describe.skipIf(!port || !envFile)('MAX-238 exempt non-good samples still enable', () => {
   let root: Pool, pool: Pool, source: Pool;
@@ -316,7 +316,8 @@ describe.skipIf(!port || !envFile)('MAX-238 exempt non-good samples still enable
           .every(entry => entry.published === true) };
     } finally {
       mkdirSync(dirname(evidencePath), { recursive: true });
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
 
     // A non-good sample must actually be present for this package to prove anything.

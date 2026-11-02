@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -29,7 +29,7 @@ import { admin } from '../policy/test-support.js';
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_apply_failure_${process.pid}`;
 const ref = { type: 'instance' as const, id: 1 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/apply-failure-retains-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/apply-failure-retains-20261028.json', import.meta.url));
 type Status = Awaited<ReturnType<MetricConfigurationService['status']>>;
 type Pin = { id: string; version: string; digest: string };
 
@@ -205,7 +205,8 @@ describe.skipIf(!port)('MAX-238 a failed application keeps the previously applie
         boundaries: { activate_called: false, worker_started: false, attempt_inserted: false,
           source_tables_written: 'disposable schema only; no 3306 statements', config_files_changed: false },
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });

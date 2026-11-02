@@ -9,6 +9,7 @@ vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: moc
 vi.mock('../metrics/consumers/runtime.js', async importOriginal => ({
   ...await importOriginal<typeof import('../metrics/consumers/runtime.js')>(),
   internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+  authenticatedMetricConsumerService: { query: mocks.query },
 }));
 vi.mock('../workflows/execution-context.js', () => ({ assertWorkflowActive: () => {} }));
 

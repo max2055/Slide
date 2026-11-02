@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { MysqlMetricStorage } from '../metrics/storage.js';
 import { RolloutControl } from '../metrics/rollout/control.js';
-import { configuredRetention, type RetentionPolicy } from '../metrics/retention.js';
+import { configuredRetention, DEFAULT_TREND_RETENTION_MS, type RetentionPolicy } from '../metrics/retention.js';
 import type { JobRegistry } from './job-registry.js';
 import type { ClaimedJob, JobExecutionContext, WorkflowJobInput } from './worker-runtime.js';
 
@@ -25,6 +25,8 @@ export function readMetricRetentionConfig(env: NodeJS.ProcessEnv = process.env):
     maxRunMs: integer('MAX_RUN_MS', 10000, 60000), intervalMs: integer('INTERVAL_MS', 3600000, 86400000) };
 }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+export const retentionPolicyHash=(config:RetentionPolicy)=>digest(JSON.stringify([config.rawMs,config.historyMs,config.attemptMs,
+  config.trendMs??DEFAULT_TREND_RETENTION_MS,Object.entries(config.valueTypeMs??{}).sort(([a],[b])=>a.localeCompare(b)),Object.entries(config.trendValueTypeMs??{}).sort(([a],[b])=>a.localeCompare(b))]));
 export function createMetricRetentionJob(availableAt = new Date(), predecessor?: string): WorkflowJobInput {
   const key = predecessor ? digest(predecessor) : `startup-${Math.floor(availableAt.getTime() / 1000)}`;
   return { id: `mrt-${digest(key).slice(0, 32)}`, type: 'metrics.retention', schemaVersion: 1, payload: {},
@@ -50,12 +52,13 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
     if (!config) return;
     context.signal.throwIfAborted();
     const started = Date.now();
-    const policyHash = digest(JSON.stringify([config.rawMs, config.historyMs, config.attemptMs]));
+    const policyHash = retentionPolicyHash(config);
     const storage = new MysqlMetricStorage(pool, clock, config);
     const rollout = new RolloutControl(pool, undefined, clock);
     const guard = async (c: PoolConnection) => {
       context.signal.throwIfAborted();
-      if (!readMetricRetentionConfig(env)) throw new Error('RETENTION_DISABLED');
+      const live=readMetricRetentionConfig(env);if (!live) throw new Error('RETENTION_DISABLED');
+      if(retentionPolicyHash(live)!==policyHash || live.mode!==config.mode)throw new Error('RETENTION_POLICY_CHANGED');
       const [rows] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND job_type = 'metrics.retention'
         AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
       [job.id, context.workerId, context.fencingToken]);
@@ -104,7 +107,7 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       }
       context.signal.throwIfAborted();
       const data = { reason: 'configured_metric_retention', mode: config.mode, policyHash,
-        policy: { rawMs: config.rawMs, historyMs: config.historyMs, attemptMs: config.attemptMs },
+        policy: { rawMs: config.rawMs, historyMs: config.historyMs, attemptMs: config.attemptMs,trendMs:config.trendMs??DEFAULT_TREND_RETENTION_MS,valueTypeMs:config.valueTypeMs,trendValueTypeMs:config.trendValueTypeMs },
         batches, counts, preview, elapsedMs: Date.now() - started, pending, jobId: job.id, at: clock().toISOString() };
       await owner.beginTransaction();
       try {

@@ -1,10 +1,11 @@
-import { configuredRetention, validateRetention, observationSelections, retentionPreview, retentionIds, deleteRetentionIds, type RetentionGuard, type RetentionCounts } from './retention.js';
+import { configuredRetention, validateRetention, observationSelections, trendSelection, retentionPreview, retentionIds, deleteRetentionIds, type RetentionGuard, type RetentionCounts } from './retention.js';
 export { DEFAULT_RETENTION } from './retention.js';
 import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { ResourceSchema, type Resource, type MetricDefinition } from '../contracts/metrics/definitions.js';
 import { CollectionAttemptSchema, type CollectionAttempt, type RawObservation, type NormalizedObservation } from '../contracts/metrics/observations.js';
 import { seriesIdentity, validateObservation, validateAttempt, validateAttemptTransition } from '../contracts/metrics/validation.js';
+import { preserveBeforePrune, expireRetainedTrends } from './consumers/retained-trends.js';
 
 export type StoredObservation = RawObservation | NormalizedObservation;
 export type Series = Pick<NormalizedObservation, 'resource_type' | 'resource_id' | 'metric' | 'dimensions'>;
@@ -149,7 +150,7 @@ export class MysqlMetricStorage {
 
   /** Preview uses the same reference-aware predicates as execution; never reads raw values. */
   async preview(): Promise<RetentionCounts> {
-    return this.transaction(c => retentionPreview(c, observationSelections(this.clock(), this.retention), this.clock()));
+    return this.transaction(c => retentionPreview(c, {...observationSelections(this.clock(), this.retention),retainedTrends:trendSelection(this.clock(),this.retention)}, this.clock()));
   }
 
   /** Every statement is bounded. Expiry drains before history; live references retain identity only. */
@@ -172,10 +173,14 @@ export class MysqlMetricStorage {
             'reason', 'raw_retention_expired'), payload = NULL, valid_value = 0
             WHERE id IN (${ids.map(() => '?').join(',')})`, [this.retention.rawMs * 1000, ...ids]);
           result[name] = Number(updated.affectedRows);
-        } else result[name] = await deleteRetentionIds(c, selection, ids);
+        } else {
+          if(name==='normalized')await preserveBeforePrune(c,ids,this.clock(),this.retention);
+          result[name] = await deleteRetentionIds(c, selection, ids);
+        }
         // Do not delete identity/history while any full batch of raw payload expiry remains.
         if (name === 'rawPayload' && ids.length === limit) break;
       }
+      Object.assign(result,await expireRetainedTrends(c,this.clock(),this.retention,limit));
       await guard?.(c);
       return result;
     });

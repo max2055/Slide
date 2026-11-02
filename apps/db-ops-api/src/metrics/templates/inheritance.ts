@@ -81,6 +81,9 @@ export async function inheritTemplate(
     inherited,
     aggregate: {
       ...draft,
+      ...((base?.aggregate.discovery_rules?.length || draft.discovery_rules?.length) ? {
+        discovery_rules: merge(base?.aggregate.discovery_rules ?? [], draft.discovery_rules ?? [], v => v.rule_id),
+      } : {}),
       items: merge(base?.aggregate.items ?? [], draft.items, (v) => v.item_id),
       triggers: merge(
         base?.aggregate.triggers ?? [],
