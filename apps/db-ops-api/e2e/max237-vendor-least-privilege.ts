@@ -26,7 +26,7 @@ let phase = 'start';
 try {
   for (const engine of ['oracle', 'dameng'] as const) {
     const user = (engine === 'oracle' ? 'C##MAX237_' : 'MAX237_') + nonce;
-    const password = 'Mq7_' + randomBytes(20).toString('hex');
+    const password = 'Mq7_' + randomBytes(12).toString('hex');
     const connect = (account: { user: string; password: string }) => engine === 'oracle'
       ? oracledb.getConnection({ ...account, connectString: '127.0.0.1:1521/ORCLCDB' })
       : dmdb.getConnection({ ...account, connectString: '127.0.0.1:5236', loginEncrypt: false, connectTimeout: 5000, socketTimeout: 5000 });
