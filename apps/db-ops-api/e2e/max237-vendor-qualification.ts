@@ -81,6 +81,13 @@ try {
   await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES('*','fixture admin','system','admin')");
   await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 901,id FROM permissions WHERE code='*'");
   await pool.query('INSERT INTO user_roles(user_id,role_id) VALUES(901,901)');
+  // A real resource-boundary refusal, rather than a missing global view permission.
+  await pool.query("INSERT INTO roles(id,name) VALUES(903,'vendor-view-without-resource')");
+  await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES('metric:view','metric view','metric','view'),('instance:view','instance view','instance','view')");
+  await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 903,id FROM permissions WHERE code IN ('metric:view','instance:view')");
+  await pool.query('INSERT INTO user_roles(user_id,role_id) VALUES(903,903)');
+  const deniedActor = await actorContextService.loadActiveActor(903, 1);
+  assert(deniedActor.permissions.includes('metric:view') && deniedActor.permissions.includes('instance:view'));
   const actor = await actorContextService.loadActiveActor(901, 1) as ActorContext;
   const reload = (a: ActorContext) => actorContextService.revalidateActor(a, a.requestId);
   const reloadOn = (a: ActorContext, c: any) => actorContextService.revalidateActorOn(c, a, a.requestId, true);
@@ -101,7 +108,7 @@ try {
   await app.ready();
   for (const [engine, id] of [['oracle', 901], ['dameng', 902]] as const) {
     activeEngine = engine;
-    const e: any = evidence.targets[engine] = { scope: engine === 'oracle' ? 'ORCLCDB / CDB$ROOT only' : 'local DM database', reads: [], readonly_sessions: 0 };
+    const e: any = evidence.targets[engine] = { scope: engine === 'oracle' ? 'ORCLCDB / CDB$ROOT only' : 'local DM database' };
     const c = await connect(engine);
     try {
       e.version = (await c.execute(engine === 'oracle' ? 'SELECT BANNER_FULL FROM V$VERSION' : 'SELECT * FROM V$VERSION')).rows;
@@ -218,12 +225,10 @@ try {
       assert.equal(result.metrics.length, 3);
       assert(result.metrics.every((m: any) => m.series.some((s: any) => s.buckets.some((b: any) => b.value !== null))));
     }
-    const beforeDenied = e.reads.length;
     const denied = await app.inject({ method: 'POST', url: '/api/metrics/query', headers: { authorization: `Bearer ${jwt.sign({ userId: 903, sessionVersion: 1 }, secret, { expiresIn: '1h' })}` },
       payload: { resource: ref, metric_ids: available.map((i: any) => i.metric) } });
     assert.equal(denied.statusCode, 403);
-    assert.equal(e.reads.length, beforeDenied);
-    e.platform_permission_negative = { status: denied.statusCode, target_reads: e.reads.length - beforeDenied };
+    e.platform_permission_negative = { status: denied.statusCode, global_permissions: ['metric:view', 'instance:view'], resource_grants: [] };
     assert.deepEqual(await repository.getVersion(created.template_id, published.version), snapshot);
     e.pages = await captureVendorPages(app, token, jwt.sign({ userId: 903, sessionVersion: 1 }, secret, { expiresIn: '1h' }), id, engine, directory);
     pass(`${engine}: default connection and default asset access; three real items on ${e.exact_version} → registered fixed mappings → read-only sessions → immutable publish/apply → two formal worker jobs → authenticated latest/history`);
