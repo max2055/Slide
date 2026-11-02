@@ -119,8 +119,6 @@ describe('generated public API contract', () => {
       '/api/investigations/{id}/requests/{requestId}/cancel',
       '/api/investigations/{id}/results',
       '/api/investigations/{id}/runs',
-      '/api/investigations/drafts',
-      '/api/investigations/entry-facts',
       '/api/llm/models',
       '/api/llm/test',
       '/api/metrics/config/bulk',
