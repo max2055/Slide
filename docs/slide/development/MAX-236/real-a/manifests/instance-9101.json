@@ -1,0 +1,54 @@
+{
+  "resource": {
+    "type": "instance",
+    "id": 9101
+  },
+  "identities": [
+    {
+      "resource_type": "instance",
+      "engine": "mysql",
+      "old_id": "cpu_old",
+      "unit": "%",
+      "target_metric_id": "cpu_usage",
+      "target_unit": null,
+      "in_scope": true,
+      "has_custom_sql": false,
+      "custom_sql_reviewed": false
+    },
+    {
+      "resource_type": "instance",
+      "engine": "mysql",
+      "old_id": "legacy_old",
+      "unit": "%",
+      "target_metric_id": null,
+      "target_unit": null,
+      "in_scope": true,
+      "has_custom_sql": false,
+      "custom_sql_reviewed": false
+    },
+    {
+      "resource_type": "instance",
+      "engine": "mysql",
+      "old_id": "retired_old",
+      "unit": "%",
+      "target_metric_id": "retired_metric",
+      "target_unit": null,
+      "in_scope": true,
+      "has_custom_sql": false,
+      "custom_sql_reviewed": false
+    }
+  ],
+  "template_pins": [
+    {
+      "template_id": "tpl-a",
+      "version": 1,
+      "content_hash": "sha256:b7503c4f49fc34114a73ed6b579614f99b3a67c50b40bf828ea4a46db9938ee3"
+    },
+    {
+      "template_id": "tpl-foundation",
+      "version": 1,
+      "content_hash": "sha256:3b90c3356edef738d002af9ecd52d05919780666b09a0683934295d4fad6c294"
+    }
+  ],
+  "object_blockers": []
+}
