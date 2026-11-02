@@ -56,7 +56,7 @@ try {
           // only this run-owned user's allowlisted SELECT grants go through that entry.
           assert(/^GRANT SELECT ON SYS\.V_\$(SESSION|PARAMETER|SYSSTAT|INSTANCE) TO C##MAX237_[A-F0-9]+$/.test(sql));
           try {
-            execFileSync('docker', ['exec', '-i', 'oracle19c', 'sqlplus', '-s', '/', 'as', 'sysdba'], {
+            execFileSync('docker', ['exec', '-i', 'oracle19c', 'bash', '-lc', 'exec sqlplus -s / as sysdba'], {
               input: `WHENEVER SQLERROR EXIT FAILURE\nALTER SESSION SET CONTAINER=CDB$ROOT;\n${sql} CONTAINER=CURRENT;\nEXIT;\n`,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
