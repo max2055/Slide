@@ -108,7 +108,10 @@ export class SystemEventWorkflow extends InvestigationObservationDatabase {
       await c.execute('UPDATE investigations SET problem_status=?,version=? WHERE id=?', [problemStatus,version,inv.id]);
       await appendObservation(c, inv.id, `platform-verification:${receipt.id}`, { type: 'investigation.changed', occurredAt, payload: { version, lifecycle: inv.lifecycle, problemStatus } });
       await this.authorization.authorize(c as never, actor, inv, 'patch');
-      return receipt;
+      // MySQL JSON can change a floating-point measurement's representation.
+      // First response, retries and detail reads must share the durable receipt.
+      const [saved] = await observationRows(c, 'SELECT payload FROM platform_event_verifications WHERE id=?', [receipt.id]);
+      return decode(saved.payload);
     });
   }
 }
