@@ -141,6 +141,15 @@ try {
     const release = registry.list().find(r => r.package.id === spec.package_id && r.package.version === (engine === 'oracle' ? '1.3.0' : '1.2.0'))!;
     const { id: packageId, version, digest } = release.package;
     const pin = { id: packageId, version, digest };
+    const capabilityResponse = await app.inject({ method: 'GET', url: '/api/metrics/templates/capabilities', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(capabilityResponse.statusCode, 200);
+    // Retain only this engine's selected pin; the endpoint is the template editor's source.
+    const capabilityBody = capabilityResponse.json();
+    e.product_capabilities = capabilityBody.candidates.filter((c: any) => c.package.id === pin.id && c.package.version === pin.version);
+    assert.equal(e.product_capabilities.length, 3);
+    const counterCapability = e.product_capabilities.find((c: any) => c.metric.id.endsWith('commit_total'));
+    assert(counterCapability.permissions.includes(engine === 'oracle' ? 'SELECT V_$INSTANCE' : 'SELECT V$INSTANCE'));
+    assert(counterCapability.discovery.includes('CROSS JOIN V$INSTANCE'));
     if (engine === 'oracle') {
       const old = registry.list().find(r => r.package.id === spec.package_id && r.package.version === '1.0.0')!.package;
       e.original_candidate = (await runPackage(registry, { package: { id: old.id, version: old.version, digest: old.digest }, credential_ref, overrides: {} },
