@@ -41,7 +41,9 @@ try {
       const users = engine === 'oracle' ? 'DBA_USERS' : 'DBA_USERS';
       assert.equal(Number((await admin.execute(`SELECT COUNT(*) FROM ${users} WHERE USERNAME='${user}'`)).rows[0][0]), 0);
       phase = engine + ':create';
-      await admin.execute(`CREATE USER ${user} IDENTIFIED BY "${password}"${engine === 'oracle' ? ' CONTAINER=CURRENT' : ''}`);
+      // Oracle root requires a common C## identity. All privilege grants remain CURRENT (root),
+      // so creating this identity does not grant login or collection access in any PDB.
+      await admin.execute(`CREATE USER ${user} IDENTIFIED BY "${password}"${engine === 'oracle' ? ' CONTAINER=ALL' : ''}`);
       created = true; save();
       // Union exactly the published collector permissions; no DBA/CONNECT/RESOURCE role.
       const grants = [...new Set(vendorLifecycleSpecs.filter(s => s.applicability[0].values.includes(engine)).flatMap(s => s.permissions))];
@@ -89,6 +91,8 @@ try {
       catch (error) { if ((error as Error).message === 'PROTECTED_READ_ALLOWED') throw error; e.protected_read = { sql, error: safe(error) }; }
       assert(engine === 'oracle' ? e.protected_read.error.number === 942 || e.protected_read.error.number === 1031 : e.protected_read.error.number === -551);
       e.minimum_privilege_verified = true; save();
+    } catch (error) {
+      e.failure = { phase, ...safe(error) }; save(); throw error;
     } finally {
       phase = engine + ':cleanup';
       await oraclePool?.close(0); await client?.close();
