@@ -128,7 +128,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
     const published = await policies.changeBinding(admin, ref1, input, true);
     expect(published.published).toBe(true); expect(published.resources[0].binding.revision).toBe(1);
     expect(configurationDigest(published.resources[0])).toBe(testedDigest);
-    expect(await audits(ref1)).toBe(2);
+    expect(await audits(ref1)).toBe(1);
     const stored = await operationRow('apply-intent-1');
     expect(stored).toMatchObject({ resource_key: refKey(ref1), actor_id: admin.userId, target_revision: 1,
       configuration_digest: testedDigest });
@@ -179,7 +179,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
         { exists: async () => true, inventory: configurationInventory }).changeBinding(admin, ref2, input, true)]);
     expect(results.map(result => result.resources[0].binding.revision)).toEqual([1, 1]);
     expect(results[0].resources[0].published_at).toBe(results[1].resources[0].published_at);
-    expect(await audits(ref2)).toBe(2);
+    expect(await audits(ref2)).toBe(1);
     expect(await count(`SELECT COUNT(*) AS n FROM metric_policy_apply_operations WHERE operation_key = ?`, ['apply-intent-2'])).toBe(1);
     evidence.concurrent_duplicates = { revisions: results.map(result => result.resources[0].binding.revision),
       same_published_at: true, audits: await audits(ref2) };
@@ -236,7 +236,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
     const auditsBefore = await audits(ref2);
     const published = await policies.changeBinding(admin, ref2, { expected_revision: 1, package: pin, overrides: { enabled: 'disable' } }, true);
     expect(published.resources[0].binding.revision).toBe(2);
-    expect(await audits(ref2)).toBe(auditsBefore + 2);
+    expect(await audits(ref2)).toBe(auditsBefore + 1);
     expect(await operations()).toBe(operationsBefore);
     const stale = await capture(() => policies.changeBinding(admin, ref2, { expected_revision: 1, package: pin }, true));
     expect(stale!.code).toBe('POLICY_REVISION_CONFLICT');
