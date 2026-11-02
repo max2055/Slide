@@ -1,6 +1,9 @@
+import { actorContextService } from '../auth/actor-context.js';
+import { canReadResource } from '../resources/resource-service.js';
+import { RefSchema } from '../metrics/policy/model.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
-import { requirePermission } from '../auth/require-permission.js';
+import { hasPermission, requirePermission } from '../auth/require-permission.js';
 import {
   auditLogManager,
   type AuditEventType,
@@ -46,8 +49,13 @@ function requestRoute(request: FastifyRequest): string {
 
 function resourceFromRequest(request: FastifyRequest, route: string): { resourceType?: string; resourceId?: string } {
   const segments = route.split('/').filter(Boolean);
-  const resourceType = segments[0] === 'api' ? segments[1] : segments[0];
+  const family = segments[0] === 'api' ? segments[1] : segments[0];
+  const resourceType = family === 'database' && segments[2] === 'instances' ? 'instance' : family === 'servers' ? 'server' : family === 'network-devices' ? 'network_device' : family;
   const params = request.params as Record<string, unknown> | undefined;
+  if (family === 'metrics' && params && ['instance','server','network_device'].includes(String(params.type))
+    && /^[1-9]\d*$/.test(String(params.id)) && Number.isSafeInteger(Number(params.id))) {
+    return {resourceType:String(params.type),resourceId:String(params.id)};
+  }
   const resourceValue = params && Object.values(params).find(value => ['string', 'number'].includes(typeof value));
   return {
     resourceType,
@@ -101,7 +109,17 @@ export async function registerSystemAuditRoutes(
       return reply.code(400).send({ error: '审计查询参数无效' });
     }
 
+    let resource: {type:'instance'|'server'|'network_device';id:number}|null=null;
+    if(query.resource!==undefined){
+      const match=typeof query.resource==='string'?/^(instance|server|network_device):([1-9]\d*)$/.exec(query.resource):null;
+      const parsed=RefSchema.safeParse(match?{type:match[1],id:Number(match[2])}:null);
+      if(!parsed.success)return reply.code(400).send({error:'审计资源参数无效'});
+      resource=parsed.data;
+      const actor=await actorContextService.revalidateActor((request as any).user,request.id);
+      if(!hasPermission(new Set(actor.permissions),'audit:view')||!canReadResource(actor,resource))return reply.code(403).send({error:'无权访问该资源审计'});
+    }
     const filters: AuditLogQuery = {
+      ...(resource?{resourceType:resource.type,resourceId:String(resource.id)}:{}),
       eventType: eventType as AuditEventType | undefined,
       startTime,
       endTime,
@@ -110,6 +128,7 @@ export async function registerSystemAuditRoutes(
       offset,
     };
     const result = await manager.query(filters);
+    if(resource){const actor=await actorContextService.revalidateActor((request as any).user,request.id);if(!hasPermission(new Set(actor.permissions),'audit:view')||!canReadResource(actor,resource))return reply.code(403).send({error:'无权访问该资源审计'});}
     return reply.send({ items: result.entries, total: result.total, limit, offset });
   });
 }

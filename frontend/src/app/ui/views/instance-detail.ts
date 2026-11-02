@@ -1,3 +1,5 @@
+import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
@@ -23,7 +25,7 @@ import { authFetch } from "../../../api/index.js";
 
 import { currentHealthStatus, evidenceTime, evidenceTimeState } from './health-score-state.js';
 
-interface InstanceDetail { hasCredential?: boolean; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
+interface InstanceDetail { hasCredential?: boolean; db_version?: string | null; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
 interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
 type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
@@ -104,7 +106,7 @@ export class InstanceDetailPage extends LitElement {
     }
     .header { margin-bottom:var(--space-md); padding-bottom:var(--space-md); }
     .header-left { gap:var(--space-md); }
-    .instance-title { font-size:24px; }
+    .instance-title { font-size:24px; margin:0; overflow-wrap:anywhere; }
     .resource-meta { color:var(--muted); font-size:12px; margin-top:var(--space-xs); overflow-wrap:anywhere; }
     .title-copy { flex:1; min-width:0; }
     .tabs { margin-bottom:var(--space-lg); }
@@ -275,7 +277,7 @@ export class InstanceDetailPage extends LitElement {
       if (!res.ok) {
         this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
         this.detailReadError = res.status === 401 || res.status === 403 ? '无权读取实例详情' : '实例详情读取失败';
-        if (res.status === 401 || res.status === 403) this.error = this.detailReadError;
+        if (res.status === 401 || res.status === 403) { this.instance=null;this.overview=null;this._resetEvidence();this.error = this.detailReadError; }
         return;
       }
       const instance = await res.json();
@@ -329,7 +331,7 @@ export class InstanceDetailPage extends LitElement {
     } catch {/* ignore tab data errors */}
   }
 
-  private _goBack() { if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
+  private _goBack() { if (returnToResourceList('instance')) return; if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
   private _setTab(tab: string) {
     const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
     if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
@@ -392,7 +394,7 @@ export class InstanceDetailPage extends LitElement {
     const descriptions = {
       idle: '尚无读取结果，无法判断是否存在记录。', loading: '正在读取，请稍候。',
       error: '请求失败或返回格式异常，请刷新重试。', forbidden: '请确认当前账号的实例访问权限。',
-      unavailable: '实例未连接、采集来源未就绪或数据库不支持此查询，请检查连接和采集配置。',
+      unavailable: '实例未连接、采集来源未就绪或数据库不支持此查询，请检查连接和监控配置。',
       expired: '距上次成功读取已超过 1 分钟，请刷新后查看。',
     };
     return html`<app-card><div role=${state === 'error' || state === 'forbidden' ? 'alert' : 'status'}>
@@ -514,7 +516,7 @@ export class InstanceDetailPage extends LitElement {
         </section>
         <section class="attention"><h3>证据缺口</h3>
           <p>${item ? (item.gaps.length ? item.gaps.map(gap => gaps[gap] ?? '部分证据缺失').join('；') : item.quality !== 'good' ? '当前仅有部分或质量不足的观测，不能推断所有信号完整。' : '当前快照未报告缺口；不代表已覆盖全部信号。') : '尚未取得此资源的证据快照。'}${fresh === 'stale' ? ' 请先核对采集状态和观测时间。' : ''}</p>
-          <button class="btn" @click=${() => this._setTab('collection')}>查看采集配置</button>
+          <button class="btn" @click=${() => this._setTab('collection')}>查看监控配置</button>
           ${item?.gaps.length ? html`<details class="overview-note"><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}
         </section>
       </app-card>
@@ -531,7 +533,7 @@ export class InstanceDetailPage extends LitElement {
   // ---- Render ----
   override render() {
     if (this.loading && !this.instance) return html`<div class="loading loading-pulse">加载中...</div>`;
-    if (this.error) return html`<div class="empty"><div class="empty-state"><div class="empty-title">加载失败</div><div class="empty-desc">${this.error}</div></div></div>`;
+    if (this.error) return html`<div class="empty"><div class="empty-state"><div class="empty-title">加载失败</div><button class="btn btn-refresh" @click=${this.loadData}>重试</button><button class="btn" @click=${this._goBack}>返回列表</button><div class="empty-desc">${this.error}</div></div></div>`;
     if (!this.instance) return html`<div class="empty"><div class="empty-state"><div class="empty-title">实例不存在</div></div></div>`;
 
     return html`
@@ -539,10 +541,10 @@ export class InstanceDetailPage extends LitElement {
         <div class="header">
           <div class="header-left">
             <button class="btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
-            <div class="title-copy"><span class="instance-title">${this.instance.name}</span><div class="resource-meta">${this.instance.db_type} · ${this.instance.host}:${this.instance.port} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div></div>
+            <div class="title-copy"><h1 class="instance-title">${this.instance.name}</h1><div class="resource-meta">${this.instance.db_type} · ${this.instance.host}:${this.instance.port} · 版本 ${this.instance.db_version || '未知'} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div></div>
             ${this._healthBadge()}
           </div>
-          <div class="header-right">
+          <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
@@ -556,10 +558,10 @@ export class InstanceDetailPage extends LitElement {
         </div>
 
         <resource-investigation-links resourceType="instance" .resourceId=${this.instanceId}></resource-investigation-links>
-      <div class="tabs" role="tablist" aria-label="资源详情页签">
+      <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="资源详情页签">
           ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
             <button role="tab" aria-selected=${String(this.activeTab === t || t === "metrics" && this.activeTab === "trend")} class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
-              ${({ overview:"概览", collection:"采集配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
+              ${({ overview:"概览", collection:"监控配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
               ${t === "topsql" && this._queryState('topsql') === 'success' && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
               ${t === "sessions" && this._queryState('sessions') === 'success' && this.sessions.length > 0 ? html`<span class="tab-badge">${this.sessions.length}</span>` : ""}
             </button>

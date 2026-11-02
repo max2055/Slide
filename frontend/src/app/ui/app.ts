@@ -467,7 +467,7 @@ export class SlideApp extends LitElement {
       const initialNetworkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? initialId : null);
       if (tabParam === "server-detail" && initialId) (this as any).serverId = Number(initialId);
       if (tabParam === "network-device-detail" && initialNetworkId) (this as any).networkDeviceId = Number(initialNetworkId);
-      this.setTab(tabParam as Tab);
+      this.setTab(tabParam as Tab, true);
     }
 
     // Listen for navigation events
@@ -479,7 +479,7 @@ export class SlideApp extends LitElement {
         if (tab === "chat" && session) {
           switchChatSession(this as unknown as AppViewState, session);
         }
-        this.setTab(tab as Tab);
+        this.setTab(tab as Tab, true);
         // Keep server and network-device context IDs independent.
         if (tab === "server-detail" && effectiveServerId != null) {
           (this as any).serverId = Number(effectiveServerId);
@@ -526,7 +526,7 @@ export class SlideApp extends LitElement {
         const networkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? id : null);
         if (tabParam === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
         if (tabParam === "network-device-detail") (this as any).networkDeviceId = networkId ? Number(networkId) : undefined;
-        this.setTab(tabParam as Tab);
+        this.setTab(tabParam as Tab, true);
       }
     });
 
@@ -603,9 +603,10 @@ export class SlideApp extends LitElement {
     applySettingsInternal(this as unknown as Parameters<typeof applySettingsInternal>[0], next);
   }
 
-  setTab(next: Tab) {
+  setTab(next: Tab, preserveContext = false) {
     setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
     this.navDrawerOpen = false;
+    if (preserveContext) return;
     // Clear URL search params when switching tabs via sidebar
     // Preserve the context identifier for detail tabs (page refresh support).
     const url = new URL(window.location.href);

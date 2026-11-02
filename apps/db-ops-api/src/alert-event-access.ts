@@ -63,21 +63,34 @@ export async function registerEventReadRoutes(app: FastifyInstance, verify: preH
           if (!event) return;
           result = path.endsWith('/logs') ? await alertEventService.getEventLogs(event.id) : event;
         } else {
-          const s = await scope(actor);
+          let s = await scope(actor);
           const query = req.query as any;
+          let resource: {type:'instance'|'server'|'network_device';id:number}|undefined;
+          let from:string|undefined,to:string|undefined;
+          if(query.resource!==undefined){
+            const match=typeof query.resource==='string'?/^(instance|server|network_device):([1-9]\d*)$/.exec(query.resource):null;
+            const parsed=RefSchema.safeParse(match?{type:match[1],id:Number(match[2])}:null);
+            if(!parsed.success||path!==''||typeof query.from!=='string'||typeof query.to!=='string'||!Number.isFinite(Date.parse(query.from))||!Number.isFinite(Date.parse(query.to))||Date.parse(query.from)>=Date.parse(query.to)||Date.parse(query.to)-Date.parse(query.from)>31*86400000)return reply.code(400).send({error:'INVALID_RESOURCE_WINDOW'});
+            resource=parsed.data;from=new Date(query.from).toISOString();to=new Date(query.to).toISOString();
+            if(!canReadResource(actor,resource))return reply.code(403).send({error:'FORBIDDEN'});
+            // Exact authorized resource filtering replaces global instance scope;
+            // legacy server/network event identities remain readable in this scope.
+            s={allowed_instance_ids:null,allowed_event_ids:[]};
+          }
           const instanceId = query.instance_id === undefined ? undefined : Number(query.instance_id);
           if (instanceId !== undefined && (!Number.isSafeInteger(instanceId) || instanceId <= 0))
             return reply.code(400).send({ error: 'INVALID_INSTANCE' });
           if (instanceId !== undefined && !hasInstanceAccess(actor, instanceId))
             return reply.code(403).send({ error: 'FORBIDDEN' });
-          result =
+          try { result =
             path === '/stats'
               ? await alertEventService.getEventStats(s.allowed_instance_ids, s.allowed_event_ids)
               : path === '/mttr'
                 ? await alertEventService.getMTTRStats(s.allowed_instance_ids, s.allowed_event_ids)
                 : path === '/search'
                   ? await alertEventService.searchEvents({ ...query, ...s, instance_id: instanceId })
-                  : await alertEventService.getEvents({ ...query, ...s, instance_id: instanceId });
+                  : await alertEventService.getEvents({ ...query, ...s, instance_id: instanceId, ...(resource?{resource,from,to,strict:true,allowed_event_ids:undefined}: {}) });
+          } catch(error) {if(resource)return reply.code(503).send({error:'EVENT_READ_UNAVAILABLE'});throw error;}
         }
         const final = await actorContextService.revalidateActor(actor, req.id);
         if (
