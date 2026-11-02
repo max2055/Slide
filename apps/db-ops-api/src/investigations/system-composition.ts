@@ -12,6 +12,7 @@ import { createSystemTools, type SystemToolOptions } from './system-tools.js';
 import type { TriggerBinding } from './trigger-policy.js';
 
 export function systemInvestigationConfiguration(env: NodeJS.ProcessEnv = process.env) {
+  if (['INVESTIGATION_SYSTEM_EVENTS_ENABLED', 'INVESTIGATION_SYSTEM_AUTO_ENABLED'].some(key => env[key] !== undefined && !['true','false'].includes(env[key]!))) throw new Error('SYSTEM_CONFIGURATION_INVALID');
   const enabled = env.INVESTIGATION_SYSTEM_EVENTS_ENABLED === 'true';
   const automatic = env.INVESTIGATION_SYSTEM_AUTO_ENABLED === 'true';
   const serviceUserId = Number(env.INVESTIGATION_SYSTEM_SERVICE_USER_ID);
@@ -59,6 +60,27 @@ export async function createSystemComposition(poolProvider: () => Pool | null, o
   const source = options.source ?? sourceManagementService;
   return {
     bridge, publisher, enabled: config.enabled,
+    collectionActive: () => config.enabled && !!uninstall,
+    async observation() {
+      const base = { configurationSource: 'deployment-environment', applyMode: 'restart',
+        collection: { configured: config.enabled, effective: config.enabled && !!uninstall },
+        automatic: { configured: config.automatic, effective: config.enabled && config.automatic && !!uninstall },
+        publisher: publisher?.observation() ?? null };
+      const pool = poolProvider();
+      if (!pool) return { ...base, quality: 'unknown', gaps: ['SYSTEM_STORE_UNAVAILABLE'], actual: null };
+      const [rows] = await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS events,
+        MAX(e.received_at) AS lastReceivedAt, COUNT(e.request_id) AS admissions,
+        MAX(r.created_at) AS lastRunAt FROM operational_events e
+        LEFT JOIN investigation_requests q ON q.id=e.request_id
+        LEFT JOIN agent_runs r ON r.message_id=q.message_id AND r.session_id=JSON_UNQUOTE(JSON_EXTRACT(q.request_snapshot,'$.sessionId'))
+        WHERE e.source IN ('slide.system.api','slide.system.collector','slide.system.queue','slide.system.agent')`);
+      const row = rows[0];
+      return { ...base, quality: !config.enabled ? 'unknown' : 'good',
+        gaps: !config.enabled ? ['SYSTEM_COLLECTION_DISABLED'] : [],
+        actual: { events: Number(row.events), admissions: Number(row.admissions),
+          lastReceivedAt: row.lastReceivedAt ? new Date(row.lastReceivedAt).toISOString() : null,
+          lastRunAt: row.lastRunAt ? new Date(row.lastRunAt).toISOString() : null } };
+    },
     install() { if (publisher && !uninstall) uninstall = installSystemFailurePublisher(publisher); },
     async close() {
       // Stop accepting before draining; no producer can extend shutdown.

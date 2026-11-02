@@ -39,6 +39,7 @@ async function fixture(page: Page, options: { emptyNetwork?: boolean; overviewFa
     if (/^\/api\/network-devices\/\d+\/(metrics|interfaces|relations)$/.test(path)) body = { metrics: [], interfaces: [], relations: [] };
     if (path === '/api/resources') body = { items: items.map(item => ({ resource: item.resource, label: item.label, status: item.status, attributes: item.attributes })) };
     if (path === '/api/dashboard/capacity-trend') body = { current_total_gb: 2.71, trend: [{ time: new Date(Date.now() - 3600_000).toISOString(), total_size_gb: 2.4, instance_count: 2 }, { time: now, total_size_gb: 2.71, instance_count: 2 }] };
+    if (path === '/api/investigations/entry-facts') body = { context: route.request().postDataJSON(), facts: [], modelInvoked: false };
     if (path.endsWith('/evidence')) body = { generatedAt: now, facts: [{ id: 'a'.repeat(64), kind: 'observation', status: 'fact', quality: 'good', observedAt: now, validUntil: new Date(Date.now() + 300_000).toISOString(), source: 'fixture', correlationId: 'test', provenance: {}, payload: { metricId: 'cpu_usage', value: 0 } }], inferences: [], hypotheses: [], gaps: [], truncated: false };
     if (path.endsWith('/diagnose-agent')) { posts++; body = { analysisId: 42, status: 'queued' }; }
     if (path.endsWith('/analyses/42')) { polls++; body = { analysisId: 42, status: polls > 1 ? 'completed' : 'running', completedAt: now, result: { summary: '已读取真实记录（测试夹具）' } }; }
@@ -83,20 +84,20 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
   });
 }
 
-test('diagnosis is explicit, task is tracked, and return restores scope', async ({ page }) => {
+test('evidence opens bounded workspace facts without analysis and return restores scope', async ({ page }) => {
   const control = await fixture(page); await page.goto('/dashboard?scope=server&q=Payments');
   const view = page.locator('dashboard-page'); await expect(view.locator('.risk-row').first()).toBeVisible();
   await view.locator('.risk-row').first().getByRole('link', { name: '查看证据', exact: true }).click();
-  await expect(page).toHaveURL(/resourceType=server&resourceId=11/);
-  const diagnosis = page.locator('resource-diagnosis-page');
-  await expect(diagnosis.getByRole('combobox', { name: '资源', exact: true })).toHaveValue('server:11');
+  await expect(page).toHaveURL(/\/investigations\?entry=/);
+  const entry = JSON.parse(new URL(page.url()).searchParams.get('entry')!);
+  expect(entry.resourceRefs).toEqual([{ type: 'server', id: 11, role: 'primary' }]);
+  expect(Date.parse(entry.to) - Date.parse(entry.from)).toBe(30 * 60_000);
+  expect(entry.returnTo).toBe('/dashboard?scope=server&q=Payments');
+  const workspace = page.locator('investigation-entry');
+  await expect(workspace).toContainText('尚未进行模型分析');
+  await expect(workspace).toContainText('server:11');
   expect(control.posts()).toBe(0);
-  await diagnosis.getByRole('button', { name: '开始只读诊断', exact: true }).click();
-  await expect(diagnosis.locator('[data-analysis-id="42"]')).toContainText('运行中');
-  await expect(diagnosis.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
-  await expect(diagnosis.locator('[data-analysis-id="42"]')).toContainText('已读取真实记录', { timeout: 10_000 });
-  expect(control.posts()).toBe(1);
-  await diagnosis.getByRole('link', { name: '返回原运维总览' }).click();
+  await workspace.getByRole('link', { name: '返回来源', exact: true }).click();
   await expect(page).toHaveURL(/scope=server&q=Payments/);
   await expect(page.locator('dashboard-page').getByRole('searchbox')).toHaveValue('Payments');
 });

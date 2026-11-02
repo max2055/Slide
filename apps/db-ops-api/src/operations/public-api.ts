@@ -53,6 +53,7 @@ export const operationsPublicPaths = {
   '/api/operations/action-executions/{id}/verification': { ...route('get','readOperationsVerification'), ...route('post','prepareOperationsVerification','OperationsEmptyCommand') },
   '/api/operations/action-executions/{id}/verification/versions/{version}': route('get','readOperationsVerificationVersion'),
   '/api/operations/knowledge': { ...route('get','searchOperationsCases'), ...route('post','createOperationsCase','OperationsCaseCandidate') },
+  '/api/operations/knowledge/prepare': {get:{...route('get','prepareRedactedCaseFromRecords').get,parameters:[{name:'investigationId',in:'query',required:true,schema:{type:'string',format:'uuid'}},{name:'resultVersion',in:'query',required:true,schema:{type:'integer',minimum:1}}]}},
   '/api/operations/knowledge/{id}': { ...route('get','readOperationsCase'), ...route('put','reviseOperationsCase','OperationsCaseRevision') },
   '/api/operations/knowledge/{id}/submit': route('post','submitOperationsCase','OperationsCaseTransition'),
   '/api/operations/knowledge/{id}/review': route('post','reviewOperationsCase','OperationsCaseReview'),

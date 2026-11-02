@@ -173,6 +173,7 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
       '094_agent_tool_execution_intents',
       '112_investigations',
       '117_investigation_observation',
+      '149_investigation_workflow_receipts',
     ])
       await apply(file(`../../../sql/migrations/${name}.sql`));
     await apply(file('../schema/operations-v1.sql'));
@@ -281,6 +282,16 @@ describe.skipIf(!port)('P07 production SQL execution boundary', () => {
     await expect(store.enqueue(reviewer, { ...command, approvalId: '999' })).rejects.toMatchObject({
       code: 'OPERATIONS_IDEMPOTENCY_CONFLICT',
     });
+  });
+  it('original attention keeps the execution version after plan revision and rechecks its complete historical ACL',async()=>{
+    const command=await approved(),e=await store.enqueue(reviewer,command);
+    await approvals.revise(author,{planId:command.planId,expectedVersion:1},proposal());
+    const original=await plans.transaction(c=>store.attentionIn(c,reviewer,e.id));
+    expect(original).toMatchObject({kind:'reconcile',executionId:e.id,plan:{id:command.planId,version:1}});
+    const context=await plans.transaction(c=>store.contextIn(c,reviewer,e.id));
+    expect(context.execution.planVersion).toBe(1);expect(context.plan.version).toBe(1);
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='servers:manage'");
+    await expect(plans.transaction(c=>store.attentionIn(c,reviewer,e.id))).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
   });
   it('rolls approval + intent + locks back if the durable queue insert fails', async () => {
     const command = await approved();

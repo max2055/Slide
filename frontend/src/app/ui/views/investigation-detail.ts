@@ -1,3 +1,4 @@
+import '../components/system-investigation-facts.ts';
 import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
 import { html, nothing } from 'lit';
 import { investigationMessages, type InvestigationsController } from '../controllers/investigations.ts';
@@ -7,6 +8,9 @@ import { apiClient } from '../../../api/index.ts';
 import '../components/investigation-context.ts';
 import '../components/investigation-feedback.ts';
 import '../components/investigation-operation-context.ts';
+import '../components/investigation-supplement.ts';
+import '../components/investigation-handoff.ts';
+import '../components/investigation-workflow.ts';
 
 export const executionLabels: Record<string, string> = {
   queued: '排队中', running: '运行中', completed: '执行完成', failed: '执行失败', cancelled: '已取消',
@@ -40,6 +44,10 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <div><dt>调查进度</dt><dd><app-badge>${lifecycleLabels[detail.lifecycle]}</app-badge></dd></div>
         <div><dt>业务问题</dt><dd><app-badge>${problemLabels[detail.problemStatus]}</app-badge></dd></div>
       </dl>
+      ${!active && !result && !detail.legacyAnalysis ? html`<button class="btn-primary"
+        ?disabled=${controller.busy || controller.operationForbidden || controller.acceptanceUnknown || controller.continuationUnavailable || !controller.online || detail.lifecycle === 'closed' || detail.lifecycle === 'archived'}
+        @click=${() => void controller.continue(detail.goal)}>开始只读调查</button>
+        <p class="muted">显式开始后使用现有目标和范围创建新 Run；查看页面不会调用模型。</p>` : nothing}
       <h3>${active && result ? '最近已保存的结果' : '本次调查结果'}</h3>
       <section aria-label="本次调查结果">
       ${result ? html`
@@ -53,7 +61,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <h3>${active ? '最近结果的停止原因' : '停止原因'}</h3>
         <p>${result.result.execution?.reasonCode ? stopLabels[result.result.execution.reasonCode] ?? '已记录停止原因码，请展开执行过程与技术详情核对原始记录。' : '历史记录未保留具体停止原因；不能据此认定检查已完整完成。'}</p>
         <h3>下一步</h3>${result.result.recommendations.length
-          ? result.result.recommendations.map(r => html`<p>${r.action}</p>`)
+          ? html`<p>${[...result.result.recommendations].sort((a,b)=>['high','medium','low'].indexOf(a.priority)-['high','medium','low'].indexOf(b.priority))[0].action}</p>${result.result.recommendations.length>1?html`<details><summary>全部建议（尚未执行）</summary>${result.result.recommendations.map(r=>html`<p>${r.action}</p>`)}</details>`:nothing}`
           : html`<p>先核对已有证据与停止原因；需要时提交新的只读调查，保留原执行记录。</p>`}
         <button class="btn" @click=${options.onEvidence}>查看完整结果与证据</button>
       ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>`}
@@ -69,8 +77,17 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
+    ${result&&!active&&result.result.unresolvedQuestions.length&&detail.lifecycle!=='closed'&&detail.lifecycle!=='archived'?html`<app-card><span slot="header">需要你处理 · 当前调查记录</span><p>${result.result.unresolvedQuestions[0]}</p><button class="btn" @click=${()=>document.querySelector('investigation-supplement')?.scrollIntoView({block:'center'})}>补充当前缺口</button><p class="muted">来自当前结果 V${result.version}，不创建第二套待办或事件状态。</p></app-card>`:nothing}
+    ${detail.profileId === 'system' ? html`<system-investigation-facts .investigationId=${detail.id} .version=${detail.version}
+      .disabled=${active || controller.busy || controller.operationForbidden || !controller.online || detail.lifecycle === 'closed' || detail.lifecycle === 'archived'}
+      @platform-verification-saved=${() => void controller.select(detail.id)}></system-investigation-facts>` : nothing}
+    <investigation-workflow .investigationId=${detail.id} .version=${detail.version} .eventIds=${detail.context?.entry?.sourceEventIds??[]} .originUntil=${detail.context?.to??''} .active=${active} .readonly=${controller.operationForbidden||!controller.online||controller.acceptanceUnknown||['closed','archived'].includes(detail.lifecycle)} @investigation-workflow-saved=${()=>void controller.refreshAfterWorkflow()}></investigation-workflow>
+    <investigation-handoff .detail=${detail} .result=${result}></investigation-handoff>
     <investigation-operation-context .investigationId=${detail.id} .resultVersion=${result?.version ?? 0} .resources=${detail.resources}></investigation-operation-context>
-    <investigation-feedback .investigationId=${detail.id} .resultId=${result?.id ?? ''}
+    ${result && !detail.legacyAnalysis ? html`<investigation-supplement .investigationId=${detail.id} .resultId=${result.id} .resultVersion=${result.version} .gaps=${result.result.unresolvedQuestions}
+      .disabled=${active || controller.continuationUnavailable || controller.busy || controller.operationForbidden || controller.acceptanceUnknown || !controller.online || detail.lifecycle === 'archived' || detail.lifecycle === 'closed'}
+      .submit=${(message: string, supplement: NonNullable<import('../../../api/generated/public-api.ts').InvestigationRequest['supplement']>) => controller.continue(message, supplement)}></investigation-supplement>` : nothing}
+    <investigation-feedback .evidence=${controller.evidence} .investigationId=${detail.id} .resultId=${result?.id ?? ''}
       .resultVersion=${result?.version ?? 0} .investigationVersion=${detail.version}
       .activeRequest=${active} .readonly=${controller.operationForbidden || !controller.online}
       @investigation-feedback-saved=${() => void controller.refreshFacts()}></investigation-feedback>

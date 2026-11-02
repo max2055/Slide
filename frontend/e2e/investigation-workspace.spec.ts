@@ -42,9 +42,14 @@ async function openProcess(page: Page) {
 }
 async function create(page: Page, title: string) {
   await page.getByRole('button', { name: '创建手动调查' }).click();
+  await page.getByText('自定义标题（选填）', { exact: true }).click();
   await page.getByRole('textbox', { name: '调查标题', exact: true }).fill(title);
+  await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
   await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('读取合成只读指标，根因待验证');
-  await page.getByRole('textbox', { name: '资源 ID', exact: true }).fill('101');
+  if (!await page.getByRole('textbox', { name: '资源 ID', exact: true }).isVisible()) {
+      await page.getByText('高级：按资源标识补充', { exact: true }).click();
+    }
+    await page.getByRole('textbox', { name: '资源 ID', exact: true }).fill('101');
   await page.getByRole('button', { name: '提交调查', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '继续调查', exact: true })).toBeVisible();
   return new URL(page.url()).searchParams.get('investigation')!;
@@ -118,9 +123,14 @@ test('ordinary Chat sends directly; conversion preserves Session and message IDs
   const [messages] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [session.session_id]);
   expect(messages.length).toBeGreaterThan(1);
   await page.getByRole('button', { name: '转为调查', exact: true }).click();
+  await page.getByText('自定义标题（选填）', { exact: true }).click();
   await page.getByRole('textbox', { name: '调查标题', exact: true }).fill('对话关联调查');
+  await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
   await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('关联原消息，再读取指标');
-  await page.getByRole('textbox', { name: '资源 ID', exact: true }).fill('101');
+  if (!await page.getByRole('textbox', { name: '资源 ID', exact: true }).isVisible()) {
+      await page.getByText('高级：按资源标识补充', { exact: true }).click();
+    }
+    await page.getByRole('textbox', { name: '资源 ID', exact: true }).fill('101');
   await page.getByRole('button', { name: '提交调查', exact: true }).click();
   await expect(page.locator('.investigation-messages')).toContainText('不填调查表，直接提问');
   await expect(page.locator('.investigation-states')).toContainText('执行完成');
@@ -132,7 +142,7 @@ test('ordinary Chat sends directly; conversion preserves Session and message IDs
   await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('普通对话合成回答');
   await observed(page);
   const counts = env.counts();
-  env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+  env.disconnectObservers(); await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
   await expect(page.locator('.investigation-messages')).toContainText('普通对话合成回答', { timeout: 15000 });
   const [refreshed] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [session.session_id]);
   expect(refreshed).toEqual(after); expect(env.counts()).toEqual(counts);
@@ -148,7 +158,7 @@ test('real WS disconnect hides content, snapshot restores without creating a Run
   await observed(page);
   const counts = env.counts();
   env.disconnectObservers();
-  await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
   await expect(page.locator('.investigation-messages')).toHaveCount(0);
   await expect(page.locator('.investigation-messages')).toContainText('再次读取合成指标', { timeout: 15000 });
   const ids = await page.evaluate(() => { const c = (document.querySelector('investigations-page') as any).controller; return c.snapshot.documents.map((d: any) => d.id); });
@@ -223,8 +233,12 @@ test('viewer cannot append; same-JWT live resource revocation hides content and 
   await expect(page.locator('.investigation-messages')).toContainText('再次读取合成指标');
   const [before] = await env.pool.query('SELECT COUNT(*) AS n FROM investigation_requests WHERE investigation_id=?', [investigationId]);
   await page.getByRole('textbox', { name: '继续调查', exact: true }).fill('viewer 请求');
-  await page.getByRole('button', { name: '提交新 Run' }).click();
-  await expect(page.getByRole('alert')).toContainText('没有调查操作权限');
+  await expect(page.getByRole('button', { name: '提交新 Run' })).toBeDisabled();
+  const denied = await page.request.post(`${env.url}/api/investigations/${investigationId}/runs`, {
+    headers: { Authorization: `Bearer ${env.token(env.viewer)}`, 'Idempotency-Key': crypto.randomUUID() },
+    data: { message: 'viewer 请求', expectedVersion: 2 },
+  });
+  expect(denied.status()).toBe(403);
   const [after] = await env.pool.query('SELECT COUNT(*) AS n FROM investigation_requests WHERE investigation_id=?', [investigationId]);
   expect(after[0].n).toBe(before[0].n);
   await page.reload(); await expect(page.locator('.investigation-messages')).toContainText('再次读取合成指标');
@@ -248,7 +262,7 @@ test('list loading, read error, search empty and inaccessible deep link are expl
   await expect(page.getByText('暂无匹配调查', { exact: true })).toBeVisible();
   await page.unroute('**/api/investigations?*');
   await page.route('**/api/investigations?*', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'INVESTIGATION_QUEUE_UNAVAILABLE' }) }));
-  await page.getByRole('button', { name: '筛选', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('暂不可用');
+  await page.getByRole('button', { name: '筛选', exact: true }).click(); await expect(page.locator('.workspace-error[role=alert]')).toContainText('暂不可用');
   await page.unroute('**/api/investigations?*');
   await page.goto(`${env.url}/investigations?investigation=00000000-0000-0000-0000-000000000000`);
   await expect(page.getByRole('alert')).toContainText('不存在或已无访问权限');
@@ -285,9 +299,15 @@ for (const entry of ['creation', 'conversion'] as const) {
     if (session) await service.addMessage(env.owner, session.session_id, { messageId, role: 'user', content: '撤权前的原消息' });
     await page.goto(`${env.url}/${session ? `chat?session=${session.session_id}` : 'investigations'}`);
     await page.getByRole('button', { name: session ? '转为调查' : '创建手动调查', exact: true }).click();
+    await page.getByText('自定义标题（选填）', { exact: true }).click();
+    await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
+    if (!await page.getByRole('textbox', { name: '资源 ID', exact: true }).isVisible()) {
+      await page.getByText('高级：按资源标识补充', { exact: true }).click();
+    }
     for (const [name, value] of [['调查标题', 'HTTP sensitive title'], ['调查目标', 'HTTP sensitive goal'], ['资源 ID', '101']]) {
       await page.getByRole('textbox', { name, exact: true }).fill(value);
     }
+    await page.getByText('指定绝对窗口（可选）', { exact: true }).click();
     await page.getByLabel('观察开始时间', { exact: true }).fill('2026-10-12T00:00');
     await page.getByLabel('观察结束时间', { exact: true }).fill('2026-10-12T00:10');
     await page.evaluate(() => (window as any).httpForm = document.querySelector('investigation-create'));
@@ -466,7 +486,7 @@ test('history over 200 canonical facts loads older pages and survives reload', a
   await loadAll();
   await observed(page);
   env.disconnectObservers();
-  await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
   await expect(page.locator('.investigation-messages')).toContainText('分页事实 204', { timeout: 15000 });
   await openProcess(page); await expect(page.getByRole('button', { name: '加载更早消息', exact: true })).toBeVisible();
   await loadAll();
@@ -511,7 +531,7 @@ for (const phase of ['initial', 'reconnect'] as const) {
       await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204');
       if (phase === 'reconnect') {
         await observed(page);
-        env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+        env.disconnectObservers(); await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
         await expect(page.locator('.investigation-messages')).toContainText('延迟分页 204', { timeout: 15000 });
       } else await initial!.started;
       await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
@@ -590,7 +610,7 @@ test('more than 20 durable result versions page, remain after snapshot, and reco
   await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.refreshing === undefined)).toBe(true);
   await expect(select.locator('option')).toHaveCount(22); await expect(select).toHaveValue(versions.at(-1).id);
   await observed(page);
-  env.disconnectObservers(); await expect(page.getByRole('alert')).toContainText('连接中断');
+  env.disconnectObservers(); await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
   await expect(select.locator('option')).toHaveCount(20, { timeout: 15000 });
   await context.getByRole('button', { name: '加载更早结果版本', exact: true }).click(); await expect(select.locator('option')).toHaveCount(22);
   await page.reload(); await expect(select.locator('option')).toHaveCount(20);
@@ -619,6 +639,7 @@ for (const action of ['revocation', 'selection'] as const) {
       await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
       if (action === 'revocation') {
         await page.getByRole('button', { name: '创建手动调查', exact: true }).click();
+        await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
         await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('需随撤权清空的创建草稿');
         await page.evaluate(() => (window as any).t06Page.form = document.querySelector('investigation-create'));
         await env.pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');

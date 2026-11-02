@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactiveControllerHost } from 'lit';
 import { authFetch } from '../../../api/index.ts';
-import { OperationsResource, operationsApi } from './operations-api.ts';
+import { OperationsResource, operationsApi, currentUserId } from './operations-api.ts';
 vi.mock('../../../api/index.ts', () => ({ authFetch:vi.fn() }));
 const api=vi.mocked(authFetch);
 const response=(value:unknown,status=200)=>({ok:status<400,status,json:async()=>value}) as Response;
@@ -52,4 +52,10 @@ describe('operations HTTP authority and uncertain acceptance',()=>{
     const pending=r.write('/knowledge',{sensitive:'draft'});r.hostDisconnected();release(response({secret:'created'}));
     expect(await pending).toBeNull();expect(clear).toHaveBeenCalled();expect(r.data).toBeNull();
   });
+});
+
+it('uses the active JWT display identity when the cached profile is absent or stale',()=>{
+ try{localStorage.setItem('user','{"id":9}');const payload=btoa(JSON.stringify({userId:22}));localStorage.setItem('token',`header.${payload}.signature`);expect(currentUserId()).toBe(22);
+ localStorage.removeItem('user');expect(currentUserId()).toBe(22);localStorage.setItem('token','invalid');expect(currentUserId()).toBeNull();
+ }finally{localStorage.removeItem('user');localStorage.removeItem('token');}
 });

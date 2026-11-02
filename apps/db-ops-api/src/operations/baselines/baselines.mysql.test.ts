@@ -308,6 +308,9 @@ describe.skipIf(!port)('P04 B06 real MySQL/HTTP with explicitly separated synthe
   it('real fixed SQL → source acceptance → formal publication → baseline HTTP stays unknown for short observations', async () => {
     const registry = createConfigurationRegistry(), ref = { type: 'instance' as const, id: 101 };
     const [version] = await f.rows('SELECT VERSION() version');
+    // mysql-basic@2 is reviewed only for 9.6. Use the real server required by
+    // run-investigation-rollout.sh; never relabel an 8.4 target as supported.
+    expect(version.version, 'OPERATIONS_TEST_MYSQL_PORT must use real MySQL 9.6 for mysql-basic@2').toMatch(/^9\.6\./);
     await f.rows("UPDATE database_instances SET host='127.0.0.1',port=?,db_type='mysql',db_version=? WHERE id=101", [port, version.version]);
     const inventory = () => ({ type: ref.type, id: String(ref.id), attributes: {
       'db.engine': { value: 'mysql', observed_at: new Date(now).toISOString(), source: 'real_driver' },

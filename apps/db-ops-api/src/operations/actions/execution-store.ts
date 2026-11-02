@@ -114,6 +114,22 @@ export class ActionExecutionStore {
     const refs = await this.sources.scope(c, actor, plan.content);
     await this.authorization.authorize(c, actor, refs, write ? 'actions:execute' : 'actions:read');
   }
+  /** Original execution context survives a later plan revision; no dispatch. */
+  async contextIn(c:PlanConnection,actor:ActorContext,id:string) {
+    const execution=await this.load(c,id);
+    await this.authorize(c,actor,execution);
+    const [reportReference]=await planRows(c,'SELECT id,version FROM action_verification_reports WHERE execution_id=? ORDER BY version DESC LIMIT 1 FOR SHARE',[id]);
+    return {execution,plan:await this.historicalPlan(c,execution),reportReference:reportReference?{id:reportReference.id,version:Number(reportReference.version)}:null};
+  }
+  async attentionIn(c:PlanConnection,actor:ActorContext,id:string) {
+    if((actor.principalKind??'user')!=='user')return null;
+    const {execution,plan}=await this.contextIn(c,actor,id);
+    await this.authorize(c,actor,execution,true);
+    const [report]=await planRows(c,'SELECT id,version,state FROM action_verification_reports WHERE execution_id=? ORDER BY version DESC LIMIT 1 FOR SHARE',[id]);
+    return {plan,executionId:id,approvalId:null,reportId:report?.id??null,reportVersion:report?Number(report.version):null,
+      kind:!['succeeded','failed','cancelled','rejected'].includes(execution.state)?'reconcile' as const
+        :execution.state==='succeeded'?'verify' as const:'continue' as const};
+  }
   async get(actor: ActorContext, id: string): Promise<ExecutionRecord> {
     actor = freezeInvestigationCaller(actor);
     return this.transaction(async (c) => {

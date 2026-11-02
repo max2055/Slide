@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { InvestigationFeedbackRequest, InvestigationFeedbackRecord } from '../../../api/generated/public-api.ts';
+import type { InvestigationFeedbackRequest, InvestigationFeedbackRecord, InvestigationEvidence } from '../../../api/generated/public-api.ts';
 import { investigationApi, InvestigationApiError, investigationErrorText } from '../controllers/investigation-api.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import './app-card.ts';
@@ -20,6 +20,7 @@ const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', reso
 export class InvestigationFeedback extends LitElement {
   @property({attribute:false}) actionReport: {id:string;version:number;contentHash:string;state:string;validUntil:string;observedFrom:string|null;observedUntil:string|null;evidence:Array<{id:string}>} | null = null;
   @state() private useActionReport = false;
+  @property({attribute:false}) evidence: InvestigationEvidence[] = [];
   @property() investigationId = '';
   @property() resultId = '';
   @property({ type: Number }) resultVersion = 0;
@@ -91,8 +92,7 @@ export class InvestigationFeedback extends LitElement {
       || this.activeRequest && this.kind === 'close') return;
     this.error = '';
     if (!this.pending) {
-      if (!this.note.trim()) { this.error = '请填写反馈或处理依据。'; return; }
-      const base = { resultId: this.resultId, resultVersion: this.resultVersion, expectedVersion: this.investigationVersion, note: this.note.trim() };
+      const base = { resultId: this.resultId, resultVersion: this.resultVersion, expectedVersion: this.investigationVersion, note: this.note.trim() || `人工提交：${kindLabels[this.kind]}${this.kind === 'rating' ? `（${this.rating}）` : '；依据所选记录，仍保留原始证据与缺口'}` };
       const evidenceIds = [...new Set(this.ids.split(',').map(id => id.trim()).filter(Boolean))];
       let body: InvestigationFeedbackRequest;
       try {
@@ -143,6 +143,7 @@ export class InvestigationFeedback extends LitElement {
       investigation-feedback [role=alert] { color:var(--danger); }
     </style><app-card><span slot="header">人工反馈与关闭验证</span>
       <p>当前结果版本 ${this.resultVersion || '暂无'}。根因确认和业务恢复分别记录；外部处理不会由平台执行。</p>
+      <p>恢复确认须核对当前范围与后续观测窗口；旧证据不能覆盖更新的未改善或证据不足记录。</p>
       ${this.readonly ? html`<p>当前为只读查看。</p>` : html`<form @submit=${(e: Event) => { e.preventDefault(); void this.submit(); }}>
         <app-form-field label="记录类型"><select aria-label="记录类型" .value=${this.kind} ?disabled=${disabled}
           @change=${(e: Event) => this.kind = (e.target as HTMLSelectElement).value as InvestigationFeedbackRequest['kind']}>
@@ -151,13 +152,21 @@ export class InvestigationFeedback extends LitElement {
           @change=${(e: Event) => this.rating = (e.target as HTMLSelectElement).value}><option value="helpful">有帮助</option><option value="unhelpful">无帮助</option><option value="incorrect">判断有误</option></select></app-form-field>` : nothing}
         ${this.kind === 'close' ? html`<app-form-field label="业务问题状态"><select aria-label="业务问题状态" .value=${this.problemStatus} ?disabled=${disabled}
           @change=${(e: Event) => this.problemStatus = (e.target as HTMLSelectElement).value}>${Object.entries(problemLabels).map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select></app-form-field>` : nothing}
-        <app-form-field label="反馈与处理依据"><textarea aria-label="反馈与处理依据" rows="3" maxlength="4000" .value=${this.note} ?disabled=${disabled}
+        <app-form-field label="反馈与处理依据（选填）"><textarea aria-label="反馈与处理依据" rows="3" maxlength="4000" .value=${this.note} ?disabled=${disabled}
           @input=${(e: Event) => this.note = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field>
         ${this.kind === 'handling' ? field('外部处理时间', this.performedAt, value => this.performedAt = value, 'datetime-local') : nothing}
         ${verified && this.actionReport ? html`<label><input aria-label="使用当前效果报告" type="checkbox" .checked=${this.useActionReport} ?disabled=${disabled} @change=${(e:Event)=>{this.useActionReport=(e.target as HTMLInputElement).checked;const r=this.actionReport;if(this.useActionReport&&r){this.method='人工核对行动效果报告';this.from=r.observedFrom??'';this.to=r.observedUntil??'';this.ids='';}}}>使用当前效果报告 v${this.actionReport.version}（仍需人工确认）</label>` : nothing}
       ${verified ? html`${field('验证方法', this.method, value => this.method = value)}${field('观察开始时间', this.from, value => this.from = value, 'datetime-local')}
           ${field('观察结束时间', this.to, value => this.to = value, 'datetime-local')}` : nothing}
-        ${verified || this.kind === 'handling' ? field('证据 ID（逗号分隔）', this.ids, value => this.ids = value) : nothing}
+        ${(verified || this.kind === 'handling') && !this.useActionReport ? html`
+          <app-form-field label="验证证据" hint="从已授权证据选择；时间只从该证据的实际窗口带入，缺失时需核对原记录。">
+            <select aria-label="验证证据" .value=${this.ids} ?disabled=${disabled} @change=${(e:Event)=>{
+              this.ids=(e.target as HTMLSelectElement).value;
+              const proof=this.evidence.find(item=>item.id===this.ids);
+              this.from=proof?.observedFrom??'';this.to=proof?.observedTo??'';
+              this.method=proof?'人工核对所选观测证据':'';
+            }}><option value="">请选择证据</option>${this.evidence.filter(item=>item.status==='available'&&Date.parse(item.expiresAt)>Date.now()).map(item=>html`<option value=${item.id}>${item.summary} · ${item.observedFrom??'窗口未知'} — ${item.observedTo??'窗口未知'}</option>`)}</select>
+          </app-form-field><details><summary>兼容旧证据标识输入（高级）</summary>${field('证据 ID（逗号分隔）', this.ids, value => this.ids = value)}</details>` : nothing}
         ${this.activeRequest && this.kind === 'close' ? html`<p>执行进行中，结束后才能关闭调查。</p>` : nothing}
         <button class="btn-primary" type="submit" ?disabled=${this.busy || !this.resultId || this.activeRequest && this.kind === 'close'}>${this.busy ? '正在保存…' : this.pending ? '核对原提交' : '保存人工记录'}</button>
       </form>`}
@@ -166,6 +175,7 @@ export class InvestigationFeedback extends LitElement {
       <ul class="feedback-history" aria-label="人工记录">${this.items.map(item => html`<li>
         <strong>${kindLabels[item.command.kind]}</strong> · 结果 v${item.command.resultVersion} · 记录人 ${item.actorId} · ${item.createdAt}
         ${item.staleResult || item.command.resultId !== this.resultId ? html`<p>旧结果引用，不能用于当前结论。</p>` : nothing}
+        ${item.staleVerification ? html`<p>验证依据已被后续记录取代或失效，仅保留历史人工确认，不能证明当前恢复。</p>` : nothing}
         <p>${item.command.note}</p>
         ${item.command.kind === 'rating' ? html`<p>${{ helpful: '有帮助', unhelpful: '无帮助', incorrect: '判断有误' }[item.command.rating]}；反馈保留为人工记录。</p>` : nothing}
         ${item.command.kind === 'close' ? html`<p>关闭时业务状态：${problemLabels[item.command.problemStatus]}</p>` : nothing}

@@ -85,7 +85,7 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
 
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_bridge_failure');
-    for (const table of ['investigation_admission_keys', 'investigation_requests', 'investigation_members', 'investigation_resources', 'investigations',
+    for (const table of ['investigation_results', 'investigation_admission_keys', 'investigation_requests', 'investigation_members', 'investigation_resources', 'investigations',
       'chat_session_shares', 'chat_messages', 'chat_sessions', 'workflow_jobs', 'outbox_events', 'agent_runs', 'refresh_tokens']) await pool.query(`DELETE FROM ${table}`);
     await pool.execute("UPDATE users SET status = 'active', session_version = 1 WHERE id IN (101, 102, ?)", [serviceId]);
     await pool.execute("UPDATE users SET username = 'slide-investigation-ops-test', password_hash = ? WHERE id = ?", [INVESTIGATION_SERVICE_PASSWORD, serviceId]);
@@ -108,6 +108,78 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
   afterAll(async () => {
     await app?.close(); await pool?.end();
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
+  });
+
+  // Seeded result is a persistence fixture, never a claim of Provider acceptance.
+  const supplementBase = async () => {
+    const prior = await bridge.admit(owner, { ...command(), idempotencyKey: 'base-result' });
+    const resultId = randomUUID();
+    await pool.execute(`INSERT INTO investigation_results
+      (id, investigation_id, request_id, run_id, version, source_key, payload_hash, result_json)
+      VALUES (?, ?, ?, 'fixture-run', 1, 'fixture-result', ?, '{}')`, [resultId, investigation.id, prior.requestId, 'a'.repeat(64)]);
+    await pool.execute('UPDATE investigations SET active_request_id = NULL WHERE id = ?', [investigation.id]);
+    return { message: '核实服务状态是否改善', expectedVersion: prior.version,
+      supplement: { resultId, resultVersion: 1, observation: '人工记录：测试负载已停止' } };
+  };
+  it('JWT HTTP concurrent supplements freeze one next-version request without rewriting the result', async () => {
+    const body = await supplementBase();
+    const send = () => app.inject({ method: 'POST', url: `/api/investigations/${investigation.id}/runs`,
+      headers: { ...headers, 'idempotency-key': 'supplement-once' }, payload: body });
+    const replies = await Promise.all(Array.from({ length: 12 }, send));
+    expect(replies.map(r => r.statusCode)).toEqual(Array(12).fill(202));
+    expect(new Set(replies.map(r => r.body)).size).toBe(1);
+    const requests = await all('investigation_requests'); expect(requests).toHaveLength(2);
+    const next = requests.find(r => r.id === replies[0].json().requestId)!;
+    expect(next.request_snapshot.supplement).toEqual(body.supplement);
+    expect(next.request_snapshot.message).toContain('用户陈述，尚未验证');
+    expect(next.request_snapshot.message).toContain(body.supplement.observation);
+    expect(await all('investigation_results')).toHaveLength(1);
+    expect(await all('chat_messages')).toHaveLength(2);
+    const changed = await app.inject({ method: 'POST', url: `/api/investigations/${investigation.id}/runs`,
+      headers: { ...headers, 'idempotency-key': 'supplement-once' }, payload: { ...body, supplement: { ...body.supplement, observation: '更改内容' } } });
+    expect(changed.statusCode).toBe(409);
+  });
+  it('binds unknown and numerical answers to server-owned gaps; preserves source, unknown and idempotent receipt', async () => {
+    const body = await supplementBase();
+    await pool.execute('UPDATE investigation_results SET result_json=? WHERE id=?',
+      [JSON.stringify({ unresolvedQuestions: ['当前窗口延迟（毫秒）？'] }), body.supplement.resultId]);
+    const post = (answer: unknown, key: string = randomUUID()) => app.inject({ method: 'POST', url: `/api/investigations/${investigation.id}/runs`,
+      headers: { ...headers, 'idempotency-key': key }, payload: { ...body, supplement: { ...body.supplement, answer } } });
+    for (const answer of [{gapIndex:1,kind:'unknown'}, {gapIndex:0,kind:'number',value:5},
+      {gapIndex:0,kind:'choice',value:'observed',source:'model'}, {gapIndex:0,kind:'unknown',value:5}])
+      expect((await post(answer)).statusCode).toBe(400);
+    expect(await all('investigation_requests')).toHaveLength(1);
+    const answer = {gapIndex:0,kind:'number',value:0,source:'monitoring_display'};
+    const first = await post(answer, 'number-source'); expect(first.statusCode).toBe(202);
+    const receipt = await post({source:'monitoring_display',value:0,kind:'number',gapIndex:0}, 'number-source');
+    expect(receipt.json()).toEqual(first.json());
+    const next = (await all('investigation_requests')).find(r => r.id === first.json().requestId)!;
+    expect(next.request_snapshot.supplement.answer).toEqual(answer);
+    expect(next.request_snapshot.message).toContain('当前窗口延迟（毫秒）？');
+    expect(next.request_snapshot.message).toContain('用户转录监控展示');
+    expect(next.request_snapshot.message).toContain('未验证');
+    expect((await all('chat_messages')).find(m=>m.message_id===next.message_id)!.content).toBe(next.request_snapshot.message);
+    await pool.execute('UPDATE investigations SET active_request_id=NULL WHERE id=?', [investigation.id]);
+    const second = await app.inject({method:'POST',url:`/api/investigations/${investigation.id}/runs`,
+      headers:{...headers,'idempotency-key':randomUUID()},payload:{...body,expectedVersion:first.json().version,
+        supplement:{...body.supplement,answer:{gapIndex:0,kind:'unknown'}}}});
+    expect(second.statusCode).toBe(202);
+    expect((await all('investigation_requests')).find(r=>r.id===second.json().requestId)!.request_snapshot.message).toContain('保留此缺口');
+    expect(await all('investigation_results')).toHaveLength(1);
+  });
+  it('rejects stale/foreign result bindings before creating a new request, and rechecks revoked JWT', async () => {
+    const body = await supplementBase();
+    for (const supplement of [{ ...body.supplement, resultId: randomUUID() }, { ...body.supplement, resultVersion: 2 }]) {
+      const reply = await app.inject({ method: 'POST', url: `/api/investigations/${investigation.id}/runs`,
+        headers: { ...headers, 'idempotency-key': randomUUID() }, payload: { ...body, supplement } });
+      expect(reply.statusCode).toBe(409);
+    }
+    await pool.execute('UPDATE users SET session_version = session_version + 1 WHERE id = 101');
+    const denied = await app.inject({ method: 'POST', url: `/api/investigations/${investigation.id}/runs`,
+      headers: { ...headers, 'idempotency-key': randomUUID() }, payload: body });
+    expect(denied.statusCode).toBe(401);
+    expect(await all('investigation_requests')).toHaveLength(1);
+    expect(await all('chat_messages')).toHaveLength(1);
   });
 
   it('100 same-key admissions append one message, one request/job/outbox and stable acceptance', async () => {

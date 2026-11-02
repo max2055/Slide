@@ -164,7 +164,7 @@ export class InvestigationAuthorization {
     const resources = await rows(connection, `SELECT resource_type, resource_id, role FROM investigation_resources
       WHERE investigation_id = ? ORDER BY resource_type, resource_id FOR SHARE`, [id]);
     return Object.freeze({ id: record.id, sessionId: record.session_id, profileId: record.profile_id,
-      profileVersion: Number(record.profile_version), scopeVersion: record.scope_version, version: Number(record.version),
+      profileVersion: Number(record.profile_version), scopeVersion: record.scope_version, scopeRevision: Number(record.scope_revision ?? 0), version: Number(record.version),
       lifecycle: record.lifecycle, owner: Object.freeze({ kind: record.owner_kind, id: Number(record.owner_id) }),
       resources: Object.freeze(resources.map(ref => Object.freeze({ type: ref.resource_type, id: Number(ref.resource_id), role: ref.role }))),
     });
@@ -176,7 +176,7 @@ export class InvestigationAuthorization {
     const ceiling = freezeInvestigationCaller(caller);
     const kind = ceiling.principalKind ?? 'user';
     if (kind === 'service' && !ceiling.resourceBoundary) throw invisible();
-    const useFacts = !!facts && action === 'read' && !frozen && contentResources.length === 0;
+    const useFacts = !(investigation.scopeRevision ?? 0) && !!facts && action === 'read' && !frozen && contentResources.length === 0;
     let current: ActorContext;
     if (useFacts) {
       if (facts.authenticationFailed || !facts.current) throw invisible();
@@ -215,9 +215,12 @@ export class InvestigationAuthorization {
     const globalInstanceAccess = !ceiling.resourceBoundary && permission(current, 'instance:*')
       && permission(ceiling, 'instance:*') && (!frozen || frozen.globalInstanceAccess === true);
     if (!permitted('chat:view') || profile.id === 'system' && !permitted('config:view')) throw invisible();
-    for (const ref of [...investigation.resources, ...contentResources]) {
+    const historical = (investigation.scopeRevision ?? 0) > 0
+      ? (await rows(connection, 'SELECT resource_type,resource_id FROM investigation_scope_resources WHERE investigation_id=? FOR SHARE', [investigation.id]))
+        .map(ref => ({ type: ref.resource_type, id: Number(ref.resource_id) })) : [];
+    for (const ref of [...investigation.resources, ...contentResources, ...historical]) {
       if (!['instance', 'server', 'network_device'].includes(ref.type) || !Number.isSafeInteger(ref.id) || ref.id <= 0
-        || !canRead(current, ref) || !canRead(ceiling, ref) || frozenActor && !canRead(frozenActor, ref)) throw invisible();
+        || !canRead(current, ref) || !canRead(ceiling, ref) || frozenActor && [...investigation.resources, ...contentResources].some(r=>r.type===ref.type&&r.id===ref.id) && !canRead(frozenActor, ref)) throw invisible();
       if (ref.type === 'instance' && !current.instanceScopes[ref.id] && !globalInstanceAccess) throw invisible();
       if (useFacts) {
         if (!facts.live.has(`${ref.type}:${ref.id}`)) throw invisible();

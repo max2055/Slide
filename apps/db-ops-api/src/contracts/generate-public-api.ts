@@ -1,3 +1,4 @@
+import {InvestigationWorkflowSchemas} from '../investigations/workflow-contracts.js';
 import { operationsJsonSchemas, operationsPublicPaths } from '../operations/public-api.js';
 import { InvestigationFeedbackSchemas } from '../investigations/feedback-contracts.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -47,6 +48,8 @@ export function buildOpenApiDocument() {
     paths: {
       ...metricPublicPaths,
       ...operationsPublicPaths,
+      ...Object.fromEntries(['scope','retest'].map(kind=>[`/api/investigations/{id}/${kind}`,{post:{operationId:kind==='scope'?'confirmInvestigationScope':'retestInvestigationWithoutAction',security:[{bearerAuth:[]}],parameters:[investigationId(),{name:'Idempotency-Key',in:'header',required:true,schema:{type:'string',minLength:1,maxLength:255}}],description:'Explicit human confirmation, current operator/all-scope authorization, immutable version and idempotent receipt. No model/action/collector/event-state writes.',requestBody:{required:true,content:{'application/json':{schema:refSchema(kind==='scope'?InvestigationWorkflowSchemas.InvestigationScopeCommand:InvestigationWorkflowSchemas.InvestigationRetestCommand)}}},responses:{'200':{description:'Immutable authorized receipt'},'400':{description:'Invalid input'},'404':{description:'Scope not visible'},'409':{description:'Version/active execution or changed source'},'503':{description:'Acceptance unknown; reconcile original key'}}}}])),
+      '/api/investigations/{id}/workflow':{get:{operationId:'readInvestigationWorkflow',security:[{bearerAuth:[]}],parameters:[investigationId(),{name:'before',in:'query',schema:{type:'integer',minimum:1}}],responses:{'200':{description:'Authorized current relation suggestions and original scope/retest receipts; 20 per page'},'404':{description:'Scope withdrawn'}}}},
       '/api/alerts/{id}/investigation': { post: {
         operationId: 'openAlertInvestigation', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
         description: 'Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.',
@@ -173,6 +176,19 @@ export function buildOpenApiDocument() {
           '401': { description: 'Authentication required' }, '403': { description: 'Observation permission denied' },
         },
       } },
+      '/api/platform/system-events/{id}/investigation': { post: { operationId: 'createSystemInvestigationDraft', security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, properties: {} } } } },
+        description: 'Explicit original-event draft; live System authority and original Investigation ACL. One unique event link; no Run, model or automatic policy mutation.',
+        responses: { '200': { description: 'Existing authorized or new read-only draft', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemDraft) } } }, '404': { description: 'Original event or linked investigation inaccessible' }, '409': { description: 'Concurrent association changed' }, '503': { description: 'Unavailable; retry original event' } } } },
+      '/api/platform/system-events/{id}/verifications': { post: { operationId: 'verifySystemEvent', security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemVerificationRequest) } } },
+        description: 'Explicit no-action recheck: current operator/revision, exact event association; server post-failure same-callsite/deployment evidence only. Immutable receipt and original Investigation problem status/stream audit commit together. Missing/disabled/failed evidence stays unknown. No model or HTTP replay.',
+        responses: { '200': { description: 'Audited recheck or idempotent original', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemVerification) } } }, '400': { description: 'Invalid request/key' }, '403': { description: 'Operator required' }, '404': { description: 'Not visible or wrong event/scope' }, '409': { description: 'Version conflict or active request' }, '503': { description: 'Unavailable; retry original key' } } } },
+      '/api/investigations/{id}/platform-events': { get: { operationId: 'getSystemInvestigationFacts', security: [{ bearerAuth: [] }], parameters: [investigationId()],
+        description: 'Authorized original platform events, immutable failure deployments and recent verification receipts; no model or writes.',
+        responses: { '200': { description: 'Original event evidence and audit', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemInvestigationFacts) } } }, '404': { description: 'System investigation not visible' }, '503': { description: 'Evidence unavailable' } } } },
       '/api/platform/system-events': { get: { operationId: 'listSystemEvents', security: [{ bearerAuth: [] }],
         description: 'Live chat:view and config:view required. At most 100 durable System events, including suppressed engine failures. Investigation links require the original ACL; no implicit service sharing.',
         responses: { '200': { description: 'Durable System event summaries', content: { 'application/json': { schema: refSchema(SystemHttpSchemas.SystemEventsPage) } } },
@@ -584,7 +600,7 @@ function schemaType(schema: TSchema, refs: Record<string,string> = {}): string {
 function buildInvestigationClientTypes(): string {
   return '// Generated investigation contract baseline; routes are not implemented by these types.\n'
     + "import type { ProjectionFrame } from '../../../../packages/agent-core/src/message-projection.ts';\n\n"
-    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas, ...InvestigationFeedbackSchemas, ...SystemHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
+    + Object.entries({ ...InvestigationSchemas, ...InvestigationHttpSchemas, ...InvestigationObservationSchemas, ...InvestigationProfileSchemas, ...InvestigationGovernanceSchemas, ...InvestigationBridgeSchemas, ...InvestigationFeedbackSchemas, ...InvestigationWorkflowSchemas, ...SystemHttpSchemas }).map(([name, schema]) => `export type ${name} = ${schemaType(schema)};\n`).join('') + '\n';
 }
 
 export function buildClientTypes(): string {
@@ -605,7 +621,7 @@ export interface QueueObservation {
 }
 export interface PlatformObservations {
   schemaVersion: 1; generatedAt: string; releaseId: string | null; commitSha: string | null;
-  uptimeSeconds: number; components: unknown[]; logs: unknown; queue: QueueObservation;
+  uptimeSeconds: number; components: unknown[]; logs: unknown; queue: QueueObservation; system?: unknown;
 }
 
 export interface HealthResponse {`)

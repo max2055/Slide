@@ -170,6 +170,47 @@ export class ActionPlanService {
       && ['draft', 'pending_approval', 'approved'].includes(plan.state)) return { ...plan, state: 'expired' };
     return plan;
   }
+  /** Read-only projection of the SAME eligibility checks used by the command.
+   * Does not approve, consume a binding, enqueue, or refresh stale evidence. */
+  async attentionIn(c: PlanConnection, caller: ActorContext, planId: string) {
+    if ((caller.principalKind ?? 'user') !== 'user') return null;
+    const plan = await this.readIn(c, caller, planId);
+    const executions = await planRows(c,
+      'SELECT id,state,plan_version FROM action_executions WHERE plan_id=? ORDER BY created_at DESC,id DESC FOR SHARE', [planId]);
+    const execution = executions.find(e => Number(e.plan_version) === plan.version);
+    // Unknown/in-flight sends must be reconciled at their original record, never
+    // advertised as another executable approval.
+    if (execution) {
+      const refs = await this.sources.scope(c, caller, plan.content);
+      await this.authorization.authorize(c, caller, refs, 'actions:execute');
+      if (!['succeeded','failed','cancelled','rejected'].includes(execution.state))
+        return { kind: 'reconcile' as const, plan, executionId: execution.id, approvalId: null };
+      if (execution.state === 'succeeded') {
+        const [report] = await planRows(c,
+          'SELECT id,version,state FROM action_verification_reports WHERE execution_id=? ORDER BY version DESC LIMIT 1 FOR SHARE', [execution.id]);
+        return { kind: 'verify' as const, plan, executionId: execution.id, approvalId: null, reportId:report?.id ?? null,reportVersion:report ? Number(report.version) : null };
+      }
+      return {kind:'continue' as const,plan,executionId:execution.id,approvalId:null};
+    }
+    const [approval] = await planRows(c, `SELECT id FROM agent_tool_approvals WHERE tool_name='operations_action_plan'
+      AND JSON_UNQUOTE(JSON_EXTRACT(args_redacted,'$.planId'))=?
+      AND JSON_EXTRACT(args_redacted,'$.version')=?
+      AND JSON_UNQUOTE(JSON_EXTRACT(args_redacted,'$.contentHash'))=? ORDER BY id DESC LIMIT 1 FOR SHARE`,
+      [plan.id,plan.version,plan.contentHash]);
+    if (!approval || !['pending_approval','approved'].includes(plan.state)) return null;
+    this.enabled(plan.state === 'approved');
+    const { row, policy, now } = await this.approval(c, plan, String(approval.id));
+    const kind = plan.state === 'pending_approval' ? 'approve' as const : 'execute' as const;
+    if (row.status !== (kind === 'approve' ? 'pending' : 'approved')) return null;
+    if (kind === 'execute') {
+      if (!policy.reviewer || policy.reviewer.userId !== Number(row.reviewer_id) || !policy.reviewerLiveHash || await this.liveHash(c, policy.reviewer) !== policy.reviewerLiveHash) return null;
+      await this.check(c, authorityCaller(policy.reviewer), plan, 'actions:approve', now);
+      await this.executionBinding(c,plan,String(approval.id),row,policy);
+    }
+    const proof = await this.check(c, caller, plan, kind === 'approve' ? 'actions:approve' : 'actions:execute', now);
+    await this.fresh(c, plan, proof);
+    return { kind, plan, approvalId: String(approval.id), executionId: null };
+  }
   async get(caller: ActorContext, planId: string): Promise<ActionPlanVersion> {
     parse(refSchema, { planId, expectedVersion: 1 });
     caller = freezeInvestigationCaller(caller);
@@ -321,6 +362,27 @@ export class ActionPlanService {
       return { ...plan, state };
     });
   }
+  private async executionBinding(c: PlanConnection, plan: ActionPlanVersion, approvalId: string, row: any, policy: ApprovalPolicy) {
+      const [binding] = await planRows(
+        c,
+        'SELECT * FROM action_approval_bindings WHERE approval_id=? FOR UPDATE',
+        [approvalId],
+      );
+      if (
+        !binding ||
+        binding.plan_id !== plan.id ||
+        Number(binding.plan_version) !== plan.version ||
+        binding.content_hash !== plan.contentHash ||
+        binding.policy_version !== plan.content.policyVersion ||
+        binding.approval_mode !== 'once' ||
+        binding.consumed_at ||
+        Number(binding.author_id) !== plan.content.author.id ||
+        Number(binding.requester_id) !== plan.content.requester.id ||
+        Number(binding.reviewer_id) !== policy.reviewer?.userId ||
+        new Date(binding.expires_at).getTime() !== new Date(row.expires_at).getTime()
+      )
+        throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+  }
   /** P07 MUST write its unique execution + durable intent/outbox in enqueue.
    * It MUST NOT send to an external target within this callback. A commit with
    * lost acknowledgement is reconciled using the persisted execution key. */
@@ -343,25 +405,7 @@ export class ActionPlanService {
         throw new OperationsError('OPERATIONS_FORBIDDEN');
       await this.check(c, authorityCaller(policy.reviewer), plan, 'actions:approve', now);
       const proof = await this.check(c, caller, plan, 'actions:execute', now);
-      const [binding] = await planRows(
-        c,
-        'SELECT * FROM action_approval_bindings WHERE approval_id=? FOR UPDATE',
-        [command.approvalId],
-      );
-      if (
-        !binding ||
-        binding.plan_id !== plan.id ||
-        Number(binding.plan_version) !== plan.version ||
-        binding.content_hash !== plan.contentHash ||
-        binding.policy_version !== plan.content.policyVersion ||
-        binding.approval_mode !== 'once' ||
-        binding.consumed_at ||
-        Number(binding.author_id) !== plan.content.author.id ||
-        Number(binding.requester_id) !== plan.content.requester.id ||
-        Number(binding.reviewer_id) !== policy.reviewer.userId ||
-        new Date(binding.expires_at).getTime() !== new Date(row.expires_at).getTime()
-      )
-        throw new OperationsError('OPERATIONS_PRECONDITION_FAILED');
+      await this.executionBinding(c,plan,command.approvalId,row,policy);
       const [used] = (await c.execute(
         `UPDATE agent_tool_approvals SET status='consumed',consumed_at=UTC_TIMESTAMP(3),used_count=1
         WHERE id=? AND status='approved' AND scope='once' AND used_count=0 AND expires_at>UTC_TIMESTAMP(3)`,

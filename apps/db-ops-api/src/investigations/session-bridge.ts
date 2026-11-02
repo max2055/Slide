@@ -1,3 +1,4 @@
+import { InvestigationWorkflow } from './workflow.js';
 import { freezeExecutionAllocation, readExecutionAllocation, taskExecutionConfiguration, type TaskExecutionConfiguration } from './execution-allocation.js';
 import { InvestigationEffectiveBudgetService, resolveAdmissionConfiguration, type InvestigationAdmissionConfiguration } from './effective-budget.js';
 import { investigationBudgetConfiguration, type InvestigationBudgetConfiguration } from './budget-configuration.js';
@@ -71,6 +72,7 @@ export class InvestigationSessionBridge {
 
   /** Minimal read-side composition reuses this exact configured pool and live
    * authority. Tests/workers must never fall back to another global database. */
+  workflowService() { return new InvestigationWorkflow(this.poolProvider,this.authorization); }
   observationServices() {
     return { stream: new InvestigationStreamStore(this.poolProvider, this.authorization),
       evidence: new InvestigationEvidenceStore(this.poolProvider, this.authorization),
@@ -157,7 +159,7 @@ export class InvestigationSessionBridge {
 
   async admit(actor: ActorContext, command: RequestCommand): Promise<InvestigationAcceptance> {
     actor = freezeInvestigationCaller(actor);
-    const input = { ...command };
+    const input = structuredClone(command);
     const store = this.storeFor(actor);
     return store.transaction((connection, append) => this.admitOnConnection(actor, store, connection, append, input));
   }
@@ -231,7 +233,7 @@ export class InvestigationSessionBridge {
         ...(executionAllocation ? { executionAllocation } : {}),
         ...(frozen ? { continuationOperator: { kind: actor.principalKind ?? 'user', id: actor.userId } } : {}) }), acceptance.requestId]);
     await this.chat.appendInvestigationMessage(executionActor, acceptance.investigationId, acceptance.version, acceptance.requestId,
-      { messageId: randomUUID(), role: 'user', content: command.message }, connection);
+      { messageId: randomUUID(), role: 'user', content: snapshot.message }, connection);
     if (frozen) {
       const profile = resolveInvestigationProfile(investigation.profileId, investigation.profileVersion);
       const storedBudget = await this.effectiveBudget.readStoredFrom(connection);

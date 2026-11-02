@@ -31,3 +31,12 @@ it('keeps missing stop evidence explicit and labels a saved outcome during an ac
  expect(outcome.textContent).toContain('未记录具体缺口，不代表');
  expect(outcome.textContent).toContain('最近结果的停止原因');
 });
+
+it('starts a saved draft with its existing goal and no required prompt, only on explicit click', () => {
+ const c:any={detail:{id:'one',title:'调查',goal:'核对原窗口',profileId:'ops',lifecycle:'open',problemStatus:'unconfirmed',resources:[],sessionId:'s'},results:{items:[]},history:[],snapshot:null,online:true};
+ const submit=vi.fn();c.continue=submit;
+ render(renderInvestigationDetail(c,{draft:'',onDraft:()=>{},onContinue:()=>{},onEvidence:()=>{}}),container());
+ expect(submit).not.toHaveBeenCalled();
+ const button=[...document.querySelectorAll('button')].find(b=>b.textContent==='开始只读调查');expect(button).toBeDefined();button!.click();
+ expect(submit).toHaveBeenCalledWith('核对原窗口');
+});

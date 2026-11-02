@@ -107,7 +107,7 @@ export function createOperationsComposition(pool: () => Pool | null, options: {
     },
   };
   const persistedCaller = (id: string) => executions.transaction(async c => executions.actor(c, await executions.load(c, id)));
-  const ui = new OperationsUiIntegration(new PlanStore({getConnection:async()=>{const p=pool();if(!p)throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');return await p.getConnection() as never;}}), plans,knowledge,new CaseCursorCodec(key), 'proposal' in environment ? environment as TrustedActionProposal : undefined, contexts,investigations);
+  const ui = new OperationsUiIntegration(new PlanStore({getConnection:async()=>{const p=pool();if(!p)throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');return await p.getConnection() as never;}}), plans,knowledge,new CaseCursorCodec(key), 'proposal' in environment ? environment as TrustedActionProposal : undefined, contexts,investigations,executions);
   const registerActions = async (app: FastifyInstance, verify: ReturnType<typeof createVerifyToken>) => {
     await registerActionPlanRoutes(app, verify, plans);
     await registerActionExecutionRoutes(app, verify, executions, executor);

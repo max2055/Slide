@@ -97,8 +97,13 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     await page.goto(`${env.url}/investigations`);
     expect(await page.evaluate(() => isSecureContext)).toBe(true);
     await page.getByRole('button', { name: '创建手动调查' }).click();
+    await page.getByText('自定义标题（选填）', { exact: true }).click();
     await page.getByRole('textbox', { name: '调查标题', exact: true }).fill('可信 TLS 调查');
+    await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
     await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('读取合成只读指标');
+    if (!await page.getByRole('textbox', { name: '资源 ID', exact: true }).isVisible()) {
+      await page.getByText('高级：按资源标识补充', { exact: true }).click();
+    }
     await page.getByRole('textbox', { name: '资源 ID', exact: true }).fill('101');
     await page.getByRole('button', { name: '提交调查', exact: true }).click();
     await expect(page.locator('.investigation-states')).toContainText('执行完成');

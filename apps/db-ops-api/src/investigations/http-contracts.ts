@@ -1,3 +1,4 @@
+import { InvestigationSupplementAnswerSchema } from './supplement-contracts.js';
 import { InvestigationEntryContextSchema, InvestigationDraftResponseSchema, InvestigationEntryFactsSchema } from './entry-contracts.js';
 import { Type, type Static } from '@sinclair/typebox';
 import { InvestigationSubjectSchema, InvestigationLifecycleSchema } from './contracts.js';
@@ -14,6 +15,8 @@ export const InvestigationCreateRequestSchema = Type.Object({ title: text(200), 
   from: Type.Optional(text(32)), to: Type.Optional(text(32)),
 }, { $id: 'InvestigationCreateRequest', ...strict });
 export const InvestigationRequestSchema = Type.Object({ message: text(2_000), expectedVersion: version,
+  supplement: Type.Optional(Type.Object({ resultId: text(36), resultVersion: version,
+    observation: text(1_000), answer: Type.Optional(InvestigationSupplementAnswerSchema) }, strict)),
   continuationOf: Type.Optional(Type.Object({ requestId: text(36), runId: text(36), resultVersion: version, notAfter: Type.Optional(text(32)) }, strict)) },
   { $id: 'InvestigationRequest', ...strict });
 export const InvestigationPatchRequestSchema = Type.Object({ expectedVersion: version,

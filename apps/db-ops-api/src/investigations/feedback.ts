@@ -6,6 +6,7 @@ import type { ActorContext } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
 import { evidenceHash, redactEvidence } from '../analysis/analysis-evidence.js';
 import { InvestigationAuthorization } from './authorization.js';
+import { currentRecoveryTimeline } from './recovery-timeline.js';
 import { InvestigationStoreError, type AdmissionInvestigation } from './store.js';
 import { InvestigationObservationDatabase, observationRows, appendObservation, decode, invalidObservation, absentObservation } from './observation-db.js';
 import { InvestigationResultStore, resultEvidenceIds, type VersionedInvestigationResult } from './result-schema.js';
@@ -72,6 +73,15 @@ export class InvestigationFeedbackStore extends InvestigationObservationDatabase
       }
       if (latest !== result.version || investigation.version !== command.expectedVersion || !Number.isSafeInteger(investigation.version + 1)) throw new InvestigationStoreError('VERSION_CONFLICT');
       if (investigation.lifecycle === 'archived') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
+      if('verification' in command&&command.verification){
+        const [source]=await observationRows(c,'SELECT request_snapshot FROM investigation_requests WHERE id=? AND investigation_id=? FOR SHARE',[result.requestId,investigationId]);
+        if(decode(source?.request_snapshot)?.scopeVersion!==investigation.scopeVersion)throw new InvestigationStoreError('VERSION_CONFLICT');
+        if (command.kind === 'recovery' || command.kind === 'close') {
+          const retestIds=references.filter((_,index)=>metadata[index]?.source==='retest:formal-observations').map(r=>r.id);
+          if (!await currentRecoveryTimeline(c, investigationId, investigation.scopeVersion, command.verification, retestIds))
+            throw new InvestigationStoreError('VERSION_CONFLICT');
+        }
+      }
       if (command.kind === 'close') {
         const [row] = await observationRows(c, 'SELECT active_request_id FROM investigations WHERE id = ?', [investigationId]);
         if (row.active_request_id) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
@@ -115,10 +125,17 @@ export class InvestigationFeedbackStore extends InvestigationObservationDatabase
       const items: InvestigationFeedbackRecord[] = [];
       for (const row of rows.slice(0, limit)) {
         const result = await this.result(c, investigation, row.result_id, Number(row.result_version));
-        const { references } = await this.references(c, actor, investigation, result, decode(row.command_json), false);
+        const { references, metadata } = await this.references(c, actor, investigation, result, decode(row.command_json), false);
         const record = this.record(row, references, Number(latest.version));
+        if (record.verification && ['recovery', 'close'].includes(record.command.kind)) {
+          const [source] = await observationRows(c, 'SELECT request_snapshot FROM investigation_requests WHERE id=? AND investigation_id=? FOR SHARE', [result.requestId, investigationId]);
+          record.staleVerification = record.staleResult || references.some(ref => ref.status === 'expired')
+            || decode(source?.request_snapshot)?.scopeVersion !== investigation.scopeVersion
+            || !await currentRecoveryTimeline(c, investigationId, investigation.scopeVersion, record.verification,
+              references.filter((_, index) => metadata[index]?.source === 'retest:formal-observations').map(ref => ref.id));
+        }
         if (record.verification?.actionReport) {
-          record.staleVerification = record.staleResult || investigation.version !== record.version;
+          record.staleVerification = record.staleVerification || record.staleResult || investigation.version !== record.version;
           if (!record.staleVerification) {
             try {
               await this.actionReports.forFeedback(c as never, actor, investigationId, result.id, result.version,

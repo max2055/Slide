@@ -56,7 +56,7 @@ test('lost WS plus pruned replay: snapshot keeps canonical message IDs and Run c
   const counts = env.counts();
   await env.pool.query('DELETE FROM investigation_stream_events WHERE investigation_id=?', [investigation.id]);
   env.disconnectObservers();
-  await expect(page.getByRole('alert')).toContainText('连接中断');
+  await expect(page.locator('.workspace-error[role=alert]')).toContainText('连接中断');
   await expect(page.locator('.investigation-states')).toContainText('执行完成', { timeout: 15_000 });
   await page.reload(); await expect(page.locator('.investigation-states')).toContainText('执行完成');
   const [after] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [investigation.sessionId]);

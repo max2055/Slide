@@ -218,3 +218,10 @@ it('ordinary completed continuation keeps its original payload', async () => {
   const c = partialController(); c.detail!.derivedRunState = 'completed'; await c.continue('新目标');
   expect(JSON.parse(api.mock.calls[0][1]!.body as string)).toEqual({ message: '新目标', expectedVersion: 3 });
 });
+
+it('blocks continuation while confirmed scope facts are being refreshed',async()=>{
+ const c=new InvestigationsController(()=>{},null);(c as any).detail={id:'one',version:2};(c as any).id='one';
+ let done!:()=>void;vi.spyOn(c,'refreshFacts').mockImplementation(()=>new Promise(r=>done=r));
+ const pending=c.refreshAfterWorkflow();expect(c.continuationUnavailable).toBe(true);await c.continue('new scope');expect(api).not.toHaveBeenCalled();
+ done();await pending;expect(c.continuationUnavailable).toBe(false);
+});

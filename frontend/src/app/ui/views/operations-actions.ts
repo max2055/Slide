@@ -8,6 +8,8 @@ import '../components/app-card.ts';
 import '../components/app-badge.ts';
 import '../components/app-empty-state.ts';
 import '../components/app-dialog.ts';
+import '../components/app-form-field.ts';
+import type { InvestigationRecord } from '../controllers/investigation-api.ts';
 import '../components/investigation-feedback.ts';
 
 interface PlanApproval { id: number | string; status: string; args_redacted: unknown; tool_name: string }
@@ -32,13 +34,26 @@ export class OperationsActions extends LitElement {
   @state() private formError = '';
   @state() private investigation = '';
   @state() private stateFilter = '';
-  @state() private draftResult = 1;
+  @state() private draftResult = 0;
   @state() private draftTarget = 0;
   @state() private draftImpact = '';
   @state() private executionIds: string[] = [];
+  private source = new OperationsResource<InvestigationRecord & {latestResult:{id:string;version:number;result:{summary:string}}|null}>(this, () => {this.draftTarget=0;this.draftResult=0;this.draftImpact='';}, authorizedJson);
+  private sources = new OperationsResource<{items:InvestigationRecord[]}>(this, undefined, authorizedJson);
+  private async loadSource() {
+    this.draftTarget=0;this.draftImpact='';
+    if (!this.investigation) {this.source.reset();return;}
+    const wantedTarget=Number(new URL(location.href).searchParams.get('targetId'));
+    const inv=await this.source.load(`/api/investigations/${encodeURIComponent(this.investigation)}`);
+    if(inv) {
+      if(!this.draftResult)this.draftResult=inv.latestResult?.version??0;
+      const targets=inv.resources.filter(r=>r.type==='server');
+      this.draftTarget=targets.find(r=>r.id===wantedTarget)?.id ?? (targets.length===1?targets[0].id:0);
+    }
+  }
   private discovery = new OperationsResource<{items:PlanRecord[];partial:boolean;nextCursor:string|null;authorizedCounts:{total:number}}>(this);
 
-  private plans = new OperationsResource<{plan:PlanRecord}>(this, () => this.clearDrafts());
+  private plans = new OperationsResource<{plan:PlanRecord;reportReference?:{id:string;version:number}|null}>(this, () => this.clearDrafts());
   private approvals = new OperationsResource<ApprovalPage>(this, () => this.clearDrafts(), authorizedJson);
   private clearDrafts() { this.approvalId='';this.note='';this.confirmAction='';this.editing=false;this.impact='';this.formError=''; }
   private can(action:string) { return hasSlidePermission(this.permissions,`operations:actions:${action}`); }
@@ -48,7 +63,11 @@ export class OperationsActions extends LitElement {
   protected firstUpdated() {
     this.planId=new URL(location.href).searchParams.get('plan') ?? '';
     this.investigation=new URL(location.href).searchParams.get('sourceInvestigation') ?? '';
-    if (this.planId) void this.open(this.planId,false); else void this.discover();
+    const resultVersion=new URL(location.href).searchParams.get('resultVersion');
+    if(resultVersion && /^[1-9]\d*$/.test(resultVersion) && Number.isSafeInteger(Number(resultVersion)))this.draftResult=Number(resultVersion);
+    const targetId=new URL(location.href).searchParams.get('targetId');
+    if(targetId && /^[1-9]\d*$/.test(targetId) && Number.isSafeInteger(Number(targetId)))this.draftTarget=Number(targetId);
+    if (this.planId) void this.open(this.planId,false); else {void this.discover();if(this.investigation)void this.loadSource();else void this.sources.load('/api/investigations?limit=50');}
     if (hasSlidePermission(this.permissions,'approval:view')) void this.loadApprovals();
   }
   private async loadApprovals() {
@@ -63,12 +82,14 @@ export class OperationsActions extends LitElement {
   private async open(id:string,push=true) {
     this.clearDrafts();this.executionIds=[];this.planId=id;
     if(push) { const u=new URL(location.href);u.searchParams.set('plan',id);history.pushState({},'',u); }
-    const result=await this.plans.load(`/actions/plans/${encodeURIComponent(id)}`);
+    const focusedExecution=new URL(location.href).searchParams.get('attentionExecution');
+    const result=await this.plans.load(focusedExecution?`/actions/execution-context/${encodeURIComponent(focusedExecution)}`:`/actions/plans/${encodeURIComponent(id)}`);
     if(result) {
+      if(focusedExecution){this.executionIds=[focusedExecution];return;}
       this.bindApproval(result.plan);
       if(result.plan.state==='approved' && this.filter!=='processed'){this.filter='processed';void this.loadApprovals();}
       const page=await this.discovery.load(`/actions/plans?planId=${encodeURIComponent(id)}`);
-      if(this.plans.data?.plan.id===id) {const current=page?.items?.find(p=>p.id===id);this.executionIds=current?.executions?.map(e=>e.id) ?? [];if(current?.approvalId)this.approvalId=current.approvalId;}
+      if(this.plans.data?.plan.id===id) {const current=page?.items?.find(p=>p.id===id);const expectedExecution=new URL(location.href).searchParams.get('attentionExecution');this.executionIds=current?.executions?.filter(e=>!expectedExecution||e.id===expectedExecution&&e.planVersion===result.plan.version).map(e=>e.id) ?? [];if(current?.approvalId)this.approvalId=current.approvalId;}
     }
   }
   private async discover(cursor?:string) {
@@ -79,13 +100,13 @@ export class OperationsActions extends LitElement {
     await this.discovery.load(`/actions/plans?${q}`);
   }
   private async draft() {
-    if(!this.investigation.trim()||!this.draftTarget||!this.draftImpact.trim())return;
+    if(!this.source.data||this.source.locked||this.source.data.activeRequestId||this.source.data.latestResult?.version!==this.draftResult||!this.draftTarget||!this.draftImpact.trim())return;
     const value=await this.plans.write<{plan:PlanRecord}>('/actions/drafts',{investigationId:this.investigation.trim(),resultVersion:this.draftResult,targetId:this.draftTarget,impact:this.draftImpact.trim()});
     if(value)await this.open(value.plan.id);
   }
   private discoveryView() {
     const d=this.discovery;
-    return html`<app-card><span slot="header">行动计划</span><div class="toolbar"><label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event)=>this.investigation=(e.target as HTMLInputElement).value}></label>
+    return html`<app-card><span slot="header">行动计划</span><div class="toolbar"><details><summary>按调查标识筛选（高级）</summary><label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event)=>{this.investigation=(e.target as HTMLInputElement).value;this.source.reset();this.draftResult=0;}}></label></details>
       <label>计划状态<select aria-label="计划状态筛选" .value=${this.stateFilter} @change=${(e:Event)=>{this.stateFilter=(e.target as HTMLSelectElement).value;void this.discover();}}><option value="">全部状态</option>${['draft','pending_approval','approved','rejected','expired'].map(s=>html`<option value=${s}>${operationLabels[s]}</option>`)}</select></label><button class="btn btn-refresh" ?disabled=${d.locked} @click=${()=>this.discover()}>查找计划</button></div>
       ${d.loading?html`<p role="status">正在查找计划…</p>`:nothing}${d.error?html`<p role="alert">${d.error}</p>`:nothing}
       ${d.data?.items?.map(p=>html`<div class="row"><button class="btn-ghost" @click=${()=>void this.open(p.id)}>计划 ${p.id} · v${p.version}</button><span>${operationLabels[p.state]}</span><p>${p.content.impact}</p><p class="muted">${p.executions?.map(e=>`v${e.planVersion} · ${operationLabels[e.state]??e.state}`).join('；')||'暂无可见执行记录'}</p></div>`)}
@@ -93,10 +114,22 @@ export class OperationsActions extends LitElement {
       ${d.data?.partial?html`<p class="notice warn">当前窗口不完整；本页 ${d.data.authorizedCounts.total} 条可见计划，请继续翻页。</p>`:nothing}
       ${d.data?.nextCursor?html`<button class="btn" ?disabled=${d.locked} @click=${()=>this.discover(d.data!.nextCursor!)}>下一页计划</button>`:nothing}
     </app-card>${this.can('propose')?html`<app-card><span slot="header">从当前调查创建草案</span><p>服务器解析已注册工具、策略和验证器；创建草案后仍需独立审批与显式执行。</p>
-      <label>当前结果版本<input aria-label="草案结果版本" type="number" min="1" .value=${String(this.draftResult)} @input=${(e:Event)=>this.draftResult=Number((e.target as HTMLInputElement).value)}></label>
-      <label>目标服务器<input aria-label="草案目标服务器" type="number" min="1" .value=${String(this.draftTarget||'')} @input=${(e:Event)=>this.draftTarget=Number((e.target as HTMLInputElement).value)}></label>
-      <label>预计影响<textarea aria-label="草案预计影响" maxlength="2000" .value=${this.draftImpact} @input=${(e:Event)=>this.draftImpact=(e.target as HTMLTextAreaElement).value}></textarea></label>
-      <button class="btn-primary" ?disabled=${this.plans.locked||!this.investigation||!this.draftTarget||!this.draftImpact.trim()} @click=${this.draft}>创建可信来源草案</button></app-card>`:nothing}`;
+      ${this.source.loading?html`<p role="status">正在读取来源结果与授权目标…</p>`:nothing}
+      ${this.source.error?html`<p role="alert">${this.source.error}</p>`:nothing}
+      ${!this.investigation?html`<app-form-field label="来源调查"><select aria-label="草案来源调查" @change=${(e:Event)=>{this.investigation=(e.target as HTMLSelectElement).value;this.draftResult=0;void this.loadSource();void this.discover();}}><option value="">请选择已有调查</option>${this.sources.data?.items.map(i=>html`<option value=${i.id}>${i.title}</option>`)}</select></app-form-field>`:nothing}
+      ${this.source.data?html`<p>来源：${this.source.data.title} · 结果 V${this.draftResult}</p><p>${this.source.data.latestResult?.result.summary??'尚无结果，先完成只读调查。'}</p>
+        ${this.source.data.latestResult?.version!==this.draftResult?html`<p role="alert">来源结果已变化，请返回调查核对当前结果后重新创建草案。</p>`:nothing}
+        ${this.source.data.activeRequestId?html`<p role="status">调查仍在执行，等待结果保存后再整理行动。</p>`:nothing}
+        <app-form-field label="目标服务器" hint="仅列出来源调查中的服务器；受信注册与证据仍由服务端复核。">
+          <select aria-label="草案目标服务器" .value=${String(this.draftTarget)} ?disabled=${this.source.locked}
+            @change=${(e:Event)=>this.draftTarget=Number((e.target as HTMLSelectElement).value)}>
+            <option value="0">请选择</option>${this.source.data.resources.filter(r=>r.type==='server').map(r=>html`<option value=${r.id}>${resourceLabel(r)}</option>`)}</select>
+        </app-form-field>
+        <app-form-field label="预计影响确认"><select aria-label="草案预计影响" .value=${this.draftImpact} ?disabled=${this.source.locked}
+          @change=${(e:Event)=>this.draftImpact=(e.target as HTMLSelectElement).value}>
+          <option value="">请选择</option><option value="重启专用演练服务可能短暂中断服务，原进程内存不可恢复；需独立审批及后续实际观测验证。">已理解专用服务短暂中断与原进程内存不可恢复的影响</option></select></app-form-field>
+      `:nothing}
+      <button class="btn-primary" ?disabled=${this.plans.locked||this.source.locked||!this.source.data||!!this.source.data.activeRequestId||this.source.data.latestResult?.version!==this.draftResult||!this.draftTarget||!this.draftImpact.trim()} @click=${this.draft}>创建可信来源草案</button></app-card>`:nothing}`;
   }
   private async submit() {
     const p=this.plans.data?.plan;if(!p)return;
@@ -105,7 +138,7 @@ export class OperationsActions extends LitElement {
   }
   private async review() {
     const p=this.plans.data?.plan, action=this.confirmAction;
-    if(!p || !action || !this.note.trim() || !/^[1-9]\d{0,19}$/.test(this.approvalId)) return;
+    if(!p || !action || !/^[1-9]\d{0,19}$/.test(this.approvalId)) return;
     this.confirmAction='';
     const result=await this.plans.write<{plan:PlanRecord}>(`/actions/plans/${encodeURIComponent(p.id)}/review`,{expectedVersion:p.version,approvalId:this.approvalId,action,note:this.note.trim()});
     if(result) { this.plans.data=result;this.note='';this.requestUpdate();void this.loadApprovals(); }
@@ -133,23 +166,26 @@ export class OperationsActions extends LitElement {
       ${this.can('propose') ? html`<button class="btn" ?disabled=${this.plans.locked} @click=${()=>{this.editing=true;this.impact=c.impact;}}>编辑为新计划版本</button>`:nothing}
       ${this.editing ? html`<label>预计影响<textarea aria-label="预计影响" maxlength="2000" .value=${this.impact} ?disabled=${this.plans.locked} @input=${(e:Event)=>this.impact=(e.target as HTMLTextAreaElement).value}></textarea></label><p class="notice warn">保存新版本使旧批准失效，必须重新提交审核。</p><button class="btn-primary" ?disabled=${this.plans.locked||!this.impact.trim()} @click=${this.revise}>保存新计划版本</button>`:nothing}
     </app-card>${p.state==='pending_approval'&&this.can('approve') ? html`<app-card><span slot="header">独立人工审批</span><p>提交者与作者不能自批。批准仅绑定当前内容版本，且仍需显式执行。</p>
-      <label>审批记录号<input aria-label="审批记录号" inputmode="numeric" maxlength="20" .value=${this.approvalId} ?disabled=${this.plans.locked} @input=${(e:Event)=>this.approvalId=(e.target as HTMLInputElement).value}></label>
-      <label>审批备注<textarea aria-label="审批备注" maxlength="1000" .value=${this.note} ?disabled=${this.plans.locked} @input=${(e:Event)=>this.note=(e.target as HTMLTextAreaElement).value}></textarea></label>
-      <button class="btn-primary" ?disabled=${this.plans.locked||own||!fresh||!this.note.trim()||!/^[1-9]\d{0,19}$/.test(this.approvalId)} @click=${()=>this.confirmAction='approve'}>批准当前版本</button>
-      <button class="btn" ?disabled=${this.plans.locked||own||!fresh||!this.note.trim()||!/^[1-9]\d{0,19}$/.test(this.approvalId)} @click=${()=>this.confirmAction='reject'}>驳回当前版本</button>
+      <p>${this.approvalId?'已关联当前版本的审批记录。':'尚未找到当前版本审批记录，请刷新核对；不能手工替换审批绑定。'}</p><details><summary>审批记录标识</summary><input aria-label="审批记录号" readonly .value=${this.approvalId}></details>
+      <label>审批备注（选填）<textarea aria-label="审批备注" maxlength="1000" .value=${this.note} ?disabled=${this.plans.locked} @input=${(e:Event)=>this.note=(e.target as HTMLTextAreaElement).value}></textarea></label>
+      <button class="btn-primary" ?disabled=${this.plans.locked||own||!fresh||!/^[1-9]\d{0,19}$/.test(this.approvalId)} @click=${()=>this.confirmAction='approve'}>批准当前版本</button>
+      <button class="btn" ?disabled=${this.plans.locked||own||!fresh||!/^[1-9]\d{0,19}$/.test(this.approvalId)} @click=${()=>this.confirmAction='reject'}>驳回当前版本</button>
     </app-card>`:nothing}</aside></div>`;
   }
   render() {
+    const params=new URL(location.href).searchParams;
+    const stale=!!this.plans.data&&(this.plans.data.plan.id!==this.planId||params.has('attentionPlanVersion')&&params.get('attentionPlanVersion')!==String(this.plans.data.plan.version)||params.has('attentionPlanHash')&&params.get('attentionPlanHash')!==this.plans.data.plan.contentHash||params.has('sourceInvestigation')&&params.get('sourceInvestigation')!==this.plans.data.plan.content.investigationId||params.has('attentionApproval')&&!!this.approvalId&&params.get('attentionApproval')!==this.approvalId||params.has('attentionExecution')&&!this.executionIds.includes(params.get('attentionExecution')!)||params.has('attentionReport')&&(params.get('attentionReport')!==this.plans.data.reportReference?.id||params.get('attentionReportVersion')!==String(this.plans.data.reportReference?.version)));
     const p=this.plans, bindings=this.approvals.data?.items.filter(row=>row.kind==='agent').map(approvalPlanBinding).filter(b=>b!==null) ?? [];
     return html`<div class="heading"><div><h1>行动中心</h1><p class="muted">明确目标、独立批准、受控执行，分别核对执行与恢复。</p></div></div>
-      <form class="toolbar" @submit=${(e:Event)=>{e.preventDefault();if(this.planId.trim())void this.open(this.planId.trim());}}><label>打开计划<input aria-label="打开计划" placeholder="输入计划标识" required maxlength="128" .value=${this.planId} @input=${(e:Event)=>this.planId=(e.target as HTMLInputElement).value}></label><button class="btn" ?disabled=${p.loading||p.writing||p.accessInvalidated}>读取计划</button>${p.data?html`<button class="btn btn-refresh" type="button" ?disabled=${p.loading||p.writing||p.accessInvalidated} @click=${()=>void this.open(p.data!.plan.id,false)}>刷新原计划</button>`:nothing}</form>
+      ${params.get("returnTo")==="/investigations"?html`<a href="/investigations">返回工作空间并刷新原记录提醒</a>`:nothing}
+      <details><summary>按计划标识打开（高级）</summary><form class="toolbar" @submit=${(e:Event)=>{e.preventDefault();if(this.planId.trim())void this.open(this.planId.trim());}}><label>打开计划<input aria-label="打开计划" placeholder="输入计划标识" required maxlength="128" .value=${this.planId} @input=${(e:Event)=>this.planId=(e.target as HTMLInputElement).value}></label><button class="btn" ?disabled=${p.loading||p.writing||p.accessInvalidated}>读取计划</button>${p.data?html`<button class="btn btn-refresh" type="button" ?disabled=${p.loading||p.writing||p.accessInvalidated} @click=${()=>void this.open(p.data!.plan.id,false)}>刷新原计划</button>`:nothing}</form></details>
       ${p.error?html`<p role="alert">${p.error}</p>`:nothing}${p.mutationUnknown?html`<p class="notice warn" role="status">操作接受结果未知。仅可只读刷新核对原计划，当前页面不会重发。</p>`:nothing}${p.loading?html`<div class="skeleton" role="status">正在读取计划…</div>`:nothing}
-      ${p.data?this.renderPlan(p.data.plan):html`<div class="layout"><section>${this.discoveryView()}<app-card><span slot="header">统一审批记录</span><p class="muted">审批记录保留审核历史；计划与执行请使用上方授权列表。</p>
+      ${stale?html`<p role="alert">提醒引用的计划版本已变化，操作暂不可用。<a href=${`/operations-actions?plan=${encodeURIComponent(p.data!.plan.id)}${params.has("attentionExecution")?`&attentionExecution=${encodeURIComponent(params.get("attentionExecution")!)}`:""}`}>打开当前原计划并重新确认</a></p>`:p.data?this.renderPlan(p.data.plan):html`<div class="layout"><section>${this.discoveryView()}<app-card><span slot="header">统一审批记录</span><p class="muted">审批记录保留审核历史；计划与执行请使用上方授权列表。</p>
         ${hasSlidePermission(this.permissions,'approval:view')?html`<div class="toolbar"><label>审批状态<select aria-label="行动审批状态" .value=${this.filter} ?disabled=${this.approvals.loading||this.approvals.accessInvalidated} @change=${(e:Event)=>{this.filter=(e.target as HTMLSelectElement).value;void this.loadApprovals();}}><option value="pending">待审批</option><option value="processed">已处理</option></select></label><button class="btn btn-refresh" ?disabled=${this.approvals.loading||this.approvals.accessInvalidated} @click=${this.loadApprovals}>刷新已提交计划</button></div>`:html`<p>需要审批查看权限才能发现已提交记录；仍可按计划标识读取授权内容。</p>`}
         ${this.approvals.loading?html`<p role="status">正在读取审批记录…</p>`:nothing}${this.approvals.error?html`<p role="alert">${this.approvals.error}</p>`:nothing}
         ${bindings.map(b=>html`<div class="row"><button class="btn-ghost" @click=${()=>void this.open(b.planId)}>审批记录 ${b.approvalId} · 计划 ${b.planId} · v${b.version}</button><span class="muted">${operationLabels[b.status]??b.status} · 打开后核对当前版本</span></div>`)}
         ${this.approvals.data&&!bindings.length?html`<app-empty-state title="没有可见的已提交计划" description="此结果不包含未提交草稿，也不代表没有在途执行。"></app-empty-state>`:nothing}
-      </app-card></section><aside><app-card><span slot="header">行动边界</span><p>仅支持专用演练服务；计划变更后旧批准失效。未知回执需核对原动作，不提供执行重试。</p><a href="/investigations">返回 AI 工作空间</a></app-card></aside></div>`}
+      </app-card></section><aside><app-card><span slot="header">行动边界</span><p>仅支持专用演练服务；计划变更后旧批准失效。未知回执需核对原动作，不提供执行重试。</p><a href=${this.investigation ? `/investigations?investigation=${encodeURIComponent(this.investigation)}` : '/investigations'}>返回 AI 工作空间</a></app-card></aside></div>`}
       <app-dialog .open=${!!this.confirmAction} title="确认当前计划审批" @app-dialog-close=${()=>this.confirmAction=''}><p>目标：${p.data?resourceLabel(p.data.plan.content.target):''} · 版本 ${p.data?.plan.version}</p><p class="notice warn">${p.data?.plan.content.rollback.description}</p><p>此批准不执行动作；更改版本后需重新审批。</p><div slot="footer"><button class="btn" @click=${()=>this.confirmAction=''}>取消</button><button class="btn-primary" ?disabled=${p.locked} @click=${this.review}>确认${this.confirmAction==='approve'?'批准':'驳回'}当前版本</button></div></app-dialog>`;
   }
 }

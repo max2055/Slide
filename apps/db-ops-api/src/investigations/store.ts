@@ -1,3 +1,5 @@
+import { Value } from '@sinclair/typebox/value';
+import { InvestigationSupplementAnswerSchema, type InvestigationSupplementAnswer } from './supplement-contracts.js';
 import type { InvestigationEntryContext } from './entry-contracts.js';
 import { assertKnownPartial, type InvestigationContinuation } from './continuation.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -16,6 +18,7 @@ export class InvestigationStoreError extends Error {
 export type InvestigationActor = { kind: 'user' | 'service'; id: number };
 export interface InvestigationAdmission {
   continuationOf?: InvestigationContinuation;
+  supplement?: { resultId: string; resultVersion: number; observation: string; answer?: InvestigationSupplementAnswer };
   investigationId: string;
   actor: InvestigationActor;
   idempotencyKey: string;
@@ -44,6 +47,7 @@ export interface AdmissionInvestigation {
   profileId: string;
   profileVersion: number;
   scopeVersion: string;
+  scopeRevision?: number;
   lifecycle: 'open' | 'waiting' | 'closed' | 'archived';
   version: number;
   owner: Readonly<InvestigationActor>;
@@ -132,6 +136,15 @@ function validate(input: InvestigationAdmission): void {
     || typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim() || Buffer.byteLength(input.idempotencyKey) > 255
     || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 2_000
     || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) throw invalid();
+  const supplement = input.supplement;
+  if (supplement && (!uuid.test(supplement.resultId) || !Number.isSafeInteger(supplement.resultVersion)
+    || supplement.resultVersion < 1 || !validText(supplement.observation, 1_000)
+    || Object.keys(supplement).some(key => !['resultId', 'resultVersion', 'observation', 'answer'].includes(key)))) throw invalid();
+  if (supplement && supplement.answer !== undefined && !Value.Check(InvestigationSupplementAnswerSchema, supplement.answer)) throw invalid();
+}
+/** User statements remain explicitly unverified; the original result is never rewritten. */
+export function admissionMessage(input: Pick<InvestigationAdmission, 'message' | 'supplement'>): string {
+  return input.supplement ? `基于已保存结果 V${input.supplement.resultVersion} 的结构化补充（用户陈述，尚未验证）：\n${input.supplement.observation}\n本轮问题：\n${input.message}` : input.message;
 }
 async function select<T extends RowDataPacket>(connection: TransactionConnection, sql: string, values: unknown[]): Promise<T[]> {
   const [rows] = await connection.execute(sql, values) as [T[], unknown];
@@ -167,7 +180,7 @@ export class MysqlInvestigationStore {
   private toRecord(row: RowDataPacket, resources: readonly RowDataPacket[], creation?: RowDataPacket): InvestigationRecord {
     const context = creation?.command_snapshot?.context;
     return { ...(context ? { context } : {}), id: row.id, sessionId: row.session_id, title: row.title, goal: row.goal,
-      profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version,
+      profileId: row.profile_id, profileVersion: Number(row.profile_version), scopeVersion: row.scope_version, scopeRevision: Number(row.scope_revision ?? 0),
       lifecycle: row.lifecycle, problemStatus: row.problem_status, version: Number(row.version),
       owner: Object.freeze({ kind: row.owner_kind, id: Number(row.owner_id) }),
       resources: Object.freeze(resources.map(resource => Object.freeze({ type: resource.resource_type,
@@ -442,13 +455,14 @@ export class MysqlInvestigationStore {
     append: (event: OutboxInput) => Promise<string>,
     input: InvestigationAdmission): Promise<InvestigationAdmissionResult> {
     validate(input);
-    input = { ...input, actor: { ...input.actor } };
+    input = { ...input, actor: { ...input.actor }, ...(input.supplement ? { supplement: structuredClone(input.supplement) } : {}) };
     if (typeof this.authorize !== 'function') throw new InvestigationStoreError('INVESTIGATION_OPERATION_FORBIDDEN');
     // All fields are primitives in fixed order. Freeze the caller's command,
     // not a newly resolved Profile version that could change on a retry.
     const requestHash = createHash('sha256').update(JSON.stringify([
       input.investigationId, input.message, input.expectedVersion,
       ...(input.continuationOf ? [input.continuationOf.requestId, input.continuationOf.runId, input.continuationOf.resultVersion, input.continuationOf.notAfter ?? null] : []),
+      ...(input.supplement ? [input.supplement.resultId, input.supplement.resultVersion, input.supplement.observation, ...(input.supplement.answer ? [input.supplement.answer.gapIndex, input.supplement.answer.kind, 'value' in input.supplement.answer ? input.supplement.answer.value : null, 'source' in input.supplement.answer ? input.supplement.answer.source : null] : [])] : []),
     ])).digest('hex');
     const key = Buffer.from(input.idempotencyKey, 'utf8');
     const keyValues = [input.actor.kind, input.actor.id, key];
@@ -480,6 +494,23 @@ export class MysqlInvestigationStore {
       ON r.idempotency_key=CONCAT('investigation:',q.id) WHERE q.investigation_id=? ORDER BY q.accepted_version DESC LIMIT 1 FOR UPDATE`, [investigation.id]);
     if (input.continuationOf) await assertKnownPartial(connection, investigation.id, input.continuationOf);
     else if (latestRun?.state === 'partial') throw new InvestigationStoreError('VERSION_CONFLICT');
+    if (input.supplement) {
+      const [base] = await select(connection, `SELECT id, version, result_json FROM investigation_results
+        WHERE investigation_id = ? ORDER BY version DESC LIMIT 1 FOR UPDATE`, [investigation.id]);
+      if (!base || base.id !== input.supplement.resultId || Number(base.version) !== input.supplement.resultVersion)
+        throw new InvestigationStoreError('VERSION_CONFLICT');
+      if (input.supplement.answer) {
+        const result = typeof base.result_json === 'string' ? JSON.parse(base.result_json) : base.result_json;
+        const question = result?.unresolvedQuestions?.[input.supplement.answer.gapIndex];
+        if (typeof question !== 'string' || !question.trim()) throw invalid();
+        // The original server result owns the question; client text cannot substitute it.
+        const answer = input.supplement.answer;
+        const statement = answer.kind === 'unknown' ? '不清楚；保留此缺口，不推定正常或异常'
+          : answer.kind === 'choice' ? `${answer.value === 'observed' ? '观察到相关现象' : '未观察到相关现象'}；来源：用户观察（未验证）`
+          : `数值：${answer.value}；来源：${answer.source === 'user_measurement' ? '用户测量' : '用户转录监控展示'}（单位与时间以原缺口为准；未验证）`;
+        input.message = `核实当前结果中的缺口：${question}\n${statement}。\n${input.message}`;
+      }
+    }
     const version = investigation.version + 1;
     if (!Number.isSafeInteger(version)) throw new InvestigationStoreError('VERSION_CONFLICT');
     const requestId = randomUUID();
@@ -487,7 +518,8 @@ export class MysqlInvestigationStore {
     const jobKey = `investigation.execute:${requestId}`;
     // Only IDs go in the Workflow queue; the immutable request owns the
     // execution snapshot. No Agent Run is fabricated at admission time.
-    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: input.message,
+    const snapshot = { ...investigation, problemStatus: 'unconfirmed' as const, actor: { ...input.actor }, message: admissionMessage(input),
+      ...(input.supplement ? { supplement: structuredClone(input.supplement) } : {}),
       ...(input.continuationOf ? { continuationOf: structuredClone(input.continuationOf) } : {}) };
     await connection.execute(`INSERT INTO investigation_requests
       (id, investigation_id, actor_kind, actor_id, idempotency_key, request_hash, request_snapshot, job_id, accepted_version)

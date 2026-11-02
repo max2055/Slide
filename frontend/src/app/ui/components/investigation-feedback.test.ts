@@ -88,3 +88,19 @@ it('uses the actual report binding with visible local observation times and clea
   expect(command.verification).toMatchObject({actionReport:{id:'report',version:2,hash:'a'.repeat(64)},evidenceIds:[],from:'2026-01-01T00:00:00.000Z',to:'2026-01-01T00:05:00.000Z'});
   view.actionReport={...view.actionReport,version:3,contentHash:'b'.repeat(64)};await view.updateComplete;expect((view as any).useActionReport).toBe(false);
 });
+it('selects authorized evidence and its actual window without typing IDs, method or note',async()=>{
+  const view=await form();(view as any).note='';(view as any).kind='recovery';
+  view.evidence=[{id:'proof',investigationId:'one',requestId:'q',runId:'run',source:'observation',summary:'正式后续采样',resources:[],observedFrom:'2026-01-01T00:00:00.000Z',observedTo:'2026-01-01T00:05:00.000Z',collectedAt:'2026-01-01T00:05:00.000Z',contentHash:'a'.repeat(64),expiresAt:new Date(Date.now()+60000).toISOString(),status:'available'}];
+  await view.updateComplete;const select=view.querySelector<HTMLSelectElement>('[aria-label="验证证据"]')!;
+  select.value='proof';select.dispatchEvent(new Event('change'));await view.updateComplete;
+  vi.mocked(investigationApi).mockResolvedValueOnce(record);await (view as any).submit();
+  const command=JSON.parse(vi.mocked(investigationApi).mock.calls.at(-1)![1]!.body as string);
+  expect(command.verification).toEqual({method:'人工核对所选观测证据',evidenceIds:['proof'],from:'2026-01-01T00:00:00.000Z',to:'2026-01-01T00:05:00.000Z'});
+  expect(command.note).toContain('人工提交');
+});
+it('labels superseded human verification as history instead of current recovery proof',async()=>{
+  const view=await form();
+  vi.mocked(investigationApi).mockResolvedValueOnce({items:[{...record,staleVerification:true}],nextBefore:null});
+  await (view as any).load();await view.updateComplete;
+  expect(view.textContent).toContain('验证依据已被后续记录取代或失效');
+});

@@ -6,6 +6,7 @@ import { InvestigationAuthorization, freezeInvestigationCaller } from '../../inv
 import { validateInvestigationResult } from '../../investigations/contracts.js';
 import { resultEvidenceIds } from '../../investigations/result-schema.js';
 import { InvestigationStoreError } from '../../investigations/store.js';
+import { currentRecoveryTimeline } from '../../investigations/recovery-timeline.js';
 import { OutboxService } from '../../workflows/outbox-service.js';
 import type { ResourceRef } from '../../resources/types.js';
 import { OperationsAuthorization } from '../authorization.js';
@@ -21,6 +22,7 @@ export interface CaseSource {
   investigationId: string; resultVersion: number; resultId: string; resultHash: string;
   requestId: string; runId: string; scopeVersion: string;
   provenance: Record<string, unknown>;
+  retest?:{id:string;version:number;hash:string};
   evidence: { id: string; hash: string; validUntil: string; observedFrom: string | null;
     observedTo: string | null; collectedAt: string;
     quality: { partial: boolean | null; truncated: boolean | null; hasMore: boolean | null };
@@ -51,7 +53,7 @@ const permission = { instance: 'instance:view', server: 'servers:view', network_
 
 /** SQL authorization is evaluated before COUNT/order/LIMIT, never by loading
  * the global case corpus into JS. Every persisted resource must be visible. */
-export function caseVisibility(ceiling: ActorContext, current: ActorContext): { sql: string; values: any[] } {
+function resourceVisibility(ceiling: ActorContext, current: ActorContext): { sql: string; values: any[] } {
   const values: any[] = [], predicates: string[] = [];
   for (const type of ['instance', 'server', 'network_device'] as const) {
     const terms = [`r.resource_type = '${type}'`];
@@ -70,14 +72,19 @@ export function caseVisibility(ceiling: ActorContext, current: ActorContext): { 
     terms.push(`EXISTS(SELECT 1 FROM ${table} target WHERE target.id=r.resource_id${type === 'instance' ? " AND target.lifecycle_state='available'" : ''})`);
     predicates.push(`(${terms.join(' AND ')})`);
   }
-  return { sql: `EXISTS(SELECT 1 FROM trusted_case_resources r WHERE r.case_id=c.id AND r.version=v.version)
-    AND NOT EXISTS(SELECT 1 FROM trusted_case_resources r WHERE r.case_id=c.id AND r.version=v.version AND NOT (${predicates.join(' OR ')}))`, values };
+  return {sql: predicates.join(' OR '),values};
+}
+export function caseVisibility(ceiling:ActorContext,current:ActorContext):{sql:string;values:any[]} {
+  const visibility=resourceVisibility(ceiling,current);
+  return {sql:`EXISTS(SELECT 1 FROM trusted_case_resources r WHERE r.case_id=c.id AND r.version=v.version)
+    AND NOT EXISTS(SELECT 1 FROM trusted_case_resources r WHERE r.case_id=c.id AND r.version=v.version AND NOT (${visibility.sql}))`,values:visibility.values};
 }
 
 /** Source removal/reopening/new result/evidence expiry invalidates every
  * indexed consumer immediately, with no asynchronous cleanup dependency. */
 function sourceVisibility(caller: ActorContext, current: ActorContext): { sql: string; values: any[] } {
   if (![caller, current].every(a => allowed(a, 'chat:view'))) return { sql: 'FALSE', values: [] };
+  const historical=resourceVisibility(caller,current);
   const system = [caller, current].every(a => allowed(a, 'config:view')) ? 'TRUE' : "i.profile_id <> 'system'";
   return { sql: `EXISTS(SELECT 1 FROM investigations i JOIN investigation_results ir
       ON ir.investigation_id=i.id AND ir.version=c.source_result_version
@@ -102,8 +109,9 @@ function sourceVisibility(caller: ActorContext, current: ActorContext): { sql: s
         evidence_id CHAR(36) PATH '$.id', evidence_hash CHAR(64) PATH '$.hash')) e
         LEFT JOIN investigation_evidence ie ON BINARY ie.id=BINARY e.evidence_id AND ie.investigation_id=i.id
           AND ie.request_id=ir.request_id AND ie.run_id=ir.run_id
-        WHERE ie.id IS NULL OR BINARY ie.content_hash<>BINARY e.evidence_hash OR ie.expired_at IS NOT NULL OR ie.expires_at<=UTC_TIMESTAMP(3)))`,
-    values: [caller.principalKind ?? 'user', caller.userId, caller.principalKind === 'service' ? 0 : caller.userId] };
+        WHERE ie.id IS NULL OR BINARY ie.content_hash<>BINARY e.evidence_hash OR ie.expired_at IS NOT NULL OR ie.expires_at<=UTC_TIMESTAMP(3))
+      AND NOT EXISTS(SELECT 1 FROM investigation_scope_resources r WHERE r.investigation_id=i.id AND NOT (${historical.sql})))`,
+    values: [caller.principalKind ?? 'user', caller.userId, caller.principalKind === 'service' ? 0 : caller.userId,...historical.values] };
 }
 
 export class KnowledgeStore {
@@ -154,13 +162,42 @@ export class KnowledgeStore {
     try {
       const investigation = await this.investigations.load(c as never, id);
       await this.investigations.authorize(c as never, caller, investigation, 'content');
-      const [head] = await rows(c, 'SELECT lifecycle,active_request_id FROM investigations WHERE id=? FOR SHARE', [id]);
+      const [head] = await rows(c, 'SELECT lifecycle,problem_status,active_request_id FROM investigations WHERE id=? FOR SHARE', [id]);
       if (head.lifecycle !== 'closed' || head.active_request_id) throw fail();
       const [result] = await rows(c, `SELECT * FROM investigation_results WHERE investigation_id=? AND version=?
         AND version=(SELECT MAX(version) FROM investigation_results WHERE investigation_id=?) FOR SHARE`, [id, resultVersion, id]);
       if (!result) throw fail();
+      const [sourceRequest]=await rows(c,'SELECT request_snapshot FROM investigation_requests WHERE id=? AND investigation_id=? FOR SHARE',[result.request_id,id]);
+      if(json(sourceRequest?.request_snapshot)?.scopeVersion!==investigation.scopeVersion)throw fail();
       const body = json(result.result_json), refs = resultEvidenceIds(body);
       if (!validateInvestigationResult(body, new Set(refs)).ok || !refs.length || refs.length > 100) throw fail();
+      // Revalidate legacy resolved records too: a historical human confirmation
+      // cannot make superseded recovery proof eligible for case publication.
+      if (head.problem_status === 'resolved') {
+        const [closed] = await rows(c, "SELECT verification_json FROM investigation_feedback WHERE investigation_id=? AND result_id=? AND JSON_UNQUOTE(JSON_EXTRACT(command_json,'$.kind'))='close' ORDER BY accepted_version DESC LIMIT 1 FOR SHARE", [id, result.id]);
+        const verification = json(closed?.verification_json);
+        if (!verification) throw fail();
+        const formalIds: string[] = [];
+        for (const ref of verification.evidenceIds ?? []) {
+          const [proof] = await rows(c, 'SELECT metadata_json FROM investigation_evidence WHERE id=? AND investigation_id=? AND request_id=? AND run_id=? FOR SHARE', [ref, id, result.request_id, result.run_id]);
+          if (!proof) throw fail();
+          if (json(proof.metadata_json)?.source === 'retest:formal-observations') formalIds.push(ref);
+          if (!refs.includes(ref)) refs.push(ref);
+        }
+        if (refs.length > 100 || !await currentRecoveryTimeline(c, id, investigation.scopeVersion, verification, formalIds)) throw fail();
+      }
+      // Preserve legacy sources. A no-action recovery adds the exact proof
+      // selected by the human closing record, never just the model's facts.
+      let retest:CaseSource['retest'];
+      const [workflow]=await rows(c,"SELECT payload FROM investigation_workflow_receipts WHERE investigation_id=? AND kind='retest' ORDER BY accepted_version DESC LIMIT 1 FOR SHARE",[id]);
+      const receipt=workflow&&json(workflow.payload);
+      if(receipt?.conclusion==='recovered'&&receipt.scopeVersion===investigation.scopeVersion&&receipt.evidenceId){
+        const [closed]=await rows(c,"SELECT verification_json FROM investigation_feedback WHERE investigation_id=? AND result_id=? AND JSON_UNQUOTE(JSON_EXTRACT(command_json,'$.kind'))='close' ORDER BY accepted_version DESC LIMIT 1 FOR SHARE",[id,result.id]);
+        if(json(closed?.verification_json)?.evidenceIds?.includes(receipt.evidenceId)){
+          if(!refs.includes(receipt.evidenceId))refs.push(receipt.evidenceId);
+          if(refs.length>100)throw fail();retest={id:receipt.id,version:receipt.version,hash:operationsContentHash(receipt)};
+        }
+      }
       const provenance = body.provenance;
       if (![provenance.modelVersion, provenance.promptVersion, ...Object.values(provenance.toolVersions)].every(v =>
         typeof v === 'string' && v.trim() && !/^(unknown|unavailable)$/i.test(v)) || !Object.keys(provenance.toolVersions).length
@@ -185,7 +222,7 @@ export class KnowledgeStore {
           page: { limit: ordinal('limit'), offset: ordinal('offset'), nextOffset: ordinal('nextOffset') } });
       }
       return { resources, source: { investigationId: id, resultVersion, resultId: result.id, resultHash: result.payload_hash,
-        requestId: result.request_id, runId: result.run_id, scopeVersion: investigation.scopeVersion, provenance, evidence } };
+        requestId: result.request_id, runId: result.run_id, scopeVersion: investigation.scopeVersion, provenance, evidence,...(retest?{retest}:{}) } };
     } catch (error) {
       if (error instanceof InvestigationStoreError) {
         if (error.statusCode === 404 || error.statusCode === 403) throw absent();

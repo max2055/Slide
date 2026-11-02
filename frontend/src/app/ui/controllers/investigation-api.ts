@@ -9,7 +9,10 @@ export interface InvestigationRecord {
   id: string; sessionId: string; title: string; goal: string; profileId: 'ops' | 'system'; version: number;
   lifecycle: InvestigationLifecycle; problemStatus: InvestigationProblemStatus; activeRequestId: string | null;
   resources: InvestigationCreateRequest['resourceRefs']; owner: { kind: string; id: number };
+  canOperate?:boolean;
+  latestOutcome?: {resultId:string;resultVersion:number;summary:string;gaps:string[]}|null;
   derivedRunState?: InvestigationExecutionState | null; createdAt: string; updatedAt: string;
+  context?: {from?:string;to?:string;entry?:{sourceEventIds:number[];returnTo:string}};
   legacyAnalysis?: { analysisId: number; status: string; legacy: true; readOnly: true;
     view: { kind: string; summary: string; rootCauseVerification: { status: 'unverified' }; value: unknown } } | null;
 }

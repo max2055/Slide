@@ -14,7 +14,7 @@ export const TAB_GROUPS = [
   },
   {
     label: "operations",
-    tabs: ["events", "resource-diagnosis", "sql-console", "cron-jobs", "reports", "operations-knowledge"],
+    tabs: ["events", "sql-console", "cron-jobs", "reports", "operations-knowledge"],
   },
   {
     label: "securityGovernance",

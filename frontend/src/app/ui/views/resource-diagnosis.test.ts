@@ -6,9 +6,9 @@ vi.mock('../../../api/index.js', () => ({ authFetch }));
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); localStorage.clear(); history.replaceState({}, '', '/'); });
 
 describe('cross-resource diagnosis', () => {
-  it('preserves four groups and registers diagnosis under operations', () => {
+  it('preserves the legacy route while removing the independent diagnosis navigation', () => {
     expect(TAB_GROUPS).toHaveLength(4);
-    expect(TAB_GROUPS.find(group => group.label === 'operations')?.tabs).toContain('resource-diagnosis');
+    expect(TAB_GROUPS.find(group => group.label === 'operations')?.tabs).not.toContain('resource-diagnosis');
     expect(tabFromPath('/resource-diagnosis')).toBe('resource-diagnosis');
   });
 

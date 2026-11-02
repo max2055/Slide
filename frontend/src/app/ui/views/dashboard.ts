@@ -1,3 +1,4 @@
+import { investigationEntryHref } from '../controllers/investigation-entry.ts';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { subscribeServiceRecovery } from '../../../api/service-recovery.js';
 import { LitElement, html, nothing } from 'lit';
@@ -172,9 +173,12 @@ export class DashboardPage extends LitElement {
     return new Date(stamp).toLocaleString();
   }
   private detailHref(ref: Ref, diagnosis = false) {
-    const url = new URL(diagnosis ? '/resource-diagnosis' : ref.type === 'instance' ? '/instance-detail' : ref.type === 'server' ? '/server-detail' : '/network-device-detail', location.origin);
-    if (diagnosis) { url.searchParams.set('resourceType', ref.type); url.searchParams.set('resourceId', String(ref.id)); }
-    else url.searchParams.set(ref.type === 'network_device' ? 'networkDeviceId' : 'id', String(ref.id));
+    if(diagnosis) {
+      const until=new Date(),from=new Date(+until-30*60000);
+      return investigationEntryHref({schemaVersion:1,resourceRefs:[{type:ref.type,id:ref.id,role:'primary'}],from:from.toISOString(),to:until.toISOString(),sourceEventIds:[],returnTo:'/dashboard'+location.search});
+    }
+    const url = new URL(ref.type === 'instance' ? '/instance-detail' : ref.type === 'server' ? '/server-detail' : '/network-device-detail', location.origin);
+    url.searchParams.set(ref.type === 'network_device' ? 'networkDeviceId' : 'id', String(ref.id));
     url.searchParams.set('returnTo', '/dashboard' + location.search);
     return url.pathname + url.search;
   }
