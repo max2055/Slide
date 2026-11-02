@@ -1,4 +1,5 @@
 import { SourceSnapshotCapture } from '../rollout/source-shadow.js';
+import { discoveryBudget } from '../templates/discovery-store.js';
 import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
 import { z } from 'zod';
@@ -125,8 +126,11 @@ export class MetricScheduler {
         throw new Error('SCHEDULE_SUPERSEDED');
       }
       const plan = current.pending.plan;
-      timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), plan.settings.timeout_ms);
-      const settings = plan.settings;
+      const budget = discoveryBudget(plan.parameters);
+      rule(!budget || budget.series_upper_bound <= plan.settings.max_series_per_resource,'DISCOVERY_SERIES_BUDGET');
+      const settings = {...plan.settings,timeout_ms:Math.min(plan.settings.timeout_ms,budget?.timeout_ms??Infinity),
+        max_rows:Math.min(plan.settings.max_rows,budget?.max_rows??Infinity)};
+      timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), settings.timeout_ms);
       // Resolving a credential can wait on a lock too: the live fence must hold
       // before it starts, not only at the commit that refuses a late result.
       await fence.assertCurrent();

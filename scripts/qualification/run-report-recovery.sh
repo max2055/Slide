@@ -29,5 +29,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then echo "isolated report MySQL unavailable" >&2; exit 1; fi
+# Keep schema migrations serial on the shared disposable MySQL; concurrent
+# fresh-schema DDL can exhaust the unchanged 10s investigation setup deadline.
 node scripts/qualification/recovery-observation.mjs "$container" "$port" \
-  pnpm --filter slide-api exec vitest run src/workflows/report-recovery.mysql.test.ts src/workflows/outbox-service.mysql.test.ts src/investigations/store.mysql.test.ts
+  pnpm --filter slide-api exec vitest run --maxWorkers=1 src/workflows/report-recovery.mysql.test.ts src/workflows/outbox-service.mysql.test.ts src/investigations/store.mysql.test.ts

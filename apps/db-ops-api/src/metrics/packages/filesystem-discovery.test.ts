@@ -1,0 +1,12 @@
+import { describe,it,expect } from 'vitest';
+import { collectFilesystems } from './filesystem-discovery.js';
+import type { Transport } from './adapters.js';
+const row=(mount='/data',fsid='42')=>({mount_id:'7',device:'0:22',mount,fs_type:'tmpfs',fsid,used:'4096'});
+const packet=(rows=[row()])=>({boot:'12345678-1234-1234-1234-123456789abc',namespace:'mnt:[32]',before:rows.map(({fsid,used,...r})=>r),rows,after:rows.map(({fsid,used,...r})=>r)});
+const read=(v:any,truncated=false,max=100)=>collectFilesystems({method:'ssh',client:null as never,pool:{execCommands:async()=>[{stdout:typeof v==='string'?v:JSON.stringify(v),stderr:'',exitCode:0,signal:null,truncated}]}} as Transport & {method:'ssh'},5000,max);
+describe('MAX245 filesystem complete inventory and stable identity',()=>{
+  it('retains identity across mount move and reader restart, separates newly created filesystem',async()=>{const a=(await read(packet()))[0],b=(await read(packet([row('/renamed')])))[0],c=(await read(packet([row('/data','43')])))[0];expect(a.dimensions.filesystem_epoch).toBe(b.dimensions.filesystem_epoch);expect(a.dimensions.filesystem_epoch).not.toBe(c.dimensions.filesystem_epoch);expect(a.fields.used).toEqual({encoding:'uint64',value:'4096'});});
+  it('separates boot and namespace lifetimes',async()=>{const p=packet(),a=(await read(p))[0];p.namespace='mnt:[33]';expect((await read(p))[0].dimensions.filesystem_epoch).not.toBe(a.dimensions.filesystem_epoch);p.namespace='mnt:[32]';p.boot='22345678-1234-1234-1234-123456789abc';expect((await read(p))[0].dimensions.filesystem_epoch).not.toBe(a.dimensions.filesystem_epoch);});
+  it('rejects incomplete, truncated, changed and over-budget inventory rather than accepting empty',async()=>{await expect(read('{}')).rejects.toThrow();await expect(read(packet(),true)).rejects.toThrow();await expect(read(packet(),false,0)).rejects.toThrow();const p=packet();p.after=[];await expect(read(p)).rejects.toThrow();p.after=p.before;p.rows=[];await expect(read(p)).rejects.toThrow();expect(await read(packet([]))).toEqual([]);});
+  it('rejects ambiguous duplicate bind roots, invalid fsid and uint64 overflow',async()=>{await expect(read(packet([row(),row('/bind')]))).rejects.toThrow();for(const fsid of ['0','-1','unknown'])await expect(read(packet([row('/data',fsid)]))).rejects.toThrow();const p=packet();p.rows[0].used='18446744073709551616';await expect(read(p)).rejects.toThrow();});
+});

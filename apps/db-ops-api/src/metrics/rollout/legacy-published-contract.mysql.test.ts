@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -30,7 +30,7 @@ import { admin } from '../policy/test-support.js';
  */
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_legacy_contract_${process.pid}`;
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/rollout-contract-20261029.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/rollout-contract-20261029.json', import.meta.url));
 const ref: Ref = { type: 'instance', id: 1 };
 const at = '2026-10-29T00:00:00.000Z';
 const registry = createConfigurationRegistry();
@@ -204,7 +204,8 @@ describe.skipIf(!port)('legacy published contract read by the rollout readers', 
           collector_started: false, worker_started: false, route_mounted: false,
           source_tables_written: 'disposable schema only; no 3306 statements' },
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180_000);
 });

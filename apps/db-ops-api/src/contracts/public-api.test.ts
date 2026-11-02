@@ -138,8 +138,15 @@ describe('generated public API contract', () => {
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
       '/api/metrics/configuration-history/{type}/{id}/{revision}',
+      '/api/metrics/discovery/{type}/{id}',
+      '/api/metrics/discovery/{type}/{id}/stop',
       '/api/metrics/observations',
       '/api/metrics/policy/groups',
+      '/api/metrics/study/capacity',
+      '/api/metrics/study/catalog',
+      '/api/metrics/study/dimensions',
+      '/api/metrics/study/replay',
+      '/api/metrics/study/trend',
       '/api/metrics/template-bindings/{type}/{id}',
       '/api/metrics/template-bindings/{type}/{id}/apply',
       '/api/metrics/template-bindings/{type}/{id}/collect',
@@ -163,6 +170,7 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/capabilities',
       '/api/metrics/templates/library',
       '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/discovery-preview',
       '/api/metrics/templates/{templateId}/draft',
       '/api/metrics/templates/{templateId}/editor',
       '/api/metrics/templates/{templateId}/item',
@@ -274,13 +282,17 @@ describe('generated public API contract', () => {
     const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
     await registerTemplateTriggerRoutes(app,async()=>undefined);
     const {registerTemplateGovernanceRoutes}=await import('../metrics/templates/governance-routes.js');
+    const {registerDiscoveryRoutes}=await import('../metrics/templates/discovery-routes.js');
     await registerTemplateGovernanceRoutes(app,async()=>undefined);
+    await registerDiscoveryRoutes(app,async()=>undefined);
     const {registerResourceTriggerRead}=await import('../metrics/triggers/resource-detail-routes.js');
     await registerResourceTriggerRead(app,async()=>undefined);
     await app.ready();
     await app.close();
     expect([...registered].sort()).toEqual([
       '/api/metrics/configuration-history/{type}/{id}/{revision}',
+      '/api/metrics/discovery/{type}/{id}',
+      '/api/metrics/discovery/{type}/{id}/stop',
       '/api/metrics/template-bindings/{type}/{id}',
       '/api/metrics/template-bindings/{type}/{id}/apply',
       '/api/metrics/template-bindings/{type}/{id}/collect',
@@ -304,6 +316,7 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/capabilities',
       '/api/metrics/templates/library',
       '/api/metrics/templates/{templateId}/copy',
+      '/api/metrics/templates/{templateId}/discovery-preview',
       '/api/metrics/templates/{templateId}/draft',
       '/api/metrics/templates/{templateId}/editor',
       '/api/metrics/templates/{templateId}/item',
@@ -314,7 +327,7 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
     ]);
-    const documented = Object.keys(document.paths).filter(path => path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/')).sort();
+    const documented = Object.keys(document.paths).filter(path => (path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/') || path.startsWith('/api/metrics/discovery/'))).sort();
     expect(documented).toEqual([...registered].sort());
 
     const operation = (path: string, method: 'get' | 'post') => document.paths[path][method];

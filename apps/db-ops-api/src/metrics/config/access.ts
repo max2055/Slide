@@ -71,7 +71,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
       const credentials = await store.getCredentials(ref.id), device = await store.getDevice(ref.id);
       if (!credentials || !device) { discovery.forget(ref.id); throw new AdapterError('permission_denied'); }
       resource.attributes['snmp.version'] = { value: credentials.protocol === 'snmpv2c' ? 2 : 3, source: 'resource_configuration', observed_at: new Date().toISOString() };
-      snmp = preserveDiscovery ? discovery.get(ref.id, [device.host, device.snmpPort, credentials]) : new SnmpDiscovery();
+      snmp = preserveDiscovery ? discovery.get(ref.id, [device.host, device.snmpPort, credentials]) : new SnmpDiscovery(Date.now, undefined, true);
     }
     const reference = `credential:asset-${ref.type}-${ref.id}`;
     // Trial and production each own separate caches; counter collectors need the lifecycle evidence on both paths.

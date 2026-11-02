@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
-vi.mock('../../../api/index.js', () => ({ authFetch }));
+vi.mock('../../../api/index.js', () => ({ authFetch, apiClient:{getSessionContext:()=>1} }));
 import { DatabaseLogTab } from './database-log-tab.js';
 import { SemanticMetrics } from '../components/semantic-metrics.js';
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));

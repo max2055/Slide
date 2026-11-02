@@ -19,6 +19,7 @@
  * at 0 for a new aggregate, while published version numbers are >= 1.
  */
 import { z } from 'zod';
+import { DiscoveryRuleSchema } from './discovery.js';
 import {
   DimensionsSchema, IdSchema, MetricRefSchema, ResourceTypeSchema, TimestampSchema, UnitSchema, VersionSchema,
 } from './definitions.js';
@@ -73,7 +74,8 @@ export const VersionedCapabilityPlaceholderSchema = z.strictObject({
   executable: z.literal(false),
 });
 export const TemplateCapabilitiesSchema = z.strictObject({
-  discovery: VersionedCapabilityPlaceholderSchema,
+  discovery: z.union([VersionedCapabilityPlaceholderSchema,z.strictObject({contract_version:z.literal('1.0.0'),
+    ref:z.literal('builtin:template-discovery.v1'),executable:z.literal(true)})]),
   graphs: VersionedCapabilityPlaceholderSchema,
 });
 
@@ -170,6 +172,7 @@ const aggregateFields = {
   base: TemplateBaseRefSchema.nullable(),
   items: z.array(TemplateItemRefSchema),
   triggers: z.array(TemplateTriggerRefSchema),
+  discovery_rules: z.array(DiscoveryRuleSchema).max(16).optional(),
   parameters: TemplateParametersSchema,
   capabilities: TemplateCapabilitiesSchema,
 };

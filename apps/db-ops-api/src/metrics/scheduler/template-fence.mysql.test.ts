@@ -19,6 +19,8 @@ import { decodeBindingPayload, encodeTemplatePendingPayload } from '../bindings/
 import type { ResourceBindingCandidate } from '../../contracts/metrics/templates.js';
 import type { ClaimedJob, JobExecutionContext } from '../../workflows/worker-runtime.js';
 import { MysqlScheduleStore, type TemplateExecutionSnapshot } from './store.js';
+import { MySqlTemplateRepository } from '../templates/mysql-repository.js';
+import { emptyDraftAggregate, templateContentHash } from '../templates/model.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const RESOURCE = { type: 'instance' as const, id: 1 };
@@ -31,7 +33,8 @@ const JOB_ID = 'job-238-fence';
 const WORKER = 'worker-238';
 const AT = '2026-10-29T12:00:00.000Z';
 const HASH = `sha256:${'a'.repeat(64)}` as const;
-const PIN = { template_id: 'tpl-238', version: 1, content_hash: `sha256:${'b'.repeat(64)}` };
+const AGGREGATE = { ...emptyDraftAggregate('tpl-238'), package_composition: [] };
+const PIN = { template_id: 'tpl-238', version: 1, content_hash: templateContentHash(AGGREGATE) };
 
 const plan = (revision: number) => ({
   kind: 'template_collection_plan' as const, internal: true as const,
@@ -46,10 +49,10 @@ const plan = (revision: number) => ({
 });
 
 /** A stored `templates-v1` row the real codec accepts; nothing about it is mocked. */
-function templatePayload(): string {
+function templatePayload(version = 1): string {
   const binding: ResourceBindingCandidate = {
     resource: { ...RESOURCE }, package: null, group_id: null, overrides: {},
-    revision: REVISION, template_pins: [PIN],
+    revision: REVISION, template_pins: [{ ...PIN, version }],
   } as ResourceBindingCandidate;
   return encodeTemplatePendingPayload({
     binding, base_revision: PLAN_REVISION, target_revision: REVISION, resolution_identity: HASH,
@@ -107,6 +110,16 @@ describe.skipIf(!port)('template execution fence on isolated MySQL', () => {
     await root.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '', database, connectionLimit: 8 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
+    // MAX-245's formal discovery writer resolves every immutable pin. Seed the
+    // real metadata-only version behind this deliberately empty cadence plan.
+    const repository = new MySqlTemplateRepository(pool);
+    await repository.create({ template_id: PIN.template_id, name: 'Fence fixture', status: 'draft', current_published_version: null,
+      revision: 0, created_by: 1, created_at: AT, updated_at: AT },
+    { template_id: PIN.template_id, revision: 0, aggregate: emptyDraftAggregate(PIN.template_id), published_version: null, updated_by: 1, updated_at: AT });
+    await repository.publish({ templateId: PIN.template_id, expectedTemplateRevision: 0, expectedDraftRevision: 0,
+      contentHash: PIN.content_hash, aggregate: AGGREGATE, items: [], packageComposition: [],
+      sourceChain: { actor_id: 1, request_id: 'fence-fixture', base: null, created_at: AT, published_at: AT, retired_at: null, migration_ref: null },
+      publishedAt: AT, draftUpdatedAt: AT, actorId: 1 });
   }, 120000);
   afterAll(async () => {
     await pool?.end();
@@ -129,6 +142,17 @@ describe.skipIf(!port)('template execution fence on isolated MySQL', () => {
     expect(after.schedule.next_due_ms).toBeGreaterThan(0);
     expect(after.tables.metric_observations).toBe(before.tables.metric_observations);
     expect(after.tables.metric_attempts).toBe(before.tables.metric_attempts);
+  });
+
+  it('rolls back cadence when the pinned immutable version is missing', async () => {
+    const payload = templatePayload(2);
+    await pool.execute('UPDATE metric_policy_bindings SET payload=? WHERE resource_key=?', [payload, RESOURCE_KEY]);
+    const decoded = decodeBindingPayload(payload);
+    if (decoded.kind !== 'template_pending') throw new Error('pending fixture required');
+    const before = await counts();
+    await expect(store.commitTemplate({ ...snapshot, decoded }, noResults, claimed(), context(), Date.now()))
+      .rejects.toThrow('DISCOVERY_VERSION_MISSING');
+    expect(await counts()).toEqual(before);
   });
 
   describe('refuses to write anything for', () => {

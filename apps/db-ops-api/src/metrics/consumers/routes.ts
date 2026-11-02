@@ -5,8 +5,10 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import { PolicyError, RefSchema, rule } from '../policy/model.js';
 import { authenticatedMetricConsumerService } from './runtime.js';
 import { ConsumerAlertPolicySchema, scoreMetrics } from './evaluation.js';
+import { registerMetricStudyRoutes, metricStudyService } from './study-routes.js';
 const EvaluateSchema = z.strictObject({ query: z.unknown(), policies: z.array(ConsumerAlertPolicySchema).max(32) });
-export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = authenticatedMetricConsumerService) {
+export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = authenticatedMetricConsumerService, study=metricStudyService) {
+  await registerMetricStudyRoutes(app, verifyToken, study);
   for (const op of ['query', 'discover', 'inventory', 'evaluate', 'observations'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
     reply.header('Cache-Control', 'private, no-store');
     const actor = (request as unknown as { user?: ActorContext }).user;

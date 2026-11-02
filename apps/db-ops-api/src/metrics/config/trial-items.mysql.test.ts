@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
@@ -41,7 +41,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const envFile = process.env.SLIDE_DEBUG_ENV_FILE;
 const database = `max238_trial_items_${process.pid}`;
 const ref = { type: 'instance' as const, id: 1 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/trial-items-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/trial-items-20261028.json', import.meta.url));
 const formalTables = ['metric_observations', 'metric_publications', 'alerts', 'alert_events', 'notification_records'] as const;
 const itemOrder = ['读取', '转换', '单位校验', '值', '时间', '耗时', '错误'] as const;
 type Item = (typeof itemOrder)[number];
@@ -304,7 +304,8 @@ describe.skipIf(!port || !envFile)('MAX-238 a trial returns read, transform, uni
         source_selected: 'SELECT only; no INSERT/UPDATE/DELETE on the application database',
         formal_tables: [...formalTables],
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });

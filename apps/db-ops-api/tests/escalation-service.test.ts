@@ -43,14 +43,18 @@ describe('alert-escalation-service.ts', () => {
   });
 
   it('manualEscalation returns error when alert not found', async () => {
-    const c={query:vi.fn(),beginTransaction:vi.fn(),execute:vi.fn().mockResolvedValue([[]]),rollback:vi.fn(),release:vi.fn(),destroy:vi.fn()};
-    mockPool.getConnection.mockResolvedValue(c);
+    const connection = { query: vi.fn().mockResolvedValue([[]]), execute: vi.fn().mockResolvedValue([[]]),
+      beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), destroy: vi.fn() };
+    mockPool.getConnection.mockResolvedValue(connection);
     const { alertEscalationService } = await import('../src/alert-escalation-service');
     const result = await alertEscalationService.manualEscalation(999, 'critical');
     expect(result.success).toBe(false);
     expect(result.error).toBe('ESCALATION_NOT_FOUND');
-    expect(c.rollback).toHaveBeenCalledOnce();
-    expect(c.release).toHaveBeenCalledOnce();
+    expect(connection.execute).toHaveBeenCalledWith('SELECT * FROM alerts WHERE id=? FOR UPDATE', [999]);
+    expect(connection.rollback).toHaveBeenCalledOnce();
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
+    expect(connection.destroy).not.toHaveBeenCalled();
   });
 
   it('getEscalationRules returns empty when no rules in DB', async () => {

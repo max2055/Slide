@@ -7,13 +7,29 @@ import { collectionStatus } from '../components/metric-test-fixtures.js';
 const response = (body: unknown, status = 200) => ({ ok: status === 200, status, json: async () => body });
 const audit = { action: 'binding.publish', revision: 3, at: '2026-10-16T00:00:00Z', configuration: { package: { id: 'mysql-basic' } } };
 const mock = () => authFetch.mockImplementation(async (url: string) => response(url === '/api/resources' ? { items: [] }
-  : url.includes('/groups') ? { groups: [] } : url.endsWith('/catalog') ? { packages: [], metrics: [] } : [audit]));
+  : url.includes('/groups') ? { groups: [] } : url.endsWith('/catalog') ? { packages: [], metrics: [] }
+  : url.endsWith('/templates/library') ? { templates: [], can_manage: true }
+  : url.endsWith('/templates/capabilities') ? { candidates: [], unavailable: [] }
+  : url.includes('/templates?') ? { templates: [] }
+  : url.endsWith('/template-governance/resources') ? [] : [audit]));
 const mount = async () => {
   const el = document.createElement('metric-settings') as any; el.view = 'audit'; document.body.append(el);
   await vi.waitFor(() => expect(el.catalog).not.toBeNull()); el.resourceId = 7;
   await vi.waitFor(() => expect(el.audits).toHaveLength(1)); await el.updateComplete; return el;
 };
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); });
+
+it('R6 renders one template library and reachable governance outside compatibility details', async () => {
+  mock(); const el = await mount(); el.view = 'packages'; await el.updateComplete;
+  const root = el.shadowRoot;
+  expect(root.querySelectorAll('template-library')).toHaveLength(1);
+  expect(root.querySelectorAll('template-governance')).toHaveLength(1);
+  const details = root.querySelector('details.package-compatibility');
+  expect(details.open).toBe(false);
+  expect(details.querySelector('template-library, template-governance')).toBeNull();
+  details.open = true;
+  expect(details.querySelector('[aria-label="采集包筛选"]')).not.toBeNull();
+});
 
 it('reads resource audit, keeps revision/details, and distinguishes empty from forbidden', async () => {
   mock(); const el = await mount();

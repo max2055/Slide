@@ -1,5 +1,5 @@
 import { publicationAuditCount } from './audit-test-support.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -33,7 +33,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_apply_idempotency_${process.pid}`;
 const ref1: Ref = { type: 'instance', id: 1 };
 const ref2: Ref = { type: 'instance', id: 2 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/apply-idempotency-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/apply-idempotency-20261028.json', import.meta.url));
 type Status = Awaited<ReturnType<MetricConfigurationService['status']>>;
 type Pin = { id: string; version: string; digest: string };
 
@@ -246,6 +246,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
       operation_rows: await operations(), stale_error: stale, status: observed(status) };
   }));
   afterAll(() => {
+    mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
     writeFileSync(evidencePath, `${JSON.stringify({ ...evidence, run: {
       branch: execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(),
       head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

@@ -33,6 +33,31 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
       while (!output.includes('服务器已启动') && Date.now() < deadline && child.exitCode === null) await new Promise(resolve => setTimeout(resolve, 50));
       expect(output, 'actual server must finish API-only initialization').toContain('WORKER_LEASE_UNAVAILABLE');
       const headers = { Authorization: `Bearer ${fixture.tokens.owner}` };
+      // MAX-245 publication regression: exercise the production registrations,
+      // including MAX-241's resource read route, with live grants and real schema.
+      const metricPaths = [
+        '/api/metrics/templates/library',
+        '/api/metrics/templates/capabilities',
+        '/api/metrics/discovery/instance/101',
+        '/api/metrics/template-bindings/instance/101/effective-triggers',
+      ];
+      const read = (path: string) => fetch(`http://127.0.0.1:${httpPort}${path}`, { headers });
+      for (const path of metricPaths) {
+        const result = await read(path);
+        expect(result.status, `${path}: ${await result.text()}`).toBe(200);
+        expect(result.headers.get('cache-control')).toContain('no-store');
+        expect((await fetch(`http://127.0.0.1:${httpPort}${path}`)).status).toBe(401);
+      }
+      expect((await read('/api/metrics/discovery/instance/999')).status).toBe(403);
+      const invalidPreview = await fetch(`http://127.0.0.1:${httpPort}/api/metrics/templates/unknown/discovery-preview`, {
+        method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ unexpected: true }),
+      });
+      expect(invalidPreview.status).toBe(400);
+      await fixture.rows("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='metric:view'");
+      for (const path of metricPaths) expect((await read(path)).status, path).toBe(403);
+      await fixture.rows("INSERT INTO role_permissions(role_id,permission_id) SELECT 101,id FROM permissions WHERE code='metric:view'");
+      await fixture.rows('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=101');
+      for (const path of metricPaths.slice(2)) expect((await read(path)).status, path).toBe(403);
       const response = await fetch(`http://127.0.0.1:${httpPort}/api/operations/knowledge`, { headers });
       expect(response.status).toBe(404); // authenticated original role has no new permission
       await fixture.rows("INSERT INTO role_permissions(role_id,permission_id) SELECT 101,id FROM permissions WHERE code='operations:cases:view'");

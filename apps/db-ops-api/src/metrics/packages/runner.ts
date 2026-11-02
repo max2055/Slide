@@ -32,6 +32,7 @@ export interface PackageExecution {
   states?: ReadonlyMap<string, CounterState>;
 }
 export interface PackageResult {
+  discovery_rows?: Array<{ collector_id: string; dimensions: Record<string, string>; name: string }>;
   source_validation?: ReturnType<import('../rollout/source-shadow.js').SourceSnapshotCapture['compare']>;
   observations: Computation[];
   raw?: RawObservation[];
@@ -107,6 +108,8 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
         const rows = await shared.get(key)!;
         execution.signal?.throwIfAborted();
         if (rows.length > settings.max_rows || new Set(rows.map(r => stable(r.dimensions))).size !== rows.length) throw new Error('DUPLICATE_OR_EXCESS_ROWS');
+        (result.discovery_rows ??= []).push(...rows.map(row => ({ collector_id: collector.id,
+          dimensions: structuredClone(row.dimensions), name: row.display_name ?? Object.values(row.dimensions).join(' / ') })));
         const discovered = new Set(rows.map(row => stable(row.dimensions)));
         for (const [key, state] of result.states) {
           if (state.baseline.source.collector_id === collector.id && !discovered.has(stable(state.baseline.dimensions))) result.states.delete(key);

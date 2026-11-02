@@ -12,8 +12,9 @@ const metric = (r: Awaited<ReturnType<typeof runPackage>>, id: string) => r.obse
 function setup() {
   let now = Date.parse(fixture.at), ticks = fixture.uptime_ticks;
   const b = structuredClone(fixture.ifTable), x = structuredClone(fixture.ifXTable);
+  b[0].values['3'] = 6;
   const transport: Extract<Transport, { method: 'snmp' }> = { method: 'snmp',
-    get: vi.fn(async oids => oids.map(oid => ({ oid, type: 67, value: ticks }))),
+    get: vi.fn(async oids => oids.map(oid => ({ oid, type: 67, value: oid===OIDS.count ? b.length : ticks }))),
     table: vi.fn(async root => root === OIDS.table ? b : x) };
   const { registry, pin } = createSnmpPackage();
   const discovery = new SnmpDiscovery(() => now);
@@ -29,6 +30,43 @@ function setup() {
   return { b, x, transport, context, run, advance, reset: () => { ticks = 100; }, discovery };
 }
 describe('SNMP V2 precision and continuity', () => {
+  it('MAX245 physical interface identity survives rename, loss and process restart, while reused ifIndex is distinct', async () => {
+    const s=setup();s.context.evidence.snmp=new SnmpDiscovery(()=>Date.parse(s.context.observed_at),undefined,true);
+    const first=metric(await s.run(),'network.interface.oper_up');
+    s.advance();s.x[0].values['1']='renamed';s.b[0].values['2']='new description';
+    expect(metric(await s.run(),'network.interface.oper_up').dimensions).toEqual(first.dimensions);
+    const base=s.b.pop(),extended=s.x.pop();s.advance();await s.run();s.b.push(base);s.x.push(extended);
+    s.context.evidence.snmp=new SnmpDiscovery(()=>Date.parse(s.context.observed_at),undefined,true);s.advance();
+    expect(metric(await s.run(),'network.interface.oper_up').dimensions).toEqual(first.dimensions);
+    s.b[0].values['6']='020000000099';s.advance();
+    expect(metric(await s.run(),'network.interface.oper_up').dimensions.interface_epoch).not.toBe(first.dimensions.interface_epoch);
+  });
+  it.each(['empty', 'short', 'changed', 'missing', 'index'] as const)('Chief R1: rejects %s completeness evidence', async mode => {
+    const s=setup(); const collector=new SnmpDiscovery(undefined,undefined,true);
+    if(mode==='empty')s.b.length=0;
+    if(mode==='index')s.b[0].values['1']=2;
+    let reads=0;
+    s.transport.get=async oids=>{reads++;return oids.filter(oid=>mode!=='missing'||oid!==OIDS.count).map(oid=>({oid,value:oid===OIDS.count?(mode==='short'?2:mode==='changed'&&reads>1?2:1):100000}));};
+    await expect(collector.collect('builtin:snmp.interfaces.v1',s.transport,5000,6)).rejects.toThrow();
+  });
+  it('Chief R1: accepts only a proved complete empty table', async()=>{
+    const s=setup();s.b.length=0;s.x.length=0;
+    const collector=new SnmpDiscovery(undefined,undefined,true);
+    expect(await collector.collect('builtin:snmp.interfaces.v1',s.transport,5000,6)).toEqual([]);
+    expect(s.transport.table).toHaveBeenCalledWith(OIDS.table,5000);
+  });
+  it('Chief R2: ambiguous same-MAC siblings are unknown; singleton identity survives sibling loss, reboot, restart and index/name change',async()=>{
+    const s=setup();const collector=new SnmpDiscovery(undefined,undefined,true);
+    const collect=(c=collector)=>c.collect('builtin:snmp.interfaces.v1',s.transport,5000,6);
+    const first=(await collect())[0].dimensions.interface_epoch;
+    const sibling=structuredClone(s.b[0]);sibling.index='2';sibling.values['1']=2;s.b.push(sibling);
+    await expect(collect()).rejects.toThrow();
+    await expect(collect(new SnmpDiscovery(undefined,undefined,true))).rejects.toThrow();
+    s.b.pop();s.reset();s.b[0].index='3';s.b[0].values['1']=3;s.x[0].index='3';s.x[0].values['1']='renamed';
+    expect((await collect())[0].dimensions.interface_epoch).toBe(first);
+    expect((await collect(new SnmpDiscovery(undefined,undefined,true)))[0].dimensions.interface_epoch).toBe(first);
+    s.b[0].values['6']='020000000099';expect((await collect())[0].dimensions.interface_epoch).not.toBe(first);
+  });
   it('decodes Counter64 binary without Number; rejects unsafe and out-of-range integers', () => {
     expect(unsigned(Buffer.from('0020000000000001', 'hex'), 64)).toBe('9007199254740993');
     expect(unsigned(Buffer.from('ffffffffffffffff', 'hex'), 64)).toBe('18446744073709551615');

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'dotenv';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -195,7 +195,8 @@ describe.skipIf(!port || !envFile)('MAX-238 awaiting the first sample never read
       disposable_schema: `${database} on 127.0.0.1:${port}, dropped by afterAll` };
     evidence.targets = { instance: { id: 1, name: 'mysql3306', host: 'localhost', port: 3306 },
       server: { id: 3, host: '192.168.49.130', port: 22 } };
-    writeFileSync(new URL('../../../../../docs/slide/development/MAX-238/formal-awaiting-sample-20261027.json', import.meta.url),
+    mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/formal-awaiting-sample-20261027.json', import.meta.url),
       JSON.stringify(evidence, null, 2) + '\n');
   }, 180000);
 });

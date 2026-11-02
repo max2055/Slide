@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -31,7 +31,7 @@ import { admin } from '../policy/test-support.js';
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_recovery_path_${process.pid}`;
 const instanceRef = { type: 'instance' as const, id: 1 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/recovery-path-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/recovery-path-20261028.json', import.meta.url));
 
 /** Capture the existing rejection contract instead of assuming one error type. */
 const rejection = async (run: () => Promise<unknown>) => {
@@ -186,7 +186,8 @@ describe.skipIf(!port)('MAX-238 a missing template or credential has a recoverab
         disposable_schema: `${database} on 127.0.0.1:${port}, dropped by afterAll`,
         resource: { id: 1, db_type: 'mysql', db_version: '8.0.46', status: 'active', lifecycle_state: 'available', credential: 'blank at start' },
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });
