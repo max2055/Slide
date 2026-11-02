@@ -218,7 +218,9 @@ test('MAX243 real 503 → durable event → no-model System draft → three veri
   await expect(page.locator('system-investigation-facts')).toContainText('HTTP_503');
   await env.pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=101 AND p.code='config:view'");
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:['chat:view']}})));
-  await expect(page.locator('main')).not.toContainText('HTTP_503');
+  // Revocation may also activate the login gate, which removes <main>.
+  // Assert erasure across the whole document in either rendering state.
+  await expect(page.locator('body')).not.toContainText('HTTP_503');
   expect((await api(`/api/investigations/${next.id}/platform-events`)).status).toBe(404);
   expect((await api(`/api/platform/system-events/${second}/verifications`,{investigationId:next.id,expectedVersion:2},crypto.randomUUID())).status).toBe(404);
 });
