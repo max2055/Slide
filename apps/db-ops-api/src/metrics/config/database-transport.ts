@@ -9,6 +9,9 @@ import { AdapterError, type Transport } from '../packages/adapters.js';
 import { bindDatabaseDriver } from '../database/collector.js';
 import { postgresCounterTransport } from './postgres-counter.js';
 import { mysqlCounterTransport, type MysqlCounterDiscovery } from './mysql-counter.js';
+import { vendorCounterTransport, type VendorCounterState } from './vendor-counter.js';
+
+const vendorCounters = new WeakMap<DatabaseConnection, VendorCounterState>();
 
 /** Fixed package reads only. Dedicated sessions prevent trial timeouts changing a shared session. */
 export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCounters?: MysqlCounterDiscovery): Transport {
@@ -59,5 +62,10 @@ export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCoun
   });
   if (connection.db_type === 'postgresql') return postgresCounterTransport(execute);
   if (connection.db_type === 'mysql' && mysqlCounters) return mysqlCounterTransport(execute, mysqlCounters);
+  if (connection.db_type === 'oracle' || connection.db_type === 'dameng') {
+    let state = vendorCounters.get(connection);
+    if (!state) { state = {}; vendorCounters.set(connection, state); }
+    return vendorCounterTransport(connection.db_type, execute, state);
+  }
   return bindDatabaseDriver(execute);
 }

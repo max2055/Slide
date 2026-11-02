@@ -85,6 +85,19 @@ export function databaseReleases(): PackageRelease[] {
       documentation: [...(engine === 'mysql' ? base.documentation : []), ...reads.map((r, i) => ({ collector_id: `${engine}-${r.name}`, permissions: specs[i].permissions, discovery: specs[i].discovery }))] });
   });
 }
+// The authorized 19c target reports 19.19, not 19.3. Add explicit identities;
+// never broaden the applicability/digests of already published package pins.
+export const oracle1919Reads: DatabaseRead[] = databaseReads.filter(r => r.engine === 'oracle')
+  .map(r => ({ ...r, name: `${r.name}_19_19` }));
+export const oracle1919Specs: ImplementationSpec[] = databaseSpecs.filter(s => s.applicability[0].values.includes('oracle')).map((spec, i) => ({
+  ...spec, id: implementationId(oracle1919Reads[i]),
+  applicability: [{ attribute: 'db.engine', values: ['oracle'] }, { attribute: 'db.version', values: ['19.19'] }],
+}));
+export function oracle1919Release(): PackageRelease {
+  const base = databaseReleases().find(r => r.package.id === 'oracle-representative')!;
+  return sealRelease({ ...base, package: { ...base.package, version: '1.2.0', applicability: oracle1919Specs[0].applicability,
+    collectors: base.package.collectors.map((c, i) => ({ ...c, implementation_ref: oracle1919Specs[i].id })) } });
+}
 /** Opt-in registry for the existing PolicyService/MetricScheduler. Old package pins remain immutable. */
 export function capacityReleases(): PackageRelease[] {
   const bases = [builtinReleases()[0], ...databaseReleases().filter(r => ['oracle-representative', 'dameng-representative'].includes(r.package.id))];
@@ -100,7 +113,7 @@ export function capacityReleases(): PackageRelease[] {
   });
 }
 export function createDatabaseRegistry(): PackageRegistry {
-  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs]);
-  [...builtinReleases(), ...databaseReleases(), ...capacityReleases()].forEach(r => registry.install(r));
+  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...oracle1919Specs]);
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), oracle1919Release()].forEach(r => registry.install(r));
   return registry;
 }
