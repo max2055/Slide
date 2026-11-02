@@ -120,11 +120,12 @@ test("flag rollback while real controlled tool is running leaves new job owner i
     expect(old).toHaveLength(0);
     await page.goto(`${env.url}/investigations?investigation=${receipt.investigationId}`);
     await expect(page.locator(".investigation-states")).toContainText("运行中");
-    const refused = page.waitForResponse(
-      (r) => r.url().includes("/cancel") && r.request().method() === "POST",
-    );
-    await page.getByRole("button", { name: "取消本次执行", exact: true }).click();
-    expect((await refused).status()).toBe(403); // source grants viewer, not cancel/append authority
+    // Source access grants read authority only; the UI now refuses before sending.
+    const [requests] = await env.pool.query("SELECT id FROM investigation_requests WHERE investigation_id=?", [receipt.investigationId]);
+    const refused = await page.request.post(`${env.url}/api/investigations/${receipt.investigationId}/requests/${requests[0].id}/cancel`, {
+      headers: { Authorization: `Bearer ${env.token(env.owner)}` },
+    });
+    expect(refused.status()).toBe(403);
     await expect(page.getByRole("button", { name: "取消本次执行", exact: true })).toBeDisabled();
     await env.pool.query(
       "UPDATE investigation_requests SET cancel_requested_at=NOW() WHERE investigation_id=?",

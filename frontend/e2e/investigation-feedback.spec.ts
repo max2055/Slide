@@ -67,6 +67,7 @@ test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read',
   // exact synthetic observed window regardless of local browser timezone.
   await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, seed.verification.from));
   await page.getByLabel('观察结束时间', { exact: true }).fill(await localObservedTime(page, seed.verification.to));
+  await page.getByText('兼容旧证据标识输入（高级）', { exact: true }).click();
   await page.getByLabel('证据 ID（逗号分隔）', { exact: true }).fill(seed.proof.id);
   await page.getByRole('button', { name: '保存人工记录' }).click();
   await expect(page.getByRole('list', { name: '人工记录' })).toContainText('确认人 101');
@@ -79,6 +80,7 @@ test('real JWT/HTTP/SQL feedback, human confirmation, closure and revoked read',
   await page.getByLabel('验证方法', { exact: true }).fill('观察所有关联资源');
   await page.getByLabel('观察开始时间', { exact: true }).fill(await localObservedTime(page, seed.verification.from));
   await page.getByLabel('观察结束时间', { exact: true }).fill(await localObservedTime(page, seed.verification.to));
+  await page.getByText('兼容旧证据标识输入（高级）', { exact: true }).click();
   await page.getByLabel('证据 ID（逗号分隔）', { exact: true }).fill(seed.proof.id);
   await page.getByRole('button', { name: '保存人工记录' }).click();
   await expect(page.getByRole('list', { name: '人工记录' })).toContainText('关闭时业务状态：已验证恢复');
