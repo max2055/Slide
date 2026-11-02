@@ -1,3 +1,4 @@
+import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
 import { registerResourceTriggerRead } from './src/metrics/triggers/resource-detail-routes.js';
 import { registerAlertEscalationRoute } from './src/alert-escalation-routes.js';
@@ -481,7 +482,8 @@ async function start() {
   await registerInvestigationFeedbackRoutes(fastify, verifyToken);
   await registerInvestigationProfileRoutes(fastify, verifyToken);
   await registerInvestigationGovernanceRoutes(fastify, verifyToken);
-  await registerSystemEventRoutes(fastify, verifyToken, new SystemEventReader(() => dbConnection.getPool()));
+  await registerSystemEventRoutes(fastify, verifyToken, new SystemEventReader(() => dbConnection.getPool()),
+    new SystemEventWorkflow(() => dbConnection.getPool(), undefined, undefined, undefined, () => systemComposition!.collectionActive()));
   await registerAnalysisBridgeRoutes(fastify, verifyToken);
   await registerAgentToolApprovalRoutes(fastify, verifyToken);
   await registerAgentSecurityRoutes(fastify, verifyToken);
@@ -502,7 +504,8 @@ async function start() {
     await registerResourceTriggerRead(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
-    () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
+    () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue(),
+    () => systemComposition!.observation());
   await registerSourceRoutes(fastify, verifyToken);
   await registerEvidenceRoutes(fastify, verifyToken);
   await registerEvidenceEvaluationRoutes(fastify, verifyToken);
