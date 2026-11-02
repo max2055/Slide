@@ -85,6 +85,48 @@ export function databaseReleases(): PackageRelease[] {
       documentation: [...(engine === 'mysql' ? base.documentation : []), ...reads.map((r, i) => ({ collector_id: `${engine}-${r.name}`, permissions: specs[i].permissions, discovery: specs[i].discovery }))] });
   });
 }
+// The authorized 19c target reports 19.19, not 19.3. Add explicit identities;
+// never broaden the applicability/digests of already published package pins.
+export const oracle1919Reads: DatabaseRead[] = databaseReads.filter(r => r.engine === 'oracle')
+  .map(r => ({ ...r, name: `${r.name}_19_19` }));
+export const oracle1919Specs: ImplementationSpec[] = databaseSpecs.filter(s => s.applicability[0].values.includes('oracle')).map((spec, i) => ({
+  ...spec, id: implementationId(oracle1919Reads[i]),
+  applicability: [{ attribute: 'db.engine', values: ['oracle'] }, { attribute: 'db.version', values: ['19.19'] }],
+}));
+export function oracle1919Release(): PackageRelease {
+  const base = databaseReleases().find(r => r.package.id === 'oracle-representative')!;
+  return sealRelease({ ...base, package: { ...base.package, version: '1.2.0', applicability: oracle1919Specs[0].applicability,
+    collectors: base.package.collectors.map((c, i) => ({ ...c, implementation_ref: oracle1919Specs[i].id })) } });
+}
+// New opt-in pins disclose the native lifecycle SELECT and every required view.
+// Historical documentation/digests remain immutable; do not silently repin bindings.
+export const vendorLifecycleSql = {
+  oracle: `SELECT TO_CHAR(s.VALUE, 'FM99999999999999999999'),
+  TO_CHAR(i.STARTUP_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME,
+  SYS_CONTEXT('USERENV','CON_NAME')
+  FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'user commits'`,
+  dameng: `SELECT CAST(s.STAT_VAL AS VARCHAR(20)),
+  TO_CHAR(i.START_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME
+  FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'transaction commit count'`,
+};
+export const vendorLifecycleReads: DatabaseRead[] = databaseReads.filter(r => r.engine === 'oracle' || r.engine === 'dameng')
+  .map(r => ({ ...r, name: `${r.name}_lifecycle_v2`, permissions: ['CREATE SESSION', ...r.permissions.filter(p => !p.startsWith('driver ')),
+    ...(r.name === 'transactions' ? [r.engine === 'oracle' ? 'SELECT V_$INSTANCE' : 'SELECT V$INSTANCE'] : [])] }));
+export const vendorLifecycleSpecs: ImplementationSpec[] = vendorLifecycleReads.map(r => ({
+  id: implementationId(r), method: 'sql', resource_type: 'instance',
+  applicability: [{ attribute: 'db.engine', values: [r.engine] }, { attribute: 'db.version', values: [r.engine === 'oracle' ? '19.19' : '8.1'] }],
+  outputs: r.fields.map(f => ({ raw_field: f.name, definition: f.definition, input_unit: f.definition.unit })), permissions: r.permissions,
+  discovery: `Bound instance only; fixed SELECT: ${r.name.startsWith('transactions_') ? vendorLifecycleSql[r.engine as 'oracle' | 'dameng'] : r.sql}`,
+}));
+export function vendorLifecycleReleases(): PackageRelease[] {
+  return [oracle1919Release(), databaseReleases().find(r => r.package.id === 'dameng-representative')!].map(base => {
+    const engine = base.package.applicability[0].values[0];
+    const specs = vendorLifecycleSpecs.filter(s => s.applicability[0].values.includes(engine));
+    return sealRelease({ ...base, package: { ...base.package, version: engine === 'oracle' ? '1.3.0' : '1.2.0',
+      collectors: base.package.collectors.map((c, i) => ({ ...c, implementation_ref: specs[i].id })) },
+      documentation: base.documentation.map((d, i) => ({ ...d, permissions: specs[i].permissions, discovery: specs[i].discovery })) });
+  });
+}
 /** Opt-in registry for the existing PolicyService/MetricScheduler. Old package pins remain immutable. */
 export function capacityReleases(): PackageRelease[] {
   const bases = [builtinReleases()[0], ...databaseReleases().filter(r => ['oracle-representative', 'dameng-representative'].includes(r.package.id))];
@@ -100,7 +142,7 @@ export function capacityReleases(): PackageRelease[] {
   });
 }
 export function createDatabaseRegistry(): PackageRegistry {
-  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs]);
-  [...builtinReleases(), ...databaseReleases(), ...capacityReleases()].forEach(r => registry.install(r));
+  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...oracle1919Specs, ...vendorLifecycleSpecs]);
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), oracle1919Release(), ...vendorLifecycleReleases()].forEach(r => registry.install(r));
   return registry;
 }
