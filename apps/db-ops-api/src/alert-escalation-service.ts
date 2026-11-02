@@ -4,10 +4,13 @@
  * 支持手动升级和升级规则 CRUD。
  */
 import mysql from 'mysql2/promise';
+import { ALERT_LEVELS } from './alert-levels.js';
 import { CronJob } from 'cron';
 import { dbConnection } from './db-connection';
 import { alertDatabaseService } from './alert-database-service';
-import { notificationService } from './notification-service';
+import { enqueueNotificationTransition } from './notification-transition.js';
+import { actorContextService, ActorAuthenticationError, type ActorContext } from './auth/actor-context.js';
+import { canManageResource } from './resources/resource-service.js';
 
 interface EscalationRule {
   id: number;
@@ -103,28 +106,8 @@ class AlertEscalationService {
 
       for (const alert of alerts) {
         try {
-          await pool.execute(
-            'UPDATE alerts SET level = ? WHERE id = ?',
-            [rule.to_level, alert.id]
-          );
-
-          await pool.execute(
-            `INSERT INTO alert_event_logs (alert_id, action, details, created_at)
-             VALUES (?, 'escalated', ?, NOW())`,
-            [
-              alert.id,
-              JSON.stringify({ from_level: rule.from_level, to_level: rule.to_level, rule_id: rule.id, auto_escalated: true }),
-            ]
-          );
-
-          // 发送升级通知（异步，失败不阻断升级流程）
-          notificationService.sendEscalationNotification(
-            alert.id,
-            rule.from_level,
-            rule.to_level
-          ).catch((err) => console.error(`发送升级通知异常 [告警 ${alert.id}]:`, err));
-
-          totalEscalated++;
+          const result = await this.transition(alert.id,rule.to_level,undefined,rule.from_level,rule.id);
+          if (result.changed) totalEscalated++;
         } catch (error) {
           console.error(`升级告警 ${alert.id} 失败:`, error);
         }
@@ -137,40 +120,35 @@ class AlertEscalationService {
   /**
    * 手动升级指定告警
    */
-  async manualEscalation(alertId: number, newLevel: string, actorId?: number): Promise<{ success: boolean; error?: string }> {
-    const pool = this.getPool();
-    if (!pool) return { success: false, error: '数据库未连接' };
-
-    try {
-      const [rows] = await pool.execute('SELECT level FROM alerts WHERE id = ?', [alertId]) as any;
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return { success: false, error: '告警不存在' };
+  async manualEscalation(alertId:number,newLevel:string,actor?:ActorContext):Promise<{success:boolean;error?:string;changed?:boolean}> {
+    try { return {success:true,...await this.transition(alertId,newLevel,actor)}; }
+    catch(e) {return {success:false,error:e instanceof ActorAuthenticationError?'ESCALATION_AUTH':e instanceof Error&&e.message.startsWith('ESCALATION_')?e.message:'ESCALATION_STATE_UNKNOWN'};}
+  }
+  private async transition(alertId:number,newLevel:string,actor?:ActorContext,expected?:string,ruleId?:number){
+    const levels=ALERT_LEVELS;
+    if(!levels.includes(newLevel))throw Error('ESCALATION_LEVEL');
+    const pool=this.getPool();if(!pool)throw Error('ESCALATION_UNAVAILABLE');
+    const c=await pool.getConnection();let reusable=false;
+    try{
+      await c.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');await c.beginTransaction();
+      const [rows]=await c.execute<any[]>('SELECT * FROM alerts WHERE id=? FOR UPDATE',[alertId]);
+      if(!rows.length)throw Error('ESCALATION_NOT_FOUND');const a=rows[0];
+      if(!levels.includes(a.level))throw Error('ESCALATION_LEVEL');
+      const authorize=async(lock=false)=>{
+        if(!actor)return;const live=await actorContextService.revalidateActorOn(c as any,actor,actor.requestId,lock);
+        const ref=a.instance_id?{type:'instance' as const,id:Number(a.instance_id)}:a.server_id?{type:'server' as const,id:Number(a.server_id)}:a.network_device_id?{type:'network_device' as const,id:Number(a.network_device_id)}:null;
+        if(!(live.permissions.includes('*')||live.permissions.includes('alert:manage'))||!ref||!canManageResource(live,ref))throw Error('ESCALATION_FORBIDDEN');
+      };
+      await authorize();
+      const changed=(!expected||a.level===expected)&&!['resolved','closed'].includes(a.status)&&a.level!==newLevel;
+      if(changed){
+        if(levels.indexOf(newLevel)<=levels.indexOf(a.level))throw Error('ESCALATION_DIRECTION');
+        await c.execute('UPDATE alerts SET level=? WHERE id=?',[newLevel,alertId]);
+        await c.execute("INSERT INTO alert_event_logs(alert_id,action,actor_id,details) VALUES(?,'escalated',?,?)",[alertId,actor?.userId??null,JSON.stringify({from_level:a.level,to_level:newLevel,rule_id:ruleId??null,auto_escalated:!actor})]);
+        await enqueueNotificationTransition(c,alertId,{id:`escalation-${newLevel}`,phase:'escalation',at:new Date().toISOString(),from_level:a.level,to_level:newLevel});
       }
-
-      const oldLevel = rows[0].level;
-      await pool.execute('UPDATE alerts SET level = ? WHERE id = ?', [newLevel, alertId]);
-
-      await pool.execute(
-        `INSERT INTO alert_event_logs (alert_id, action, actor_id, details, created_at)
-         VALUES (?, 'escalated', ?, ?, NOW())`,
-        [
-          alertId,
-          actorId || null,
-          JSON.stringify({ from_level: oldLevel, to_level: newLevel, auto_escalated: false }),
-        ]
-      );
-
-      // 发送升级通知（异步，失败不阻断升级流程）
-      notificationService.sendEscalationNotification(
-        alertId,
-        oldLevel,
-        newLevel
-      ).catch((err) => console.error(`发送升级通知异常 [告警 ${alertId}]:`, err));
-
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
+      await authorize(true);await c.commit();reusable=true;return {changed};
+    }catch(e){try{await c.rollback();reusable=true;}catch{}throw e;}finally{if(reusable)c.release();else c.destroy();}
   }
 
   async getEscalationRules(enabled?: boolean): Promise<EscalationRule[]> {

@@ -1,0 +1,338 @@
+{
+  "step1_publish": {
+    "pin": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "revision": 1,
+    "published_at": "2026-10-28T13:15:27.107Z",
+    "status": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "step2_stale_revision": {
+    "error": {
+      "name": "Error",
+      "code": "POLICY_REVISION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_REVISION_CONFLICT"
+    },
+    "status": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "step3_forbidden": {
+    "actor": {
+      "permissions": [
+        "instance:view"
+      ],
+      "instanceScopes": {
+        "1": "read-only"
+      }
+    },
+    "audits_before": 1,
+    "audits_after": 1,
+    "error": {
+      "name": "Error",
+      "code": "POLICY_FORBIDDEN",
+      "status": 403,
+      "message": "POLICY_FORBIDDEN"
+    },
+    "status": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "step4_stale_candidate": {
+    "error": {
+      "name": "Error",
+      "code": "POLICY_REVISION_CONFLICT",
+      "status": 409,
+      "message": "POLICY_REVISION_CONFLICT"
+    },
+    "status": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "recommendations_compatibility": [
+    {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "mysql-basic",
+      "version": "2.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "mysql-representative",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "postgresql-representative",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "oracle-representative",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "dameng-representative",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "mysql-basic",
+      "version": "1.1.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "oracle-representative",
+      "version": "1.1.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "dameng-representative",
+      "version": "1.1.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "mysql-diagnostics",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "mysql-diagnostics",
+      "version": "1.1.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "postgresql-diagnostics",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "postgresql-diagnostics",
+      "version": "1.1.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "oracle-diagnostics",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "oracle-diagnostics",
+      "version": "1.1.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "dameng-diagnostics",
+      "version": "1.0.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "dameng-diagnostics",
+      "version": "1.1.0",
+      "compatibility": "incompatible"
+    },
+    {
+      "id": "mysql-custom-processlist-connections",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "mysql-custom-slow-query-snapshot",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    },
+    {
+      "id": "mysql-custom-existing-scalars",
+      "version": "1.0.0",
+      "compatibility": "compatible"
+    }
+  ],
+  "step5_incompatible": {
+    "candidate": {
+      "id": "mysql-basic",
+      "version": "2.0.0",
+      "digest": "sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322",
+      "compatibility": "incompatible"
+    },
+    "error": {
+      "name": "Error",
+      "code": "PACKAGE_INCOMPATIBLE",
+      "status": 422,
+      "message": "PACKAGE_INCOMPATIBLE"
+    },
+    "status": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "resource2_publish": {
+    "pin": {
+      "id": "mysql-basic",
+      "version": "1.0.0",
+      "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+    },
+    "revision": 1,
+    "published_at": "2026-10-28T13:15:27.310Z",
+    "overrides": {
+      "enabled": "disable"
+    },
+    "settings_enabled": false
+  },
+  "status_after_resource2": {
+    "resource1": {
+      "resource": {
+        "type": "instance",
+        "id": 1
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": true,
+      "effective_enabled.source": "package",
+      "blockers": [
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    },
+    "resource2": {
+      "resource": {
+        "type": "instance",
+        "id": 2
+      },
+      "binding.published_revision": 1,
+      "binding.package": {
+        "id": "mysql-basic",
+        "version": "1.0.0",
+        "digest": "sha256:f35d9c93e1c63b080db59482018e0331e8500da8da5613fd8820988a12b57f1c"
+      },
+      "binding.application": "pending",
+      "binding.applied_revision": null,
+      "effective_enabled.policy_enabled": false,
+      "effective_enabled.source": "resource",
+      "blockers": [
+        "POLICY_COLLECTION_DISABLED",
+        "APPLICATION_PENDING",
+        "CAPABILITY_UNKNOWN",
+        "AWAITING_SAMPLE"
+      ]
+    }
+  },
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "head": "86101d6dafba7b8d60297d970f5171807d29fc26",
+    "test": "publish-rejections.mysql.test.ts",
+    "disposable_schema": "max238_publish_rejections_10273 on 127.0.0.1:13306, dropped by afterAll",
+    "boundaries": {
+      "activate_called": false,
+      "report_applied_called": false,
+      "worker_started": false,
+      "attempt_inserted": false,
+      "source_tables_written": "disposable schema only; no 3306 statements",
+      "config_files_changed": false
+    }
+  }
+}

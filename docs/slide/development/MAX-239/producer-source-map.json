@@ -1,0 +1,345 @@
+{
+  "source": "88fc15e2bce814218ff2f1836a33d57ff236eef6",
+  "paths": [
+    {
+      "path": "apps/db-ops-api/server.ts",
+      "source_blob": "0caa4531445d78ef4170f88427801991c0e1a093"
+    },
+    {
+      "path": "apps/db-ops-api/sql/migrations/135_metric_template_binding_storage.sql",
+      "source_blob": "02ab8842788b88cbfb625f55a0107e3a1ce2e757"
+    },
+    {
+      "path": "apps/db-ops-api/sql/migrations/136_metric_capability_evidence.sql",
+      "source_blob": "3c010d167df5bc2b6fccb11a99d76b1d387fdb5b"
+    },
+    {
+      "path": "apps/db-ops-api/sql/migrations/137_metric_collect_requests.sql",
+      "source_blob": "9f9a6c4ed0df6537e5118a7d41ea06e37fbf9a9f"
+    },
+    {
+      "path": "apps/db-ops-api/src/auth/actor-context.ts",
+      "source_blob": "db33868a2708f0b7057091d4870e2ee164bfecbd"
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/metrics/public-api.ts",
+      "source_blob": "5edbf01fc09575cbc66eb2da590a479e1262dfd0"
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/metrics/template-bindings.ts",
+      "source_blob": "17509cc632a9a9c7b3b2d9fc8b558dde179e0ab8"
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/metrics/templates.ts",
+      "source_blob": "df9c3fabe6b232196a456deaf616ad390550791c"
+    },
+    {
+      "path": "apps/db-ops-api/src/contracts/public-api.test.ts",
+      "source_blob": "51a1fdcadb909d8dc69dde49feaefac183cb292c"
+    },
+    {
+      "path": "apps/db-ops-api/src/database-service.detect-version.test.ts",
+      "source_blob": "d6a3435c5bbeb11cd1a2e4d0e7a6ff77be334317"
+    },
+    {
+      "path": "apps/db-ops-api/src/database-service.ts",
+      "source_blob": "ffc8eac22541d071a06754f82eed8b77fea38382"
+    },
+    {
+      "path": "apps/db-ops-api/src/instance-database-service.detected-version.test.ts",
+      "source_blob": "a6e7daf537cbda57733d513975123394fb59ad7c"
+    },
+    {
+      "path": "apps/db-ops-api/src/instance-database-service.ts",
+      "source_blob": "73e6e63788bc16ad80edbb852e9637ab748da7f6"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/capability-evidence.test.ts",
+      "source_blob": "fbb50769294a5eec07a06eee85583d2dd5bd720e"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/capability-evidence.ts",
+      "source_blob": "da0bf2e75343aee27248aae156071eaaa260f8fc"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/mysql-host.test.ts",
+      "source_blob": "c4d5e2b7fbc5840706378a13ee8bbf6d9e3a8761"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/mysql-host.ts",
+      "source_blob": "f41a703d1553051c93ac5e2e0b97a4853ad3b1b1"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/package-reader.ts",
+      "source_blob": "84c45c734c240151574a5e47f47b77493335423d"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/preflight.test.ts",
+      "source_blob": "3267f4488ce2757de3313ccb986d230d73a94d70"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/preflight.ts",
+      "source_blob": "aa3e3cdb35d36519a38f971e4c3260359f684cec"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/resolve.ts",
+      "source_blob": "4228ec065e51d38bf547561b40207b4e0b7a0209"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/target-identity.ts",
+      "source_blob": "569c294b2ce8371e17f759797029e74b45c03364"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/transaction-adapter.ts",
+      "source_blob": "6f64e125562d0f4e5ce33ed0662083d92328c871"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/transaction-guard.ts",
+      "source_blob": "c8dbac41e00f7568f7094817a9a7379968bd9f27"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-issuer.test.ts",
+      "source_blob": "4903cb2f4e7763eec97e458ac9945d5d4641f7a1"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-persistence.mysql.test.ts",
+      "source_blob": "086af1459403c78d2b61142c24bd090b6cab5524"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/trial-receipt-writer.ts",
+      "source_blob": "31683d0f8c8e7f368829cae1f751eefa4a4cf7b6"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/bindings/unbind-impact.ts",
+      "source_blob": "b0bded1443e0d245222b44277742de027f98ab80"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/flow.mysql.test.ts",
+      "source_blob": "2e221e9284dd0b6867f4113565032431ce74f084"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/status-store.ts",
+      "source_blob": "b1eef43ff5c3c25940e09db014e99f286bd7fb0d"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/status.test.ts",
+      "source_blob": "6e4d7ac35f80bd0ef6e63d3e1cc3cb78340d36b4"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/config/status.ts",
+      "source_blob": "55ec6031988bc87eec919baff03deba886fa1488"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/consumers/runtime.ts",
+      "source_blob": "c603f4ce3e517600961947810b5969d61f23739c"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/consumers/service.ts",
+      "source_blob": "e0ebba1d8243b389d45a46c34e64c2e5adc176fa"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/service.ts",
+      "source_blob": "b1c7f20e68b80706af42599744d91fd8786be819"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/store.ts",
+      "source_blob": "75f4b143dfe13c7410ae18553d3f4f545ed4285e"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/template-gateway.test.ts",
+      "source_blob": "acb144f6279b4d7a6a0415e7ceab9cdaf873d33c"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/policy/test-support.ts",
+      "source_blob": "a487d9b54494dbc22b8c5a50543815a773abfc4e"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/rollout/formalization.ts",
+      "source_blob": "c4ac9359d91a010106ef7e8b937201ac69761563"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/lifecycle.ts",
+      "source_blob": "a7afe84133fa5e2fe414094487068de319987e68"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/runtime.ts",
+      "source_blob": "ab21403f8e9aa758e2adda25a98cfa208ced1f1a"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/service.ts",
+      "source_blob": "5c70812877ab5922959560a30cf9fdb45774b58d"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/store.ts",
+      "source_blob": "65255b079cc150ef1c38ce65e4a62ce91e3cad19"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/template-fence.mysql.test.ts",
+      "source_blob": "a8ee71f1490cff48df04e1edb0f23a77f8ef088e"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/scheduler/template-request-fence.test.ts",
+      "source_blob": "8a1c283173127bb8cf8fd4161bf154d3ff86bc13"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/binding-service-probe.test.ts",
+      "source_blob": "429f580d82903c6ad6422ccef20dfcc9b143416b"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/binding-service.test.ts",
+      "source_blob": "d47cc445275b79697b748aacb987a51d341c31d6"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/binding-service.ts",
+      "source_blob": "08b330f24a818fd95d22f7d8912baab0f8e54517"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/catalog.test.ts",
+      "source_blob": "89ea67fb09434b7d3130c47025f4bdec06a55ee7"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/catalog.ts",
+      "source_blob": "9cadce5ee2f7e1ade7bde391cf21fe3710fc5271"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/collect-now.mysql.test.ts",
+      "source_blob": "b896ef087194f32dba5e584973d1920cf6564930"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/collect-now.ts",
+      "source_blob": "95fb6750df28eb3e0df74ebc30260c6e498c8b56"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/errors.ts",
+      "source_blob": "8274f357feedf9bd6dd1b84dfef5989cdceb29bf"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/first-binding.real.test.ts",
+      "source_blob": "e11714d314c8449e5ba4625575827bd67171b7d3"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/index.ts",
+      "source_blob": "81da5a4f2c8f75830412ee743a5a91ec14ff4b2b"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/max237-zabbix-import-cli.ts",
+      "source_blob": "5c872796b8707e4c1a511ebd675d33166e03e311"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts",
+      "source_blob": "7de98d51a788416b1e92b7f635d6b3b7ca2d756d"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts",
+      "source_blob": "261cecac629bddea5b89bd0ee3b5ea6fa9e528ac"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.ts",
+      "source_blob": "c6421b7aa40b38aa7e069692540c393360042f53"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repin-authorization.mysql.test.ts",
+      "source_blob": "4de8f4c17d71a09a5d49c101027b43248c7535e4"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repin.test.ts",
+      "source_blob": "84099cb5b8ab00dd4d40b3b082284fb3af3cae4d"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repin.ts",
+      "source_blob": "8a91ad4c0705132b2d1cbcfe13750cd89ac94afd"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repository.test.ts",
+      "source_blob": "0bf785dc82d725c6eb499f4045b12d79d309a823"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/repository.ts",
+      "source_blob": "25d840a74fd729c3f10b66213470cbcf79b9011a"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/routes.ts",
+      "source_blob": "8ec0f020ad09a80a364b8f4a5a3a0f8402d6170a"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/service.test.ts",
+      "source_blob": "eaeba9b7e853647203e97ffc2ef80cb5aeab6567"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/service.ts",
+      "source_blob": "38d134a9d06097078d4f6bad747d0e0408dcebc4"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/zabbix-official-templates.test.ts",
+      "source_blob": "255ed9e9706697cf60af0699afef8adbad35b251"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/zabbix-official-templates.ts",
+      "source_blob": "80a6418933385118965c14ff311c8654ad41a03e"
+    },
+    {
+      "path": "apps/db-ops-api/src/metrics/templates/zabbix-template-import.ts",
+      "source_blob": "5bafc19c05cd4d9054b6672d9d8b25a3ef16c3b8"
+    },
+    {
+      "path": "apps/db-ops-api/src/resources/resource-service.ts",
+      "source_blob": "44bbb11f258c0e2717f6ded425f6d5acecdd4cbe"
+    },
+    {
+      "path": "apps/db-ops-api/src/testing/owned-fixture.test.ts",
+      "source_blob": "9e7342c4286dd91e222ec00d4a9362fb6c67d1ee"
+    },
+    {
+      "path": "apps/db-ops-api/src/testing/owned-fixture.ts",
+      "source_blob": "960d2fda87d0ad94758ea46024f1c7d844664580"
+    },
+    {
+      "path": "apps/db-ops-api/src/workflows/bounded-worker.ts",
+      "source_blob": "b2572bf0628ade8ea82f86a91c6d7fac96a34e4c"
+    },
+    {
+      "path": "apps/db-ops-api/src/workflows/worker-runtime.ts",
+      "source_blob": "70dfef6fd0717d1b8e8e9e565efaa5c7b2724f8d"
+    },
+    {
+      "path": "frontend/src/api/generated/public-api.ts",
+      "source_blob": "82f0dd2c8854e15fa0916f0bd076e0b8e11b2bb5"
+    },
+    {
+      "path": "frontend/src/app/ui/components/legacy-metric-configuration.test.ts",
+      "source_blob": "fb7445685b355ee3c71633e88b13b3843153436d"
+    },
+    {
+      "path": "frontend/src/app/ui/components/legacy-metric-configuration.ts",
+      "source_blob": "c4cab7cf891a8aad287700db35b721e8df0c2bc4"
+    },
+    {
+      "path": "frontend/src/app/ui/components/metric-api.ts",
+      "source_blob": "7090f08e756f405ca3fc0f73e219efec7bc60ad7"
+    },
+    {
+      "path": "frontend/src/app/ui/components/metric-configuration.test.ts",
+      "source_blob": "bfa7e7764620cd34bc7978c9b2bb5d4bb0109a58"
+    },
+    {
+      "path": "frontend/src/app/ui/components/metric-configuration.ts",
+      "source_blob": "4c68db2f7f8c30d4c21d28c9574054312ce40fd4"
+    },
+    {
+      "path": "frontend/src/app/ui/components/native-template-configuration.test.ts",
+      "source_blob": "0111304873af80699489ae5ca9795fc093499c3d"
+    },
+    {
+      "path": "frontend/src/app/ui/components/native-template-configuration.ts",
+      "source_blob": "6f0fdcc484838f1e23865a90fc73b9b40ac22a5e"
+    },
+    {
+      "path": "frontend/src/app/ui/views/instances-db-editor.test.ts",
+      "source_blob": "92f29a6b779e3f69eafb08089c1dbe5e5e95eab7"
+    },
+    {
+      "path": "frontend/src/app/ui/views/metric-settings.ts",
+      "source_blob": "30a78b4e8aba2ecc1bdc2974441770b846503889"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "task": "MAX238-COLLECTION-DISPLAY-E2E-R3",
+  "date": "2026-10-30",
+  "branch": "agent/15coder1/max-238",
+  "base": "9bce33001dd26e3765660749f659d67b40025bef",
+  "implementation_commit": "8bea2073b",
+  "pr": {
+    "number": 567,
+    "state": "draft",
+    "base": "main",
+    "product_head": "d7e35e435",
+    "product_parent": "6be40c0c1e0cd7dc05f99d91684550bfa54308e3",
+    "docs_commit": "added on top of the product head by this evidence file only"
+  },
+  "environment": {
+    "mysql": "mysql:8.4.10 one-shot container, 127.0.0.1:13319 (non-3306), empty database + full migration, container max238r3-mysql",
+    "target": "existing mysql3306 instance:1 (read-only, not re-collected in this round)",
+    "reused_evidence": "docs/slide/development/MAX-238/native-template-chain-20261029.json"
+  },
+  "scheduler_request_fence": {
+    "files": [
+      "apps/db-ops-api/src/metrics/scheduler/store.ts",
+      "apps/db-ops-api/src/metrics/scheduler/service.ts"
+    ],
+    "store_method": "assertCurrentTemplate",
+    "checks": [
+      "ctx.signal.throwIfAborted",
+      "instanceAccessLifecycle.assertAvailable",
+      "assetCollectionEnabled (FOR UPDATE)",
+      "current template binding revision",
+      "workflow_jobs running + lease_owner + fencing_token + lease_expires_at > NOW() FOR UPDATE",
+      "metric_schedule (resource_key, revision, job_id)"
+    ],
+    "call_sites": [
+      "before access.resolve",
+      "in check(): before every transport request/retry",
+      "after each release IO and before failure/commit records"
+    ],
+    "regression": {
+      "controlled_suite": "apps/db-ops-api/src/metrics/scheduler/template-request-fence.test.ts",
+      "on_r2_service": { "failed": 2, "passed": 0 },
+      "after_fix": { "failed": 0, "passed": 2 },
+      "assertions": [
+        "lease lost after begin -> 0 remote reads, fenceReads >= 1, no commit",
+        "lease lost during first read -> exactly 1 in-flight read, second release not started, no commit"
+      ],
+      "mysql_suite": "apps/db-ops-api/src/metrics/scheduler/template-fence.mysql.test.ts",
+      "mysql_cases": 16,
+      "mysql_result": "16 passed",
+      "new_mysql_cases": ["passes while live", "expired lease -> SCHEDULE_STALE_EXECUTION", "superseded revision -> SCHEDULE_SUPERSEDED", "schedule row re-pointed -> SCHEDULE_STALE_EXECUTION"]
+    },
+    "limit": "empty observations prove the request boundary and cadence, not a real-sample rollback payload"
+  },
+  "trial_live_authorization": {
+    "file": "apps/db-ops-api/src/metrics/templates/binding-service.ts",
+    "authorize": "reload live actor -> assertAccess(live, ref, write)",
+    "call_sites": [
+      "after the resource lock",
+      "after access.resolve, before the first request",
+      "before every actual read through before_request (guarded transport and adapter retries)",
+      "after each release IO",
+      "before receipt persistence"
+    ],
+    "fail_closed": ["revoked permission", "session revoked", "resource boundary narrowed", "missing live source"],
+    "no_side_effects_on_refusal": ["remote IO", "receipt", "binding", "audit", "publication"],
+    "regression": {
+      "file": "apps/db-ops-api/src/metrics/templates/binding-service.test.ts",
+      "surface": "Fastify inject against the real registerMetricTemplateRoutes",
+      "cases": ["revoked after resolution -> 403, 0 reads, no writes", "revoked during first read -> 1 in-flight read, no receipt write"],
+      "suite_result": "15 passed (R2: 8)"
+    }
+  },
+  "repin_atomic_publication": {
+    "files": [
+      "apps/db-ops-api/src/metrics/templates/binding-service.ts",
+      "apps/db-ops-api/src/metrics/templates/repin.ts",
+      "apps/db-ops-api/src/metrics/templates/routes.ts"
+    ],
+    "design": {
+      "entry": "TemplateBindingService.repin(actor, ref, templateId)",
+      "transaction": "mysqlTemplatePublication: one connection, one transaction over item versions, draft, version, current pointer and source_chain",
+      "authorize_boundaries": ["after read-only analysis", "before each item version", "before updateDraft", "before publish", "before setCurrent"],
+      "audit": "writes are audited under the re-read operator; offline maintenance identity only when no caller names one"
+    },
+    "handler_regression": {
+      "cases": ["revoked after analysis 403", "session revoked 401", "resource narrowed 403", "no live source 503", "success 200 with version 2, current 2, actor 7", "every write immediately preceded by a live re-read"],
+      "result": "15 passed including the R2 cases"
+    },
+    "mysql_regression": {
+      "file": "apps/db-ops-api/src/metrics/templates/repin-authorization.mysql.test.ts",
+      "cases": [
+        "revoked at setCurrent -> 403 and rollback: versions [1], current 1, template/draft revision and aggregate unchanged, item versions still 1",
+        "session revoked -> 401 and no residual rows",
+        "all boundaries hold -> version 2, current 2, source_chain actor_id 7 / request_id req-238-r3"
+      ],
+      "result": "3 passed"
+    }
+  },
+  "unchanged_reused": {
+    "r1_real_chain": "docs/slide/development/MAX-238/native-template-chain-20261029.json (not re-run, not re-collected)",
+    "r2_commit_fence_and_apply_authorization": "reused; only the request boundary was added",
+    "binding_application": "pending/applied_revision 4; formal rollout revision 5 (reported truthfully, not forged)"
+  },
+  "checks": {
+    "template_request_fence": "2 passed",
+    "template_fence_mysql": "16 passed",
+    "repin_authorization_mysql": "3 passed",
+    "unit_metrics_templates_scheduler_contracts": "12 files passed / 7 skipped; 171 passed / 68 skipped",
+    "mysql_metrics_templates_scheduler": "13 files passed / 4 skipped; 143 passed / 25 skipped",
+    "unit_metrics_contracts": "67 files passed / 48 skipped; 935 passed / 202 skipped",
+    "api_typecheck": "passed",
+    "frontend_typecheck": "passed",
+    "contracts_check": "passed"
+  },
+  "remaining": [
+    "all-metric good, history window thresholds, history authorization after disable/unbind, rename/version identity, SLO and capacity",
+    "server 3 chain, 24h steady state, migration rehearsal, notification recovery, AI closure",
+    "MAX238 remains in_progress / not done"
+  ]
+}

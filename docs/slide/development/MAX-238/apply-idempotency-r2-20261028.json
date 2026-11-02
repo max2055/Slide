@@ -1,0 +1,138 @@
+{
+  "package": "MAX238-APPLY-IDEMPOTENCY-R2",
+  "branch": "agent/15coder1/max-238",
+  "base": "d874ae663bf914f0eac3fb0a4415fda934d89294",
+  "implementation": "1a7cd24b41eebd58950a56240396e9ab47f19440",
+  "date": "2026-10-28",
+  "scope": {
+    "source": [
+      "apps/db-ops-api/src/metrics/policy/service.ts",
+      "apps/db-ops-api/src/metrics/config/service.ts",
+      "frontend/src/app/ui/components/metric-configuration.ts"
+    ],
+    "tests_and_fixtures": [
+      "apps/db-ops-api/src/metrics/config/idempotency-r2.test.ts",
+      "apps/db-ops-api/src/metrics/config/apply-idempotency-r2.mysql.test.ts",
+      "apps/db-ops-api/e2e/max238-real-api-server.ts",
+      "frontend/e2e/max238-idempotency-real-api.spec.ts",
+      "frontend/e2e/max238-real-api.sh",
+      "frontend/playwright.MAX-238.config.ts",
+      "frontend/src/app/ui/components/metric-configuration.test.ts"
+    ]
+  },
+  "sha256": {
+    "apps/db-ops-api/src/metrics/policy/service.ts": "fe0dd6bff3afae4b7c2b3c78ff7cb066e83986ea7f4e7c51da97880587352710",
+    "apps/db-ops-api/src/metrics/config/service.ts": "13e48b212363c6187c96c8c000511a7a26c65b663c7890d204956eb84d85e9f0",
+    "frontend/src/app/ui/components/metric-configuration.ts": "164d10682ef35c8a7036e0518cd96b6edb96f39d9be2b758321af13f7e451171",
+    "frontend/src/app/ui/components/metric-configuration.test.ts": "f92c1b8001ede5e4a2224ad9eba4c0e4cd0a7ffe91411724cef872c79e17f090",
+    "frontend/playwright.MAX-238.config.ts": "068a29b44059dec4e025e7a13b0134aa565606cfe5746d2b86599da04fcb7a0c",
+    "apps/db-ops-api/src/metrics/config/idempotency-r2.test.ts": "c81b09f7bead7e5e0b47c822db0a04713e8c33709854b9124c1040d8b9807cd6",
+    "apps/db-ops-api/src/metrics/config/apply-idempotency-r2.mysql.test.ts": "97de950303b508f335615cb768903988d3c4a5f80dad9a33dc6b37992c9ca40a",
+    "apps/db-ops-api/e2e/max238-real-api-server.ts": "531500c53b8b05c9f11106e83796799a14054dd6bc0c968dbee5f4f1f2d84f98",
+    "frontend/e2e/max238-idempotency-real-api.spec.ts": "ddbcf9c52cbc7e2120b00f20e5929f53e407add7133b852047510acc5c10b1e1",
+    "frontend/e2e/max238-real-api.sh": "3739e497585642d470f23a3b01d40b6d3286c58a8d456bd93573456d04f2c2dc"
+  },
+  "checks": {
+    "idempotency_r2_unit": {
+      "passed": 9
+    },
+    "idempotency_r1_regression_and_routes": {
+      "passed": 23
+    },
+    "metrics_config_policy_module": {
+      "passed": 151,
+      "skipped": 66,
+      "note": "no MySQL env"
+    },
+    "disposable_mysql_r2": {
+      "passed": 4,
+      "port": 13306,
+      "schema_per_test_file": true,
+      "dropped_after": true
+    },
+    "accepted_mysql_regression": {
+      "passed": 16,
+      "files": [
+        "apply-idempotency.mysql.test.ts",
+        "apply-idempotency-r1.mysql.test.ts",
+        "publish-rejections.mysql.test.ts"
+      ]
+    },
+    "bulk_and_rollout": {
+      "passed": 33,
+      "skipped": 36
+    },
+    "api_typecheck": "exit 0",
+    "contracts_check": "exit 0",
+    "frontend_typecheck": "exit 0",
+    "frontend_tests": {
+      "passed": 1326
+    },
+    "frontend_build": "passed, CSP check passed",
+    "playwright_max238": {
+      "passed": 4,
+      "browser": "chromium"
+    }
+  },
+  "evidence": {
+    "unknown_trial_outcome": {
+      "state": "pending",
+      "trial_calls": 1,
+      "retry_code": "POLICY_OPERATION_PENDING"
+    },
+    "separate_process": {
+      "reads_pending": true,
+      "retry_code": "POLICY_OPERATION_PENDING",
+      "binding_revisions": 0,
+      "audits": 0
+    },
+    "publication_rollback": {
+      "state_after": "absent",
+      "retry_publishes_revision": 1
+    },
+    "http_lost_response": {
+      "state": "committed",
+      "replay_revision": 1,
+      "audits": 1
+    },
+    "http_pending": {
+      "state": "pending",
+      "duplicate_status": 409,
+      "trials": 1
+    },
+    "browser_committed_recovery": {
+      "activate_calls": 1,
+      "journal": "committed",
+      "revision": 1
+    },
+    "browser_pending_reload": {
+      "activate_calls": 1,
+      "trials_delta": 1,
+      "query_only_after_reload": true
+    }
+  },
+  "boundaries": {
+    "target_connection_opened": false,
+    "real_collection": false,
+    "worker_started": false,
+    "production_write": false,
+    "trial_in_browser_and_http_tests": "controlled fixture",
+    "auth_in_e2e": "fixed fixture admin",
+    "restart_drill": "second OS process reading the same schema; no mid-commit kill",
+    "recovery_store": "sessionStorage scoped by user id and resource; same tab only",
+    "legacy_unkeyed_policy_publish": "unchanged pre-transaction authorization"
+  },
+  "pr": {
+    "number": 567,
+    "url": "https://github.com/max2055/Slide/pull/567",
+    "draft": true,
+    "release_branch": "agent/15coder1/max-238-release",
+    "base": "e11f6ba2ed8108af585af022c4acf8817c1d1fec",
+    "excluded": [
+      "CLAUDE.md",
+      "attachments/**"
+    ],
+    "merged": false,
+    "deployed": false
+  }
+}

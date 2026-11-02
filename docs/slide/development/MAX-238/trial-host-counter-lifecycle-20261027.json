@@ -1,0 +1,462 @@
+{
+  "run": {
+    "date": "2026-10-27",
+    "branch": "agent/15coder1/max-238",
+    "base_sha": "cc0599a40282065b489194f56ef2a70d09e3b72c",
+    "implementation_sha": "6fb39d531",
+    "test": "apps/db-ops-api/src/metrics/config/unified.real.test.ts",
+    "env": {
+      "UNIFIED_METRICS_REAL": "true",
+      "UNIFIED_METRICS_EXISTING": "true",
+      "UNIFIED_METRICS_UI": "unset",
+      "UNIFIED_METRICS_SWITCH": "unset",
+      "UNIFIED_METRICS_CUSTOM": "unset",
+      "METRICS_TEST_MYSQL_PORT": 13306
+    },
+    "vitest": "1 passed, 79.33s",
+    "focused": {
+      "access.test.ts": "9 passed",
+      "access+routes": "20 passed",
+      "typecheck": "tsc --noEmit clean"
+    }
+  },
+  "targets": {
+    "instance": {
+      "id": 1,
+      "name": "mysql3306",
+      "host": "localhost",
+      "port": 3306,
+      "version": "9.6.0"
+    },
+    "server": {
+      "id": 3,
+      "host": "192.168.49.130",
+      "port": 22,
+      "fingerprint": "SHA256:Fm+RarQJbqLeHkhPWPEcvPSL9HxN5gXMv6+9Q6n3OPA"
+    }
+  },
+  "trial": {
+    "instance": {
+      "attempts": [
+        {
+          "collector": "diagnostics_connections",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.293Z",
+          "duration_ms": 22.0,
+          "observations": 1
+        },
+        {
+          "collector": "diagnostics_limit",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.308Z",
+          "duration_ms": 37.0,
+          "observations": 1
+        },
+        {
+          "collector": "diagnostics_transactions",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.322Z",
+          "duration_ms": 51.0,
+          "observations": 2
+        },
+        {
+          "collector": "diagnostics_size",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.337Z",
+          "duration_ms": 66.0,
+          "observations": 1
+        },
+        {
+          "collector": "diagnostics_queries",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.349Z",
+          "duration_ms": 78.0,
+          "observations": 1
+        },
+        {
+          "collector": "diagnostic_counters",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.361Z",
+          "duration_ms": 90.0,
+          "observations": 5
+        },
+        {
+          "collector": "buffer_pages",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.374Z",
+          "duration_ms": 103.0,
+          "observations": 1
+        },
+        {
+          "collector": "uptime_diagnostics",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.385Z",
+          "duration_ms": 114.0,
+          "observations": 1
+        },
+        {
+          "collector": "diagnostic_gauges",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.397Z",
+          "duration_ms": 126.0,
+          "observations": 5
+        },
+        {
+          "collector": "diagnostic_ratios",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.408Z",
+          "duration_ms": 137.0,
+          "observations": 3
+        },
+        {
+          "collector": "innodb_diagnostics",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.420Z",
+          "duration_ms": 149.0,
+          "observations": 3
+        },
+        {
+          "collector": "thread_cache",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.431Z",
+          "duration_ms": 160.0,
+          "observations": 1
+        },
+        {
+          "collector": "active_transactions",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.443Z",
+          "duration_ms": 172.0,
+          "observations": 1
+        },
+        {
+          "collector": "replication_channels",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.271Z",
+          "ended_at": "2026-10-27T14:30:07.454Z",
+          "duration_ms": 183.0,
+          "observations": 0
+        }
+      ],
+      "samples": 30,
+      "persisted": false
+    },
+    "server": {
+      "attempts": [
+        {
+          "collector": "linux-basic",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:08.256Z",
+          "duration_ms": 525.0,
+          "observations": 2
+        },
+        {
+          "collector": "linux-host-gauges",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:08.766Z",
+          "duration_ms": 1035.0,
+          "observations": 2
+        },
+        {
+          "collector": "linux-filesystem",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:09.204Z",
+          "duration_ms": 1473.0,
+          "observations": 22
+        },
+        {
+          "collector": "linux-network",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:09.344Z",
+          "duration_ms": 1613.0,
+          "observations": 2
+        },
+        {
+          "collector": "linux-block",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:09.501Z",
+          "duration_ms": 1770.0,
+          "observations": 9
+        },
+        {
+          "collector": "linux-diagnostic-gauges-v1",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:10.505Z",
+          "duration_ms": 2774.0,
+          "observations": 8
+        },
+        {
+          "collector": "linux-filesystem-diagnostics-v1",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:10.920Z",
+          "duration_ms": 3189.0,
+          "observations": 22
+        },
+        {
+          "collector": "linux-network-diagnostics-v1",
+          "status": "succeeded",
+          "error": null,
+          "started_at": "2026-10-27T14:30:07.731Z",
+          "ended_at": "2026-10-27T14:30:11.060Z",
+          "duration_ms": 3329.0,
+          "observations": 4
+        }
+      ],
+      "samples": 82,
+      "persisted": false
+    }
+  },
+  "fixed_collectors": {
+    "linux-network": [
+      {
+        "metric": "host.network.bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "47506923"
+        }
+      },
+      {
+        "metric": "host.network.bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "66057557"
+        }
+      }
+    ],
+    "linux-block": [
+      {
+        "metric": "linux.block.read_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "965485568"
+        }
+      },
+      {
+        "metric": "linux.block.write_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "328601088"
+        }
+      },
+      {
+        "metric": "linux.block.io_time_ms_total",
+        "unit": "ms",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "2130"
+        }
+      },
+      {
+        "metric": "linux.block.read_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "929768448"
+        }
+      },
+      {
+        "metric": "linux.block.write_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "250981376"
+        }
+      },
+      {
+        "metric": "linux.block.io_time_ms_total",
+        "unit": "ms",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "2220"
+        }
+      },
+      {
+        "metric": "linux.block.read_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "2269184"
+        }
+      },
+      {
+        "metric": "linux.block.write_bytes_total",
+        "unit": "By",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      },
+      {
+        "metric": "linux.block.io_time_ms_total",
+        "unit": "ms",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      }
+    ],
+    "linux-network-diagnostics-v1": [
+      {
+        "metric": "linux.network.events_total",
+        "unit": "count",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      },
+      {
+        "metric": "linux.network.events_total",
+        "unit": "count",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      },
+      {
+        "metric": "linux.network.events_total",
+        "unit": "count",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      },
+      {
+        "metric": "linux.network.events_total",
+        "unit": "count",
+        "quality": "good",
+        "value": {
+          "encoding": "uint64",
+          "value": "0"
+        }
+      }
+    ]
+  },
+  "formal_cycles": [
+    {
+      "resource_type": "instance",
+      "cycles": 20
+    },
+    {
+      "resource_type": "server",
+      "cycles": 16
+    }
+  ],
+  "readonly": {
+    "pre_run_probe": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1
+      },
+      "bindings": [
+        {
+          "key": "instance:1",
+          "revision": 4
+        },
+        {
+          "key": "server:3",
+          "revision": 3
+        }
+      ]
+    },
+    "post_run_probe": {
+      "database_instances": 5,
+      "servers": 1,
+      "server3": {
+        "id": 3,
+        "collection_enabled": 1
+      },
+      "bindings": [
+        {
+          "key": "instance:1",
+          "revision": 4
+        },
+        {
+          "key": "server:3",
+          "revision": 3
+        }
+      ],
+      "stray_disposable": [],
+      "instances": [
+        "1:mysql3306",
+        "2:postgresql5432",
+        "6:test-audit-name-dameng",
+        "7:oracle1521",
+        "8:test-audit-name"
+      ]
+    },
+    "original_configuration_digest": "90f3ef2ee223fd2ff0371b1513d1293bb9ce0ea32610a9fe247f2c83055ae15a",
+    "original_configuration_unchanged": true
+  },
+  "cleanup": {
+    "disposable_schema": "max189_real_* on 127.0.0.1:13306, dropped by the test; container removed after the run",
+    "stray_schemas_after_run": []
+  },
+  "unchanged_environment": [
+    "mysql.innodb.deadlocks_total stays null/unknown",
+    "mysql.replication.* has no series",
+    "linux.block.io_time_ms_total keeps ms and gets no rate",
+    "no real network-device socket",
+    "SSH unit fixture still skipped without its port/password"
+  ]
+}

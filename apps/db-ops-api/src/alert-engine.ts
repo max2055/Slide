@@ -1,3 +1,4 @@
+import { blockingDependencies } from './alert-dependencies.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * 告警引擎服务
@@ -287,7 +288,19 @@ class AlertEngine {
     }
 
     assertWorkflowActive();
-    const result = await alertDatabaseService.createAlert({
+    const pool = dbConnection.getPool();
+    if (!pool) throw Error('DEPENDENCY_STATE_UNKNOWN');
+    const connection = await pool.getConnection();
+    let result: {success:boolean;alertId?:number};
+    try {
+    await connection.beginTransaction();
+    await connection.execute('SELECT id FROM alert_dependency_lock WHERE id=1 FOR UPDATE');
+    if ((await blockingDependencies(connection,{type:'instance',id:instanceId},`legacy:${rule.id}`)).length) {
+      await connection.commit(); return;
+    }
+    const [duplicate] = await connection.execute<any[]>("SELECT id FROM alerts WHERE instance_id=? AND metric_name=? AND JSON_EXTRACT(tags,'$.rule_id')=? AND status NOT IN ('resolved','closed') LIMIT 1",[instanceId,rule.metric_name,rule.id]);
+    if (duplicate.length) { await connection.commit(); return; }
+    result = await alertDatabaseService.createAlert({
       instance_id: instanceId,
       alert_type: typeMap[rule.metric_name] || 'performance',
       level: levelMap[severity] || 'warning',
@@ -299,7 +312,10 @@ class AlertEngine {
       metric_value: String(currentValue),
       threshold_value: String(threshold),
       tags,
-    });
+    }, connection);
+    if (!result.success) throw Error('ALERT_WRITE_FAILED');
+    await connection.commit();
+    } catch(e) { await connection.rollback(); throw e; } finally { connection.release(); }
 
     // 7. 创建告警后，为该实例+指标设置静默期（使用规则配置的静默时长，默认 5 分钟）
     const silenceDuration = (rule.silence_minutes as number) ?? 5;
