@@ -106,8 +106,12 @@ try {
         ? "SELECT COUNT(*) FROM DBA_OBJECTS WHERE OWNER='SYS' AND OBJECT_NAME='USER$'"
         : "SELECT COUNT(*) FROM DBA_OBJECTS WHERE OWNER='SYS' AND OBJECT_NAME='SYSUSER$'")).rows[0][0]) > 0, true);
       try { await client.execute(sql); e.protected_read = { sql, unexpected_success: true }; save(); throw Error('PROTECTED_READ_ALLOWED'); }
-      catch (error) { if ((error as Error).message === 'PROTECTED_READ_ALLOWED') throw error; e.protected_read = { sql, error: safe(error) }; }
-      assert(engine === 'oracle' ? e.protected_read.error.number === 942 || e.protected_read.error.number === 1031 : e.protected_read.error.number === -551);
+      catch (error) {
+        if ((error as Error).message === 'PROTECTED_READ_ALLOWED') throw error;
+        e.protected_read = { sql, error: safe(error), permission_message: /privilege|permission|权限/i.test((error as Error).message) };
+      }
+      assert(engine === 'oracle' ? e.protected_read.error.number === 942 || e.protected_read.error.number === 1031
+        : e.protected_read.error.number === -5504 && e.protected_read.permission_message);
       e.minimum_privilege_verified = true; save();
     } catch (error) {
       e.failure = { phase, ...safe(error) }; save(); throw error;
