@@ -49,6 +49,16 @@ it('keeps metric cards on temporary failure, clears values on permission denial'
   authFetch.mockResolvedValue({ ok: false, status: 403 }); await el.load(); await el.updateComplete;
   expect(el.result).toBeNull(); expect(el.error).toContain('权限');
 });
+it.each([401, 403, 404])('invalidates historical study when the production query refuses access (%s)', async status => {
+  authFetch.mockResolvedValue({ ok: true, json: async () => result });
+  const el = await mount();
+  expect((el.shadowRoot!.querySelector('metric-study') as any).resourceId).toBe(1);
+  authFetch.mockResolvedValue({ ok: false, status });
+  await el.load(); await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect((el.shadowRoot!.querySelector('metric-study') as any).resourceId).toBe(0);
+  expect(el.shadowRoot!.querySelector<HTMLButtonElement>('button[aria-busy]')!.disabled).toBe(true);
+});
 it('discards late data after changing resource', async () => {
   let finish!: (value: unknown) => void;
   authFetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ ok: false, status: 403 });
