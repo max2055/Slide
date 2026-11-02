@@ -81,7 +81,10 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
       document.documentElement.style.setProperty('--accent', '#265f99');
     }, theme);
     const table = page.locator('resource-metrics-table');
-    const help = table.getByRole('button', { name: '数据量说明', exact: true });
+    await page.getByRole('button', { name: '列设置', exact: true }).click();
+    await table.getByRole('checkbox', { name: '数据库大小', exact: true }).check();
+    await table.getByRole('button', { name: '完成', exact: true }).click();
+    const help = table.getByRole('button', { name: '数据库大小说明', exact: true });
     await keyboardFocus(page, help);
     const measurement = await help.evaluate(el => {
       const luminance = (rgb: string) => rgb.match(/[\d.]+/g)!.slice(0, 3).map(Number)
@@ -184,17 +187,23 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) tes
     const table = page.locator('resource-metrics-table');
     const grid = table.locator('app-data-table');
     await expect(grid.locator('tbody tr')).toHaveCount(20);
-    await expect(grid.locator('th')).toHaveText(['选择', '序号', identity, '地址', version, ...(type === 'instance' ? ['数据量 ⓘ'] : []), '观测健康', '采集状态', '最近采集时间', '操作']);
+    await expect(grid.locator('th')).toHaveText(['选择', '序号', identity, '地址', version, '观测健康', '采集状态', '最近成功采集', '操作']);
     await expect(grid.locator('tbody tr').first().locator('.actions button')).toHaveText(['详情', '编辑', '测试', '删除']);
     await expect(table.locator('.actions details, .mobile-resources')).toHaveCount(0);
-    await expect(grid.locator('tbody tr').first().locator('td').nth(type === 'instance' ? 7 : 6)).toContainText('采集中');
-    await expect(grid.locator('tbody tr').nth(1).locator('td').nth(type === 'instance' ? 7 : 6)).toContainText('失败');
+    await expect(grid.locator('tbody tr').first().locator('td').nth(6)).toContainText('采集中');
+    await expect(grid.locator('tbody tr').nth(1).locator('td').nth(6)).toContainText('失败');
     await expect(grid.locator('tbody tr').nth(1).locator('td').nth(4)).toContainText('未知');
-    await expect(grid.locator('tbody tr').nth(2).locator('td').nth(type === 'instance' ? 6 : 5)).toContainText('已过期');
+    await expect(grid.locator('tbody tr').nth(2).locator('td').nth(5)).toContainText('已过期');
     await expect(grid.locator('tbody tr').first().locator('time:not(.size-observed)')).toHaveAttribute('datetime', '2026-10-20T03:04:05Z');
     if (type === 'instance') {
-      await expect(grid.locator('tbody tr').first().locator('td').nth(5)).toContainText('8.00 KiB');
-      await expect(grid.locator('tbody tr').nth(2).locator('td').nth(5)).toContainText('0 B · 已过期');
+      await page.getByRole('button', { name: '列设置', exact: true }).click();
+      const sizeColumn = table.getByRole('checkbox', { name: '数据库大小', exact: true });
+      await expect(sizeColumn).not.toBeChecked();
+      await sizeColumn.check();
+      await table.getByRole('button', { name: '完成', exact: true }).click();
+      await expect(grid.locator('th')).toHaveCount(10);
+      await expect(grid.locator('tbody tr').first().locator('td').nth(9)).toContainText('8.00 KiB');
+      await expect(grid.locator('tbody tr').nth(2).locator('td').nth(9)).toContainText('0 B · 已过期');
     }
     const sizes = await grid.locator('tbody tr').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
     expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);

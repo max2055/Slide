@@ -1,3 +1,4 @@
+import '../components/resource-event-context.js';
 import { LitElement, css, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import './system-events.ts';
@@ -68,6 +69,7 @@ export class EventCenterPage extends LitElement {
   }
 
   override render() {
+    if (new URLSearchParams(location.search).has('resource')) return html`<resource-event-context></resource-event-context>`;
     return html`
       <p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>
       <div class="tabs" role="tablist" aria-label="事件中心">

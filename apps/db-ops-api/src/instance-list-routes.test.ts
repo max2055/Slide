@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import {actorContextService} from './auth/actor-context.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerInstanceListRoutes } from './instance-list-routes.js';
 import { dbConnection } from './db-connection.js';
@@ -8,6 +9,7 @@ const apps: ReturnType<typeof Fastify>[] = [];
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); vi.restoreAllMocks(); });
 const reader = { username: 'reader', permissions: ['instance:view'], roles: [], instanceScopes: { 7: 'read-only' } };
 async function request(actor: unknown, load = vi.fn().mockResolvedValue([])) {
+  vi.spyOn(actorContextService, 'revalidateActor').mockImplementation(async current => current);
   const app = Fastify(); apps.push(app);
   await registerInstanceListRoutes(app, async req => { (req as any).user = actor; }, { getManagedInstances: load });
   return { response: await app.inject({ method: 'GET', url: '/api/database/instances' }), load };

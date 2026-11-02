@@ -32,3 +32,6 @@ tmp/
 /.multica/
 /apps/db-ops-api/.qualification/
 /.planning/phases/
+
+/.max236-workflow/
+/scripts/max236/__pycache__/

@@ -1,3 +1,5 @@
+import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
+import { registerResourceTriggerRead } from './src/metrics/triggers/resource-detail-routes.js';
 import { registerAlertEscalationRoute } from './src/alert-escalation-routes.js';
 import { deliveryStore } from './src/workflows/delivery-store.js';
 import { registerAlertDependencyRoutes } from './src/alert-dependency-routes.js';
@@ -497,6 +499,7 @@ async function start() {
     await registerTemplateAuthoringRoutes(app, verifyToken);
     await registerDiscoveryRoutes(app, verifyToken);
     await registerTemplateTriggerRoutes(app, verifyToken);
+    await registerResourceTriggerRead(app, verifyToken);
   });
   await installPlatformObservation(fastify, verifyToken, undefined,
     () => new MysqlWorkflowStore(() => dbConnection.getPool() as any).observeQueue());
@@ -1430,19 +1433,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // 获取实例详情
-  fastify.get('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const instance = await instanceDatabaseService.getInstanceById(Number(id));
-      if (!instance) {
-        return reply.code(404).send({ error: '实例不存在' });
-      }
-      reply.send(publicInstanceDto(instance as unknown as Record<string, unknown>));
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取实例详情失败：' + error.message });
-    }
-  });
+  await registerResourceIdentityRoutes(fastify, verifyToken);
+  // Resource identity handlers are shared with isolated integration acceptance.
+
 
   // 更新实例
   fastify.put('/api/database/instances/:id', { preHandler: [verifyToken, requirePermission('instance:update'), requireInstanceAccess('read-write')] }, async (request, reply) => {
@@ -1538,37 +1531,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // ========== 服务器管理 API ==========
 
   // 获取所有服务器
-  fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
-    try {
-      const servers = await serverDatabaseService.getAllServers();
-      reply.send(servers.map((server) => publicServerDto(server as unknown as Record<string, unknown>)));
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
-    }
-  });
-
-  // 获取服务器详情
-  fastify.get('/api/servers/:id', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const server = await serverDatabaseService.getServerById(Number(id));
-      if (!server) {
-        return reply.code(404).send({ error: '服务器不存在' });
-      }
-      // Strip credential_encrypted from response — never send encrypted blob to frontend
-      const { credential_encrypted, ...safeServer } = server;
-      // Decrypt and include username for edit-form pre-fill (but NOT password/key)
-      try {
-        const creds = serverDatabaseService.decryptCredentials(credential_encrypted);
-        (safeServer as any).credential_username = creds.username;
-      } catch {
-        // If decryption fails, skip — frontend will show empty username field
-      }
-      reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
-    }
-  });
 
   // 创建服务器
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
@@ -5010,8 +4972,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   await registerAlertDependencyRoutes(fastify, verifyToken);
   await registerMaintenanceRoutes(fastify, verifyToken);
-  await registerTemplateAuthoringRoutes(fastify, verifyToken);
-  await registerDiscoveryRoutes(fastify, verifyToken);
   await registerTemplateGovernanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---

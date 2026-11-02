@@ -155,7 +155,7 @@ it('keeps the eight business columns fixed even with obsolete hidden-column choi
   el.hiddenColumns = ['name', 'version', 'address', 'health', 'collection', 'last_collection', 'actions', ...el.defaultHiddenColumns];
   await el.updateComplete; await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
   const table = el.shadowRoot.querySelector('app-data-table'); await table.updateComplete;
-  expect(table.columns.map((c: any) => c.label)).toEqual(['选择', '序号', '实例', '地址', '版本', '观测健康', '采集状态', '最近采集时间', '操作']);
+  expect(table.columns.map((c: any) => c.label)).toEqual(['选择', '序号', '实例', '地址', '版本', '观测健康', '采集状态', '最近成功采集', '操作']);
   expect(table.querySelector('tbody td:nth-child(5)').textContent).toContain('未知');
   expect(table.textContent).toContain('未知 · 已过期');
   expect(el.shadowRoot.querySelector('.mobile-resources')).toBeNull();

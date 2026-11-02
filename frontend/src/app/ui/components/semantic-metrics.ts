@@ -201,6 +201,8 @@ export class SemanticMetrics extends LitElement {
       if (this.range) ({ from, to } = this.range);
       else if (this.from && this.to) { from = this.from; to = this.to; }
       else { to = new Date(now).toISOString(); from = new Date(now - this.hours * 3600000).toISOString(); }
+      const scopeUrl=new URL(location.href);scopeUrl.searchParams.set('metricResource',`${resourceType}:${resourceId}`);scopeUrl.searchParams.set('metricFrom',from);scopeUrl.searchParams.set('metricTo',to);history.replaceState({},'',scopeUrl);
+      window.dispatchEvent(new CustomEvent('slide-resource-window',{detail:{type:resourceType,id:resourceId,window:{from,to}}}));
       const query = { resource: { type: this.resourceType, id: this.resourceId }, view: 'all', history: true, from, to, bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)) };
       const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query) });
       if (!current()) return;
