@@ -9,8 +9,10 @@ const runtimeCounterKeys = ['modelStep', 'providerAttempts', 'toolCalls', 'recov
 export interface PlatformLogInput {
   component: string; eventType: string; status: 'ok' | 'failed' | 'unknown';
   durationMs?: number; errorCode?: string; correlationId?: string; traceId?: string;
-  releaseId?: string; runtimeCounters?: RuntimeLogCounters;
+  releaseId?: string; commitSha?: string; callsite?: string; runtimeCounters?: RuntimeLogCounters;
   jobType?: string;
+  /** Process-keyed opaque read-request identity; never raw request content. */
+  requestScope?: string;
   streamBoundary?: { anchorId?: string; sourceRequestId?: string; discardedBytes?: number };
 }
 interface PlatformLogEntry extends PlatformLogInput { timestamp: string; level: 'info' | 'error' | 'warn'; }
@@ -32,6 +34,9 @@ export class StructuredLogEvidenceAdapter {
       component: input.component, eventType: input.eventType, status: input.status,
       durationMs: input.durationMs, errorCode: safe(input.errorCode), correlationId: safe(input.correlationId) ?? randomUUID(),
       traceId: safe(input.traceId), releaseId: safe(input.releaseId),
+      commitSha: /^[a-f0-9]{40}$/.test(input.commitSha ?? '') ? input.commitSha : undefined,
+      callsite: typeof input.callsite === 'string' && /^[A-Za-z0-9_.:/-]{1,512}$/.test(input.callsite) ? input.callsite : undefined,
+      requestScope: /^[a-f0-9]{64}$/.test(input.requestScope ?? '') ? input.requestScope : undefined,
       ...(safe(input.jobType) ? { jobType: safe(input.jobType) } : {}),
       ...(input.streamBoundary ? { streamBoundary: {
         anchorId: /^[a-f0-9-]{36}$/i.test(input.streamBoundary.anchorId ?? '') ? input.streamBoundary.anchorId : undefined,
@@ -44,6 +49,35 @@ export class StructuredLogEvidenceAdapter {
     this.entries = this.entries.filter(entry => Date.parse(entry.timestamp) >= this.now() - HOUR);
     this.entries.push(entry);
     if (this.entries.length > this.capacity) { this.droppedAt = this.now(); this.entries.splice(0, this.entries.length - this.capacity); }
+  }
+
+  /** Server-owned exact failure comparison, never arbitrary log or URL replay. */
+  verifyFailure(event: { occurredAt: string; callsite: string; releaseId?: string; commitSha?: string; correlationId?: string }, enabled: boolean) {
+    const now = this.now(), from = Date.parse(event.occurredAt);
+    const gaps: string[] = [];
+    if (!enabled) gaps.push('SYSTEM_COLLECTION_DISABLED');
+    if (!event.releaseId || !event.commitSha) gaps.push('SOURCE_EVENT_VERSION_MISSING');
+    if (!Number.isFinite(from) || from > now || from < now - HOUR) gaps.push('LOG_WINDOW_UNAVAILABLE');
+    if (from < this.startedAt) gaps.push('LOG_WINDOW_PRECEDES_PROCESS');
+    if (this.droppedAt !== null && this.droppedAt >= from) gaps.push('LOG_BUFFER_TRUNCATED');
+    const originals = this.entries.filter(row => row.component === 'api' && row.eventType === 'request.completed'
+      && row.status === 'failed' && row.correlationId === event.correlationId && row.callsite === event.callsite
+      && row.releaseId === event.releaseId && row.commitSha === event.commitSha);
+    const scope = originals.length === 1 ? originals[0].requestScope : undefined;
+    if (!scope) gaps.push('LOG_REQUEST_SCOPE_UNAVAILABLE');
+    const matching = this.entries.filter(row => scope && row.requestScope === scope && row.component === 'api'
+      && row.eventType === 'request.completed' && row.callsite === event.callsite && Date.parse(row.timestamp) > from
+      && Date.parse(row.timestamp) <= now && now - Date.parse(row.timestamp) <= 300_000);
+    if (matching.some(row => row.releaseId !== event.releaseId || row.commitSha !== event.commitSha)) gaps.push('SOURCE_COMMIT_MISMATCH');
+    const latest = matching.at(-1);
+    if (!latest) gaps.push('LOG_EVIDENCE_MISSING');
+    if (latest?.status === 'unknown') gaps.push('LOG_STATUS_UNKNOWN');
+    // A bounded successful observation is scoped to this original callsite,
+    // never a claim about all platform components or the root cause.
+    const conclusion = gaps.length ? 'insufficient_evidence' as const
+      : latest?.status === 'failed' ? 'not_improved' as const : 'recovered' as const;
+    return { from: event.occurredAt, to: new Date(now).toISOString(), conclusion, gaps,
+      observation: latest ? { ...latest } : null, persistence: 'process-local' as const };
   }
 
   query(options: { from?: string; to?: string; component?: string }) {

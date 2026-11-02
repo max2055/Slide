@@ -18,6 +18,7 @@ for _ in $(seq 1 60); do
 done
 if [[ "$ready" != 1 ]]; then echo 'Isolated T09 MySQL unavailable' >&2; exit 1; fi
 case "${1:-}" in
+  --platform) T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-frontend exec playwright test --config playwright.investigation.config.ts MAX-243-platform.spec.ts --output test-results-platform ;;
   --streaming)
     DB_HOST=127.0.0.1 DB_PORT="$port" DB_USER=root DB_PASSWORD='' pnpm --filter slide-frontend exec playwright test --config playwright.streaming-live.config.ts ;;
   --regression)

@@ -36,6 +36,11 @@ export async function registerKnowledgeRoutes(app: FastifyInstance, verifyToken:
     await service.search(actor, query as CaseSearchInput, page => { reply.send(page); });
     return reply;
   });
+  route('GET','/api/operations/knowledge/prepare',async(r,_reply,actor)=>{
+    const q=r.query as Record<string,string>;
+    if(Object.keys(q).some(k=>!['investigationId','resultVersion'].includes(k))||!q.resultVersion||!/^[1-9]\d*$/.test(q.resultVersion))throw new OperationsError('OPERATIONS_INPUT_INVALID');
+    return service.prepare(actor,{investigationId:q.investigationId,resultVersion:Number(q.resultVersion)});
+  });
   route('GET', '/api/operations/knowledge/:id', async (r, reply, actor) => {
     await service.detail(actor, idOf(r), view => { reply.send(view); });
     return reply;

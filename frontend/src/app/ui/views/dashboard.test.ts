@@ -194,14 +194,14 @@ describe('overview evidence hierarchy', () => {
     expect(root.querySelector('#resource-details').parentElement.id).toBe('overview-panel');
     const risk = root.querySelector('.risk-row');
     expect(risk.querySelectorAll('a')).toHaveLength(2);
-    expect(risk.querySelector('.risk-next').href).toContain('/resource-diagnosis?');
+    expect(risk.querySelector('.risk-next').href).toContain('/investigations?entry=');
     expect(risk.querySelector('time').title).toBe(item().observedAt);
     expect(risk.querySelector('details').open).toBe(false);
     risk.querySelector('.relation-select').click(); await dashboard.updateComplete;
     expect(root.querySelector('#risk-relations').textContent).toContain('#9');
     const table = root.querySelector('app-data-table'); await table.updateComplete;
     expect(table.querySelector('.more-actions a').href).toContain('/server-detail?');
-    expect(table.querySelector('.more-actions a:last-child').href).toContain('/resource-diagnosis?');
+    expect(table.querySelector('.more-actions a:last-child').href).toContain('/investigations?entry=');
   });
   it('clears resource content on a revoked overview response', async () => {
     const dashboard = document.createElement('dashboard-page') as any;

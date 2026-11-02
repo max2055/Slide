@@ -108,7 +108,9 @@ export class InvestigationOperationContext extends LitElement {
     return html`<app-card><span slot="header">案例参考与行动</span><p>历史案例是参考材料，与当前事实分开核对。创建计划不会获得执行许可。</p>
       <div class="toolbar"><a class="btn" href=${`/operations-knowledge?sourceInvestigation=${encodeURIComponent(this.investigationId)}`}>查找可信案例</a>
         ${this.resultVersion ? html`<a class="btn" href=${`/operations-knowledge?sourceInvestigation=${encodeURIComponent(this.investigationId)}&resultVersion=${this.resultVersion}`}>从当前结果整理案例</a>` : nothing}
-        <a class="btn" href=${`/operations-actions?sourceInvestigation=${encodeURIComponent(this.investigationId)}`}>查看行动计划</a></div>
+        <a class="btn" href=${`/operations-actions?sourceInvestigation=${encodeURIComponent(this.investigationId)}${this.resultVersion ? `&resultVersion=${this.resultVersion}` : ''}`}>查看行动计划</a></div>
+      ${this.resultVersion ? this.resources.filter(ref => ref.type === 'server').map(ref => html`<a class="btn"
+        href=${`/operations-actions?sourceInvestigation=${encodeURIComponent(this.investigationId)}&resultVersion=${this.resultVersion}&targetId=${ref.id}`}>为服务器 ${ref.id} 整理当前结果的行动草案</a>`) : nothing}
       <p class="muted">行动仅限专用工具、不可变计划与独立人工批准；后续仍需显式执行及效果验证。</p>
     </app-card><app-card><span slot="header">关联事项与解释</span><p>按资源、当前时间窗口与可信关系关联，不将相关性解释为根因。</p>
       <button class="btn" ?disabled=${a.locked || !this.resources.length || this.resources.length > 20} @click=${this.computeAttention}>评估当前关联事项</button>

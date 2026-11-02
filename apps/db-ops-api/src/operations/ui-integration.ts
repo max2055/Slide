@@ -5,9 +5,11 @@ import { ActorContextService, type ActorContext } from '../auth/actor-context.js
 import { hasPermission } from '../auth/require-permission.js';
 import { freezeInvestigationCaller, InvestigationAuthorization } from '../investigations/authorization.js';
 import { InvestigationStoreError } from '../investigations/store.js';
+import { InvestigationResultStore } from '../investigations/result-schema.js';
 import { resultEvidenceIds } from '../investigations/result-schema.js';
 import { OperationsError, operationsContentHash } from './contracts.js';
 import { approvalAuthority } from './actions/approval-binding.js';
+import type { ActionExecutionStore } from './actions/execution-store.js';
 import { ActionPlanService } from './actions/plan-service.js';
 import { PlanStore, planRows, decodePlanJson } from './actions/plan-store.js';
 import { CaseCursorCodec } from './knowledge/search.js';
@@ -32,7 +34,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 export class OperationsUiIntegration {
   constructor(readonly store: PlanStore, readonly plans: ActionPlanService, readonly knowledge: KnowledgeService,
     readonly cursors: CaseCursorCodec, readonly environment?: TrustedActionProposal,
-    private readonly contexts = new ActorContextService(), private readonly investigations = new InvestigationAuthorization()) {}
+    private readonly contexts = new ActorContextService(), private readonly investigations = new InvestigationAuthorization(), private readonly executions?:ActionExecutionStore) {}
   async discover(caller: ActorContext, input: unknown) {
     const q = parse(planDiscoverySchema, input), { cursor: _cursor, ...filter } = q;
     caller = freezeInvestigationCaller(caller);
@@ -74,6 +76,77 @@ export class OperationsUiIntegration {
         nextCursor: more && scanned ? this.cursors.encode({after:scanned,asOf:position?.asOf ?? now.toISOString(),filter:fingerprint,authority,expires:+now+300000}) : null };
     });
   }
+  async workspaceAttention(caller: ActorContext, input: unknown) {
+    const q = parse(z.strictObject({ limit:z.coerce.number().int().min(1).max(50).default(20), cursor:z.string().max(2048).optional() }), input);
+    caller = freezeInvestigationCaller(caller);
+    return this.store.transaction(async c => {
+      const current = await this.contexts.loadInvestigationActorFrom(c,caller.userId,caller.principalKind ?? 'user',caller.sessionVersion,caller.requestId);
+      if (![caller,current].every(a=>hasPermission(new Set(a.permissions),'chat:view'))) throw new OperationsError('OPERATIONS_NOT_FOUND');
+      const now=await this.store.now(c), filter=operationsContentHash(['workspace-attention-v1',q.limit]);
+      const authority=operationsContentHash([approvalAuthority(caller),approvalAuthority(current)]);
+      const position=q.cursor ? this.cursors.decode(q.cursor,filter,authority,+now) : null;
+      const candidates=await planRows(c,`SELECT * FROM investigations WHERE id>? AND created_at<=?
+        AND lifecycle IN ('open','waiting') ORDER BY id LIMIT 301 FOR SHARE`,[position?.after ?? '',new Date(position?.asOf ?? now)]);
+      const items=[]; let after='',consumed=0,unavailable=false;
+      for (const row of candidates.slice(0,300)) {
+        after=row.id; consumed++;
+        try {
+          const inv=await this.investigations.load(c,row.id);
+          await this.investigations.authorize(c,caller,inv,'content');
+          if ((caller.principalKind ?? 'user') !== 'user') continue;
+          const [result]=await planRows(c,'SELECT * FROM investigation_results WHERE investigation_id=? ORDER BY version DESC LIMIT 1 FOR SHARE',[inv.id]);
+          if(result) await new InvestigationResultStore(undefined,this.investigations).authorizedBindings(c as never,caller,inv,{investigationId:inv.id,requestId:result.request_id,runId:result.run_id},resultEvidenceIds(decodePlanJson(result.result_json)));
+          const [creation]=await planRows(c,'SELECT command_snapshot FROM investigation_create_keys WHERE investigation_id=? LIMIT 1 FOR SHARE',[inv.id]);
+          const context=creation?decodePlanJson(creation.command_snapshot)?.context:null;
+          const source={context,investigationId:inv.id,investigationVersion:inv.version,scopeVersion:inv.scopeVersion,
+            resultId:result?.id ?? null,resultVersion:result ? Number(result.version) : null,title:row.title,updatedAt:new Date(row.updated_at).toISOString()};
+          let action=null;
+          if ([caller,current].every(a=>hasPermission(new Set(a.permissions),'operations:actions:view'))) {
+            if(this.executions) {
+              const executions=await planRows(c,`SELECT e.id FROM action_executions e JOIN action_plans p ON p.id=e.plan_id
+                WHERE p.investigation_id=? ORDER BY e.created_at DESC,e.id DESC FOR SHARE`,[inv.id]);
+              for(const execution of executions) {
+                try { action=await this.executions.attentionIn(c,caller,execution.id);if(action)break; }
+                catch(error) {if((error instanceof OperationsError||error instanceof InvestigationStoreError)&&[403,404,409,410,422].includes(error.statusCode))continue;throw error;}
+              }
+            }
+            const plans=await planRows(c,'SELECT id FROM action_plans WHERE investigation_id=? ORDER BY id FOR SHARE',[inv.id]);
+            for (const plan of action?[]:plans) {
+              try { const next=await this.plans.attentionIn(c,caller,plan.id); if(next){ action=next;break;} }
+              catch(error) {
+                if (!(error instanceof OperationsError || error instanceof InvestigationStoreError)) throw error;
+                if ([403,404,409,410,422].includes(error.statusCode)) continue;
+                if (error.statusCode===503) {unavailable=true;continue;}
+                throw error;
+              }
+            }
+          }
+          if (action) {
+            if(action.kind==='continue')await this.investigations.authorize(c,caller,inv,'patch');
+            const [bound]=await planRows(c,'SELECT id FROM investigation_results WHERE investigation_id=? AND version=? FOR SHARE',[inv.id,action.plan.content.resultVersion]);
+            items.push({...source,resultId:bound?.id ?? null,kind:action.kind,planId:action.plan.id,planVersion:action.plan.version,
+            planHash:action.plan.contentHash,approvalId:action.approvalId,executionId:action.executionId,
+            reportId:'reportId' in action?action.reportId:null,reportVersion:'reportVersion' in action?action.reportVersion:null,
+            resultVersion:action.plan.content.resultVersion});
+          } else if (!row.active_request_id && row.problem_status!=='resolved') {
+            await this.investigations.authorize(c,caller,inv,'patch');
+            items.push({...source,kind:'continue' as const,planId:null,planVersion:null,planHash:null,approvalId:null,executionId:null});
+          }
+          if(items.length===q.limit)break;
+        } catch(error) {
+          if ((error instanceof InvestigationStoreError || error instanceof OperationsError) && [403,404].includes(error.statusCode)) continue;
+          throw error;
+        }
+      }
+      return {items,unavailable,countScope:'page' as const,nextCursor:consumed<candidates.length&&after
+        ? this.cursors.encode({after,asOf:position?.asOf ?? now.toISOString(),filter,authority,expires:+now+300000}):null};
+    });
+  }
+  async executionContext(caller:ActorContext,id:string) {
+    if(!this.executions||!z.uuid().safeParse(id).success)throw new OperationsError('OPERATIONS_INPUT_INVALID');
+    caller=freezeInvestigationCaller(caller);
+    return this.store.transaction(c=>this.executions!.contextIn(c,caller,id));
+  }
   async draft(caller: ActorContext, input: unknown) {
     const q = parse(trustedDraftSchema,input);
     if (!this.environment) throw new OperationsError('OPERATIONS_DEPENDENCY_UNAVAILABLE');
@@ -110,6 +183,8 @@ export async function registerOperationsUiRoutes(app: FastifyInstance, verify: (
     scope.setErrorHandler((error,_r,p)=>p.code(error instanceof OperationsError || error instanceof InvestigationStoreError ? error.statusCode : 503)
       .send({reasonCode:error instanceof OperationsError || error instanceof InvestigationStoreError ? error.code : 'OPERATIONS_DEPENDENCY_UNAVAILABLE'}));
     const actor = (r:any):ActorContext => { if(!r.user)throw new OperationsError('OPERATIONS_FORBIDDEN');return r.user; };
+    scope.get('/api/operations/actions/execution-context/:id',r=>service.executionContext(actor(r),(r.params as {id:string}).id));
+    scope.get('/api/operations/workspace-attention', r=>service.workspaceAttention(actor(r),r.query));
     scope.get('/api/operations/actions/plans', r=>service.discover(actor(r),r.query));
     scope.post('/api/operations/actions/drafts',async(r,p)=>p.code(201).send({plan:await service.draft(actor(r),r.body)}));
     scope.post('/api/operations/knowledge/:id/bind',async(r,p)=>p.code(201).send(await service.knowledge.bind(actor(r),(r.params as any).id,parse(manualCaseBindingSchema,r.body))));

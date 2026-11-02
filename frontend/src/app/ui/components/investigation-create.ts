@@ -78,6 +78,8 @@ export class InvestigationCreate extends LitElement {
   @property() sessionId = '';
   @state() private investigationTitle = '';
   @state() private goal = '';
+  @state() private scenario = 'fault';
+  @state() private windowMinutes = 30;
   @state() private profile: 'ops' | 'system' = 'ops';
   @state() private resource = 'instance';
   @state() private ids = '';
@@ -99,7 +101,7 @@ export class InvestigationCreate extends LitElement {
   }
   createRenderRoot() { return this; }
   private clearDraft() {
-    this.investigationTitle = ''; this.goal = ''; this.ids = ''; this.from = ''; this.to = ''; this.validation = '';
+    this.investigationTitle = ''; this.goal = ''; this.scenario='fault';this.windowMinutes=30;this.ids = ''; this.from = ''; this.to = ''; this.validation = '';
     this.profile = 'ops'; this.resource = 'instance'; this.selected = []; this.resourceNames = {}; this.advancedRefs = ''; this.advancedOpen = false;
     this.controller.dispose(); this.controller = new InvestigationsController(() => this.controllerChanged(), this.client);
   }
@@ -128,18 +130,23 @@ export class InvestigationCreate extends LitElement {
     const ids = this.ids.split(',').map(id => id.trim()).filter(Boolean);
     const raw = [...this.selected, ...ids.map(id => `${this.resource}:${id}`), ...this.advancedRefs.split(',').map(ref => ref.trim()).filter(Boolean)];
     const invalid = raw.some(ref => !/^(instance|server|network_device):[1-9]\d*$/.test(ref) || !Number.isSafeInteger(Number(ref.split(':')[1])));
-    if (!this.investigationTitle.trim() || !this.goal.trim() || this.profile === 'ops' && (!raw.length || invalid)) {
-      this.validation = '请填写标题、调查目标并选择资源；高级 ID 必须为有效的正整数。'; return;
+    if (this.scenario==='custom' && !this.goal.trim() || this.profile === 'ops' && (!raw.length || invalid)) {
+      this.validation = '请选择资源；自定义问题填写一段描述，高级 ID 必须为有效的正整数。'; return;
     }
     if ((!!this.from !== !!this.to) || this.from && (Date.parse(this.from) >= Date.parse(this.to) || !Number.isFinite(Date.parse(this.from)) || !Number.isFinite(Date.parse(this.to)))) {
       this.validation = '时间窗口需同时填写，结束时间晚于开始时间。'; return;
     }
     const resourceRefs: InvestigationCreateRequest['resourceRefs'] = this.profile === 'ops'
       ? [...new Set(raw)].map((ref, i) => { const [type, id] = ref.split(':'); return { type: type as 'instance' | 'server' | 'network_device', id: Number(id), role: i ? 'related' as const : 'primary' as const }; }) : [];
-    const body: InvestigationCreateRequest = { title: this.investigationTitle.trim(), goal: this.goal.trim(), profileId: this.profile,
+    const scene=this.scenario==='availability'?'服务不可用排查':'异常现象排查';
+    const subjectName=this.profile==='system'?'Slide 平台':this.selected.map(ref=>this.resourceNames[ref]||ref).join('、')||raw.join('、');
+    const title=this.investigationTitle.trim()||`${subjectName} · ${this.scenario==='custom'?'自定义调查':scene}`.slice(0,200);
+    const goal=this.goal.trim()||`对所选范围进行只读${scene}，核对观察窗口内的事实、反证与缺口，给出一个优先下一步。不执行修复或自动确认恢复。`;
+    const until=new Date(), since=new Date(+until-this.windowMinutes*60000);
+    const body: InvestigationCreateRequest = { title, goal, profileId: this.profile,
       subject: this.profile === 'ops' ? { kind: 'resource', resource: { type: resourceRefs[0].type, id: resourceRefs[0].id } } : { kind: 'platform', component: 'slide' },
       resourceRefs, ...(this.sessionId ? { sessionId: this.sessionId.replace(/^agent:[^:]+:/, '') } : {}),
-      ...(this.from ? { from: new Date(this.from).toISOString(), to: new Date(this.to).toISOString() } : {}) };
+      ...(this.from ? { from: new Date(this.from).toISOString(), to: new Date(this.to).toISOString() } : {from:since.toISOString(),to:until.toISOString()}) };
     const result = await this.controller.create(body, false);
     if (!result) return;
     this.created(result);
@@ -168,8 +175,12 @@ export class InvestigationCreate extends LitElement {
       <p>调查只读取所选边界内的数据。${this.sessionId ? '关联原 Session，不复制历史消息。' : ''}</p>
       ${this.validation || this.controller.error ? html`<p role="alert">${this.validation || this.controller.error}</p>` : ''}
       <fieldset ?disabled=${this.controller.busy || this.controller.acceptanceUnknown}>
-      ${field('调查标题', this.investigationTitle, v => this.investigationTitle = v)}
-      <app-form-field label="调查目标" .required=${true}><textarea aria-label="调查目标" maxlength="2000" rows="3" .value=${this.goal} @input=${(e: Event) => this.goal = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field>
+      <app-form-field label="常见场景"><select aria-label="常见场景" .value=${this.scenario} @change=${(e:Event)=>{this.scenario=(e.target as HTMLSelectElement).value;this.goal='';}}>
+        <option value="fault">异常现象排查</option><option value="availability">服务不可用排查</option><option value="custom">自定义问题</option></select></app-form-field>
+      <p>常见场景自动生成标题与只读目标；按下方选择确认对象及窗口，点击“提交调查”将显式发起只读分析；打开表单不会调用模型。</p>
+      <details .open=${this.scenario==='custom'}><summary>${this.scenario==='custom'?'描述自定义问题':'补充描述（选填）'}</summary>
+      <app-form-field label="调查目标" .required=${this.scenario==='custom'}><textarea aria-label="调查目标" maxlength="2000" rows="3" .value=${this.goal} @input=${(e: Event) => this.goal = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field></details>
+      <details><summary>自定义标题（选填）</summary>${field('调查标题', this.investigationTitle, v => this.investigationTitle = v)}</details>
       <app-form-field label="调查 Profile"><select aria-label="调查 Profile" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value as 'ops' | 'system'; this.selected = []; this.resourceNames = {}; this.ids = ''; this.advancedRefs = ''; this.validation = ''; }}><option value="ops">Ops（资源只读调查）</option><option value="system">System（平台只读调查）</option></select></app-form-field>
       ${this.profile === 'ops' ? html`<h3>资源范围</h3><p>按名称选择，不默认包含其他资源。首个所选资源为主资源，其余为关联资源。</p>
         ${this.open ? html`<investigation-resource-picker .value=${this.selected} @resource-list-unavailable=${() => this.advancedOpen = true} .disabled=${this.controller.busy || this.controller.acceptanceUnknown} @resource-selection-change=${(e: CustomEvent<{ value: string[]; names: Record<string, string> }>) => { this.selected = e.detail.value; this.resourceNames = e.detail.names; }}></investigation-resource-picker>` : nothing}
@@ -179,7 +190,7 @@ export class InvestigationCreate extends LitElement {
           <app-form-field label="资源类型"><select aria-label="资源类型" .value=${this.resource} @change=${(e: Event) => this.resource = (e.target as HTMLSelectElement).value}>${Object.entries(workspaceResourceLabels).map(([key, label]) => html`<option value=${key}>${label}</option>`)}</select></app-form-field>
           <app-form-field label="资源 ID" hint="兼容入口；多个 ID 用逗号分隔，全部资源均需当前访问权限。"><input aria-label="资源 ID" .value=${this.ids} @input=${(e: Event) => this.ids = (e.target as HTMLInputElement).value}></app-form-field>
         </details>` : html`<p role="status">System 仅调查平台，已清除资源选择；不会把资源范围带入平台调查。</p>`}
-      <div class="create-times">${field('观察开始时间', this.from, v => this.from = v, 'datetime-local')}${field('观察结束时间', this.to, v => this.to = v, 'datetime-local')}</div>
+      <app-form-field label="观察窗口"><select aria-label="观察窗口" .value=${String(this.windowMinutes)} @change=${(e:Event)=>{this.windowMinutes=Number((e.target as HTMLSelectElement).value);this.from='';this.to='';}}><option value="30">最近 30 分钟</option><option value="60">最近 1 小时</option><option value="360">最近 6 小时</option></select></app-form-field><details><summary>指定绝对窗口（可选）</summary><div class="create-times">${field('观察开始时间', this.from, v => this.from = v, 'datetime-local')}${field('观察结束时间', this.to, v => this.to = v, 'datetime-local')}</div></details>
       </fieldset>
       ${this.controller.acceptanceUnknown ? html`<p role="status">提交结果未知，已锁定本次输入。请核对原请求，避免重复创建。</p>` : nothing}
       <div class="create-footer" slot="footer"><button class="btn" ?disabled=${this.controller.busy} @click=${this.close}>取消</button>

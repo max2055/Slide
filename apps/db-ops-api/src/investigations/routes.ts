@@ -80,6 +80,14 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
         }
       } });
   }
+  const workflow=bridge.workflowService();
+  route('GET','/api/investigations/:id/workflow',async(request,_reply,actor)=>{
+    const query=request.query as Record<string,string>;
+    if(Object.keys(query).some(k=>k!=='before')||query.before!==undefined&&!/^[1-9]\d*$/.test(query.before))throw invalid();
+    return workflow.read(actor,uuid((request.params as {id:string}).id),query.before?Number(query.before):undefined);
+  });
+  route('POST','/api/investigations/:id/scope',async(request,_reply,actor)=>workflow.changeScope(actor,uuid((request.params as {id:string}).id),key(request),request.body));
+  route('POST','/api/investigations/:id/retest',async(request,_reply,actor)=>workflow.retest(actor,uuid((request.params as {id:string}).id),key(request),request.body));
   route('POST', '/api/investigations', async (request, reply, actor) => {
     const idempotencyKey = key(request);
     if (!Value.Check(InvestigationCreateRequestSchema, request.body)) throw invalid();
@@ -109,7 +117,13 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
   route('GET', '/api/investigations', async (request, _reply, actor) => {
     const { options, fingerprint, limit, offset } = listInput(request);
     const result = await bridge.storeFor(actor).list(principal(actor), options);
-    return { items: result.items, authorizedCounts: { total: result.total },
+    const items=[];
+    for(const item of result.items) {
+      try {const latest=await observation.results.list(actor,item.id,undefined,1);
+        items.push({...item,canOperate:await workflow.canOperate(actor,item.id),latestOutcome:latest.items[0]?{resultId:latest.items[0].id,resultVersion:latest.items[0].version,summary:latest.items[0].result.summary,gaps:latest.items[0].result.unresolvedQuestions}:null});
+      } catch(error){if(error instanceof InvestigationStoreError&&[403,404].includes(error.statusCode))continue;throw error;}
+    }
+    return { items, authorizedCounts: { total: result.total },
       nextCursor: offset + limit < result.total ? Buffer.from(JSON.stringify({ offset: offset + limit, filter: fingerprint })).toString('base64url') : null };
   });
   route('GET', '/api/investigations/:id', async (request, _reply, actor) => {
@@ -120,7 +134,7 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     const run = record.activeRequestId
       ? snapshot.runs.find(run => run.requestId === record.activeRequestId)
       : snapshot.runs.at(-1);
-    return { ...record, legacyAnalysis: await legacy.read(actor, id), derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
+    return { ...record, canOperate:await workflow.canOperate(actor,id),legacyAnalysis: await legacy.read(actor, id), derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
       latestResult: results.items[0] ?? null, watermark: snapshot.watermark };
   });
   route('GET', '/api/investigations/:id/events', async (request, _reply, actor) => {

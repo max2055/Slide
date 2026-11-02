@@ -76,7 +76,7 @@ export class MysqlRelationStore implements RelationStore {
     } finally { connection.release(); }
   }
 }
-class MysqlRelationSession implements RelationSession {
+export class MysqlRelationSession implements RelationSession {
   constructor(readonly connection: PoolConnection) {}
   async lockHead(id: string): Promise<void> {
     await this.connection.execute('SELECT version FROM resource_relation_revisions WHERE relation_id=? ORDER BY version DESC LIMIT 1 FOR UPDATE', [id]);

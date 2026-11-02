@@ -1,3 +1,7 @@
+import { Value } from '@sinclair/typebox/value';
+import { SystemEventWorkflow } from './system-event-workflow.js';
+import { dbConnection } from '../db-connection.js';
+import { SystemDraftSchema, SystemVerificationSchema, SystemVerificationRequestSchema, SystemInvestigationFactsSchema } from './system-http-contracts.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -22,8 +26,9 @@ export class SystemEventReader {
         profileVersion: 1, scopeVersion: 'system-event-read', version: 1, lifecycle: 'open',
         owner: { kind: caller.principalKind ?? 'user', id: caller.userId }, resources: [] };
       await this.authorization.authorize(c, caller, subject, 'create');
-      const [rows] = await c.execute(`SELECT e.*, j.payload AS fact FROM operational_events e
+      const [rows] = await c.execute(`SELECT e.*, j.payload AS fact, l.investigation_id AS linked_investigation_id FROM operational_events e
         JOIN workflow_jobs j ON JSON_UNQUOTE(JSON_EXTRACT(e.envelope,'$.rawRef'))=CONCAT('workflow-job:',j.id)
+        LEFT JOIN investigation_event_links l ON l.event_id=e.id
         WHERE e.source IN ('slide.system.api','slide.system.collector','slide.system.queue','slide.system.agent')
         AND j.job_type=? ${id ? 'AND e.id=?' : ''} ORDER BY e.received_at DESC,e.id DESC LIMIT 100`,
       id ? [SYSTEM_EVENT_JOB, id] : [SYSTEM_EVENT_JOB]) as [RowDataPacket[], unknown];
@@ -34,9 +39,10 @@ export class SystemEventReader {
         if (fact.schemaVersion !== 1 || fact.source !== String(row.source) || stableHash(prepared) !== contentHash)
           throw new InvestigationStoreError('INVESTIGATION_QUEUE_UNAVAILABLE');
         let investigationId: string | null = null;
-        if (row.investigation_id) {
+        const linkedId = row.linked_investigation_id ?? row.investigation_id;
+        if (linkedId) {
           try {
-            const inv = await this.authorization.load(c, row.investigation_id);
+            const inv = await this.authorization.load(c, linkedId);
             await this.authorization.authorize(c, caller, inv, 'read');
             investigationId = inv.id;
           } catch (e) { if (!(e instanceof InvestigationStoreError) || e.code !== 'INVESTIGATION_NOT_FOUND') throw e; }
@@ -51,7 +57,33 @@ export class SystemEventReader {
     });
   }
 }
-export async function registerSystemEventRoutes(app: FastifyInstance, verify: preHandlerHookHandler, reader: SystemEventReader) {
+export async function registerSystemEventRoutes(app: FastifyInstance, verify: preHandlerHookHandler, reader: SystemEventReader, workflow = new SystemEventWorkflow(() => dbConnection.getPool())) {
+  // Explicit writes stay separate: opening facts never creates a draft or Run.
+  app.post('/api/platform/system-events/:id/investigation', { preHandler: verify,
+    schema: { body: { type: 'object', additionalProperties: false, properties: {} }, response: { 200: SystemDraftSchema } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    try {
+      if (Object.keys(request.query as object).length) throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
+      return await workflow.draft((request as any).user, (request.params as any).id);
+    } catch (e) { return workflowError(e, reply); }
+  });
+  app.post('/api/platform/system-events/:id/verifications', { preHandler: verify, schema: { response: { 200: SystemVerificationSchema } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    try {
+      if (Object.keys(request.query as object).length || !Value.Check(SystemVerificationRequestSchema, request.body)) throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
+      const key = request.headers['idempotency-key'];
+      if (typeof key !== 'string') throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
+      return await workflow.verify((request as any).user, (request.params as any).id, request.body.investigationId, request.body.expectedVersion, key);
+    } catch (e) { return workflowError(e, reply); }
+  });
+  app.get('/api/investigations/:id/platform-events', { preHandler: verify, schema: { response: { 200: SystemInvestigationFactsSchema } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    try {
+      if (Object.keys(request.query as object).length) throw new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
+      return await workflow.detail((request as any).user, (request.params as any).id);
+    } catch (e) { return workflowError(e, reply); }
+  });
   for (const detail of [false, true]) app.get(detail ? '/api/platform/system-events/:id' : '/api/platform/system-events', {
     preHandler: verify, schema: { response: { 200: detail ? SystemEventDetailSchema : SystemEventsPageSchema } },
     onRequest: async (_r, reply) => { reply.header('Cache-Control', 'private, no-store'); },
@@ -62,4 +94,9 @@ export async function registerSystemEventRoutes(app: FastifyInstance, verify: pr
       return reply.code(503).send({ error: 'INVESTIGATION_QUEUE_UNAVAILABLE' });
     }
   });
+}
+
+function workflowError(e: unknown, reply: FastifyReply) {
+  if (e instanceof InvestigationStoreError) return reply.code(e.statusCode).send({ error: e.code });
+  return reply.code(503).send({ error: 'INVESTIGATION_QUEUE_UNAVAILABLE' });
 }

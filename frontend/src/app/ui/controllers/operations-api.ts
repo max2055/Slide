@@ -163,7 +163,14 @@ export const operationLabels: Record<string, string> = {
 };
 export const resourceLabel = (ref: ResourceRef) => `${({ instance: '数据库实例', server: '服务器', network_device: '网络设备' })[ref.type]} #${ref.id}`;
 export const validRecord = (record: { validUntil: string }) => Number.isFinite(Date.parse(record.validUntil)) && Date.parse(record.validUntil) > Date.now();
-export const currentUserId = () => { try { return Number(JSON.parse(localStorage.getItem('user') ?? '{}').id) || null; } catch { return null; } };
+/** Display identity only; every mutation still uses live server JWT authorization. */
+export const currentUserId = () => {try {
+  const token=localStorage.getItem('token');
+  if(token){const part=token.split('.')[1];if(!part)return null;const base64=part.replace(/-/g,'+').replace(/_/g,'/');
+    const id=JSON.parse(atob(base64+'='.repeat((4-base64.length%4)%4))).userId;
+    return typeof id==='number'&&Number.isSafeInteger(id)&&id>0?id:null;}
+  const id=Number(JSON.parse(localStorage.getItem('user')??'{}').id);return Number.isSafeInteger(id)&&id>0?id:null;
+}catch{return null;}};
 
 /** One authenticated read stream per opened case. Disconnects fail closed;
  * there is no action retry, content cache or transport reconnect loop. */

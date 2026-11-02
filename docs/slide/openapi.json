@@ -11859,6 +11859,130 @@
             "minLength": 1,
             "pattern": "\\S",
             "type": "string"
+          },
+          "supplement": {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gapIndex": {
+                        "maximum": 49,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "const": "unknown",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "gapIndex",
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gapIndex": {
+                        "maximum": 49,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "const": "choice",
+                        "type": "string"
+                      },
+                      "source": {
+                        "const": "user_observation",
+                        "type": "string"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "const": "observed",
+                            "type": "string"
+                          },
+                          {
+                            "const": "not_observed",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "gapIndex",
+                      "kind",
+                      "value",
+                      "source"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "gapIndex": {
+                        "maximum": 49,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "kind": {
+                        "const": "number",
+                        "type": "string"
+                      },
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "user_measurement",
+                            "type": "string"
+                          },
+                          {
+                            "const": "monitoring_display",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "value": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "gapIndex",
+                      "kind",
+                      "value",
+                      "source"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "observation": {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultId": {
+                "maxLength": 36,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "resultVersion": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "resultId",
+              "resultVersion",
+              "observation"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -13251,6 +13375,44 @@
         ],
         "type": "object"
       },
+      "InvestigationRetestCommand": {
+        "$id": "InvestigationRetestCommand",
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "eventId": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "from": {
+            "maxLength": 32,
+            "minLength": 20,
+            "type": "string"
+          },
+          "to": {
+            "maxLength": 32,
+            "minLength": 20,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "eventId",
+          "from",
+          "to",
+          "confirmed"
+        ],
+        "type": "object"
+      },
       "InvestigationRootCauseVerification": {
         "$id": "InvestigationRootCauseVerification",
         "anyOf": [
@@ -13469,6 +13631,90 @@
             "type": "object"
           }
         ]
+      },
+      "InvestigationScopeCommand": {
+        "$id": "InvestigationScopeCommand",
+        "additionalProperties": false,
+        "properties": {
+          "add": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "relationId": {
+                  "pattern": "^[1-9][0-9]{0,15}$",
+                  "type": "string"
+                },
+                "version": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "relationId",
+                "version",
+                "hash"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remove": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "maximum": 4294967295,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "type": {
+                  "anyOf": [
+                    {
+                      "const": "instance",
+                      "type": "string"
+                    },
+                    {
+                      "const": "server",
+                      "type": "string"
+                    },
+                    {
+                      "const": "network_device",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "confirmed",
+          "add",
+          "remove"
+        ],
+        "type": "object"
       },
       "InvestigationStates": {
         "$id": "InvestigationStates",
@@ -25271,6 +25517,7 @@
             "const": 1,
             "type": "number"
           },
+          "system": {},
           "uptimeSeconds": {
             "minimum": 0,
             "type": "integer"
@@ -27521,6 +27768,28 @@
         ],
         "type": "object"
       },
+      "SystemDraft": {
+        "$id": "SystemDraft",
+        "additionalProperties": false,
+        "properties": {
+          "eventId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "modelInvoked": {
+            "const": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "modelInvoked"
+        ],
+        "type": "object"
+      },
       "SystemEventDetail": {
         "$id": "SystemEventDetail",
         "additionalProperties": false,
@@ -27742,6 +28011,276 @@
           "disposition",
           "suppressionReason",
           "investigationId"
+        ],
+        "type": "object"
+      },
+      "SystemInvestigationFacts": {
+        "$id": "SystemInvestigationFacts",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "properties": {
+                "eventId": {
+                  "type": "string"
+                },
+                "fact": {},
+                "returnTo": {
+                  "type": "string"
+                },
+                "verifications": {
+                  "items": {
+                    "$id": "SystemVerification",
+                    "additionalProperties": false,
+                    "properties": {
+                      "actorId": {
+                        "type": "integer"
+                      },
+                      "commitSha": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "conclusion": {
+                        "anyOf": [
+                          {
+                            "const": "recovered",
+                            "type": "string"
+                          },
+                          {
+                            "const": "not_improved",
+                            "type": "string"
+                          },
+                          {
+                            "const": "insufficient_evidence",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "eventId": {
+                        "type": "string"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "gaps": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "investigationId": {
+                        "type": "string"
+                      },
+                      "modelInvoked": {
+                        "const": false,
+                        "type": "boolean"
+                      },
+                      "observation": {},
+                      "originalHash": {
+                        "type": "string"
+                      },
+                      "persistence": {
+                        "const": "process-local",
+                        "type": "string"
+                      },
+                      "releaseId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "to": {
+                        "type": "string"
+                      },
+                      "verifiedAt": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "eventId",
+                      "investigationId",
+                      "actorId",
+                      "version",
+                      "originalHash",
+                      "releaseId",
+                      "commitSha",
+                      "from",
+                      "to",
+                      "verifiedAt",
+                      "conclusion",
+                      "gaps",
+                      "observation",
+                      "persistence",
+                      "modelInvoked"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "eventId",
+                "fact",
+                "returnTo",
+                "verifications"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "modelInvoked": {
+            "const": false,
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "truncated",
+          "modelInvoked"
+        ],
+        "type": "object"
+      },
+      "SystemVerification": {
+        "$id": "SystemVerification",
+        "additionalProperties": false,
+        "properties": {
+          "actorId": {
+            "type": "integer"
+          },
+          "commitSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "conclusion": {
+            "anyOf": [
+              {
+                "const": "recovered",
+                "type": "string"
+              },
+              {
+                "const": "not_improved",
+                "type": "string"
+              },
+              {
+                "const": "insufficient_evidence",
+                "type": "string"
+              }
+            ]
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "investigationId": {
+            "type": "string"
+          },
+          "modelInvoked": {
+            "const": false,
+            "type": "boolean"
+          },
+          "observation": {},
+          "originalHash": {
+            "type": "string"
+          },
+          "persistence": {
+            "const": "process-local",
+            "type": "string"
+          },
+          "releaseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "investigationId",
+          "actorId",
+          "version",
+          "originalHash",
+          "releaseId",
+          "commitSha",
+          "from",
+          "to",
+          "verifiedAt",
+          "conclusion",
+          "gaps",
+          "observation",
+          "persistence",
+          "modelInvoked"
+        ],
+        "type": "object"
+      },
+      "SystemVerificationRequest": {
+        "$id": "SystemVerificationRequest",
+        "additionalProperties": false,
+        "properties": {
+          "expectedVersion": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "investigationId": {
+            "pattern": "^[a-f0-9-]{36}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "investigationId",
+          "expectedVersion"
         ],
         "type": "object"
       },
@@ -44780,6 +45319,46 @@
         ]
       }
     },
+    "/api/investigations/{id}/platform-events": {
+      "get": {
+        "description": "Authorized original platform events, immutable failure deployments and recent verification receipts; no model or writes.",
+        "operationId": "getSystemInvestigationFacts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInvestigationFacts"
+                }
+              }
+            },
+            "description": "Original event evidence and audit"
+          },
+          "404": {
+            "description": "System investigation not visible"
+          },
+          "503": {
+            "description": "Evidence unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/investigations/{id}/requests/{requestId}/cancel": {
       "post": {
         "description": "Real-time operator/all-scope authorization. Atomically records cancellation intent. Unclaimed queued/retry job becomes cancelled and releases active admission. Running owner retains active admission; T04 consumes intent and owns Run termination.",
@@ -44878,6 +45457,65 @@
         ]
       }
     },
+    "/api/investigations/{id}/retest": {
+      "post": {
+        "description": "Explicit human confirmation, current operator/all-scope authorization, immutable version and idempotent receipt. No model/action/collector/event-state writes.",
+        "operationId": "retestInvestigationWithoutAction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationRetestCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Immutable authorized receipt"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Scope not visible"
+          },
+          "409": {
+            "description": "Version/active execution or changed source"
+          },
+          "503": {
+            "description": "Acceptance unknown; reconcile original key"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/investigations/{id}/runs": {
       "post": {
         "operationId": "admitInvestigationRequest",
@@ -44934,6 +45572,102 @@
           },
           "503": {
             "description": "Rolled back; no message/job/outbox orphan"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/scope": {
+      "post": {
+        "description": "Explicit human confirmation, current operator/all-scope authorization, immutable version and idempotent receipt. No model/action/collector/event-state writes.",
+        "operationId": "confirmInvestigationScope",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationScopeCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Immutable authorized receipt"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Scope not visible"
+          },
+          "409": {
+            "description": "Version/active execution or changed source"
+          },
+          "503": {
+            "description": "Acceptance unknown; reconcile original key"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/investigations/{id}/workflow": {
+      "get": {
+        "operationId": "readInvestigationWorkflow",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9-]{36}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized current relation suggestions and original scope/retest receipts; 20 per page"
+          },
+          "404": {
+            "description": "Scope withdrawn"
           }
         },
         "security": [
@@ -50429,6 +51163,47 @@
         ]
       }
     },
+    "/api/operations/knowledge/prepare": {
+      "get": {
+        "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
+        "operationId": "prepareRedactedCaseFromRecords",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized domain result, preserving unknown and immutable version/hash"
+          },
+          "201": {
+            "description": "Created immutable candidate/version"
+          },
+          "202": {
+            "description": "Durably queued; not proof of execution or resolution"
+          },
+          "401": {
+            "description": "Missing or revoked JWT"
+          },
+          "403": {
+            "description": "Mutation denied or self review"
+          },
+          "404": {
+            "description": "Content/source not visible"
+          },
+          "409": {
+            "description": "Version/cursor conflict"
+          },
+          "422": {
+            "description": "Input, feature or source precondition failed"
+          },
+          "503": {
+            "description": "Dependency unavailable; no inferred success or replay"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/operations/relations": {
       "post": {
         "description": "Live JWT/session, original delegation ceiling and complete resource/source ACL. Private/no-store. New writes require live feature flag; historical reads remain protected. Synthetic fixtures do not establish real qualification. Dispatch defaults off and requires protected target registration, once approval and independent action worker.",
@@ -50829,6 +51604,126 @@
           },
           "503": {
             "description": "Store unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events/{id}/investigation": {
+      "post": {
+        "description": "Explicit original-event draft; live System authority and original Investigation ACL. One unique event link; no Run, model or automatic policy mutation.",
+        "operationId": "createSystemInvestigationDraft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {},
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemDraft"
+                }
+              }
+            },
+            "description": "Existing authorized or new read-only draft"
+          },
+          "404": {
+            "description": "Original event or linked investigation inaccessible"
+          },
+          "409": {
+            "description": "Concurrent association changed"
+          },
+          "503": {
+            "description": "Unavailable; retry original event"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/platform/system-events/{id}/verifications": {
+      "post": {
+        "description": "Explicit no-action recheck: current operator/revision, exact event association; server post-failure same-callsite/deployment evidence only. Immutable receipt and original Investigation problem status/stream audit commit together. Missing/disabled/failed evidence stays unknown. No model or HTTP replay.",
+        "operationId": "verifySystemEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemVerification"
+                }
+              }
+            },
+            "description": "Audited recheck or idempotent original"
+          },
+          "400": {
+            "description": "Invalid request/key"
+          },
+          "403": {
+            "description": "Operator required"
+          },
+          "404": {
+            "description": "Not visible or wrong event/scope"
+          },
+          "409": {
+            "description": "Version conflict or active request"
+          },
+          "503": {
+            "description": "Unavailable; retry original key"
           }
         },
         "security": [

@@ -193,6 +193,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       '068_agent_tool_approval_scopes',
       '112_investigations',
       '117_investigation_observation',
+      '149_investigation_workflow_receipts',
     ])
       await apply(file(`../../../sql/migrations/${name}.sql`));
     await apply(file('../schema/operations-v1.sql'));
@@ -338,6 +339,37 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     await sql('DELETE FROM resource_relations');
     author = await loadActor(1);
     reviewer = await loadActor(2);
+  });
+  const attention=(actor:ActorContext,id:string)=>store.transaction(c=>service.attentionIn(c,actor,id));
+  it('attention reuses independent approval authority; refresh follows reviewed originals',async()=>{
+    const p=await pending();
+    await expect(attention(author,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
+    expect(await attention(reviewer,p.plan.id)).toMatchObject({kind:'approve',approvalId:p.approvalId,plan:{version:1}});
+    await service.review(reviewer,{...ref(p.plan),approvalId:p.approvalId,action:'reject'});
+    expect(await attention(reviewer,p.plan.id)).toBeNull();
+  });
+  it('attention refuses expired, superseded and revoked sources without consuming an approval',async()=>{
+    const p=await pending();
+    await sql("UPDATE agent_tool_approvals SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?",[p.approvalId]);
+    await expect(attention(reviewer,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_EXPIRED'});
+    const next=await service.revise(author,ref(p.plan),proposal());
+    expect(await attention(reviewer,next.id)).toBeNull();
+    const p2=await pending();
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='servers:manage'");
+    await expect(attention(reviewer,p2.plan.id)).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
+    expect((await state(p2.approvalId)).status).toBe('pending');
+  });
+  it('attention verifies full once binding and reconciles an existing send instead of offering execution again',async()=>{
+    const p=await approved();
+    expect(await attention(reviewer,p.plan.id)).toMatchObject({kind:'execute'});
+    await sql('UPDATE action_approval_bindings SET content_hash=? WHERE approval_id=?',['0'.repeat(64),p.approvalId]);
+    await expect(attention(reviewer,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_PRECONDITION_FAILED'});
+    await sql('UPDATE action_approval_bindings SET content_hash=? WHERE approval_id=?',[p.plan.contentHash,p.approvalId]);
+    const id=await execute(p);
+    expect(await attention(reviewer,p.plan.id)).toMatchObject({kind:'reconcile',executionId:id});
+    expect((await state(p.approvalId)).status).toBe('consumed');
+    await sql("UPDATE action_executions SET state='succeeded' WHERE id=?",[id]);
+    expect(await attention(reviewer,p.plan.id)).toMatchObject({kind:'verify',executionId:id});
   });
   it('rejects admin self-review, a service reviewer and nonmember; independent human approval succeeds', async () => {
     const p = await pending();

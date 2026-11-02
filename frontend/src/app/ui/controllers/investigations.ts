@@ -91,6 +91,11 @@ export class InvestigationsController {
   private contentEpoch = 0; private refreshOrdinal = 0;
   private refreshing?: Promise<void>;
   private refreshAgain = false;
+  private workflowRefreshing = false;
+  async refreshAfterWorkflow() {
+    const generation=this.generation;this.workflowRefreshing=true;this.update();
+    try {await this.refreshFacts();} finally {if(generation===this.generation){this.workflowRefreshing=false;this.update();}}
+  }
   private unsubscribe?: () => void;
   private submission?: object;
   private pending?: { signature: string; key: string; path: string; body: unknown };
@@ -161,7 +166,7 @@ export class InvestigationsController {
         investigationApi<InvestigationResultPage>(`/${id}/results`),
       ]);
       if (generation !== this.generation || this.disposed) return;
-      this.detail = detail; this.history = factMessages(facts); this.historyBefore = facts.nextBefore; this.results = results;
+      this.detail = detail; this.operationForbidden=detail.canOperate===false; this.history = factMessages(facts); this.historyBefore = facts.nextBefore; this.results = results;
       this.unsubscribe = this.client?.observeInvestigation(id, event => this.receive(event, generation));
     } catch (error) { if (generation === this.generation) this.fail(error); }
     finally { if (generation === this.generation) { this.detailLoading = false; this.update(); } }
@@ -215,7 +220,7 @@ export class InvestigationsController {
         Promise.all((this.snapshot?.evidenceIds ?? []).map(eid => investigationApi<InvestigationEvidence>(`/${id}/evidence/${eid}`))),
       ]);
       if (generation !== this.generation || epoch !== this.contentEpoch || ordinal !== this.refreshOrdinal || this.disposed) return;
-      this.detail = detail; this.evidence = evidence;
+      this.detail = detail; this.operationForbidden=detail.canOperate===false; this.evidence = evidence;
       this.results = this.results.items.length ? {
         items: [...new Map([...results.items, ...this.results.items].map(r => [r.id, r])).values()],
         nextBefore: this.results.nextBefore,
@@ -294,16 +299,17 @@ export class InvestigationsController {
     return { requestId: run.requestId, runId: run.runId, resultVersion: result.version };
   }
   get continuationUnavailable() {
-    return this.detail?.derivedRunState === 'unknown' || this.snapshot?.runs.at(-1)?.resolution === 'outcome_unknown'
+    return this.workflowRefreshing || this.detail?.derivedRunState === 'unknown' || this.snapshot?.runs.at(-1)?.resolution === 'outcome_unknown'
       || (this.detail?.derivedRunState === 'partial' && !this.partialContinuation);
   }
-  async continue(message: string) {
+  async continue(message: string, supplement?: import('../../../api/generated/public-api.ts').InvestigationRequest['supplement']) {
     if (!this.detail || this.detail.activeRequestId || !message.trim()) return;
     if (this.continuationUnavailable) {
       this.error = '当前结果尚未确认或关联信息未就绪，请刷新核对后再继续。'; this.update(); return;
     }
     const continuationOf = this.partialContinuation;
     const result = await this.submit<InvestigationAccepted>(`/${this.id}/runs`, { message, expectedVersion: this.detail.version,
+      ...(supplement ? { supplement } : {}),
       ...(continuationOf ? { continuationOf } : {}) });
     if (result) await this.refreshFacts();
     return result;

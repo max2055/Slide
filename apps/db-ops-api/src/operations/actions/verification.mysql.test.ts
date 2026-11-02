@@ -564,6 +564,18 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     expect(closed.statusCode, closed.body).toBe(200);
     expect(sends).toBe(1);
   });
+  it('a passed action report cannot override a newer adverse observation window', async () => {
+    const s = await seed();
+    const { final } = await observe(s), command = closeCommand(s, final);
+    const receipt = { scopeVersion: s.inv.scopeVersion, conclusion: 'not_improved', evidenceId: null,
+      from: final.observedUntil, to: new Date(Date.parse(final.observedUntil!) + 1000).toISOString() };
+    await f.rows("INSERT INTO investigation_workflow_receipts(id,investigation_id,actor_id,kind,idempotency_key,command_hash,accepted_version,payload) VALUES(?,?,101,'retest',?,?,99,?)",
+      [randomUUID(), s.inv.id, Buffer.from(randomUUID()), 'a'.repeat(64), JSON.stringify(receipt)]);
+    const rejected = await postClose(s, command);
+    expect(rejected.statusCode).toBe(409);
+    expect(await f.rows('SELECT * FROM investigation_feedback WHERE investigation_id=?', [s.inv.id])).toHaveLength(0);
+    expect((await reports.get(reviewer, s.execution.id)).state).toBe('passed');
+  });
   it('checks permission again after waiting and before the target read', async () => {
     const s = await seed();
     await service.prepare(reviewer, s.execution.id);

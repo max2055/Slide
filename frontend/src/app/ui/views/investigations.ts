@@ -1,3 +1,4 @@
+import '../components/investigation-attention.ts';
 import '../components/investigation-entry.ts';
 import { readInvestigationEntry } from '../controllers/investigation-entry.ts';
 import { LitElement, html, nothing } from 'lit';
@@ -109,9 +110,21 @@ export class InvestigationsPage extends LitElement {
     this.draft = ''; this.evidenceOpen = false;
     if (push) { const url = new URL(location.href); url.searchParams.set('investigation', id); history.pushState({}, '', url); }
     await this.controller.select(id);
+    const url=new URL(location.href),d=this.controller.detail,r=this.controller.results.items[0];
+    if(d && url.searchParams.has('attentionVersion') && url.searchParams.get('attentionVersion')===String(d.version)
+      && (!url.searchParams.has('attentionResult') || url.searchParams.get('attentionResult')===r?.id)
+      && (!url.searchParams.has('attentionResultVersion') || url.searchParams.get('attentionResultVersion')===String(r?.version))) {
+      for(const name of ['attentionVersion','attentionResult','attentionResultVersion'])url.searchParams.delete(name);
+      history.replaceState({},'',url);
+    }
   }
   render() {
     const c = this.controller;
+    const reminder=new URL(location.href).searchParams;
+    const reminderStale=!!c.detail && (reminder.has('attentionVersion') && reminder.get('attentionVersion')!==String(c.detail.version)
+      || reminder.has('attentionResult') && reminder.get('attentionResult')!==c.results.items[0]?.id
+      || reminder.has('attentionResultVersion') && reminder.get('attentionResultVersion')!==String(c.results.items[0]?.version));
+    if(reminderStale)c.operationForbidden=true;
     let entry; let entryError = '';
     try { entry = readInvestigationEntry(location.search); } catch (e) { entryError = (e as Error).message; }
     const filtered = !!(this.query.trim() || this.lifecycle || this.profile || this.resources.length || this.resource.trim());
@@ -182,7 +195,7 @@ export class InvestigationsPage extends LitElement {
     </style>
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
       <div class="workspace-header"><div><h1>AI 工作空间</h1><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
-      ${c.error ? html`<div class="workspace-error" role="alert">${c.error}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
+      ${c.error || c.acceptanceUnknown ? html`<div class="workspace-error" role="alert">${c.error || "提交结果尚未确认，请核对原请求。"}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       ${entryError ? html`<p role="alert">${entryError}</p>` : entry || (c.detail as any)?.context?.entry ? html`<investigation-entry
         .context=${entry ?? null} .investigationId=${entry ? '' : c.detail!.id}
         @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}
@@ -203,6 +216,9 @@ export class InvestigationsPage extends LitElement {
           <app-form-field label="高级资源筛选" hint="instance:ID / server:ID / network_device:ID，逗号分隔；与所选资源合并。"><input aria-label="资源筛选" .value=${this.resource} @input=${(e: Event) => this.resource = (e.target as HTMLInputElement).value}></app-form-field>
         </div>
       </form>
+      ${this.canView&&!c.forbidden&&!c.detail&&!c.detailLoading?html`<investigation-attention></investigation-attention>`:nothing}
+      ${reminder.has('attentionSourcePlan')&&reminder.has('attentionExecution')?html`<p>续查来源：原行动计划 V${reminder.get('attentionSourcePlanVersion')}。<a href=${`/operations-actions?plan=${encodeURIComponent(reminder.get('attentionSourcePlan')!)}&attentionExecution=${encodeURIComponent(reminder.get('attentionExecution')!)}`}>核对原执行与验证记录</a></p>`:nothing}
+      ${reminderStale?html`<p role="alert">提醒引用的原版本已变化。请先核对当前记录，再继续处理。<a href=${`/investigations?investigation=${encodeURIComponent(c.detail!.id)}`}>打开当前原调查并重新确认</a></p>`:nothing}
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
         <div class="start-signature">${icons.activity}<span>从一个具体问题开始</span></div>
         <h2>让资源证据，汇成可追溯的调查。</h2><p>选择需要关注的资源，描述你观察到的现象。调查将保留执行过程、证据与结论，便于后续核对。</p>

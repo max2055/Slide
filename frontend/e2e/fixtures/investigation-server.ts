@@ -1,3 +1,5 @@
+import { SystemEventWorkflow } from '../../../apps/db-ops-api/src/investigations/system-event-workflow.js';
+import { platformLogs } from '../../../apps/db-ops-api/src/platform/structured-log-evidence-adapter.js';
 import { registerResourceRoutes } from '../../../apps/db-ops-api/src/resources/resource-routes.js';
 import { registerInstanceListRoutes } from '../../../apps/db-ops-api/src/instance-list-routes.js';
 import { registerEvidenceRoutes } from '../../../apps/db-ops-api/src/evidence/evidence-api.js';
@@ -49,7 +51,7 @@ import { SourceSnapshotService } from '../../../apps/db-ops-api/src/platform/sou
 import { SourceManagementService } from '../../../apps/db-ops-api/src/platform/source-management-service.js';
 
 /** Real SQL/JWT/HTTP/WS/runtime; only provider/target tool data are synthetic. */
-export async function startInvestigationServer(optionsInput: { attentionPilot?: boolean; databaseAlertPilot?: boolean; systemPilot?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; syntheticPromptTokens?: number; realProvider?: LLMProvider; tls?: { key: Buffer; cert: Buffer } } = {}) {
+export async function startInvestigationServer(optionsInput: { attentionPilot?: boolean; databaseAlertPilot?: boolean; systemPilot?: boolean; systemAutomatic?: boolean; resourcePilot?: boolean; uiAcceptance?: boolean; syntheticPromptTokens?: number; realProvider?: LLMProvider; tls?: { key: Buffer; cert: Buffer } } = {}) {
   const port = Number(process.env.T06_TEST_MYSQL_PORT);
   if (!port) throw new Error('T06_TEST_MYSQL_PORT is required: use an isolated MySQL 8.4 fixture, never production');
   const require = createRequire(resolve('../apps/db-ops-api/package.json'));
@@ -73,6 +75,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
   let worker: WorkerRuntime | undefined, timer: ReturnType<typeof setInterval> | undefined;
   let current: Promise<unknown> | undefined;
   let system: SystemComposition | undefined;
+  let systemFailureStatus = 503;
   const sourceEnvKeys = ['SLIDE_SOURCE_ROOT','SLIDE_SOURCE_SIGNING_KEY','SLIDE_RELEASE_ID','SLIDE_COMMIT_SHA','SLIDE_SOURCE_DIGEST','SLIDE_RELEASE_MANIFEST'];
   const previousSourceEnv = new Map(sourceEnvKeys.map(k => [k, process.env[k]]));
   let holdChat = false, providerUnavailable = false;
@@ -132,7 +135,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
         key,JSON.stringify({releaseId:manifest.releaseId,commitSha,treeDigest:manifest.treeDigest})]);
       Object.assign(process.env,{SLIDE_SOURCE_ROOT:root,SLIDE_SOURCE_SIGNING_KEY:signingKey,SLIDE_RELEASE_ID:'t09-deployment',
         SLIDE_COMMIT_SHA:commitSha,SLIDE_SOURCE_DIGEST:manifest.treeDigest,SLIDE_RELEASE_MANIFEST:''});
-      system = await createSystemComposition(() => pool,{contexts,configuration:{enabled:true,automatic:true,serviceUserId:systemServiceId},
+      system = await createSystemComposition(() => pool,{contexts,configuration:{enabled:true,automatic:optionsInput.systemAutomatic !== false,serviceUserId:systemServiceId},
         source:new SourceManagementService(() => pool),budget:{...investigationBudgetConfiguration(),domain:'t06-synthetic',prices:{input:100,cachedInput:50,output:200}}});
     }
     const bridgeFlags = { manual: !!optionsInput.databaseAlertPilot, opsAuto: !!optionsInput.databaseAlertPilot, legacy: !!optionsInput.databaseAlertPilot };
@@ -247,9 +250,9 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
         alertEventService.getEvents({ ...request.query, allowed_instance_ids: getAccessibleInstanceIds(request.user) }));
     }
     if (system) {
-      await installPlatformObservation(app,verify);
-      await registerSystemEventRoutes(app,verify,new SystemEventReader(() => pool,authorization));
-      app.get('/fixture/system-failure',async (_r:any,reply:any) => reply.code(503).send({error:'controlled failure'}));
+      await installPlatformObservation(app,verify,platformLogs,undefined,() => system!.observation());
+      await registerSystemEventRoutes(app,verify,new SystemEventReader(() => pool,authorization), new SystemEventWorkflow(() => pool,authorization,bridge,platformLogs,() => system!.collectionActive()));
+      app.get('/fixture/system-failure',async (_r:any,reply:any) => reply.code(systemFailureStatus).send({error:'controlled failure'}));
       app.get('/fixture/system-400',async (_r:any,reply:any) => reply.code(400).send({}));
       app.get('/fixture/system-403',async (_r:any,reply:any) => reply.code(403).send({}));
     }
@@ -326,7 +329,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     const currentViewer = optionsInput.databaseAlertPilot ? await contexts.loadActiveActor(102) : viewer;
     return { url: `${optionsInput.tls ? 'https' : 'http'}://127.0.0.1:${address.port}`, pool, bridge, stream, contexts, owner: currentOwner, viewer: currentViewer, adapter, workerErrors, observationErrors, close,
       bridgeFlags, rca, alertBridge: pilotBridge,
-      system,systemServiceId,apiUrl,promptObservations,systemConsumption,ownerPassword,
+      system,systemServiceId,apiUrl,setSystemFailureStatus: (status: number) => { systemFailureStatus = status; },promptObservations,systemConsumption,ownerPassword,
       token: (actor = currentOwner) => signAccessToken(actor, secret), counts: () => ({ toolCalls, providerCalls }),
       governanceStorage: (available: boolean) => governanceAvailable = available,
       disconnectObservers: () => { for (const peer of wsServer.clients) peer.close(1012, 'fixture reconnect'); },

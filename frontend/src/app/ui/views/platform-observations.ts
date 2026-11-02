@@ -25,6 +25,9 @@ interface ComponentEvidence extends Evidence {
   component: string;
 }
 interface Observations {
+  system?: { quality?: string; gaps?: string[]; collection?: { configured: boolean; effective: boolean }; automatic?: { configured: boolean; effective: boolean };
+    publisher?: { acceptedEvents?: number; lostEvents?: number; pending?: number };
+    actual?: { events: number; admissions: number; lastReceivedAt: string | null; lastRunAt: string | null } | null };
   schemaVersion?: number;
   generatedAt?: string;
   releaseId?: string | null;
@@ -39,6 +42,7 @@ const COMPONENT_LABELS: Record<string, string> = {
   agent: "Agent 运行时",
   ws: "WebSocket",
   collector: "采集器",
+  metrics: "正式指标采集",
   queue: "任务队列",
   frontend: "前端运行时",
 };
@@ -427,7 +431,7 @@ export class PlatformObservationsPage extends LitElement {
         <div>
           <dt>限制</dt>
           <dd>
-            信号和自检通过均不能证明平台整体健康。部署一致性未知；接口未提供部署清单与采集开关，不能确认未开启。
+            信号和自检通过均不能证明平台整体健康。部署一致性仍需核对部署清单；开关状态来自运行实例的部署环境配置。
           </dd>
         </div>
       </dl>
@@ -546,9 +550,19 @@ ${JSON.stringify({ generatedAt: d.generatedAt, readAt: this.readAt, evidence: ev
                   </section>
                   <div class="notice">
                     <strong>尚不能判断平台整体健康</strong
-                    >仅展示当前响应中的运行证据。采集是否开启未知；未开启、无信号与读取失败不能等同。响应生成于
+                    >仅展示当前响应中的运行证据。采集关闭、无信号和读取失败均不能判定健康。响应生成于
                     ${time(d.generatedAt)}。
                   </div>
+                  <app-card><span slot="header">平台异常采集与自动分析</span>
+                    ${d.system?.collection && d.system?.automatic ? html`
+                      <p>异常采集：配置${d.system.collection.configured ? '开启' : '关闭'} · 当前实例${d.system.collection.effective ? '已生效' : '未生效，状态未知'}</p>
+                      <p>自动分析：配置${d.system.automatic.configured ? '开启' : '关闭'} · 当前实例${d.system.automatic.effective ? '具备派发接线，仍受权限、预算及冷却限制' : '未生效'}</p>
+                      <p>实际运行：${d.system.actual ? html`累计持久异常 ${d.system.actual.events} 条，派发 ${d.system.actual.admissions} 次；最近入库 ${time(d.system.actual.lastReceivedAt)}；最近 Run ${time(d.system.actual.lastRunAt)}` : '读取失败，未知'}</p>
+                      <p>本进程入库成功 ${d.system.publisher?.acceptedEvents ?? '未知'}；丢失 ${d.system.publisher?.lostEvents ?? '未知'}；待写 ${d.system.publisher?.pending ?? '未知'}</p>
+                    ` : html`<p>开关和实际运行状态读取不可用，未知。</p>`}
+                    <p class="caption">复用部署环境 INVESTIGATION_SYSTEM_EVENTS_ENABLED / INVESTIGATION_SYSTEM_AUTO_ENABLED，配置保存后需重启对应实例；页面读取不改变开关、不触发模型。已有入库或 Run 不能证明当前仍在运行。</p>
+                    <a href="/events?view=system">查看持久平台异常</a>
+                  </app-card>
                   <h2 class="section-title">可用信号与证据</h2>
                   <app-card .compact=${true}
                     ><div

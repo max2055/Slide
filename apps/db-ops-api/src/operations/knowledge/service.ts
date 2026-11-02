@@ -64,6 +64,34 @@ export class KnowledgeService {
     if (actor.principalKind === 'service') throw new OperationsError('OPERATIONS_FORBIDDEN');
   }
 
+  /** Read-only, server-redacted material from exact original records. Never a machine-confirmed cause. */
+  async prepare(caller:ActorContext,value:unknown) {
+    this.enabled();this.human(caller);
+    const input=parse(z.strictObject({investigationId:z.string().uuid(),resultVersion:z.number().int().positive().safe()}),value);
+    return this.store.transaction(caller,async(c,actor)=>{
+      const source=await this.store.source(c,actor,input.investigationId,input.resultVersion);
+      await this.store.authorization.authorize(c as never,actor,source.resources,'cases:manage');
+      const [result]=await rows(c,'SELECT result_json FROM investigation_results WHERE id=? FOR SHARE',[source.source.resultId]);
+      const body=typeof result.result_json==='string'?JSON.parse(result.result_json):result.result_json;
+      const [inv]=await rows(c,'SELECT title FROM investigations WHERE id=? FOR SHARE',[input.investigationId]);
+      const [measurement]=await rows(c,"SELECT payload FROM investigation_workflow_receipts WHERE investigation_id=? AND kind='retest' ORDER BY accepted_version DESC LIMIT 1 FOR SHARE",[input.investigationId]);
+      const retest=measurement&&(typeof measurement.payload==='string'?JSON.parse(measurement.payload):measurement.payload);
+      const plans=await rows(c,`SELECT e.id,e.state,e.plan_version FROM action_executions e JOIN action_plans p ON p.id=e.plan_id WHERE p.investigation_id=? ORDER BY e.created_at DESC LIMIT 21 FOR SHARE`,[input.investigationId]);
+      const candidate={investigationId:input.investigationId,resultVersion:input.resultVersion,
+        content:{title:inv.title,symptoms:'原结果陈述（模型输出不等于事实，仍需人工核对）：\n'+body.facts.map((f:{statement:string})=>f.statement).join('\n'),
+          faultType:'待人工归类',confirmedCause:'尚无独立根因确认；不以模型推断替代事实。',
+          actions:plans.length?plans.slice(0,20).map(p=>`执行记录 ${p.id} · 计划 V${p.plan_version} · ${p.state}`).join('\n')+(plans.length>20?'\n仅载入当前20条记录，需核对更早历史。':''):'当前授权列表未返回行动执行记录；需核对原记录。',
+          actualEffect:retest?`原复测记录 ${retest.id}：${retest.conclusion} · ${retest.from} — ${retest.to}；缺口 ${(retest.gaps??[]).join('、')||'未记录'}。${retest.scopeVersion!==source.source.scopeVersion?'旧范围记录，不能证明当前范围恢复。':'仍需核对该窗口与当前结果。'}`:'尚无后续复测记录，不推定恢复。',
+          counterexamples:body.unresolvedQuestions.join('\n')||'原结果未列出具体缺口，不代表不存在反证。'},
+        applicability:{conditions:'仅用于原记录所列资源、指标版本与窗口；引用前独立核对当前适用条件。',productVersion:'原记录未确认产品版本，审核前补核',resourceVersion:'原记录未确认资源版本，审核前补核'},
+        validUntil:new Date(Math.min(Date.now()+3600000,...source.source.evidence.map(e=>Date.parse(e.validUntil)))).toISOString()};
+      await this.store.source(c,actor,input.investigationId,input.resultVersion);
+      await this.store.authorization.authorize(c as never,actor,source.resources,'cases:manage');
+      return {candidate:sanitized(candidate,this.secrets),source:{investigationId:input.investigationId,resultId:source.source.resultId,resultVersion:input.resultVersion,scopeVersion:source.source.scopeVersion},
+        redactionPolicyVersion:CASE_REDACTION_POLICY,requiresHumanReview:true as const};
+    });
+  }
+
   async create(caller: ActorContext, value: unknown): Promise<{ id: string; revision: number; version: number; contentHash: string }> {
     this.enabled(); this.human(caller);
     const input = parse(candidateSchema, value);

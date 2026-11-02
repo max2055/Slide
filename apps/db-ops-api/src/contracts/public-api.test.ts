@@ -78,7 +78,7 @@ describe('generated public API contract', () => {
 
   it('generates deterministic documented operations and frontend types', () => {
     const document = buildOpenApiDocument() as any;
-    expect(Object.keys(document.paths)).toEqual([
+    expect(Object.keys(document.paths).sort()).toEqual([
       '/api/adapters/capabilities',
       '/api/ai/analysis/{id}/evidence',
       '/api/ai/analysis/{id}/investigation',
@@ -116,9 +116,13 @@ describe('generated public API contract', () => {
       '/api/investigations/{id}/facts',
       '/api/investigations/{id}/feedback',
       '/api/investigations/{id}/messages',
+      '/api/investigations/{id}/platform-events',
       '/api/investigations/{id}/requests/{requestId}/cancel',
       '/api/investigations/{id}/results',
+      '/api/investigations/{id}/retest',
       '/api/investigations/{id}/runs',
+      '/api/investigations/{id}/scope',
+      '/api/investigations/{id}/workflow',
       '/api/llm/models',
       '/api/llm/test',
       '/api/metrics/config/bulk',
@@ -197,6 +201,7 @@ describe('generated public API contract', () => {
       '/api/operations/baselines',
       '/api/operations/baselines/{id}',
       '/api/operations/knowledge',
+      '/api/operations/knowledge/prepare',
       '/api/operations/knowledge/{id}',
       '/api/operations/knowledge/{id}/bind',
       '/api/operations/knowledge/{id}/review',
@@ -210,6 +215,8 @@ describe('generated public API contract', () => {
       '/api/platform/observations',
       '/api/platform/system-events',
       '/api/platform/system-events/{id}',
+      '/api/platform/system-events/{id}/investigation',
+      '/api/platform/system-events/{id}/verifications',
       '/api/resources',
       '/api/resources/metrics/summary',
       '/api/resources/overview',
@@ -219,7 +226,7 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/collect-diagnostics',
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
-    ].sort((a,b)=>a.localeCompare(b)));
+    ]);
     const operationLookup = document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}'].get;
     expect(operationLookup.operationId).toBe('getMetricConfigurationOperation');
     expect(operationLookup.security).toEqual([{ bearerAuth: [] }]);
@@ -262,10 +269,10 @@ describe('generated public API contract', () => {
     });
     await registerMetricTemplateRoutes(app, async () => undefined);
     await registerTemplateAuthoringRoutes(app, async () => undefined);
-    const {registerTemplateGovernanceRoutes}=await import('../metrics/templates/governance-routes.js');
-    await registerTemplateGovernanceRoutes(app,async()=>undefined);
     const {registerTemplateTriggerRoutes}=await import('../metrics/triggers/routes.js');
     await registerTemplateTriggerRoutes(app,async()=>undefined);
+    const {registerTemplateGovernanceRoutes}=await import('../metrics/templates/governance-routes.js');
+    await registerTemplateGovernanceRoutes(app,async()=>undefined);
     await app.ready();
     await app.close();
     expect([...registered].sort()).toEqual([
@@ -301,8 +308,8 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
-    ].sort());
-    const documented = Object.keys(document.paths).filter(path => (path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/'))).sort();
+    ]);
+    const documented = Object.keys(document.paths).filter(path => path.startsWith('/api/metrics/template') || path.startsWith('/api/metrics/configuration-history/')).sort();
     expect(documented).toEqual([...registered].sort());
 
     const operation = (path: string, method: 'get' | 'post') => document.paths[path][method];

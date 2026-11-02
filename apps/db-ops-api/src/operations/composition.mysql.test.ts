@@ -1,6 +1,7 @@
 /** Synthetic domain records; real formal migrations, MySQL, JWT and listening
  * HTTP through the same composition as server.ts. No target or model calls. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { startFeedbackFixture } from '../investigations/feedback-test-fixture.js';
 import { signAccessToken, type ActorContext } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
@@ -19,7 +20,7 @@ describe.skipIf(!port)('P10 production composition SQL/HTTP (synthetic inputs)',
   async function request(path: string, method = 'GET', body?: unknown, actor: ActorContext | null = author) {
     const response = await fetch(base + path, { method, headers: {
       ...(actor ? { Authorization: `Bearer ${signAccessToken(actor, f.secret)}` } : {}),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'Idempotency-Key': randomUUID() }),
     }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: response.status, body: await response.json() as any, cache: response.headers.get('cache-control') };
   }
@@ -86,10 +87,22 @@ describe.skipIf(!port)('P10 production composition SQL/HTTP (synthetic inputs)',
       content: { title: '合成测试案例', symptoms: '合成现象', faultType: 'synthetic', confirmedCause: '合成原因', actions: '未执行目标动作', actualEffect: '合成效果', counterexamples: '不能计真实资格' },
       applicability: { conditions: '隔离测试', productVersion: 'synthetic-v1', resourceVersion: 'synthetic-v1' }, validUntil: new Date(Date.now() + 60_000).toISOString() };
     const created = await request('/api/operations/knowledge', 'POST', candidate);
-    expect(created.status).toBe(201);
-    const id = created.body.id;
+    // A mutable lifecycle flag alone cannot qualify a resolved source. The
+    // production adapter requires the exact human closure and its proof.
+    expect(created.status).toBe(422);
+    expect(created.body.error).toBe('OPERATIONS_PRECONDITION_FAILED');
+    expect((await f.rows('SELECT id FROM trusted_cases'))).toHaveLength(0);
+    await f.rows("UPDATE investigations SET lifecycle='open',problem_status='unconfirmed' WHERE id=?", [source.inv.id]);
+    const closed = await request(`/api/investigations/${source.inv.id}/feedback`, 'POST', {
+      ...source.base, kind: 'close', lifecycle: 'closed', problemStatus: 'resolved', verification: source.verification,
+    });
+    expect(closed.status).toBe(200);
+    expect(await f.rows('SELECT id FROM investigation_feedback WHERE investigation_id=? AND result_id=?', [source.inv.id, source.result.id])).toHaveLength(1);
+    const qualified = await request('/api/operations/knowledge', 'POST', candidate);
+    expect(qualified.status).toBe(201);
+    const id = qualified.body.id;
     expect((await request(`/api/operations/knowledge/${id}/submit`, 'POST', { expectedRevision: 1 })).status).toBe(200);
-    const review = { expectedRevision: 2, version: 1, contentHash: created.body.contentHash, decision: 'approved', note: 'Synthetic HTTP identity separation, not real case qualification' };
+    const review = { expectedRevision: 2, version: 1, contentHash: qualified.body.contentHash, decision: 'approved', note: 'Synthetic HTTP identity separation, not real case qualification' };
     expect((await request(`/api/operations/knowledge/${id}/review`, 'POST', review)).status).toBe(403);
     expect((await request(`/api/operations/knowledge/${id}/review`, 'POST', review, reviewer)).status).toBe(200);
     const visible = await request('/api/operations/knowledge', 'GET', undefined, reviewer);

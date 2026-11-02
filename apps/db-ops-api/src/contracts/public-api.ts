@@ -1,3 +1,4 @@
+import {InvestigationWorkflowSchemas} from '../investigations/workflow-contracts.js';
 import { InvestigationFeedbackSchemas } from '../investigations/feedback-contracts.js';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { InvestigationHttpSchemas } from '../investigations/http-contracts.js';
@@ -28,7 +29,7 @@ export const PlatformObservationsSchema = Type.Object({
   schemaVersion: Type.Literal(1), generatedAt: Type.String(),
   releaseId: Type.Union([Type.String(), Type.Null()]), commitSha: Type.Union([Type.String(), Type.Null()]),
   uptimeSeconds: Type.Integer({ minimum: 0 }), components: Type.Array(Type.Unknown()),
-  logs: Type.Unknown(), queue: QueueObservationSchema,
+  logs: Type.Unknown(), queue: QueueObservationSchema, system: Type.Optional(Type.Unknown()),
 }, { $id: 'PlatformObservations', additionalProperties: false });
 
 export const HealthResponseSchema = Type.Object({
@@ -668,6 +669,7 @@ export const PublicApiSchemas = {
   ...InvestigationSchemas, ...InvestigationObservationSchemas,
   ...InvestigationHttpSchemas,
   ...InvestigationFeedbackSchemas,
+  ...InvestigationWorkflowSchemas,
   ...InvestigationBridgeSchemas,
   ...SystemHttpSchemas,
   QueueObservation: QueueObservationSchema,

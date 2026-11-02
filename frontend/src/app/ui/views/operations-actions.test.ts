@@ -49,3 +49,46 @@ it('only recognizes the formal action-plan approval payload',()=>{
   expect(approvalPlanBinding({...row(),args_redacted:{kind:'other',planId:'p',version:3,contentHash:hash}})).toBeNull();
   expect(approvalPlanBinding(row())).toMatchObject({planId:'p',version:3,approvalId:'72',contentHash:hash});
 });
+
+it('carries the exact source result version into a draft and returns to the source investigation',async()=>{
+  history.replaceState({},'','/operations-actions?sourceInvestigation=source-one&resultVersion=4&targetId=501');
+  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/api/investigations/')?{id:'source-one',title:'来源调查',resources:[{type:'server',id:501}],latestResult:{id:'result',version:4,result:{summary:'夹具结果'}}}:String(url).includes('/plans?')?{items:[],authorizedCounts:{total:0},nextCursor:null}:{plan:plan()})));
+  view=document.createElement('operations-actions') as OperationsActions;
+  view.permissions=new Set(['operations:actions:view','operations:actions:propose']);
+  document.body.append(view);await flush();
+  const root=view.shadowRoot!;
+  expect(root.textContent).toContain('结果 V4');expect(root.querySelector('[aria-label="草案结果版本"]')).toBeNull();
+  expect(root.querySelector('a[href="/investigations?investigation=source-one"]')).not.toBeNull();
+  const target=root.querySelector('[aria-label="草案目标服务器"]') as HTMLSelectElement;
+  expect(target.value).toBe('501');
+  const impact=root.querySelector('[aria-label="草案预计影响"]') as HTMLSelectElement;
+  impact.selectedIndex=1;impact.dispatchEvent(new Event('change'));await flush();
+  [...root.querySelectorAll('button')].find(b=>b.textContent==='创建可信来源草案')!.click();await flush();
+  const call=api.mock.calls.find(([url])=>String(url).endsWith('/actions/drafts'))!;
+  expect(JSON.parse(call[1]!.body as string)).toEqual({investigationId:'source-one',resultVersion:4,targetId:501,impact:'重启专用演练服务可能短暂中断服务，原进程内存不可恢复；需独立审批及后续实际观测验证。'});
+});
+it('refuses stale source results and clears draft context after live authority withdrawal',async()=>{
+ history.replaceState({},'','/operations-actions?sourceInvestigation=source-one&resultVersion=4&targetId=501');
+ api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/api/investigations/')?{id:'source-one',title:'来源调查',resources:[{type:'server',id:501}],latestResult:{id:'r5',version:5,result:{summary:'新结果'}}}:{items:[],authorizedCounts:{total:0}})));
+ view=document.createElement('operations-actions') as OperationsActions;view.permissions=new Set(['operations:actions:view','operations:actions:propose']);document.body.append(view);await flush();
+ const root=view.shadowRoot!;expect(root.textContent).toContain('来源结果已变化');
+ const create=[...root.querySelectorAll('button')].find(b=>b.textContent==='创建可信来源草案')!;expect(create.disabled).toBe(true);
+ expect(api.mock.calls.some(([url])=>String(url).endsWith('/actions/drafts'))).toBe(false);
+ window.dispatchEvent(new Event('slide-session-expired'));await flush();expect(root.textContent).not.toContain('新结果');
+});
+it('permits explicit independent approval with an optional note and server-bound approval ID',async()=>{
+ api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified')?{items:[row()]}:{plan:plan()})));
+ const root=await mount();
+ const approve=[...root.querySelectorAll('button')].find(b=>b.textContent==='批准当前版本')!;
+ expect(approve.disabled).toBe(false);approve.click();await flush();
+ api.mockResolvedValue(json({},503));[...root.querySelectorAll('button')].find(b=>b.textContent==='确认批准当前版本')!.click();await flush();
+ const call=api.mock.calls.find(([url])=>String(url).endsWith('/review'))!;
+ expect(JSON.parse(call[1]!.body as string)).toEqual({expectedVersion:3,approvalId:'72',action:'approve',note:''});
+});
+it('stale reminder plan bindings expose current-record confirmation and never render approval controls',async()=>{
+ history.replaceState({},'','/operations-actions?plan=p&attentionPlanVersion=2&attentionPlanHash=old&returnTo=/investigations');
+ api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified')?{items:[row()]}:{plan:plan()})));
+ view=document.createElement('operations-actions') as OperationsActions;view.permissions=new Set(['operations:actions:view','operations:actions:approve']);document.body.append(view);await flush();
+ const root=view.shadowRoot!;expect(root.textContent).toContain('提醒引用的计划版本已变化');expect([...root.querySelectorAll('button')].some(b=>b.textContent==='批准当前版本')).toBe(false);
+ expect(root.querySelector('a[href="/operations-actions?plan=p"]')).not.toBeNull();expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+});

@@ -31,9 +31,11 @@ export class OperationsKnowledge extends LitElement {
   @state() private candidate = freshCandidate();
   @state() private humanConfirmed = false;
   @state() private formError = '';
+  private candidateGeneration=0;
+  private preparation=new OperationsResource<{candidate:Omit<CaseCandidate,'humanConfirmed'>;redactionPolicyVersion:string;requiresHumanReview:true}>(this,()=>this.clearDrafts());
   private pages = new OperationsResource<CasePage>(this, () => this.clearDrafts());
   private record = new OperationsResource<CaseRecord>(this, () => this.clearDrafts());
-  private clearDrafts() { this.note = ''; this.formOpen = false; this.candidate = freshCandidate(); this.humanConfirmed = false; this.formError = ''; }
+  private clearDrafts() { this.candidateGeneration++;this.note = ''; this.formOpen = false; this.candidate = freshCandidate(); this.humanConfirmed = false; this.formError = ''; }
   private can(code: string) { return hasSlidePermission(this.permissions, `operations:cases:${code}`); }
   private pop = () => { this.stopWatch?.();this.stopWatch=null; const id = new URL(location.href).searchParams.get('case') ?? ''; this.selected = id; this.record.reset(); this.clearDrafts(); if (id) void this.open(id, false); else void this.search(); };
   connectedCallback() { super.connectedCallback(); window.addEventListener('popstate', this.pop); }
@@ -72,9 +74,15 @@ export class OperationsKnowledge extends LitElement {
       resultVersion: r.source.resultVersion, validUntil: r.validUntil, humanConfirmed: true,
     } : { ...freshCandidate(), investigationId: p.get('sourceInvestigation') ?? '', resultVersion: Number(p.get('resultVersion')) || 1 };
     this.formOpen = true;
+    if(!edit&&this.candidate.investigationId&&p.get('resultVersion'))void this.prepareCandidate();
+  }
+  private async prepareCandidate(){
+    const gen=++this.candidateGeneration,c=this.candidate;this.humanConfirmed=false;
+    const value=await this.preparation.load(`/knowledge/prepare?investigationId=${encodeURIComponent(c.investigationId)}&resultVersion=${c.resultVersion}`);
+    if(value&&gen===this.candidateGeneration&&this.formOpen&&!this.editing)this.candidate={...value.candidate,humanConfirmed:true};
   }
   private async saveCandidate(e: Event) {
-    e.preventDefault(); if (!this.humanConfirmed || this.record.locked) return;
+    e.preventDefault(); if (!this.humanConfirmed || this.record.locked || this.preparation.loading) return;
     const c = this.candidate;
     if (!Number.isSafeInteger(c.resultVersion) || c.resultVersion < 1 || !Number.isFinite(Date.parse(c.validUntil))) { this.formError = '请填写有效结果版本与到期时间。'; return; }
     const body = { ...c, validUntil: new Date(c.validUntil).toISOString() };
@@ -158,15 +166,17 @@ export class OperationsKnowledge extends LitElement {
     const c = this.candidate;
     const field = (name: string, value: string, change: (v: string) => void, max = 4000) => html`<label>${name}<textarea aria-label=${name} required maxlength=${max} rows="2" .value=${value} ?disabled=${this.record.locked} @input=${(e: Event) => change((e.target as HTMLTextAreaElement).value)}></textarea></label>`;
     return html`<app-dialog .open=${this.formOpen} title=${this.editing ? '编辑为新案例版本' : '从调查整理案例'} @app-dialog-close=${() => this.formOpen = false}>
-      <form id="case-candidate" class="form" @submit=${this.saveCandidate}><p>请人工核实来源与处理效果；保存草稿不会自动发布。</p>
+      <form id="case-candidate" class="form" @submit=${this.saveCandidate}><p>请人工核实来源与处理效果；保存草稿不会自动发布。原记录草稿中的未知原因与缺口保持未知。</p>
+        ${!this.editing?html`<button class="btn btn-refresh" type="button" ?disabled=${this.preparation.locked||this.record.locked} @click=${this.prepareCandidate}>读取来源生成脱敏草稿</button>${this.status(this.preparation)}${this.preparation.data?html`<p>脱敏策略：${this.preparation.data.redactionPolicyVersion}；保存后仍需独立审核。</p>`:nothing}`:nothing}
+        <details><summary>核对来源调查与结果版本</summary>
         <label>来源调查 ID<input aria-label="来源调查 ID" required maxlength="128" .value=${c.investigationId} ?disabled=${this.editing || this.record.locked} @input=${(e: Event) => this.candidate = {...c, investigationId:(e.target as HTMLInputElement).value}}></label>
-        <label>来源结果版本<input aria-label="来源结果版本" type="number" min="1" required .value=${String(c.resultVersion)} ?disabled=${this.editing || this.record.locked} @input=${(e: Event) => this.candidate = {...c, resultVersion:Number((e.target as HTMLInputElement).value)}}></label>
+        <label>来源结果版本<input aria-label="来源结果版本" type="number" min="1" required .value=${String(c.resultVersion)} ?disabled=${this.editing || this.record.locked} @input=${(e: Event) => this.candidate = {...c, resultVersion:Number((e.target as HTMLInputElement).value)}}></label></details>
         ${Object.entries({title:'案例标题',symptoms:'问题现象',faultType:'故障类型',confirmedCause:'已确认原因',actions:'实际处理',actualEffect:'实际效果',counterexamples:'反面证据与不适用条件'}).map(([key,label]) => field(label,c.content[key as keyof typeof c.content],v => this.candidate = {...this.candidate,content:{...this.candidate.content,[key]:v}}, key === 'title' ? 200 : key === 'faultType' ? 100 : 4000))}
         ${Object.entries({conditions:'适用条件',productVersion:'产品版本',resourceVersion:'资源版本'}).map(([key,label]) => field(label,c.applicability[key as keyof typeof c.applicability],v => this.candidate = {...this.candidate,applicability:{...this.candidate.applicability,[key]:v}},key === 'conditions' ? 4000 : 128))}
         <label>有效期至<input aria-label="有效期至" type="datetime-local" step="0.001" required .value=${c.validUntil ? localDate(c.validUntil) : ''} ?disabled=${this.record.locked} @input=${(e: Event) => this.candidate = {...c,validUntil:(e.target as HTMLInputElement).value}}></label>
         <label class="check"><input type="checkbox" required .checked=${this.humanConfirmed} ?disabled=${this.record.locked} @change=${(e: Event) => this.humanConfirmed = (e.target as HTMLInputElement).checked}>我已人工确认来源结果、处理效果与脱敏内容</label>
         ${this.formError ? html`<p role="alert">${this.formError}</p>` : nothing}${this.status(this.record)}
-      </form><div slot="footer"><button class="btn" @click=${() => this.formOpen = false}>取消</button><button class="btn-primary" ?disabled=${this.record.locked || !this.humanConfirmed} @click=${() => this.renderRoot.querySelector<HTMLFormElement>('#case-candidate')?.requestSubmit()}>保存案例草稿</button></div>
+      </form><div slot="footer"><button class="btn" @click=${() => this.formOpen = false}>取消</button><button class="btn-primary" ?disabled=${this.record.locked || this.preparation.loading || !this.humanConfirmed} @click=${() => this.renderRoot.querySelector<HTMLFormElement>('#case-candidate')?.requestSubmit()}>保存案例草稿</button></div>
     </app-dialog>`;
   }
   render() {

@@ -390,12 +390,18 @@ export class PlanSources {
     await this.investigations.authorize(c, actor, investigation, 'content');
     const [result] = await planRows(
       c,
-      `SELECT version FROM investigation_results WHERE investigation_id=?
+      `SELECT version,request_id FROM investigation_results WHERE investigation_id=?
       ORDER BY version DESC LIMIT 1 FOR SHARE`,
       [content.investigationId],
     );
     if (Number(result?.version) !== content.resultVersion)
       throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
+    const [sourceRequest]=await planRows(c,'SELECT request_snapshot FROM investigation_requests WHERE id=? AND investigation_id=? FOR SHARE',[result.request_id,investigation.id]);
+    const sourceScope=decodePlanJson(sourceRequest?.request_snapshot)?.scopeVersion;
+    // Pre-scope historical records may lack the field. Preserve their old path
+    // only while this investigation has never acquired a confirmed scope revision.
+    const changedScope=sourceScope===undefined?await planRows(c,"SELECT id FROM investigation_workflow_receipts WHERE investigation_id=? AND kind='scope' LIMIT 1 FOR SHARE",[investigation.id]):[];
+    if(sourceScope!==undefined&&sourceScope!==investigation.scopeVersion||changedScope.length)throw new OperationsError('OPERATIONS_VERSION_CONFLICT');
     const resources: ResourceRef[] = [...investigation.resources];
     for (const ref of content.evidence) {
       const [row] = await planRows(

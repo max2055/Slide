@@ -3,14 +3,15 @@ import { platformLogs, type StructuredLogEvidenceAdapter } from './structured-lo
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { FixedWindowRateLimiter } from '../security/agent-runtime-limits.js';
 import type { QueueObservation } from '../workflows/worker-runtime.js';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { publishSystemFailure } from './system-failure-publisher.js';
 
 export async function installPlatformObservation(app: FastifyInstance, verifyToken: preHandlerHookHandler, logs: StructuredLogEvidenceAdapter = platformLogs,
-  observeQueue?: () => Promise<QueueObservation>): Promise<void> {
+  observeQueue?: () => Promise<QueueObservation>, observeSystem?: () => Promise<unknown>): Promise<void> {
   const starts = new WeakMap<object, number>();
   const clientEvents = new FixedWindowRateLimiter(120, 60_000);
   const processId = randomUUID();
+  const scopeKey = randomBytes(32);
   app.addHook('onRequest', async request => { starts.set(request, performance.now()); });
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode >= 500) {
@@ -24,9 +25,17 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
         commitSha: /^[a-f0-9]{40}$/.test(process.env.SLIDE_COMMIT_SHA ?? '') ? process.env.SLIDE_COMMIT_SHA : undefined });
     }
     if (request.routeOptions.url?.startsWith('/api/platform/')) return;
-    logs.record({ component: 'api', eventType: 'request.completed', status: reply.statusCode >= 500 ? 'failed' : 'ok',
+    logs.record({ component: 'api', eventType: 'request.completed', status: reply.statusCode >= 500 ? 'failed' : reply.statusCode >= 300 ? 'unknown' : 'ok',
       durationMs: Math.max(0, performance.now() - (starts.get(request) ?? performance.now())), correlationId: request.id,
-      errorCode: reply.statusCode >= 400 ? `HTTP_${reply.statusCode}` : undefined, releaseId: process.env.SLIDE_RELEASE_ID });
+      errorCode: reply.statusCode >= 400 ? `HTTP_${reply.statusCode}` : undefined,
+      callsite: `api:${request.method}:${request.routeOptions.url ?? 'unmatched'}`,
+      // Exact read scope only. Retain neither URL/parameters nor credentials.
+      // All headers participate: changing caller or representation cannot prove recovery.
+      requestScope: request.routeOptions.url && ['GET', 'HEAD'].includes(request.method) && request.body === undefined
+        ? createHmac('sha256', scopeKey).update(JSON.stringify([request.method, request.url,
+          Object.entries(request.headers).sort(([a], [b]) => a.localeCompare(b)), (request as any).user?.userId ?? null])).digest('hex')
+        : undefined,
+      commitSha: process.env.SLIDE_COMMIT_SHA, releaseId: process.env.SLIDE_RELEASE_ID });
   });
   app.post('/api/platform/frontend-events', { preHandler: [verifyToken], bodyLimit: 1024, config: { rateLimit: expensiveOperationRateLimitConfig } }, async (request: any, reply) => {
     if (!request.user?.userId) return reply.code(401).send({ error: 'ACTOR_REQUIRED' });
@@ -39,6 +48,7 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
     return reply.code(202).send({ accepted: true });
   });
   app.get('/api/platform/observations', { preHandler: [verifyToken] }, async (request: any, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
     const permissions: string[] = request.user?.permissions ?? [];
     if (!permissions.some(permission => ['*', 'config:*', 'config:view'].includes(permission))) return reply.code(403).send({ error: 'PLATFORM_OBSERVATION_FORBIDDEN' });
     const { from, to, component } = request.query as Record<string, string>;
@@ -47,13 +57,15 @@ export async function installPlatformObservation(app: FastifyInstance, verifyTok
       let queue: QueueObservation = { schemaVersion: 1, generatedAt: new Date().toISOString(), persistence: 'mysql',
         quality: 'unknown', types: [], gaps: ['QUEUE_STORE_UNAVAILABLE'] };
       try { if (observeQueue) queue = await observeQueue(); } catch { /* A missing gauge is not zero backlog. */ }
-      const components = ['api', 'agent', 'ws', 'collector', 'queue', 'frontend'].map(component => {
+      let system: unknown = { quality: 'unknown', gaps: ['SYSTEM_RUNTIME_UNAVAILABLE'] };
+      try { if (observeSystem) system = await observeSystem(); } catch { /* Runtime state stays unknown. */ }
+      const components = ['api', 'agent', 'ws', 'collector', 'metrics', 'queue', 'frontend'].map(component => {
         const evidence = logs.query({ from: summary.from, to: summary.to, component });
         return { component, quality: evidence.quality, gaps: evidence.gaps, groups: evidence.groups };
       });
       return { schemaVersion: 1, generatedAt: new Date().toISOString(), releaseId: process.env.SLIDE_RELEASE_ID ?? null,
         commitSha: /^[a-f0-9]{40}$/.test(process.env.SLIDE_COMMIT_SHA ?? '') ? process.env.SLIDE_COMMIT_SHA : null,
-        uptimeSeconds: Math.floor(process.uptime()), components, logs: summary, queue };
+        uptimeSeconds: Math.floor(process.uptime()), components, logs: summary, queue, system };
     } catch { return reply.code(400).send({ error: 'PLATFORM_LOG_QUERY_INVALID' }); }
   });
 }

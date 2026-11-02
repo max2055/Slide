@@ -32,7 +32,7 @@ describe('UI-02: navigation contract', () => {
     expect(TAB_GROUPS.map((group) => [group.label, [...group.tabs]])).toEqual([
       ['workspace', ['attention', 'investigations', 'chat']],
       ['resources', ['dashboard', 'network-devices', 'servers', 'instances-db']],
-      ['operations', ['events', 'resource-diagnosis', 'sql-console', 'cron-jobs', 'reports', 'operations-knowledge']],
+      ['operations', ['events', 'sql-console', 'cron-jobs', 'reports', 'operations-knowledge']],
       ['securityGovernance', ['approval', 'operations-actions', 'audit-center']],
     ]);
     expect(UTILITY_TABS).toEqual(['health-center', 'feedback', 'settings']);
