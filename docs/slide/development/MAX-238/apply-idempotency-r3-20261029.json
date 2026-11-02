@@ -1,0 +1,121 @@
+{
+  "package": "MAX238-APPLY-IDEMPOTENCY-R3",
+  "date": "2026-10-29",
+  "branch": "agent/15coder1/max-238",
+  "base": "17621094f2a44ddd11dc943f0381b7d1b25e797a",
+  "scope": [
+    "public policy entry revalidates live grants after lock wait",
+    "browser fixture removes only its own exact labelled container"
+  ],
+  "file_sha256": {
+    "apps/db-ops-api/src/metrics/policy/service.ts": "ee48e2f0503ac477964f890e1fcaff56ed7f2f0683436ab48b12a16b1d7f2561",
+    "apps/db-ops-api/src/metrics/policy/routes.ts": "e5b266de0aecf8287ea69fbdb8653df4b0ff7427fc226ade01fb70532a5f0ee5",
+    "apps/db-ops-api/src/metrics/policy/routes.test.ts": "9a8f91b8d1d48efde445c5925239cf513a708251351a6da23107e8fb6a271db2",
+    "apps/db-ops-api/src/metrics/config/apply-idempotency-r3.mysql.test.ts": "ac8244e2184d5d23748d1424697a561bd345a442b8885048fe15d3c4cb212ad1",
+    "apps/db-ops-api/src/metrics/config/conflict-cas.mysql.test.ts": "be4cd76e193551c89e1c1a1196f64efbf6d73642652db9c95660a6d115860029",
+    "apps/db-ops-api/src/metrics/config/flow.mysql.test.ts": "af373dceda608ff623440114d5090ae5ef2ca6ada790d38fc01670ff57270295",
+    "apps/db-ops-api/src/metrics/config/mysql96.mysql.test.ts": "79df56acff4399251ae3d9321273d7862c1b27d4663f5c1fe94f6f7915951528",
+    "apps/db-ops-api/src/metrics/config/unified.real.test.ts": "6385260ce787fc892323f9cd4ab469ea66f8c25567f67303a2024df9fa796552",
+    "apps/db-ops-api/e2e/max238-real-api-server.ts": "6449675da44050df733f4b12f46fe6b67d5a7526873f54c60b1680b0d0e929b7",
+    "frontend/e2e/max238-real-api.sh": "081602641514c63bf33ecaa1602eade7d8f15d30c254e64ea2f596c75788689e",
+    "frontend/e2e/max238-idempotency-real-api.spec.ts": "0382ddf2fc6d7e27b7b95e2fa243f2e29b9b67bcb28910d51f1065d08e1c1540"
+  },
+  "checks": [
+    {
+      "command": "vitest run src/metrics/policy/routes.test.ts",
+      "result": "13 passed"
+    },
+    {
+      "command": "METRICS_TEST_MYSQL_PORT=54383 vitest run src/metrics/config/apply-idempotency-r3.mysql.test.ts",
+      "result": "4 passed"
+    },
+    {
+      "command": "METRICS_TEST_MYSQL_PORT=54383 vitest run src/metrics/config src/metrics/policy --maxWorkers=3",
+      "result": "32 files / 212 tests passed; 10 files / 12 tests skipped (env-gated)"
+    },
+    {
+      "command": "vitest run src/metrics/bulk src/metrics/rollout",
+      "result": "33 passed / 36 skipped"
+    },
+    {
+      "command": "apps/db-ops-api tsc --noEmit",
+      "result": "exit 0"
+    },
+    {
+      "command": "pnpm contracts:check",
+      "result": "exit 0, public contract unchanged"
+    },
+    {
+      "command": "frontend tsc --noEmit",
+      "result": "exit 0"
+    },
+    {
+      "command": "playwright test --config playwright.MAX-238.config.ts",
+      "result": "4 passed (chromium)"
+    }
+  ],
+  "disposable_mysql": {
+    "engine": "mysql:8.4",
+    "host": "127.0.0.1",
+    "port": "random loopback, never 3306",
+    "this_evidence_port": 54383,
+    "schema": "per-test-file, created and dropped by the test",
+    "owner_label": "slide.max238.owner=<run nonce>",
+    "removed": "only the exact labelled container"
+  },
+  "public_entry_revocation": {
+    "committed_keyed_replay": {
+      "http": 403,
+      "revalidate_called": true,
+      "binding_revision": 1,
+      "audit_rows": 1,
+      "journal": "unchanged committed row"
+    },
+    "new_keyed_intent": {
+      "before_admission": 403,
+      "during_lock_wait": 403,
+      "journal": "absent",
+      "binding": "none",
+      "audit": 0,
+      "key_reusable": true
+    },
+    "keyless_publish_preview_reads": {
+      "http": 403,
+      "binding_revision": 1,
+      "audit_rows": 1
+    },
+    "config_activate_query": {
+      "activate_before_trial": 403,
+      "trials": 0,
+      "journal": "absent",
+      "query_during_wait": 403,
+      "journal_disclosed": false
+    }
+  },
+  "fixture_ownership_proof": {
+    "own_container_removed": true,
+    "parallel_same_prefix_survived_own_cleanup": true,
+    "wrong_owner_cleanup": {
+      "exit": 1,
+      "container_removed": false
+    },
+    "repeat_cleanup": {
+      "exit": 0,
+      "note": "already absent is success, no prefix sweep"
+    },
+    "launcher_log": "nonce, container, pid, cwd, mysql port and api port written to stderr on start"
+  },
+  "pre_existing_test_drift": {
+    "file": "apps/db-ops-api/src/metrics/config/conflict-cas.mysql.test.ts",
+    "observed_at_base": "17621094f reproduced failure: stale activate was not refused because the fixed guardChecks===6 injection point fell inside the trial transaction and hit innodb_lock_wait_timeout",
+    "introduced_by": "R2 (1a7cd24b4) added live checks inside the trial; not introduced by R3",
+    "r3_change": "test-only: inject after the trial returns (trial spy flag) instead of a fixed check count; assertions and production code unchanged",
+    "after": "passes in isolation and in the module run"
+  },
+  "limits": [
+    "trial boundary is a controlled fixture; no real target, collector, notification or formal history/event chain",
+    "fixed fixture admin identity in HTTP/browser evidence, not real login or permission administration",
+    "lock wait is simulated by a store admission gate; no production-scale concurrency load test",
+    "no kill at the commit instant; remote exactly-once is not claimed"
+  ]
+}

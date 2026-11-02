@@ -43,7 +43,7 @@ export function registerNotificationHandlers(
             request = {
               channel,
               message: identity.kind === 'notification'
-                ? notificationService.buildMessage(channel.type, source as any, (source as any).instance_name, (source as any).instance_host)
+                ? notificationService.buildMessage(channel.type, identity.transition ? {...source, title:`[${identity.transition.phase === 'recovery' ? '恢复' : '升级'}] ${(source as any).title}`, message: identity.transition.phase === 'recovery' ? '固定规则已判定恢复。' : `等级 ${identity.transition.from_level} → ${identity.transition.to_level}`, level: identity.transition.to_level ?? (source as any).level} : source as any, (source as any).instance_name, (source as any).instance_host)
                 : { type: 'scheduled_report', report: { id: source.id, name: (source as any).name, type: (source as any).type, format: (source as any).format, status: (source as any).status }, downloadPath: `/api/reports/${source.id}/download` },
               rolloutFence: identity.kind === 'notification' ? parseRolloutAlertFence(source as any) : undefined,
             };
@@ -61,7 +61,7 @@ export function registerNotificationHandlers(
       try {
         signal.throwIfAborted();
         const publish = async () => {
-          if (identity.kind === 'notification' && await maintenanceBlocksDelivery(identity.sourceId)) {
+          if (identity.kind === 'notification' && await maintenanceBlocksDelivery(identity.sourceId,identity.transition?.at)) {
             throw new Error('MAINTENANCE_SUPPRESSED');
           }
           transportStarted = true;

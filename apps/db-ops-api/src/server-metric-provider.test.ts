@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import serverMetricProvider, {
   canonicalDimensions,
+  parseMemoryUsage,
   parseDiskStats,
   parseNetworkInterfaceStats,
   parseProcessCount,
@@ -9,6 +10,14 @@ import serverMetricProvider, {
 import { classifyCollectionFailure } from './migrations/metric-history/server-collector.js';
 
 describe('server metric provider fixed parsers', () => {
+  it('MAX-237 uses MemAvailable and leaves absent or inconsistent memory unknown', () => {
+    expect(parseMemoryUsage('MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 600 kB\n')).toBe(40);
+    for (const output of ['', 'MemTotal: 1000 kB\nMemFree: 100 kB', 'MemTotal: 0 kB\nMemAvailable: 0 kB',
+      'MemTotal: 1000 kB\nMemAvailable: 1001 kB', 'MemTotal: 1000 kB\nMemAvailable: -1 kB', 'MemTotal: 1000 kB\nMemAvailable: 5 MB',
+      'MemTotal: 1000 kB\nMemAvailable: invalid\nMemAvailable: 500 kB',
+      'MemTotal: 1000 kB\nMemAvailable: 500 kB\nMemAvailable: 600 kB']) expect(parseMemoryUsage(output)).toBeNull();
+    expect(serverMetricProvider.getDefinitions('rhel').find(d => d.name === 'memory_usage')!.command).toBe('LC_ALL=C LANG=C cat /proc/meminfo');
+  });
   it('parses bounded network dimensions and rx/tx counters', () => {
     const rows = parseNetworkInterfaceStats(' eth0: 100 1 2 3 4 5 6 7 200 8 9 10 11 12 13 14\n');
     expect(rows).toEqual(expect.arrayContaining([

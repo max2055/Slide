@@ -26,13 +26,21 @@ async function setup(page: Page, theme = 'light') {
     const path = new URL(route.request().url()).pathname;
     if (!path.startsWith('/api/')) return route.fallback();
     return route.fulfill({ json: path.endsWith('/config/catalog') ? catalog
+      : path === '/api/metrics/templates/library' ? { templates: [], can_manage: false }
+      : path === '/api/metrics/templates/capabilities' ? { candidates: [] }
       : path === '/api/auth/permissions' ? ['*']
       : path === '/api/user/preferences' ? { preferences: { locale: 'zh-CN', themeMode: theme } }
       : path === '/api/resources' ? { items: [] } : {} });
   });
 }
-const go = (page: Page, view = 'catalog') => page.goto(`/settings/monitoring/metrics?view=${view}`);
-const entries = (page: Page) => page.locator('metric-settings app-data-table tbody tr');
+async function openPackages(page: Page) {
+  await page.getByText('采集包与兼容性详情', { exact: true }).click();
+}
+async function go(page: Page, view = 'catalog') {
+  await page.goto(`/settings/monitoring/metrics?view=${view}`);
+  if (view === 'packages') await openPackages(page);
+}
+const entries = (page: Page) => page.getByRole('region', { name: '采集模板目录' }).locator('app-data-table tbody tr');
 const detail = (page: Page) => page.locator('metric-settings app-dialog[title="采集模板详情"] .package-entry');
 const noOverflow = async (page: Page) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -62,6 +70,7 @@ for (const width of [1440, 1280, 768, 375]) for (const theme of ['light', 'dark'
     await noOverflow(page);
     await page.screenshot({ path: info.outputPath('catalog.png'), fullPage: true });
     await page.getByRole('tab', { name: '采集包', exact: true }).click();
+    await openPackages(page);
     await expect(entries(page)).toHaveCount(templateCount);
     await expect(entries(page).filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
     await expect(entries(page).filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();
@@ -173,12 +182,12 @@ test('package loading, forbidden error, retry and empty catalog', async ({ page 
   await expect(page.getByText('暂无采集包', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('catalog-loading.png'), fullPage: true });
   finish();
-  await expect(page.getByRole('alert')).toContainText('没有此资源的操作权限');
+  await expect(page.locator('metric-settings > details').getByRole('alert')).toContainText('没有此资源的操作权限');
   await expect(page.getByText('暂无采集包', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('catalog-forbidden.png'), fullPage: true });
   await page.route('**/api/metrics/config/catalog', route => route.fulfill({ json: { packages: [], metrics: [] } }));
   await page.getByRole('button', { name: '重新加载目录' }).click();
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('metric-settings > details').getByRole('alert')).toHaveCount(0);
   await expect(page.getByText('暂无采集包', { exact: true })).toBeVisible();
   await expect(page.locator('metric-settings .table-foot')).toHaveText('显示 0 / 0 个模板 · 共 0 个不可变版本');
   await page.screenshot({ path: info.outputPath('catalog-empty.png'), fullPage: true });

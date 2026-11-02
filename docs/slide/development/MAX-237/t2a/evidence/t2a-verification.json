@@ -1,0 +1,232 @@
+{
+  "allowlist": {
+    "files": [
+      {
+        "lines": 829,
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.ts",
+        "sha256": "a66f9f1c0cea755e51805a8e5c0ff3dc5d6f340a43c834d1f1ae38e7918736f3",
+        "status": "new"
+      },
+      {
+        "lines": 204,
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.test.ts",
+        "sha256": "24105e24ccc26b4551af28ad56ca4c5044d276bb318ab3374a57bff00c76e316",
+        "status": "new"
+      },
+      {
+        "lines": 572,
+        "path": "apps/db-ops-api/src/metrics/templates/mysql-repository.mysql.test.ts",
+        "sha256": "4a64ce12425ff9d478b32674fdbaf0ae56200fe373dded56cb9e6afc1b6364a7",
+        "status": "new"
+      },
+      {
+        "lines": 363,
+        "path": "apps/db-ops-api/src/metrics/templates/repository.ts",
+        "sha256": "d722c5e864eeba194a8ca653beb207e23ee8ea28f33a9cdca9081fd235e24153",
+        "status": "modified (export-only: itemContent/identityConflict)"
+      }
+    ],
+    "outside_allowlist": [],
+    "patch": "docs/slide/development/MAX-237/t2a/evidence/t2a-allowlist.patch",
+    "patch_bytes": 81775,
+    "patch_sha256": "ffca5dbddaaae1262b5afceb37983d79841f45394f36785654aad74561db5716"
+  },
+  "authorization": {
+    "decision": "issue description attachment max237-t2a-admission-20261027.md",
+    "scope": "Bounded T2A package; no runtime/production wiring, no public schema or application migration approval",
+    "t1_accepted_head": "1d7f9e1f9c5a1649a7791b995691b72f5b21f887"
+  },
+  "base": "1d7f9e1f9c5a1649a7791b995691b72f5b21f887",
+  "branch": "agent/15coder1/max-237",
+  "checks": [
+    {
+      "command": "npx vitest run src/metrics/templates (cwd apps/db-ops-api, MAX237_T2A_MYSQL_* set)",
+      "log": "docs/slide/development/MAX-237/t2a/evidence/t2a-test-log.txt",
+      "result": "5 files, 73/73 tests passed, exit 0"
+    },
+    {
+      "command": "npx vitest run src/metrics (cwd apps/db-ops-api, no MySQL env)",
+      "result": "48 files passed / 25 skipped, 499 passed / 137 skipped, exit 0; the MySQL suite is skipped without the fixture variables"
+    },
+    {
+      "command": "npx tsc --noEmit (cwd apps/db-ops-api)",
+      "result": "exit 0, no diagnostics"
+    },
+    {
+      "command": "npx oxlint apps/db-ops-api/src/metrics/templates (cwd repo root)",
+      "result": "0 warnings / 0 errors on 12 files"
+    }
+  ],
+  "code_commit": "0b60d1f429276f9ffb4ad9e318c9c4bf3a15470f",
+  "environment": {
+    "collation": "utf8mb4_bin (database, all five tables and every text column)",
+    "connections": "two independent pools (A, B) plus fault-injecting wrappers over a third pool",
+    "container_id": "b232577f0f27baf77b9eacf8cdcd14bfa2ef4e65d2ef975be8b4cbb2ae4ba664",
+    "database": "max237_t2a",
+    "ddl_git_blob": "f958ba73b719a0cf84b3546675a9701544f55a27",
+    "ddl_sha256": "3fab395880891966565dea989dc475b3dff404404d0bb085a6875aff2f5ec13d",
+    "image_id": "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d",
+    "mysql_version": "8.4.10",
+    "session": "time_zone=+00:00, sql_mode contains STRICT_ALL_TABLES"
+  },
+  "generated_at": "2026-10-27",
+  "github_issue": 261,
+  "issue": "MAX-237",
+  "known_storage_gaps": [
+    "metric_templates_v2.created_by / metric_template_drafts.updated_by are INT (narrower than the non-negative integer schema)",
+    "metric_template_item_versions.canonical_metric_id is VARCHAR(128) and canonical_semantic_version VARCHAR(16)",
+    "DATETIME supports years 1000..9999 only",
+    "T2A adds no column and does not alter DDL 140; T2B must decide the minimal storage-compatible candidate before any application migration/integration"
+  ],
+  "not_done": [
+    "not registered on any route/process; no shared pool, migration, scheduler, collector, notification or model call",
+    "no application migration or production compatibility claim",
+    "contracts:check not rerun (no contract/public-export file changed)",
+    "no real business collection loop (Linux/MySQL/PostgreSQL/Oracle/Dameng/SNMP templates), no rate/unknown-boundary evidence for the original six acceptance items",
+    "whole MAX-237 remains in_progress"
+  ],
+  "package": "MAX237-T2A",
+  "round_trip_verified": [
+    "SQL NULL for created_by, updated_by, current_published_version, published_version stays NULL (not 0/''/epoch)",
+    "0/1/2/3-digit UTC timestamps are stored as UTC DATETIME(3) and read back as YYYY-MM-DDTHH:mm:ss.SSSZ with the same instant (.1Z -> .100Z)",
+    "source_chain JSON is stored as given (original fractional digits preserved inside the JSON snapshot)",
+    "dimension JSON keeps empty keys, comma keys, unicode keys/values and key-order independence; identity comparison reuses repository.ts itemContent/identityConflict",
+    "ASCII template/item ids are case-sensitive (utf8mb4_bin) and listTemplates pages in the same ascending order as the in-memory port",
+    "state is readable through a freshly created pool/repository",
+    "renaming a template and publishing v2 leave the v1 snapshot byte-equivalent"
+  ],
+  "storage_boundaries_verified": [
+    "actor (created_by/updated_by): 0..2147483647 or NULL; 2147483648 rejected before any row exists",
+    "canonical_metric_id VARCHAR(128) and canonical_semantic_version VARCHAR(16) rejected above width (schema-valid inputs)",
+    "DATETIME year range 1000..9999; a schema-valid year 0999 is rejected",
+    "template revision at 2147483647 cannot be incremented; item version 2147483647 cannot append; published MAX version 2147483647 cannot increment",
+    "all rejections are TEMPLATE_INVALID_INPUT naming the internal T2A storage boundary and leave zero partial writes"
+  ],
+  "test_suites": [
+    {
+      "file": "catalog.test.ts",
+      "names": [
+        "registered capability selection autofills unit, dimensions, cadence and the explicit implementation pin",
+        "registered capability selection never lists a derived metric as directly selectable and says why",
+        "registered capability selection offers only metrics a collector really maps, with pin, raw field and cadence",
+        "registered capability selection orders candidates deterministically by release then metric",
+        "registered capability selection rejects a deprecated definition and never offers it",
+        "registered capability selection rejects an unknown pin, an unknown metric and a derived metric with distinct codes"
+      ],
+      "status": "passed",
+      "tests": 6
+    },
+    {
+      "file": "mysql-repository.mysql.test.ts",
+      "names": [
+        "MAX-237 T2A MySQL template repository applies template and draft writes only at the expected revision",
+        "MAX-237 T2A MySQL template repository compares dimension key sets without delimiter collisions and round-trips JSON",
+        "MAX-237 T2A MySQL template repository creates template, draft and copied items atomically",
+        "MAX-237 T2A MySQL template repository initializes the first item identity once and appends only on real content change",
+        "MAX-237 T2A MySQL template repository keeps ASCII identities case-sensitive and pages by ascending id",
+        "MAX-237 T2A MySQL template repository keeps an unknown outcome when the commit acknowledgement is lost",
+        "MAX-237 T2A MySQL template repository lets exactly one concurrent publish at the same revision win the CAS",
+        "MAX-237 T2A MySQL template repository maps SQL NULL and 0–3 digit UTC timestamps without inventing values",
+        "MAX-237 T2A MySQL template repository publishes immutable versions with CAS, idempotency and unchanged snapshots",
+        "MAX-237 T2A MySQL template repository reads persisted state through a fresh repository connection",
+        "MAX-237 T2A MySQL template repository rejects values the five tables cannot represent before writing",
+        "MAX-237 T2A MySQL template repository rolls back a half-written create when a statement fails",
+        "MAX-237 T2A MySQL template repository rolls back server-side when the connection drops before commit",
+        "MAX-237 T2A MySQL template repository rolls back the new snapshot when the pointer update fails",
+        "MAX-237 T2A MySQL template repository serialises colliding first-item writes across two independent connections",
+        "MAX-237 T2A MySQL template repository uses utf8mb4_bin tables and a strict UTC session"
+      ],
+      "status": "passed",
+      "tests": 16
+    },
+    {
+      "file": "mysql-repository.test.ts",
+      "names": [
+        "T2A DATETIME(3) round-trip rejects years the DATETIME column cannot store",
+        "T2A DATETIME(3) round-trip writes UTC wall clock and preserves the instant for 0–3 digit fractions",
+        "T2A SQL value boundaries enforces the VARCHAR widths of the canonical columns",
+        "T2A SQL value boundaries names the internal storage boundary, not the public contract",
+        "T2A SQL value boundaries refuses revision/version increments at the INT ceiling",
+        "T2A SQL value boundaries rejects INT values outside 0..2147483647 instead of truncating",
+        "T2A adapter error branches checks SQL-bound values before acquiring a connection",
+        "T2A adapter error branches keeps the unknown-commit outcome even when releasing the connection fails",
+        "T2A adapter error branches maps a duplicate parent insert to TEMPLATE_EXISTS and rolls back",
+        "T2A adapter error branches reports an unknown commit outcome instead of success or failure",
+        "T2A adapter error branches rolls back and keeps the original error when a statement fails mid-transaction"
+      ],
+      "status": "passed",
+      "tests": 11
+    },
+    {
+      "file": "repository.test.ts",
+      "names": [
+        "in-memory template repository applies draft and template writes only at the expected revision",
+        "in-memory template repository applies the identity guard on the conditional append, not only in the service",
+        "in-memory template repository compares dimension key sets without delimiter collisions",
+        "in-memory template repository keeps a published snapshot unchanged when an incompatible key set is rejected",
+        "in-memory template repository keeps item identity stable and appends only on real content change",
+        "in-memory template repository leaves no trace when the publish guards fail",
+        "in-memory template repository lets exactly one racing first write with colliding key sets win",
+        "in-memory template repository pages templates by ascending id without repeating or skipping rows",
+        "in-memory template repository publishes v1, treats identical content as a no-op and never rewrites a version",
+        "in-memory template repository refuses an incompatible semantic change on a stable item identity",
+        "in-memory template repository refuses to reuse a template identity",
+        "in-memory template repository rejects a version snapshot that disagrees with the aggregate",
+        "in-memory template repository returns detached copies from every read"
+      ],
+      "status": "passed",
+      "tests": 13
+    },
+    {
+      "file": "service.test.ts",
+      "names": [
+        "parameter types accepts one default of every declared type",
+        "parameter types re-validates the stored draft at publish and the item defaults against it",
+        "parameter types rejects a number that disguises a boolean or string parameter",
+        "publish rejections accepts the same dimension key set in another order at publish",
+        "publish rejections forbids writes for a metric:view-only actor",
+        "publish rejections maps failure codes to the intended status",
+        "publish rejections rejects a missing implementation pin and an uninstalled release",
+        "publish rejections rejects a unit or dimension mismatch against the canonical definition",
+        "publish rejections rejects an empty dimension key when publish re-validates the stored item",
+        "publish rejections rejects an empty template, an unresolved base and a blank name",
+        "publish rejections rejects an illegal cadence when the draft is saved and again at publish",
+        "publish rejections rejects an item-level cadence and undeclared item parameters",
+        "publish rejections rejects references to item versions that do not exist",
+        "publish rejections rejects stale draft and template revisions without writing a version",
+        "publish rejections rejects the same metric selected by two items",
+        "stable item identity lets exactly one of two racing selections under one item_id win",
+        "stable item identity refuses to continue a published item under an incompatible metric",
+        "template lifecycle auto-fills a selected metric and keeps the item identity across a rename",
+        "template lifecycle auto-fills dimensions and composes a template that spans releases",
+        "template lifecycle copies into a new template identity without continuing the source history",
+        "template lifecycle creates a new template version when an item version changes",
+        "template lifecycle creates a server-identified draft and enforces metric:manage",
+        "template lifecycle lets exactly one of two publishes at the same revision win",
+        "template lifecycle moves only the current pointer and refuses a stale revision",
+        "template lifecycle publishes an immutable version with a per-item raw-field trace",
+        "template lifecycle returns detached copies from reads",
+        "template lifecycle treats a rename as history-preserving and republishing as a no-op"
+      ],
+      "status": "passed",
+      "tests": 27
+    }
+  ],
+  "transaction_evidence": {
+    "cas": [
+      "template and draft CAS checked independently; stale values raise TEMPLATE_REVISION_CONFLICT / TEMPLATE_DRAFT_CONFLICT",
+      "publish checks both revisions before the content-hash lookup (stale revision + existing hash is a conflict, not a no-op)"
+    ],
+    "rollback": [
+      "create fails at the item-version insert: parent, draft, item identity and item versions all absent",
+      "publish fails at the template pointer update after inserting the snapshot: no version row, template/draft revisions and pointers unchanged",
+      "publish loses the connection before commit: server rolled back, no version row, pointer/revision unchanged",
+      "publish commits but the acknowledgement is lost: TemplateStorageUnknownCommitError, re-read shows the committed state, retry with fresh revisions is an idempotent no-op (not v2)"
+    ],
+    "two_connections": [
+      "colliding first-item writes: exactly one wins, the other is TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE, only v1 stored",
+      "identical-content first-item race: both succeed as reuse, only v1 stored",
+      "same-revision concurrent publish: exactly one wins, the other is TEMPLATE_REVISION_CONFLICT, only one version row"
+    ]
+  }
+}

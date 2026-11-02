@@ -1,0 +1,872 @@
+{
+  "package": "MAX238-NATIVE-CONFIGURATION-FLOW",
+  "date": "2026-10-30",
+  "branch": "agent/15coder1/max-238",
+  "base_commit": "3b1a76d78beffa7877199ff16204ce0210d8a61a",
+  "environment": {
+    "name": "max238cfg-2e39d54b008108ff",
+    "id": "55799d3288b21efc034aaf09a9000e09cdc58794189303e01f8416206601b736",
+    "port": 13352,
+    "image": "mysql:8.4 (8.4.10)",
+    "nonce": "2e39d54b008108ff"
+  },
+  "database": "slide_max238_native",
+  "setup": {
+    "repin": {
+      "from_version": 1,
+      "to_version": 2,
+      "changed_items": [
+        "8fbad224ebdf46e7b25a0be015f21972"
+      ]
+    },
+    "preview": {
+      "executable": true,
+      "items": [
+        "db.uptime_seconds"
+      ]
+    },
+    "trial": {
+      "decision": "attempted",
+      "metric": "db.uptime_seconds",
+      "unit": "s",
+      "observed_at": "2026-10-29T18:57:53.438Z"
+    },
+    "apply": {
+      "kind": "committed",
+      "revision": 5,
+      "binding_source": "template",
+      "binding_revision": 5,
+      "application": "pending",
+      "applied_revision": 4
+    }
+  },
+  "browser_scenarios": {
+    "A": {
+      "before": {
+        "revision": 7,
+        "target": null,
+        "application": "pending",
+        "applied": 4
+      },
+      "initial_text": "固定版本模板\n选择适合此对象的模板\n已选 1 个\n从全部已授权模板中搜索并固定到已发布版本；草稿与已退役版本不能应用。模板内容与对象能力由服务端重新校验。\n搜索模板名称\n搜索模板名称\n模板状态\n全部状态\n启用\n已弃用\n草稿\n已归档\n模板状态\nHuawei VRP by SNMP\nad4c3dad4b7b492685d1fd3bd3a664f9\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Huawei VRP by SNMP\n选择已发布版本\n1\n·\n已发布\n·\nsha256:2ea6fdc98881\n…\n已发布版本 · Huawei VRP by SNMP\nMySQL by ODBC\ne19c120027e04da69b130e0f6cea29fc\n·\n启用\n·\n2\n个已发布版本\n已发布版本 · MySQL by ODBC\n选择已发布版本\n1\n·\n已发布\n·\nsha256:4db480049580\n…\n2\n·\n已发布\n·\nsha256:1f9bd5626c77\n…\n已发布版本 · MySQL by ODBC\n分页测试模板 1\ne2e-0001\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 2\ne2e-0002\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 3\ne2e-0003\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 4\ne2e-0004\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 5\ne2e-0005\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 6\ne2e-0006\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 7\ne2e-0007\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 8\ne2e-0008\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n加载更多模板\nMySQL by ODBC\n· v\n2\n·\nsha256:1f9bd562\n…\n移除\n采集设置与参数\n来自当前检查\n启用此对象采集\n停用此对象后，策略组也不会触发采集。\n采集间隔（秒）\n1–86400\n继承\n（当前 120 秒）\n覆盖\n采集间隔（秒）\n1–86400\n高级覆盖 · 按需设置，默认继承模板\n采集开关\n继承\n启用\n停用\n采集开关\n超时（秒）\n0.25–30\n继承\n（当前 5 秒）\n覆盖\n超时（秒）\n0.25–30\n过期时间（秒）\n0.001–86400\n继承\n（当前 120 秒）\n覆盖\n过期时间（秒）\n0.001–86400\n累计计数最大间隔（秒）\n0.001–86400\n继承\n（当前 300 秒）\n覆盖\n累计计数最大间隔（秒）\n0.001–86400\n行数上限\n1–100\n继承\n（当前 100）\n覆盖\n行数上限\n1–100\n并发上限\n1–16\n继承\n（当前 1）\n覆盖\n并发上限\n1–16\n序列上限\n1–10000\n继承\n（当前 100）\n覆盖\n序列上限\n1–10000\n策略组（可选）\n不继承策略组\n策略组（可选）\n对象停用设置优先；修改模板、版本、参数或设置后，之前的试采失效，需要重新检查。\n检查配置\n试采\n应用并启用\n放弃修改\n重新加载配置\n选择固定版本\n检查兼容性\n试采\n应用并确认\n检查：组合项、兼容性与冲突\n选择固定版本后执行“检查配置”，这里会显示每个监控项、单位、采集实现与兼容结论。\n当前权威状态\n等待正式数据\n配置来",
+      "initial_selected": true,
+      "cancel": {
+        "unselected": true,
+        "writes": 0
+      },
+      "search": {
+        "has_mysql": true,
+        "has_dummy": false
+      },
+      "pagination": {
+        "has_more": true,
+        "draft_reason": true,
+        "all_loaded": true,
+        "dummy_visible": true
+      },
+      "capability_valid_until": "2026-10-29T19:00:46.643Z",
+      "preview_text": "固定版本模板\n选择适合此对象的模板\n已选 1 个\n从全部已授权模板中搜索并固定到已发布版本；草稿与已退役版本不能应用。模板内容与对象能力由服务端重新校验。\n搜索模板名称\n搜索模板名称\n模板状态\n全部状态\n启用\n已弃用\n草稿\n已归档\n模板状态\nHuawei VRP by SNMP\nad4c3dad4b7b492685d1fd3bd3a664f9\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Huawei VRP by SNMP\n选择已发布版本\n1\n·\n已发布\n·\nsha256:2ea6fdc98881\n…\n已发布版本 · Huawei VRP by SNMP\nMySQL by ODBC\ne19c120027e04da69b130e0f6cea29fc\n·\n启用\n·\n2\n个已发布版本\n已发布版本 · MySQL by ODBC\n选择已发布版本\n1\n·\n已发布\n·\nsha256:4db480049580\n…\n2\n·\n已发布\n·\nsha256:1f9bd5626c77\n…\n已发布版本 · MySQL by ODBC\n分页测试模板 1\ne2e-0001\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 2\ne2e-0002\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 3\ne2e-0003\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 4\ne2e-0004\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 5\ne2e-0005\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 6\ne2e-0006\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 7\ne2e-0007\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 8\ne2e-0008\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n草稿分页模板\ne2e-draft\n·\n草稿\n·\n0\n个已发布版本\n模板为草稿，未发布，不能应用。\nLinux by Zabbix agent\nf8f7908280354f2abeed07dc788c3747\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Linux by Zabbix agent\n选择已发布版本\n1\n·\n已发布\n·\nsha256:bfdc5171f43a\n…\n已发布版本 · Linux by Zabbix agent\nMySQL by ODBC\n· v\n2\n·\nsha256:1f9bd562\n…\n移除\nMySQL by ODBC\nv\n2\n的指标与参数\n指标\n单位\n采集实现\n数据库运行时长（8fbad224ebdf46e7b25a0be015f21972@2）\ns\nmysql-basic@2.0.0#sha256:a38519cb02bf92ce0b5d81f8d6e0dd6277bcc5f73abf92128747df8d9ee25322 · builtin:mysql.status.v2\n参数：\ninterval_ms（待确认）\n· 内容校验\nsha256:1f9bd5626c774543b1db166c6f836ae3986f145fbffb62c1ef3dfdf85d95077e\n采集设置与参数\n来自当前检查\n启用此对象采集\n停用此对象后，策略组也不会触发采集。\n采集间隔（秒）\n1–86400\n继承\n（当前 60 秒）\n覆盖\n采集间隔（秒）\n1–86400\n高级覆盖 · 按需设置，默认继承模板\n采集开关\n继承\n启用\n停用\n采集开关\n超时（秒）\n0.25–30\n继承\n（当前 5 秒）\n覆盖\n超时（秒）\n0.25–30\n过期时间（秒）\n0.001–86400\n继承\n（当前 120 秒）\n覆盖\n过期时间（秒）\n0.001–86400\n累计计数最大间隔（秒）\n0.001–86400\n继承\n（当前 300 秒）\n覆盖\n累计计数最大间隔（秒）\n0.001–86400\n行数上限\n1–100\n继承\n（当前 100）\n覆盖\n行数上限\n1–100\n并发上限\n1–16\n继承\n（当前 1）\n覆盖\n并发上限\n1–16\n序列上限\n1–10000\n继承\n（当前 100）\n覆盖\n序列上限\n1–10000\n策略组（可选）\n不继承策略组\n策略组（可选）\n对象停用设置优先；修改模板、版本、参数或设置后，之前的试采失效，需要重新检查。\n组合监控项\n数据库运行时长\n继承模板\n启用\n停用\n参数：默认、覆盖与最终值\nMySQL by ODBC\nv\n2\ninterval_ms\n默认\n60000\n来源\n模板默认\n最终\n60000\n检查配置\n试采\n应用并启用\n放弃",
+      "trial_started": true,
+      "trial": {
+        "passed": true,
+        "sample_text": "值 92060 s · 2026-10-29T18:59:33.281Z"
+      },
+      "apply_response": {
+        "status": 200,
+        "body": {
+          "kind": "committed",
+          "status": "committed",
+          "persisted": true,
+          "committed": true,
+          "revision": 8,
+          "resolution_identity": "sha256:b786cef7a1d059d6c759139eb2cc7a4bb77df38fb79a71e56986fd6ed52e96d5",
+          "operation": {
+            "key": "instance:1#8@sha256:d90e2eab77e770c0b1c7c250547783f19a4ae261e4ce12e5a41ce0e35ce88d62",
+            "caller_key": "apply-mvtwqoo9-kbdpnt6e",
+            "receipt_id": "trial-instance-1-mvtwqnta-54ocftau",
+            "status": "committed"
+          }
+        }
+      },
+      "apply": {
+        "apply_enabled": true,
+        "fetches": 1,
+        "caller_key": "apply-mvtwqoo9-kbdpnt6e",
+        "recovered": true,
+        "pending_prompt": false,
+        "operations_added": 1,
+        "operation_lookup_requests": 2,
+        "binding": {
+          "revision": 8,
+          "target": null,
+          "application": "pending",
+          "applied": 4
+        },
+        "audits": [
+          {
+            "target": "instance:1",
+            "revision": 5
+          },
+          {
+            "target": "instance:1",
+            "revision": 6
+          },
+          {
+            "target": "instance:1",
+            "revision": 7
+          },
+          {
+            "target": "instance:1",
+            "revision": 8
+          }
+        ]
+      },
+      "reload": {
+        "published": true,
+        "pending_prompt": false,
+        "target": "8",
+        "text": "固定版本模板\n选择适合此对象的模板\n已选 1 个\n从全部已授权模板中搜索并固定到已发布版本；草稿与已退役版本不能应用。模板内容与对象能力由服务端重新校验。\n搜索模板名称\n搜索模板名称\n模板状态\n全部状态\n启用\n已弃用\n草稿\n已归档\n模板状态\nHuawei VRP by SNMP\nad4c3dad4b7b492685d1fd3bd3a664f9\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Huawei VRP by SNMP\n选择已发布版本\n1\n·\n已发布\n·\nsha256:2ea6fdc98881\n…\n已发布版本 · Huawei VRP by SNMP\nMySQL by ODBC\ne19c120027e04da69b130e0f6cea29fc\n·\n启用\n·\n2\n个已发布版本\n已发布版本 · MySQL by ODBC\n选择已发布版本\n1\n·\n已发布\n·\nsha256:4db480049580\n…\n2\n·\n已发布\n·\nsha256:1f9bd5626c77\n…\n已发布版本 · MySQL by ODBC\n分页测试模板 1\ne2e-0001\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 2\ne2e-0002\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 3\ne2e-0003\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 4\ne2e-0004\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 5\ne2e-0005\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 6\ne2e-0006\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 7\ne2e-0007\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 8\ne2e-0008\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n加载更多模板\nMySQL by ODBC\n· v\n2\n·\nsha256:1f9bd562\n…\n移除\n采集设置与参数\n来自当前检查\n启用此对象采集\n停用此对象后，策略组也不会触发采集。\n采集间隔（秒）\n1–86400\n继承\n（当前 60 秒）\n覆盖\n采集间隔（秒）\n1–86400\n高级覆盖 · 按需设置，默认继承模板\n采集开关\n继承\n启用\n停用\n采集开关\n超时（秒）\n0.25–30\n继承\n（当前 5 秒）\n覆盖\n超时（秒）\n0.25–30\n过期时间（秒）\n0.001–86400\n继承\n（当前 120 秒）\n覆盖\n过期时间（秒）\n0.001–86400\n累计计数最大间隔（秒）\n0.001–86400\n继承\n（当前 300 秒）\n覆盖\n累计计数最大间隔（秒）\n0.001–8"
+      }
+    },
+    "B": {
+      "capability_valid_until": "2026-10-29T19:01:48.775Z",
+      "trial_started": true,
+      "direct_trial": 200,
+      "direct_apply": 200,
+      "direct_apply_kind": "committed",
+      "apply_enabled": true,
+      "revision_after_direct": 9,
+      "conflict_shown": true,
+      "text": "配置版本已被他人更新，请重新加载后再次检查。\n固定版本模板\n选择适合此对象的模板\n已选 1 个\n从全部已授权模板中搜索并固定到已发布版本；草稿与已退役版本不能应用。模板内容与对象能力由服务端重新校验。\n搜索模板名称\n搜索模板名称\n模板状态\n全部状态\n启用\n已弃用\n草稿\n已归档\n模板状态\nHuawei VRP by SNMP\nad4c3dad4b7b492685d1fd3bd3a664f9\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Huawei VRP by SNMP\n选择已发布版本\n1\n·\n已发布\n·\nsha256:2ea6fdc98881\n…\n已发布版本 · Huawei VRP by SNMP\nMySQL by ODBC\ne19c120027e04da69b130e0f6cea29fc\n·\n启用\n·\n2\n个已发布版本\n已发布版本 · MySQL by ODBC\n选择已发布版本\n1\n·\n已发布\n·\nsha256:4db480049580\n…\n2\n·\n已发布\n·\nsha256:1f9bd5626c77\n…\n已发布版本 · MySQL by ODBC\n分页测试模板 1\ne2e-0001\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 2\ne2e-0002\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 3\ne2e-0003\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 4\ne2e-0004\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 5\ne2e-0005\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 6\ne2e-0006\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 7\ne2e-0007\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 8\ne2e-0008\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n加载更多模板\nMySQL by ODBC\n· v\n2\n·\nsha256:1f9bd562\n…\n移除\n采集设置与参数\n来自当前检查\n启用此对象采集\n停用此对象后，策略组也不会触发采集。\n采集间隔（秒）\n1–86400\n继承\n（当前 60 秒）\n覆盖\n采集间隔（秒）\n1–86400\n高级覆盖 · 按需设置，默认继承模板\n采集开关\n继承\n启用\n停用\n采集开关\n超时（秒）\n0.25–30\n继承\n（当前 5 秒）\n覆盖\n超时（秒）\n0.25–30\n过期时间（秒）\n0.001–86400\n继承\n（当前 120 秒）\n覆盖\n过期时间（秒）\n0.001–86400\n累计计数最大间隔（秒）\n0.001–86400\n继承\n（当前 300 秒）",
+      "after_reload_target": "9"
+    },
+    "C": {
+      "capability_valid_until": "2026-10-29T19:01:48.775Z",
+      "trial_started": true,
+      "apply_enabled_before_revoke": true,
+      "apply_status": 403,
+      "refused": true,
+      "text": "没有此资源的操作权限\n固定版本模板\n选择适合此对象的模板\n已选 1 个\n从全部已授权模板中搜索并固定到已发布版本；草稿与已退役版本不能应用。模板内容与对象能力由服务端重新校验。\n搜索模板名称\n搜索模板名称\n模板状态\n全部状态\n启用\n已弃用\n草稿\n已归档\n模板状态\nHuawei VRP by SNMP\nad4c3dad4b7b492685d1fd3bd3a664f9\n·\n启用\n·\n1\n个已发布版本\n已发布版本 · Huawei VRP by SNMP\n选择已发布版本\n1\n·\n已发布\n·\nsha256:2ea6fdc98881\n…\n已发布版本 · Huawei VRP by SNMP\nMySQL by ODBC\ne19c120027e04da69b130e0f6cea29fc\n·\n启用\n·\n2\n个已发布版本\n已发布版本 · MySQL by ODBC\n选择已发布版本\n1\n·\n已发布\n·\nsha256:4db480049580\n…\n2\n·\n已发布\n·\nsha256:1f9bd5626c77\n…\n已发布版本 · MySQL by ODBC\n分页测试模板 1\ne2e-0001\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 2\ne2e-0002\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 3\ne2e-0003\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 4\ne2e-0004\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 5\ne2e-0005\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 6\ne2e-0006\n·\n启用\n·\n0\n个已发布版本\n模板没有已发布版本，不能应用。\n分页测试模板 7\ne2e-0007\n·\n启用\n·\n0\n",
+      "binding_unchanged": true,
+      "operations_unchanged": true
+    }
+  },
+  "requests": [
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?query=MySQL&limit=10"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates/e19c120027e04da69b130e0f6cea29fc/versions/2"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?cursor=e2e-0008&limit=10"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/apply"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwqoo9-kbdpnt6e"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwqoo9-kbdpnt6e"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "A",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "A",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/apply"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 409,
+      "path": "/api/metrics/template-bindings/instance/1/apply"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwr2vu-4whhdspu"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwr2vu-4whhdspu"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "B",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "B",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "C",
+      "method": "POST",
+      "path": "/api/metrics/query"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/policy/groups"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/templates?limit=10"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/status"
+    },
+    {
+      "label": "C",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/preview"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/config/resources/instance/1/recommendations"
+    },
+    {
+      "label": "C",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/trial"
+    },
+    {
+      "label": "C",
+      "method": "POST",
+      "path": "/api/metrics/template-bindings/instance/1/apply"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 403,
+      "path": "/api/metrics/template-bindings/instance/1/apply"
+    },
+    {
+      "label": "C",
+      "method": "GET",
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwrbml-bamokpq9"
+    },
+    {
+      "label": "C",
+      "kind": "response",
+      "status": 200,
+      "path": "/api/metrics/template-bindings/instance/1/operations/apply-mvtwrbml-bamokpq9"
+    }
+  ],
+  "database_facts": {
+    "container": {
+      "name": "max238cfg-2e39d54b008108ff",
+      "id": "55799d3288b21efc034aaf09a9000e09cdc58794189303e01f8416206601b736",
+      "port": 13352,
+      "image": "mysql:8.4 (8.4.10)",
+      "nonce": "2e39d54b008108ff"
+    },
+    "database": "slide_max238_native",
+    "binding": {
+      "envelope": "templates-v1",
+      "revision": 9,
+      "pending_target": 9,
+      "pins": [
+        {
+          "version": 2,
+          "template_id": "e19c120027e04da69b130e0f6cea29fc",
+          "content_hash": "sha256:1f9bd5626c774543b1db166c6f836ae3986f145fbffb62c1ef3dfdf85d95077e"
+        }
+      ],
+      "application": {
+        "status": "pending",
+        "error_code": null,
+        "reported_at": null,
+        "applied_revision": 4,
+        "resolution_identity": null
+      }
+    },
+    "capability": {
+      "count": 1,
+      "latest_valid_until": "2026-10-29T19:01:48.775Z",
+      "statuses": [
+        "supported"
+      ]
+    },
+    "operations": {
+      "count": 5,
+      "rows": [
+        {
+          "caller_key": "apply-setup-mvtwoit2",
+          "resource_key": "instance:1",
+          "target_revision": 5,
+          "status": "committed"
+        },
+        {
+          "caller_key": "apply-mvtwoz6g-wl000lr4",
+          "resource_key": "instance:1",
+          "target_revision": 6,
+          "status": "committed"
+        },
+        {
+          "caller_key": "conflict-apply-mvtwpzpx",
+          "resource_key": "instance:1",
+          "target_revision": 7,
+          "status": "committed"
+        },
+        {
+          "caller_key": "apply-mvtwqoo9-kbdpnt6e",
+          "resource_key": "instance:1",
+          "target_revision": 8,
+          "status": "committed"
+        },
+        {
+          "caller_key": "conflict-apply-mvtwr2tv",
+          "resource_key": "instance:1",
+          "target_revision": 9,
+          "status": "committed"
+        }
+      ]
+    },
+    "audits": {
+      "count": 5,
+      "revisions": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "attempts_by_revision": {
+      "4": 16,
+      "6": 1,
+      "8": 1
+    },
+    "unique_apply": {
+      "caller_key": "apply-mvtwqoo9-kbdpnt6e",
+      "operations_for_key": 1,
+      "audit_rows_for_target_8": 1
+    },
+    "target_readonly": {
+      "host": "localhost:3306",
+      "writes_attempted": 0,
+      "evidence": "The collector only issues read-only status queries on the real MySQL 9.6 target; every platform write stayed in the one-off database."
+    }
+  },
+  "gates": {
+    "backend_module": "pnpm --filter slide-api exec vitest run src/metrics/config src/metrics/templates src/metrics/bindings src/metrics/scheduler: 512 passed, 132 skipped (32 files passed, 31 skipped)",
+    "frontend_full": "pnpm --filter slide-frontend test: 150 files / 1340 tests passed",
+    "api_typecheck": "pass",
+    "frontend_typecheck": "pass",
+    "frontend_build": "pass (CSP check passed)",
+    "contracts_check": "pass"
+  },
+  "cleanup": {
+    "api_pid": 2191,
+    "vite_pid": 2206,
+    "ports_closed": [
+      "127.0.0.1:3001",
+      "127.0.0.1:5173"
+    ],
+    "container_name": "max238cfg-2e39d54b008108ff",
+    "container_id": "55799d3288b21efc034aaf09a9000e09cdc58794189303e01f8416206601b736",
+    "docker_rm_receipt": "docker rm -f returned the container name",
+    "inspect_by_name_exit": 1,
+    "inspect_by_id_exit": 1,
+    "note": "Both docker inspect lookups answer 'no such object'; the shared mysql3306 target was read-only and the shared platform database was only read for the initial copy."
+  },
+  "not_executed": [
+    "PR push/update (GitHub HTTPS unreachable from this runtime; commit SHAs are on the task branch)",
+    "watch/merge/deploy",
+    "production worker",
+    "stop-write/copy/switch/rollback/unbind",
+    "shared 3306 business writes"
+  ]
+}

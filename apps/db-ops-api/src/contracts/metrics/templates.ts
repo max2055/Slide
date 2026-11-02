@@ -185,7 +185,7 @@ export const TemplateDraftAggregateSchema = z.strictObject(aggregateFields).supe
   if (!sortedUnique(aggregate.triggers, trigger => `${trigger.rule_id}\u0000${trigger.scope}`)) {
     ctx.addIssue({ code: 'custom', path: ['triggers'], message: 'AGGREGATE_ORDER: triggers must be ascending and unique by (rule_id, scope)' });
   }
-  checkTriggerScopes(aggregate, ctx);
+  if(!aggregate.base)checkTriggerScopes(aggregate, ctx);
 });
 
 /**
@@ -202,6 +202,11 @@ export const TemplateDraftAggregateSchema = z.strictObject(aggregateFields).supe
  */
 export const TemplatePublishedAggregateSchema = z.strictObject({
   ...aggregateFields,
+  inheritance:z.strictObject({
+    items:z.record(z.string(),TemplateBaseRefSchema.extend({version:VersionNumberSchema.nullable()})),
+    parameters:z.record(z.string(),TemplateBaseRefSchema.extend({version:VersionNumberSchema.nullable()})),
+    triggers:z.record(z.string(),TemplateBaseRefSchema.extend({version:VersionNumberSchema.nullable()})),
+  }).optional(),
   package_composition: z.array(PackageCompositionEntrySchema),
 }).superRefine((aggregate, ctx) => {
   if (!sortedUnique(aggregate.items, item => item.item_id)) {

@@ -1,5 +1,10 @@
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
 import { registerResourceTriggerRead } from './src/metrics/triggers/resource-detail-routes.js';
+import { registerAlertEscalationRoute } from './src/alert-escalation-routes.js';
+import { deliveryStore } from './src/workflows/delivery-store.js';
+import { registerAlertDependencyRoutes } from './src/alert-dependency-routes.js';
+import { registerTemplateGovernanceRoutes } from './src/metrics/templates/governance-routes.js';
+import { registerTemplateAuthoringRoutes } from './src/metrics/templates/authoring-routes.js';
 import { registerAlertListRoute } from './src/alert-list-route.js';
 import { registerMaintenanceRoutes } from './src/maintenance-routes.js';
 import { registerEventReadRoutes, requireEventAccess } from './src/alert-event-access.js';
@@ -199,7 +204,6 @@ import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.j
 import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
 import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
-import { registerTemplateAuthoringRoutes } from './src/metrics/templates/authoring-routes.js';
 import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
 import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
@@ -491,7 +495,6 @@ async function start() {
     await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
     await registerMetricTemplateRoutes(app, verifyToken);
-    await registerTemplateAuthoringRoutes(app, verifyToken);
     await registerTemplateTriggerRoutes(app, verifyToken);
     await registerResourceTriggerRead(app, verifyToken);
   });
@@ -3649,37 +3652,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: Number(limit),
           offset: Number(offset),
         };
-        const records = await notificationDatabaseService.getRecords(filters);
+        const records = await notificationDatabaseService.getRecords(filters,(request as any).user);
         reply.send(records);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
     }
-  });
-
-  // Dead-letter delivery replay is an explicit privileged action.  It resets
-  // the durable job only; the original idempotency key remains unchanged.
-  fastify.post('/api/notification/jobs/:id/replay', {
-    preHandler: [verifyToken, requirePermission('notification:manage')],
-    handler: async (request, reply) => {
-      const { id } = request.params as { id: string };
-      const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/notification/jobs/:id/replay');
-      if (check.error) return reply.code(400).send(check.error);
-      const reason = String((check.body as { reason?: unknown }).reason ?? '').trim();
-      if (!reason || reason.length > 512) return reply.code(400).send({ error: '重放原因必须为 1-512 个字符' });
-      if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
-      try {
-        if (!await notificationWorkflowStore.isDeadLetter(id)) {
-          return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
-        }
-        await notificationDatabaseService.recordReplay(id, (request as any).user.userId, reason);
-        const replayed = await notificationWorkflowStore.replayDeadLetter(id);
-        if (!replayed) return reply.code(409).send({ error: '仅可重放处于 dead_letter 状态的任务' });
-        return reply.send({ success: true, job_id: id, state: 'queued' });
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
-      }
-    },
   });
 
   fastify.get('/api/notification/dead-letters', {
@@ -3688,7 +3666,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!notificationWorkflowStore) return reply.code(503).send({ error: '通知工作流尚未就绪' });
       const { limit = '50' } = request.query as { limit?: string };
       try {
-        return reply.send(await notificationWorkflowStore.listDeadLetters(Number(limit)));
+        const jobs=await notificationWorkflowStore.listDeadLetters(Number(limit)),visible=[];
+        for(const j of jobs){try{if(await deliveryStore.inspect(j.id,(request as any).user))visible.push(j);}catch(e){if(!(e instanceof PolicyError&&e.status===403))throw e;}}
+        return reply.send(visible);
       } catch (error: any) {
         return reply.code(500).send({ error: error.message });
       }
@@ -4985,27 +4965,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // --- 手动升级告警 (1 条) ---
-  fastify.post('/api/alerts/:id/escalate', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      if (!await requireAlertAccess(request, reply, Number(id), 'read-write')) return;
-      const check = strictBody(request.body as Record<string, unknown>,
-          ['new_level'], 'POST /api/alerts/:id/escalate');
-        if (check.error) return reply.code(400).send(check.error);
-        const { new_level } = check.body as { new_level: string };
-      if (!new_level) {
-        reply.code(400).send({ error: '缺少 new_level 参数' });
-        return;
-      }
-      const result = await alertEscalationService.manualEscalation(Number(id), new_level);
-      reply.send(result);
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
-    }
-  });
+  await registerAlertEscalationRoute(fastify, verifyToken);
 
+  await registerAlertDependencyRoutes(fastify, verifyToken);
   await registerMaintenanceRoutes(fastify, verifyToken);
+  await registerTemplateAuthoringRoutes(fastify, verifyToken);
+  await registerTemplateGovernanceRoutes(fastify, verifyToken);
 
   // --- 静默期 (4 条) ---
   fastify.get('/api/silence', { preHandler: [verifyToken] }, async (request, reply) => {

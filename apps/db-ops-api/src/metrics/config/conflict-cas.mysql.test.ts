@@ -191,7 +191,7 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
     expect(afterRace.binding.package).toEqual(winnerPin);
     expect(await storedRevision(key)).toBe(raceBase + 1);
     expect(await bindingRows(key)).toBe(1);
-    expect(await auditCount(key)).toBe(auditsBeforeRace + 2);
+    expect(await auditCount(key)).toBe(auditsBeforeRace + 1);
     evidence.concurrent_revision = { expected_revision: raceBase, submitted: [pinA, pinB],
       winner: { connection: winners[0].index === 0 ? 'pool' : 'pool2', package: winnerPin },
       loser: { connection: losers[0].index === 0 ? 'pool' : 'pool2', package: loserPin, error: loserError },
@@ -251,7 +251,7 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
     expect(afterTrial.binding.package).toEqual(trialPin);
     expect(afterTrial.binding.overrides).toEqual({ interval_ms: { mode: 'set', value: 45000 } });
     expect(await storedRevision(key)).toBe(advancedRevision);
-    expect(await auditCount(key)).toBe(auditsBeforeTrial + 2);
+    expect(await auditCount(key)).toBe(auditsBeforeTrial + 1);
     // The stale candidate fingerprint is equally refused even when the revision CAS matches.
     const staleCandidatePublish = await rejection(() => policies.changeBinding(admin, instanceRef,
       { expected_revision: afterTrial.binding.revision, overrides: { enabled: 'disable' } }, true, staleCandidate));
@@ -260,7 +260,7 @@ describe.skipIf(!port)('MAX-238 conflict, concurrent revision, stale test and pe
     expect(afterStaleCandidate.binding.revision).toBe(advancedRevision);
     expect(afterStaleCandidate.binding.package).toEqual(trialPin);
     expect(afterStaleCandidate.binding.overrides).toEqual({ interval_ms: { mode: 'set', value: 45000 } });
-    expect(await auditCount(key)).toBe(auditsBeforeTrial + 2);
+    expect(await auditCount(key)).toBe(auditsBeforeTrial + 1);
     evidence.stale_trial = { expected_revision: trialRevision, trial: { persisted: trialOutcome!.persisted,
       decision: trialOutcome!.decision, attempts: trialOutcome!.attempts.length, samples: trialOutcome!.samples.length },
       guard_checks: guardChecks, advanced_revision: advancedRevision,

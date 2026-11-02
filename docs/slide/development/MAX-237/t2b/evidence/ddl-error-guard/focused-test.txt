@@ -1,0 +1,5 @@
+ddl-error-guard: 4/4 PASS
+  - success: docker argv unchanged, no output, no failure
+  - auth failure: controlled reason/exit code, no marker in caller/stack/streams/record
+  - spawn failure: controlled reason, no marker
+  - separate process: exit non-zero, marker absent from stdout and stderr

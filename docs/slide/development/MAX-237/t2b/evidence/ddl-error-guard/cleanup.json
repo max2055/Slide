@@ -1,0 +1,65 @@
+{
+  "task": "MAX237-T2B-DDL-ERROR-GUARD",
+  "removed_container_id": "1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
+  "removed_volume": "max237-t2b-15coder1-20261027-data",
+  "container_by_id": {
+    "cmd": [
+      "docker",
+      "ps",
+      "-a",
+      "--filter",
+      "id=1bd969bef470c647aadd8485d031a7c41e2b90897e360beb4d9c0618e0cd8863",
+      "--format",
+      "{{.ID}} {{.Names}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "volume_by_name": {
+    "cmd": [
+      "docker",
+      "volume",
+      "ls",
+      "--filter",
+      "name=^max237-t2b-15coder1-20261027-data$",
+      "--format",
+      "{{.Name}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "owned_containers": {
+    "cmd": [
+      "docker",
+      "ps",
+      "-a",
+      "--filter",
+      "label=max237.owner=15coder1-t2b",
+      "--format",
+      "{{.ID}} {{.Names}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "owned_volumes": {
+    "cmd": [
+      "docker",
+      "volume",
+      "ls",
+      "--filter",
+      "label=max237.owner=15coder1-t2b",
+      "--format",
+      "{{.Name}}"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "state_dir_present": false,
+  "credentials_present": false,
+  "handle_present": false,
+  "conclusion": "exact recorded container and volume removed; private handle/credentials gone; no owned residue"
+}

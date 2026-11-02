@@ -1,0 +1,89 @@
+{
+  "task": "MAX238-COLLECTION-DISPLAY-E2E-R2",
+  "date": "2026-10-29",
+  "branch": "agent/15coder1/max-238",
+  "base": "4e90fb68188512ef4efc12ec134134d8dc45b675",
+  "environment": {
+    "mysql": "mysql:8.4.10 one-shot container, 127.0.0.1:13318 (non-3306), empty database + full migration",
+    "target": "existing mysql3306 instance:1 (read-only, not re-collected in this round)",
+    "reused_evidence": "docs/slide/development/MAX-238/native-template-chain-20261029.json"
+  },
+  "scheduler_fence": {
+    "file": "apps/db-ops-api/src/metrics/scheduler/store.ts",
+    "methods": ["commitTemplate", "recordTemplateFailure"],
+    "checks": [
+      "ctx.signal.throwIfAborted",
+      "instanceAccessLifecycle.assertAvailable",
+      "assetCollectionEnabled (FOR UPDATE)",
+      "current template binding revision",
+      "workflow_jobs running + lease_owner + fencing_token + lease_expires_at > NOW() FOR UPDATE",
+      "metric_schedule (resource_key, revision, job_id) FOR UPDATE",
+      "re-check after the last asynchronous work before cadence"
+    ],
+    "regression": {
+      "file": "apps/db-ops-api/src/metrics/scheduler/template-fence.mysql.test.ts",
+      "before_fix": { "failed": 8, "passed": 4 },
+      "after_fix": { "failed": 0, "passed": 12 },
+      "zero_side_effect_rows_read_back": [
+        "metric_observations", "metric_attempts", "metric_source_checks", "metric_schedule_events",
+        "metric_policy_audit", "metric_publications", "metric_schedule"
+      ]
+    }
+  },
+  "live_authorization": {
+    "file": "apps/db-ops-api/src/metrics/templates/binding-service.ts",
+    "changes": [
+      "injected reload = actorContextService.revalidateActor(actor, actor.requestId)",
+      "trustedInputs.authorize re-reads the live actor after the policy lock",
+      "trial re-reads and re-authorizes after the resource lock, before remote IO",
+      "apply surfaces a session revoked inside the locked boundary as re-authentication",
+      "missing live source fails closed (503)"
+    ],
+    "regression": {
+      "file": "apps/db-ops-api/src/metrics/templates/binding-service.test.ts",
+      "surface": "Fastify inject against the real registerMetricTemplateRoutes",
+      "before_fix": { "failed": 6, "passed": 2 },
+      "after_fix": { "failed": 0, "passed": 8 }
+    }
+  },
+  "repin": {
+    "files": [
+      "apps/db-ops-api/src/metrics/templates/routes.ts",
+      "apps/db-ops-api/src/metrics/templates/repin.ts"
+    ],
+    "changes": [
+      "resource management boundary checked before inventory is read",
+      "real caller actor recorded in the published version's source_chain",
+      "maintenance identity only for callers that name no operator"
+    ],
+    "regression": "real caller actor_id=7/request_id=req-238; offline actor_id=0"
+  },
+  "public_contracts": {
+    "source": "apps/db-ops-api/src/contracts/metrics/template-bindings.ts",
+    "routes": [
+      { "path": "/api/metrics/templates", "operationId": "listMetricTemplates", "response": "TemplateCatalog" },
+      { "path": "/api/metrics/templates/{templateId}/versions/{version}", "operationId": "getMetricTemplateVersion", "response": "TemplateVersionDetail" },
+      { "path": "/api/metrics/templates/{templateId}/repin", "operationId": "repinMetricTemplateVersion", "request": "TemplateRepinBody", "response": "TemplateRepinResponse" },
+      { "path": "/api/metrics/template-bindings/{type}/{id}", "operationId": "getMetricTemplateBinding", "response": "TemplateBindingStatus" },
+      { "path": "/api/metrics/template-bindings/{type}/{id}/preview", "operationId": "previewMetricTemplateBinding", "request": "TemplateBindingRequest", "response": "TemplateBindingPreview" },
+      { "path": "/api/metrics/template-bindings/{type}/{id}/trial", "operationId": "trialMetricTemplateBinding", "request": "TemplateTrialRequest", "response": "TemplateTrialResponse" },
+      { "path": "/api/metrics/template-bindings/{type}/{id}/apply", "operationId": "applyMetricTemplateBinding", "request": "TemplateBindingApplyRequest", "response": "TemplateBindingApplyResponse" }
+    ],
+    "manifest_guard": "registered routes captured via onRoute (GET/POST, implicit HEAD excluded) must equal the OpenAPI template path set",
+    "serialization_guard": "real registration + representative status/preview payloads round-trip field for field"
+  },
+  "checks": {
+    "template_fence_mysql": "12 passed",
+    "templates_suite": "80 passed / 22 skipped",
+    "metrics_and_contracts_suite": "94 files passed; 2 mysql files timed out under parallel load and pass alone (22 passed)",
+    "api_typecheck": "pass",
+    "frontend_typecheck": "pass",
+    "contracts_check": "pass"
+  },
+  "not_done": [
+    "binding application still pending/applied_revision 4 while rollout is at revision 5 (not claimed applied)",
+    "all-metric good, history thresholds, unbind history authorization, rename/version identity, SLO and capacity",
+    "server3 chain (unreachable), 24h steady state",
+    "whole MAX238 acceptance remains open"
+  ]
+}

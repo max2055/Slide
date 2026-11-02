@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-10-27T13:59:00Z",
+  "vitest": {
+    "command": "npx vitest run src/metrics/templates src/metrics/snmp",
+    "cwd": "apps/db-ops-api",
+    "exit": 0,
+    "files_passed": 6,
+    "files_skipped": 2,
+    "tests_passed": 94,
+    "tests_skipped": 23,
+    "log": "t3-focused-tests.txt"
+  },
+  "typecheck": {
+    "command": "npx tsc --noEmit",
+    "cwd": "apps/db-ops-api",
+    "exit": 0,
+    "diagnostics": 0
+  },
+  "oxlint": {
+    "command": "npx oxlint <5 changed files>",
+    "cwd": "repository root",
+    "exit": 0,
+    "warnings": 0,
+    "errors": 0,
+    "log": "t3-oxlint.txt"
+  },
+  "note": "MySQL integration tests are skipped without MAX237_T2B_MYSQL_* fixture variables; this package did not run them."
+}

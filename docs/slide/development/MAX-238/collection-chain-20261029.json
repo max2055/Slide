@@ -1,0 +1,5082 @@
+{
+  "contract": "MAX238-COLLECTION-DISPLAY-E2E",
+  "date": "2026-10-29",
+  "objective": "资源对象→固定发布模板→指标→已实现采集器→真实样本→正式历史→最新数据 API→页面",
+  "run": {
+    "branch": "agent/15coder1/max-238",
+    "code_head": "0f1dfaff25fde7c897bb4250523ece363b175ba8",
+    "platform": "isolated disposable MySQL 8.4 (127.0.0.1:13306, database slide_e2e_238), never 3306",
+    "environment": {
+      "METRICS_COLLECTION_ENABLED": "true",
+      "NODE_ENV": "development (not a production deployment)",
+      "api": "real apps/db-ops-api server.ts on 127.0.0.1:3001",
+      "frontend": "real Vite dev server on 127.0.0.1:5173 proxying /api to 3001",
+      "target": "real MySQL 8.4.10 container reachable over the LAN address; read-only account"
+    },
+    "server3": {
+      "host": "192.168.49.130",
+      "probes": [
+        "icmp: 2 packets, 100% packet loss",
+        "tcp 22/80/443/3306/9100: closed",
+        "arp for 192.168.49.130: incomplete"
+      ],
+      "result": "not reachable from this run; the documented SSH target could not be used"
+    }
+  },
+  "resource": [
+    {
+      "id": 1,
+      "name": "mysql3306",
+      "db_type": "mysql",
+      "host": "192.168.1.20",
+      "port": 13307,
+      "database_name": "e2e_shop",
+      "db_version": "8.4.10",
+      "status": "active",
+      "lifecycle_state": "available"
+    }
+  ],
+  "template": {
+    "package": {
+      "id": "mysql-diagnostics",
+      "version": "1.1.0",
+      "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+    },
+    "resource_type": "instance",
+    "metrics": 33,
+    "collectors": [
+      "diagnostics_connections",
+      "diagnostics_limit",
+      "diagnostics_transactions",
+      "diagnostics_size",
+      "diagnostics_queries",
+      "diagnostic_counters",
+      "buffer_pages",
+      "uptime_diagnostics",
+      "diagnostic_gauges",
+      "diagnostic_ratios",
+      "innodb_diagnostics",
+      "thread_cache",
+      "active_transactions",
+      "replication_channels"
+    ],
+    "settings": {
+      "interval_ms": 60000,
+      "timeout_ms": 5000,
+      "stale_after_ms": 120000,
+      "max_counter_gap_ms": 300000,
+      "max_rows": 100,
+      "enabled": true,
+      "max_concurrency": 1,
+      "max_series_per_resource": 330
+    },
+    "applicability": [
+      {
+        "attribute": "db.engine",
+        "value": "mysql",
+        "supported_values": [
+          "mysql"
+        ],
+        "status": "supported"
+      },
+      {
+        "attribute": "db.version",
+        "value": "8.4.10",
+        "supported_values": [
+          "5.7",
+          "8.0",
+          "8.4",
+          "9.6"
+        ],
+        "status": "supported"
+      }
+    ],
+    "origin": {
+      "layer": "resource",
+      "id": "instance:1",
+      "revision": 1
+    },
+    "metric_sources": [
+      {
+        "metric": "mysql.processlist.count@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_connections",
+          "raw_field": "connections"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.connections.limit@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_limit",
+          "raw_field": "capacity"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_transactions",
+          "raw_field": "Com_commit"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_transactions",
+          "raw_field": "Com_rollback"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_size",
+          "raw_field": "bytes"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.queries.total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostics_queries",
+          "raw_field": "Queries"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.slow_queries.total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Slow_queries"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.protocol.received_bytes_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Bytes_received"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Bytes_sent"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.handler.read_next_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Handler_read_rnd_next"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.connections.aborted_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_counters",
+          "raw_field": "Aborted_connects"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "buffer_pages",
+          "raw_field": "used"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "uptime_diagnostics",
+          "raw_field": "Uptime"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.threads.running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Threads_running"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.threads.connected@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Threads_connected"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.files.open@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Open_files"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.key_cache.used_blocks@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Key_blocks_used"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.key_cache.unused_blocks@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_gauges",
+          "raw_field": "Key_blocks_unused"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "buffer_hit"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.table_cache.hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "table_hit"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.key_cache.used_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "diagnostic_ratios",
+          "raw_field": "key_usage"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Innodb_row_lock_time_avg"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.innodb.deadlocks_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Innodb_deadlocks"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.temporary.disk_tables_total@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "innodb_diagnostics",
+          "raw_field": "Created_tmp_disk_tables"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.thread_cache.hit_percent@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "thread_cache",
+          "raw_field": "hit"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transactions.active@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "active_transactions",
+          "raw_field": "active"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.replication.behind_source_seconds@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "lag"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.replication.io_running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "io_running"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.replication.sql_running@1.0.0",
+        "source": {
+          "kind": "collector",
+          "collector_id": "replication_channels",
+          "raw_field": "sql_running"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.commit_rate"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.rollback_rate"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql.transaction_commands.completed_rate"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      },
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "source": {
+          "kind": "derived",
+          "derived_id": "mysql-query-rate"
+        },
+        "enabled": true,
+        "decision": "capability_unknown",
+        "capability": "unknown"
+      }
+    ]
+  },
+  "binding": {
+    "resource_key": "instance:1",
+    "revision": 1,
+    "published_at": "2026-10-29T14:22:43.254Z",
+    "application": {
+      "status": "applied",
+      "error_code": null,
+      "reported_at": "2026-10-29T14:31:04.823Z",
+      "applied_revision": 1
+    },
+    "operation_key": "max238-chain-20261029-01",
+    "audit_rows": 1,
+    "audit": [
+      {
+        "target": "instance:1",
+        "action": "binding.publish",
+        "revision": 1,
+        "at": "2026-10-29T14:22:43.254Z",
+        "package": {
+          "id": "mysql-diagnostics",
+          "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f",
+          "version": "1.1.0"
+        }
+      }
+    ],
+    "activate_http": 200,
+    "activate_response": {
+      "published": true,
+      "revision": 1,
+      "application": {
+        "applied_revision": null,
+        "reported_at": null,
+        "status": "pending",
+        "error_code": null
+      },
+      "requests_per_hour": 840
+    }
+  },
+  "trial": {
+    "decision": "attempted",
+    "persisted": false,
+    "attempts": [
+      {
+        "collector": "diagnostics_connections",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "diagnostics_limit",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "diagnostics_transactions",
+        "status": "succeeded",
+        "samples": 2
+      },
+      {
+        "collector": "diagnostics_size",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "diagnostics_queries",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "diagnostic_counters",
+        "status": "succeeded",
+        "samples": 5
+      },
+      {
+        "collector": "buffer_pages",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "uptime_diagnostics",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "diagnostic_gauges",
+        "status": "succeeded",
+        "samples": 5
+      },
+      {
+        "collector": "diagnostic_ratios",
+        "status": "succeeded",
+        "samples": 3
+      },
+      {
+        "collector": "innodb_diagnostics",
+        "status": "succeeded",
+        "samples": 3
+      },
+      {
+        "collector": "thread_cache",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "active_transactions",
+        "status": "succeeded",
+        "samples": 1
+      },
+      {
+        "collector": "replication_channels",
+        "status": "succeeded",
+        "samples": 0
+      }
+    ],
+    "sample_count": 30,
+    "samples": [
+      {
+        "metric": "mysql.processlist.count@1.0.0",
+        "value": "3",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_connections",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.connections.limit@1.0.0",
+        "value": "151",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_limit",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_total@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_transactions",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_transactions",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "value": "16384",
+        "unit": "By",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_size",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "By",
+          "output_unit": "By"
+        }
+      },
+      {
+        "metric": "mysql.queries.total@1.0.0",
+        "value": "26",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_queries",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.slow_queries.total@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_counters",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.protocol.received_bytes_total@1.0.0",
+        "value": "3472",
+        "unit": "By",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_counters",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "By",
+          "output_unit": "By"
+        }
+      },
+      {
+        "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+        "value": "3462",
+        "unit": "By",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_counters",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "By",
+          "output_unit": "By"
+        }
+      },
+      {
+        "metric": "mysql.handler.read_next_total@1.0.0",
+        "value": "324",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_counters",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.connections.aborted_total@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_counters",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+        "value": 14.6973,
+        "unit": "%",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:buffer_pages",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "%",
+          "output_unit": "%"
+        }
+      },
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "value": 191,
+        "unit": "s",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:uptime_diagnostics",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "s",
+          "output_unit": "s"
+        }
+      },
+      {
+        "metric": "mysql.threads.running@1.0.0",
+        "value": "2",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_gauges",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.threads.connected@1.0.0",
+        "value": "2",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_gauges",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.files.open@1.0.0",
+        "value": "2",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_gauges",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.used_blocks@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_gauges",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.unused_blocks@1.0.0",
+        "value": "6698",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_gauges",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+        "value": 93.9376,
+        "unit": "%",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_ratios",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "%",
+          "output_unit": "%"
+        }
+      },
+      {
+        "metric": "mysql.table_cache.hit_percent@1.0.0",
+        "value": 94.163,
+        "unit": "%",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_ratios",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "%",
+          "output_unit": "%"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.used_percent@1.0.0",
+        "value": 0,
+        "unit": "%",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostic_ratios",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "%",
+          "output_unit": "%"
+        }
+      },
+      {
+        "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+        "value": "0",
+        "unit": "ms",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:innodb_diagnostics",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "ms",
+          "output_unit": "ms"
+        }
+      },
+      {
+        "metric": "mysql.innodb.deadlocks_total@1.0.0",
+        "value": null,
+        "unit": "count",
+        "quality": "unknown",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:innodb_diagnostics",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.temporary.disk_tables_total@1.0.0",
+        "value": "1",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:innodb_diagnostics",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.thread_cache.hit_percent@1.0.0",
+        "value": 91.3043,
+        "unit": "%",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:thread_cache",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "%",
+          "output_unit": "%"
+        }
+      },
+      {
+        "metric": "mysql.transactions.active@1.0.0",
+        "value": "0",
+        "unit": "count",
+        "quality": "good",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:active_transactions",
+          "status": "succeeded"
+        },
+        "unit_check": {
+          "input_unit": "count",
+          "output_unit": "count"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+        "value": null,
+        "unit": "count/s",
+        "quality": "unknown",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_connections",
+          "status": "succeeded"
+        },
+        "unit_check": null
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+        "value": null,
+        "unit": "count/s",
+        "quality": "unknown",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_connections",
+          "status": "succeeded"
+        },
+        "unit_check": null
+      },
+      {
+        "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+        "value": null,
+        "unit": "count/s",
+        "quality": "unknown",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_connections",
+          "status": "succeeded"
+        },
+        "unit_check": null
+      },
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "value": null,
+        "unit": "count/s",
+        "quality": "unknown",
+        "read": {
+          "attempt_id": "trial:7351b9a6-b6af-4e61-97e0-cb8341ae060f:diagnostics_connections",
+          "status": "succeeded"
+        },
+        "unit_check": null
+      }
+    ],
+    "note": "The trial reads the target and is never written to formal history."
+  },
+  "formal_collection": {
+    "schedule": [
+      {
+        "resource_key": "instance:1",
+        "revision": 1,
+        "last_end_ms": 1793284265304,
+        "next_due_ms": 1793284325304
+      }
+    ],
+    "events": [
+      {
+        "code": "committed",
+        "n": 9
+      }
+    ],
+    "normalized_observations": 270,
+    "attempts_recorded": 20,
+    "rollout": {
+      "series": 30,
+      "semantic_series": 30,
+      "applied_series": 30,
+      "generation": 1
+    },
+    "source_acceptance": [
+      {
+        "resource_key": "instance:1",
+        "revision": 1,
+        "generation": 1
+      }
+    ],
+    "publications": {
+      "count": 240,
+      "first_observed_at": "2026-10-29T14:23:50.254Z",
+      "last_observed_at": "2026-10-29T14:31:05.221Z",
+      "samples": [
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.6729,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.0073,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 96.9231,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 93.5673,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.254Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 262,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.372Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.372Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.372Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.372Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.372Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.434Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.22498272454079415,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.434Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "68",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.462Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "18988",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.462Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.462Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "24936",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.462Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "426",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.462Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.586Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.586Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "4",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:23:50.586Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "2510422b-eb91-433e-a931-ad1364865371:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 93.3916,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 324,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.0302,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.6973,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.253Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 97.4684,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.330Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.330Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.330Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.330Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.330Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.371Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.2260361334904823,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.371Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "82",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.391Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "24160",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.391Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.391Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "32095",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.391Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "460",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.391Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.502Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.502Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "5",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:24:52.502Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "068aaaf0-f5be-462b-aca1-fb37fe42567d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.8025,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7095,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 386,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.1041,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 97.8495,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.367Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.483Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.483Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.483Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.483Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.483Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.531Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "101",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.531Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.3056628056628057,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.553Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "30655",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.553Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "40893",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.553Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "518",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.553Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.553Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.657Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "6",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.657Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:25:54.657Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "1228267c-6887-4340-a098-2e2ad230d312:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.1262,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7339,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.833,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 448,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 98.1651,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.493Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.630Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": null,
+          "unit": "count/s",
+          "quality": "unknown",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.630Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.630Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.630Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": null,
+          "unit": "count/s",
+          "quality": "unknown",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.630Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": null,
+          "unit": "count/s",
+          "quality": "unknown",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.703Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "120",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.703Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": null,
+          "unit": "count/s",
+          "quality": "unknown",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.734Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "48480",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.734Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.734Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.734Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "36226",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.734Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "552",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.863Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.863Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:26:56.863Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "7",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "f7e27fc6-adb4-46ec-9e52-c992ab39986c:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 510,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 98.374,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7339,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.6946,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.1481,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.575Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.711Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.711Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.711Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.711Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.711Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.790Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "134",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.790Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.22549003817224217,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.823Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "586",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.823Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "55640",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.823Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.823Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "41398",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.823Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.967Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "8",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.967Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:27:58.967Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "2bf79763-c9bd-4222-a493-9d641c61d026:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 98.5401,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 572,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.5574,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7339,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.1699,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.683Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.775Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.775Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.775Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.775Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.775Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.819Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.2257008818455883,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.819Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "148",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.840Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.840Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "62800",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.840Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "620",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.840Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.840Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "46570",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.945Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.945Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:29:00.945Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "9",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "3d7e2af2-149d-41d3-94a6-0188b68d0f7d:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.1998,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 635,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.5567,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7339,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 98.6842,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.776Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.897Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.897Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.897Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.897Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.897Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.954Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "170",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.954Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.35406775569324855,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.980Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "52970",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.980Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.980Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "659",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.980Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:02.980Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "71564",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:03.095Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:03.095Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:30:03.095Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "10",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "571fde35-e00d-46f5-8f00-acbf9e0077bc:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e80a8d1ffe2d6c40e77a89b4e7ae1a9b6efe3f060a31c12e4785433792ba42f8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.table_cache.hit_percent@1.0.0",
+          "value": 92.4518,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3bd7be219282d4ab078e844868a0f9c7186852d7646af2b12c3fef60d5cf5d77",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.transactions.active@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "active_transactions",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:active_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1c8b0e6c651df870baf4e69d50aa7fdfd7ddc5e82fcae4887fe85d9c54eaefd7",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.connections.limit@1.0.0",
+          "value": "151",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_limit",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_limit",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "76ad32efcc5ef696dc813f8cefcd28c5348ba2105028a84b31b45a4e7ea4e3c9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.processlist.count@1.0.0",
+          "value": "3",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_connections",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "faba5dbd19cd1d3439688cc4d851fa9a4c6ac7aa5d2e1a0d1176d8e3e5599a5b",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+          "value": "16384",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostics_size",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_size",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "3a1d5aba729065de65e456aa3a3406bb5e855e8c02eb0c0f626d807a6e1e9b8e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.threads.connected@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "375850f4b8091c2a22c5081a12eccd3692b9991bf8b281d69ec606e45581dcad",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.thread_cache.hit_percent@1.0.0",
+          "value": 98.7952,
+          "unit": "%",
+          "quality": "good",
+          "collector": "thread_cache",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:thread_cache",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "304301032274d0ceaa8883416f8356683cf8546e9428c28985def0b209488178",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.key_cache.used_blocks@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "846ac9d4cd505b5ecac8d872f7c9d5a26ff02e8f7a61e9a86c6fba44827ce6ab",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+          "value": 14.7339,
+          "unit": "%",
+          "quality": "good",
+          "collector": "buffer_pages",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:buffer_pages",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "a6bc7317c6c737a18671b961cd8fceb305cd40a4814c9f0e4b69b863373a19ea",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.threads.running@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d290763f75dc0c0b0e272b182bd66c281bd39e859cfb13e9f32296f6ccc13fed",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.files.open@1.0.0",
+          "value": "2",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b14b31f1b073f8d0d5ab4d0827a930c32df2295e64c2e170d771c73814f612c1",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.key_cache.unused_blocks@1.0.0",
+          "value": "6698",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_gauges",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_gauges",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9bc8ebd265f2b74f25ad4807dc28288eedda43ac22c2fe248850abcad8227282",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.key_cache.used_percent@1.0.0",
+          "value": 0,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "f91dbe097b4eb9b351b5961214885e2b65e59185cc0b960f68e9f9cfca5414fe",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "db.uptime_seconds@1.0.0",
+          "value": 697,
+          "unit": "s",
+          "quality": "good",
+          "collector": "uptime_diagnostics",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:uptime_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c563d1a3dd0abf0fc254037029bc527e8f8486868b1640b52f1b0da4f7dceab8",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+          "value": 94.2211,
+          "unit": "%",
+          "quality": "good",
+          "collector": "diagnostic_ratios",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_ratios",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "1bbebfad3da39416b9a4a653c8a25cc4792ceae0f4ffe8473ecde3eee3a091f6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.commit_rate",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "86f6e92cc6a046da81364a74295caac7e49c3623016d0984450444600b78994e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.rollback_rate",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "87095c6468ccf96e931cfbdbb35b57b17a292cc32ae35fd775498eec334fef49",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "metric": "mysql.transaction_commands.commit_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "011c3bab3e18ba4f4a766f43e1caa0f8cdbce4eb32ba987062af88fcc28022eb",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_transactions",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_transactions",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "9d289ec9cee21b817681a5a68b908431e9feba8915af9d25f1480b1dc94a7aa5",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+          "value": 0,
+          "unit": "count/s",
+          "quality": "good",
+          "collector": "derived:mysql.transaction_commands.completed_rate",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "18819dd30b17354ddfa485b5f48430bb873501f2ce1f3270e23b38adf3ef40b6",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.040Z",
+          "metric": "mysql.queries.per_second@1.0.0",
+          "value": 0.24160036078987213,
+          "unit": "count/s",
+          "quality": "partial",
+          "collector": "derived:mysql-query-rate",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_connections",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "30cf90d8101a13ba5fc0e822bb30bbe1767a61d804726d20fcb61ea031c161a9",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.040Z",
+          "metric": "mysql.queries.total@1.0.0",
+          "value": "185",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostics_queries",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_queries",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "e21db2901de3ebf577db5de3d9d8cac0a7dc71c6139d0196e9b343c9a76a3312",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "metric": "mysql.protocol.received_bytes_total@1.0.0",
+          "value": "58633",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "2a51340792802ccd1a69bc4b601084f08a46bf702a3146d181c8950629d97375",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "metric": "mysql.connections.aborted_total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "d14a960926c831d44bc78e58cc6adb765be79e435f70db7c3b4796608147e39c",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "metric": "mysql.handler.read_next_total@1.0.0",
+          "value": "718",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "c555922a791d8b4d99408596e17edb9f9ab6e54e6df05c3a6eae9763c68c8aba",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "metric": "mysql.slow_queries.total@1.0.0",
+          "value": "0",
+          "unit": "count",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "8d97783d091ce6cdbf0c181bb49c4b2f6f24626f78ae1441ec999d83a3db8914",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+          "value": "79360",
+          "unit": "By",
+          "quality": "good",
+          "collector": "diagnostic_counters",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostic_counters",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "be64c2db5e18637540afda0fe14e105ca34589b9b58ed1b0ae1600f0e4b6bf0a",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.221Z",
+          "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+          "value": "0",
+          "unit": "ms",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "b11e54bdc005078adce0fe679db2eb5bff0edfc7faad1afeb3370dde6887ad3e",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.221Z",
+          "metric": "mysql.innodb.deadlocks_total@1.0.0",
+          "value": null,
+          "unit": "count",
+          "quality": "unknown",
+          "collector": "innodb_diagnostics",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        },
+        {
+          "series_hash": "bb7df6eb712776805b1d61e1725f8b4eb6e77c8383d4e221d3549eb1977e64d2",
+          "generation": 1,
+          "observed_at": "2026-10-29T14:31:05.221Z",
+          "metric": "mysql.temporary.disk_tables_total@1.0.0",
+          "value": "11",
+          "unit": "count",
+          "quality": "good",
+          "collector": "innodb_diagnostics",
+          "attempt": "172d3e5e-c268-49f2-9765-a135d1f81408:1:innodb_diagnostics",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      ]
+    }
+  },
+  "status": {
+    "contract_version": "1.0.0",
+    "resource": {
+      "type": "instance",
+      "id": 1
+    },
+    "evaluated_at": "2026-10-29T14:31:21.271Z",
+    "can_manage": true,
+    "binding": {
+      "state": "bound",
+      "package": {
+        "id": "mysql-diagnostics",
+        "version": "1.1.0",
+        "digest": "sha256:785a03fc665f5dbb374e5896a41b4134dd1f2af6f64deeee06c4dca432b7250f"
+      },
+      "published_revision": 1,
+      "applied_revision": 1,
+      "application": "applied"
+    },
+    "effective_enabled": {
+      "enabled": true,
+      "global_enabled": true,
+      "asset_enabled": true,
+      "policy_enabled": true,
+      "source": "resource"
+    },
+    "collection": {
+      "state": "succeeded",
+      "last_attempt_at": "2026-10-29T14:31:04.854Z",
+      "last_success_at": "2026-10-29T14:31:05.138Z",
+      "in_flight": false
+    },
+    "formal_visibility": {
+      "state": "available",
+      "source": "semantic",
+      "last_observed_at": "2026-10-29T14:31:05.221Z",
+      "generation": 1,
+      "freshness": "fresh"
+    },
+    "coverage": [
+      {
+        "metric": {
+          "id": "db.uptime_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.tables.estimated_allocated_bytes",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.processlist.count",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.connections.limit",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transaction_commands.commit_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transaction_commands.rollback_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.queries.total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.slow_queries.total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.protocol.received_bytes_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.protocol.sent_bytes_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.handler.read_next_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.connections.aborted_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.buffer_pool.pages_used_percent",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.threads.running",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.threads.connected",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.files.open",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.key_cache.used_blocks",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.key_cache.unused_blocks",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.buffer_pool.read_hit_percent",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.table_cache.hit_percent",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.key_cache.used_percent",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.innodb.row_lock_average_ms",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.innodb.deadlocks_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "unknown",
+        "reason": "CAPABILITY_UNKNOWN"
+      },
+      {
+        "metric": {
+          "id": "mysql.temporary.disk_tables_total",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.thread_cache.hit_percent",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transactions.active",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.replication.behind_source_seconds",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.replication.io_running",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.replication.sql_running",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transaction_commands.commit_rate",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transaction_commands.rollback_rate",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.transaction_commands.completed_rate",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      },
+      {
+        "metric": {
+          "id": "mysql.queries.per_second",
+          "semantic_version": "1.0.0"
+        },
+        "state": "covered",
+        "reason": null
+      }
+    ],
+    "legacy_configuration": [],
+    "blockers": [
+      "CAPABILITY_UNKNOWN"
+    ]
+  },
+  "latest_data_api": {
+    "core": [
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "state": "available",
+        "capability": "supported",
+        "latest": {
+          "contract_version": "1.0.0",
+          "metric": {
+            "id": "db.uptime_seconds",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "s",
+          "dimensions": {},
+          "window": {
+            "from": "2026-10-29T14:30:21.302Z",
+            "to": "2026-10-29T14:31:21.302Z"
+          },
+          "value": {
+            "encoding": "float64",
+            "value": 697
+          },
+          "quality": {
+            "status": "good",
+            "reason": "none"
+          },
+          "accuracy": "exact",
+          "coverage": 1,
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "sample_count": 1,
+          "sources": [
+            {
+              "id": "sha256:f7f43c98454d3397729b18aeaaabd30b40e8005ac2ce7380b90fbac1ab93c614",
+              "source": {
+                "attempt_id": "172d3e5e-c268-49f2-9765-a135d1f81408:1:uptime_diagnostics",
+                "binding_id": "instance:1",
+                "collector_id": "uptime_diagnostics",
+                "metric_binding_id": "instance:1:db.uptime_seconds"
+              },
+              "versions": {
+                "contract": "1.0.0",
+                "package_id": "mysql-diagnostics",
+                "config_revision": 1,
+                "package_version": "1.1.0",
+                "transform_version": "1.0.0"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "state": "available",
+        "capability": "supported",
+        "latest": {
+          "contract_version": "1.0.0",
+          "metric": {
+            "id": "mysql.tables.estimated_allocated_bytes",
+            "semantic_version": "1.0.0"
+          },
+          "unit": "By",
+          "dimensions": {},
+          "window": {
+            "from": "2026-10-29T14:30:21.302Z",
+            "to": "2026-10-29T14:31:21.302Z"
+          },
+          "value": {
+            "encoding": "uint64",
+            "value": "16384"
+          },
+          "quality": {
+            "status": "partial",
+            "reason": "partial_input"
+          },
+          "accuracy": "estimated",
+          "coverage": 1,
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "sample_count": 1,
+          "sources": [
+            {
+              "id": "sha256:847207d4798d2d9f63d8598c06109deb9b70f2bd3b369e979db7525d6a563f4e",
+              "source": {
+                "attempt_id": "172d3e5e-c268-49f2-9765-a135d1f81408:1:diagnostics_size",
+                "binding_id": "instance:1",
+                "collector_id": "diagnostics_size",
+                "metric_binding_id": "instance:1:mysql.tables.estimated_allocated_bytes"
+              },
+              "versions": {
+                "contract": "1.0.0",
+                "package_id": "mysql-diagnostics",
+                "config_revision": 1,
+                "package_version": "1.1.0",
+                "transform_version": "1.0.0"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "all": [
+      {
+        "metric": "db.uptime_seconds@1.0.0",
+        "unit": "s",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 697,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.processlist.count@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "3",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.connections.limit@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "151",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.tables.estimated_allocated_bytes@1.0.0",
+        "unit": "By",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "16384",
+          "quality": "partial",
+          "accuracy": "estimated",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.commit_rate@1.0.0",
+        "unit": "count/s",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 0,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.rollback_rate@1.0.0",
+        "unit": "count/s",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 0,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transaction_commands.completed_rate@1.0.0",
+        "unit": "count/s",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 0,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.971Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.queries.total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.040Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.queries.per_second@1.0.0",
+        "unit": "count/s",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 0.24160036078987213,
+          "quality": "partial",
+          "accuracy": "estimated",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.040Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.slow_queries.total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.protocol.received_bytes_total@1.0.0",
+        "unit": "By",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.protocol.sent_bytes_total@1.0.0",
+        "unit": "By",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.handler.read_next_total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.connections.aborted_total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.072Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.buffer_pool.pages_used_percent@1.0.0",
+        "unit": "%",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 14.7339,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.threads.running@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "2",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.threads.connected@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "2",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.files.open@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "2",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.used_blocks@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "0",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.unused_blocks@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "6698",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.buffer_pool.read_hit_percent@1.0.0",
+        "unit": "%",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 94.2211,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.table_cache.hit_percent@1.0.0",
+        "unit": "%",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 92.4518,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.key_cache.used_percent@1.0.0",
+        "unit": "%",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 0,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.innodb.row_lock_average_ms@1.0.0",
+        "unit": "ms",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "0",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.221Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.innodb.deadlocks_total@1.0.0",
+        "unit": "count",
+        "state": "capability_unknown",
+        "capability": "unknown",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "unknown",
+          "observed_at": null,
+          "package": "undefined@undefined"
+        }
+      },
+      {
+        "metric": "mysql.temporary.disk_tables_total@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": null,
+          "quality": "unknown",
+          "accuracy": "unknown",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:05.221Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.thread_cache.hit_percent@1.0.0",
+        "unit": "%",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": 98.7952,
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.transactions.active@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": {
+          "value": "0",
+          "quality": "good",
+          "accuracy": "exact",
+          "freshness": "fresh",
+          "observed_at": "2026-10-29T14:31:04.854Z",
+          "config_revision": 1,
+          "package": "mysql-diagnostics@1.1.0"
+        }
+      },
+      {
+        "metric": "mysql.replication.behind_source_seconds@1.0.0",
+        "unit": "s",
+        "state": "available",
+        "capability": "supported",
+        "sample": null
+      },
+      {
+        "metric": "mysql.replication.io_running@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": null
+      },
+      {
+        "metric": "mysql.replication.sql_running@1.0.0",
+        "unit": "count",
+        "state": "available",
+        "capability": "supported",
+        "sample": null
+      }
+    ]
+  },
+  "browser": {
+    "base": "http://localhost:5173",
+    "api": "http://localhost:3001",
+    "steps": [
+      {
+        "step": "login",
+        "at": "2026-10-29T14:29:52.937Z",
+        "title": "Slide",
+        "url": "http://localhost:5173/dashboard"
+      },
+      {
+        "step": "instances-list",
+        "at": "2026-10-29T14:29:59.054Z",
+        "url": "http://localhost:5173/instances-db?tab=instances-db",
+        "hasRow": 1
+      },
+      {
+        "step": "instances-list-text-bytes",
+        "at": "2026-10-29T14:29:59.109Z",
+        "bytes": 0
+      },
+      {
+        "step": "binding-tab",
+        "at": "2026-10-29T14:30:10.361Z",
+        "url": "http://localhost:5173/instance-detail?tab=instance-detail&id=1",
+        "hasPackage": false
+      },
+      {
+        "step": "metrics-tab",
+        "at": "2026-10-29T14:30:16.496Z",
+        "url": "http://localhost:5173/instance-detail?tab=instance-detail&id=1",
+        "hasUptime": false
+      },
+      {
+        "step": "latest-data",
+        "at": "2026-10-29T14:30:16.525Z",
+        "status": 200,
+        "metrics": 2
+      }
+    ],
+    "screenshots": [
+      "max238-chain-instances-list.png",
+      "max238-chain-instance-detail.png",
+      "max238-chain-binding.png",
+      "max238-chain-metrics.png"
+    ]
+  },
+  "gaps": [
+    "target 192.168.49.130 (server 3, documented SSH target) was down/unreachable; the MySQL target was used instead of SSH items",
+    "the platform database is an isolated disposable environment, not the shared development database",
+    "mysql.innodb.deadlocks_total stays capability_unknown because MySQL 8.4 no longer reports Innodb_deadlocks in SHOW GLOBAL STATUS; 32 of 33 metrics are available and that metric is honestly unknown, not zero",
+    "network devices were not part of this run (deployment decision)"
+  ]
+}

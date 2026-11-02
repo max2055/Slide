@@ -1,3 +1,4 @@
+import { enqueueNotificationTransition } from './notification-transition.js';
 import { publicMaintenanceTags } from './maintenance-public-tags.js';
 /**
  * 告警数据库服务
@@ -546,21 +547,23 @@ class AlertDatabaseService {
    * 解决告警
    */
   async resolveAlert(alertId: number, userId?: number, connection?: mysql.PoolConnection): Promise<{ success: boolean; error?: string }> {
-    const pool = connection ?? this.getPool();
-    if (!pool) {
-      return { success: false, error: '数据库未连接' };
-    }
-
+    const pool = this.getPool();
+    if (!connection && !pool) return {success:false,error:'数据库未连接'};
+    const c=connection??await pool!.getConnection();let reusable=false;
     try {
-      const [result] = await pool.execute<mysql.ResultSetHeader>(
-        'UPDATE alerts SET status = "resolved", resolved_by = ?, resolved_at = NOW() WHERE id = ? AND NOT (source <=> "template-trigger")',
-        [userId || null, alertId]
-      );
-      return Number(result.affectedRows) === 1 ? { success: true } : { success: false, error: '模板告警须由独立恢复条件恢复或告警不存在' };
-    } catch (error: any) {
-      console.error('解决告警失败:', error);
-      return { success: false, error: error.message };
-    }
+      if(!connection)await c.beginTransaction();
+      const [rows]=await c.execute<mysql.RowDataPacket[]>('SELECT status,source FROM alerts WHERE id=? FOR UPDATE',[alertId]);
+      if(!rows.length||rows[0].source==='template-trigger')throw Error('模板告警须由独立恢复条件恢复或告警不存在');
+      if(!['resolved','closed'].includes(rows[0].status)){
+        await c.execute('UPDATE alerts SET status="resolved",resolved_by=?,resolved_at=NOW() WHERE id=?',[userId??null,alertId]);
+        await enqueueNotificationTransition(c,alertId,{id:'recovery',phase:'recovery',at:new Date().toISOString()});
+      }
+      if(!connection)await c.commit();reusable=true;return {success:true};
+    } catch(error) {
+      if(connection)throw error;
+      try{await c.rollback();reusable=true;}catch{}
+      return {success:false,error:error instanceof Error?error.message:'ALERT_RECOVERY_UNKNOWN'};
+    } finally {if(!connection){if(reusable)c.release();else c.destroy();}}
   }
 
   /**

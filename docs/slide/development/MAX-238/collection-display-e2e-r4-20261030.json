@@ -1,0 +1,93 @@
+{
+  "package": "MAX238-COLLECTION-DISPLAY-E2E-R4",
+  "date": "2026-10-30",
+  "task_branch": "agent/15coder1/max-238",
+  "base": "d494394b0fedda249d3b770b5225acc1919d0c9f",
+  "implementation_commit": "8f4312ec1",
+  "scope": "public trial receipt persistence authorization boundary",
+  "counterexample_from_review": {
+    "held": "revocation during writer connection wait",
+    "r3_result": { "status": 200, "inserts": 1 },
+    "r4_result": { "status": 403, "inserts": 0, "rollback": true }
+  },
+  "implementation": {
+    "writer_transaction": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN; authorize; INSERT; authorize; COMMIT (ROLLBACK on refusal)",
+    "authorization_boundaries": [
+      "after admission queue, before getConnection",
+      "after getConnection, before INSERT",
+      "after INSERT, before COMMIT",
+      "before replay/collision outcome on duplicate"
+    ],
+    "held_connection_reads": [
+      "ActorContextService.revalidateActorOn (plain current read)",
+      "MysqlResourceRelationStore.existsOn"
+    ],
+    "re_pin": "TemplatePublication.transaction(run, beforeCommit) with the same live grant before COMMIT",
+    "offline_compatibility": "authorize optional; public trial always supplies it and fails closed without reload",
+    "error_mapping": "auth errors pass through unchanged; unknown commit/begin/rollback is TRIAL_RECEIPT_STORE_UNAVAILABLE and the connection is destroyed"
+  },
+  "red_green": {
+    "r3_production_code": {
+      "unit_files": { "failed": 11, "passed": 27, "suites": ["trial-receipt-issuer.test.ts", "binding-service.test.ts"] },
+      "mysql_file": { "failed": 3, "passed": 1, "suite": "trial-receipt-persistence.mysql.test.ts" }
+    },
+    "r4_implementation": {
+      "focused_4_files": { "passed": 46, "failed": 0 },
+      "module_no_db": { "files_passed": 90, "files_skipped": 51, "tests_passed": 1275, "tests_skipped": 223 },
+      "modules_with_mysql": { "files_passed": 19, "files_skipped": 1, "tests_passed": 405, "tests_skipped": 22 }
+    }
+  },
+  "handler_chain": {
+    "real": ["Fastify inject", "registerMetricTemplateRoutes", "TemplateBindingService", "writeTrialReceipt", "withPolicyAdmission"],
+    "controlled": ["issuer output", "live actor source", "pool connection wait", "row-lock wait", "relation store"],
+    "cases": [
+      { "revoked_at": "issuer read", "status": 403, "inserts": 0 },
+      { "revoked_at": "connection wait", "status": 403, "inserts": 0, "rollback": true },
+      { "revoked_at": "INSERT row-lock wait", "status": 403, "inserts": 0, "rollback": true },
+      { "session_revoked_at": "INSERT row-lock wait", "status": 401, "inserts": 0 },
+      { "success": { "status": 200, "rows": 1, "commits": 1 } },
+      { "replay": { "status": 200, "rows": 1 } },
+      { "collision": { "status": 409, "rows": 1 } }
+    ]
+  },
+  "mysql": {
+    "image": "mysql:8.4 (8.4.10)",
+    "container_name": "max238r4-02a374b4f46a7efb",
+    "container_id": "823f98023e1c8610bb0326fd2c724297ba7e8cd660ab19277c5546dbe12372fc",
+    "nonce": "02a374b4f46a7efb",
+    "port_binding": "127.0.0.1:13342 -> 3306",
+    "first_attempt": {
+      "container_name": "max238r4-d72daeb41d6a2fed",
+      "container_id": "d9f1b5668a1dd9951aef159adece73c4cc4b3134b30c5dc6f3ff98edcf162d54",
+      "outcome": "exited during init: MySQL 8.4 removed --default-authentication-plugin",
+      "cleanup": "removed by exact name; docker inspect -> no such object (exit 1)"
+    },
+    "cases": [
+      { "case": "session revoked during blocked INSERT", "blocked_ms_marker": "pending after 50ms", "outcome": "ActorAuthenticationError", "rows_after": 0, "retry_rows": 1 },
+      { "case": "blocked INSERT without revocation", "outcome": "inserted", "rows_after": 1 },
+      { "case": "refusal after INSERT (controlled grant)", "outcome": "TEMPLATE_BINDING_FORBIDDEN", "rows_after": 0 },
+      { "case": "primary key idempotency", "outcomes": ["inserted", "replay", "collision"], "rows_after": 1 }
+    ],
+    "cleanup": {
+      "rm_output": "max238r4-02a374b4f46a7efb",
+      "inspect_after": "error: no such object: max238r4-02a374b4f46a7efb (exit 1)",
+      "first_attempt_inspect_after": "error: no such object: max238r4-d72daeb41d6a2fed (exit 1)"
+    },
+    "shared_3306_writes": 0
+  },
+  "checks": {
+    "focused_4_files": "46 passed",
+    "api_typecheck": "tsc --noEmit exit 0",
+    "contracts_check": "generate-public-api.ts --check exit 0",
+    "frontend": "not run (no frontend change)"
+  },
+  "not_run": [
+    "production worker", "deploy", "stop-write/copy/cutover/rollback/unbind", "shared 3306",
+    "all-metrics/24h/capacity/migration drill/notification recovery/AI loop"
+  ],
+  "limits": [
+    "revocation is a controlled actor source or a real session_version change, not a production revocation drill",
+    "no claim of absolute linearization between distributed authorization and DB commit; the last read is immediately before COMMIT",
+    "fixture transaction is not evidence of real MySQL rollback; the one-off MySQL suite is"
+  ]
+}

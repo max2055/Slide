@@ -1,0 +1,83 @@
+{
+  "issue": "MAX-237",
+  "github_issue": 261,
+  "package": "MAX237-T1-R2-DIM",
+  "generated_at": "2026-10-27",
+  "authorization": {
+    "decision": "87e70ae3c:docs/slide/development/MAX-235/continuation-v4-20261027.md",
+    "member_comment": "01a17b67-f991-761c-ab00-5fb0f883ad32",
+    "dispatch_handoff": "MAX237-T1-R2-DIM authorized; pending-dispatch; partial_only",
+    "review": "ce8880552:docs/slide/development/MAX-237/reviews/chief-t1-correction-review-20261027.md",
+    "scope": "Only apps/db-ops-api/src/metrics/templates/{repository,service}.ts, their existing tests and docs/slide/development/MAX-237/**; no schema/error-code/canonical/unit change.",
+    "release": "none — bounded correction of an unmounted internal package; not a production approval"
+  },
+  "branch": "agent/15coder1/max-237",
+  "base": "662714321d0b39e303131de9d2eee155dc7150ec",
+  "code_commit": "98c6be04b",
+  "allowlist": {
+    "patch": "docs/slide/development/MAX-237/evidence/t1-r2-dim-allowlist.patch",
+    "patch_bytes": 10214,
+    "patch_sha256": "43a0282859680528b0ba87c1e91cb098b383773fcda8e985a86074db666f3855",
+    "modified_files": [
+      "apps/db-ops-api/src/metrics/templates/repository.ts",
+      "apps/db-ops-api/src/metrics/templates/service.ts",
+      "apps/db-ops-api/src/metrics/templates/repository.test.ts",
+      "apps/db-ops-api/src/metrics/templates/service.test.ts"
+    ],
+    "outside_allowlist": []
+  },
+  "files": [
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.ts", "lines": 359, "sha256": "8399f2222973b7c91d76bd232d3c24ee8e49a59844820671b67d5a249d864bdb" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.ts", "lines": 591, "sha256": "d7060b6ca4dc7c436fb4e120eb3c2baed687bae2f2186e7771af65445e77809d" },
+    { "path": "apps/db-ops-api/src/metrics/templates/repository.test.ts", "lines": 286, "sha256": "a303d1a7e331839baccf7f6a3cf712f53553fc364c1917f55c6a7c9684ac2d57" },
+    { "path": "apps/db-ops-api/src/metrics/templates/service.test.ts", "lines": 649, "sha256": "fc3d89daf4854f8a3ad96d303f0d4af467827555bbb9995719ab34a2f644984d" }
+  ],
+  "unchanged_within_package": [
+    { "path": "apps/db-ops-api/src/metrics/templates/catalog.ts", "sha256": "371ac1648425eeead47ace8a2f467a388a83a74b7a1b90f829e4a2f74a45174d" },
+    { "path": "apps/db-ops-api/src/metrics/templates/index.ts", "sha256": "b63c556b9e9e393541cb8c25cccd6aa37f5afd18c2d865c98c454947b2a7097c" },
+    { "path": "apps/db-ops-api/src/metrics/templates/catalog.test.ts", "sha256": "854c62626334a5c6c8a85428e02cc3d9c99d254694993378fe2aa1630e0b7e05" },
+    { "path": "apps/db-ops-api/src/metrics/templates/model.ts", "sha256": "d3207eb11ddb727399328690b545128c9f8acadc61de1c2f77563bcb8c85d7d1" },
+    { "path": "apps/db-ops-api/src/metrics/templates/errors.ts", "sha256": "4f047fc3d92bb079c5bf4fcb952803f033c42adcfb7d5a800b2b9c162321570c" },
+    { "path": "apps/db-ops-api/src/contracts/metrics/templates.ts", "sha256": "76bcdfebd5af681e84453fc59e2da05b50f36ca2c8aeadecef8844e80c579a45" }
+  ],
+  "r2_dim": {
+    "previous_result": "partial — sorted key sets were compared as `.sort().join(',')`, so {} collided with {'': …} and {'db,host'} collided with {db, host}",
+    "fix": {
+      "repository.ts": "sameDimensionKeys(): sort both key arrays and compare length plus each element; used by identityConflict on the conditional append",
+      "service.ts": "resolveItems() compares the sorted declared key array with the sorted canonical dimension-name array element-wise before publishing"
+    },
+    "preserved": [
+      "TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE and TEMPLATE_DIMENSIONS_MISMATCH error codes/messages unchanged",
+      "DimensionsSchema stays byte-for-byte the accepted contract (no empty/comma key ban)",
+      "canonical metric id@semantic_version and unit guards unchanged",
+      "key order remains irrelevant to identity and publish",
+      "no schema/public export/DB/DDL/collector/route/runtime/frontend change"
+    ],
+    "counterexamples": [
+      "{} vs {'': 'unexpected dimension'} on an existing item -> repository append rejected, and a directly stored empty-key item is rejected at publish; published v1 snapshot unchanged",
+      "{'db,host': 'one dimension'} then {db, host} -> append rejected",
+      "same key set in reversed insertion order -> accepted as identical content (reused, v1)",
+      "racing first writes with {} and {'': …} -> exactly one fulfils, one TEMPLATE_ITEM_IDENTITY_INCOMPATIBLE, only v1 stored"
+    ],
+    "chief_probes": {
+      "source": "ce8880552:docs/slide/development/MAX-237/reviews/chief-correction-boundary-probes-20261027.ts",
+      "output": "docs/slide/development/MAX-237/evidence/t1-r2-dim-boundary-probes.json",
+      "result": "9/9 pass, exit 0; the three R2-DIM cases that failed in the review now pass"
+    },
+    "not_claimed": "The in-memory repository is a synchronous test double; production transaction/row-lock behaviour remains a port requirement. No DB adapter, DDL or migration was added."
+  },
+  "checks": [
+    { "command": "npx vitest run src/metrics/templates", "cwd": "apps/db-ops-api", "result": "46 passed / 46 (catalog 6, repository 13, service 27; was 41)", "exit": 0 },
+    { "command": "npx vitest run src/metrics", "cwd": "apps/db-ops-api", "result": "47 files passed, 24 skipped; 488 tests passed, 121 skipped", "exit": 0 },
+    { "command": "npx tsc --noEmit", "cwd": "apps/db-ops-api", "result": "no diagnostics", "exit": 0 },
+    { "command": "npx oxlint apps/db-ops-api/src/metrics/templates", "cwd": "repo root", "result": "0 warnings, 0 errors", "exit": 0 },
+    { "command": "npx tsx <chief-correction-boundary-probes-20261027.ts> <repo root>", "cwd": "apps/db-ops-api", "result": "9/9 pass, exit 0", "exit": 0 }
+  ],
+  "environment_note": "The worktree has no own node_modules; vitest/tsc/oxlint/tsx ran against read-only symlinks to the existing local installs. The first metrics run failed to import frontend vite until frontend/node_modules was linked; that is an environment gap, not a product failure. Skipped suites are the real-backend ones and are not counted as passes.",
+  "not_run": [
+    "pnpm contracts:check — no contract/public-export file was touched; R1 reuse evidence stands",
+    "real MySQL persistence/DDL/routes/browser UAT — outside the admitted scope",
+    "real collection, history, triggers, notifications, AI evidence — dependent packages"
+  ],
+  "status": "in_progress — T1-R2-DIM correction delivered; the issue as a whole is not complete"
+}

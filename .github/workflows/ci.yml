@@ -116,6 +116,8 @@ jobs:
         run: pnpm --filter slide-frontend typecheck
       - name: Run tests
         run: pnpm --filter slide-frontend test
+      - name: Fixture cleanup contract (controlled fake Docker)
+        run: bash frontend/e2e/max238-fixture-cleanup.test.sh
       - name: Build
         run: pnpm --filter slide-frontend build
 
