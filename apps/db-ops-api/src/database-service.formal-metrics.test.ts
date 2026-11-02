@@ -1,3 +1,4 @@
+import {internalMetricConsumerService} from './metrics/consumers/runtime.js';
 import { expect, it, vi } from 'vitest';
 const read = vi.hoisted(() => vi.fn());
 vi.mock('./metrics/consumers/resource-api.js', () => ({ resourceMetricRead: read }));
@@ -8,7 +9,7 @@ it('database realtime compatibility returns formal evidence and never reconnects
   const formal = { source_contract: 'metrics', metrics: [], recorded_at: null, semantic_metrics: { metrics: [] } };
   read.mockResolvedValueOnce(formal);
   expect(await databaseService.getRealtimeMetrics(7)).toBe(formal);
-  expect(read).toHaveBeenCalledWith(expect.objectContaining({ instanceScopes: { 7: 'read-only' } }), { type: 'instance', id: 7 });
+  expect(read).toHaveBeenCalledWith(expect.objectContaining({ instanceScopes: { 7: 'read-only' } }), { type: 'instance', id: 7 }, {}, internalMetricConsumerService);
   expect(reconnect).not.toHaveBeenCalled();
   read.mockRejectedValueOnce(new Error('FORMAL_STORE_UNAVAILABLE'));
   await expect(databaseService.getRealtimeMetrics(7)).rejects.toThrow('FORMAL_STORE_UNAVAILABLE');

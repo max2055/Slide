@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-vi.mock('../../../api/index.js', () => ({ authFetch: vi.fn(async () => ({ ok: true, json: async () => ({ items: [], total: 0 }) })) }));
+vi.mock('../../../api/index.js', () => ({ authFetch: vi.fn(async (url: string) =>
+  url.startsWith('/api/metrics/template-events/')
+    // These fixtures are legacy events, so the production evidence API returns
+    // 404, rather than a successful legacy event-list payload.
+    ? { ok: false, status: 404, json: async () => ({ code: 'TEMPLATE_EVENT_NOT_FOUND' }) }
+    : { ok: true, json: async () => ({ items: [], total: 0 }) }) }));
 import { EventManagementPage } from './event-management.js';
 
 describe('manual recovery confirmation', () => {
@@ -11,6 +16,11 @@ describe('manual recovery confirmation', () => {
     Object.assign(page, { _loadEvents: async () => {}, events: [event], selectedEvent: event, loading: false });
     document.body.append(page);
     await page.updateComplete;
+    const evidence = page.shadowRoot!.querySelector('template-event-evidence') as any;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await evidence.updateComplete;
+    expect(evidence.shadowRoot.querySelector('h4')).toBeNull();
+    expect(evidence.shadowRoot.querySelector('[role="alert"]')).toBeNull();
     return page.shadowRoot!;
   }
 

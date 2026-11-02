@@ -35,4 +35,10 @@ describe('query_metrics authenticated semantic boundary', () => {
     await tool.handler({ instance_id: 1, mode: 'inventory' }, { actor: admin });
     expect(s.inventory).toHaveBeenCalledWith(admin, { type: 'instance', id: 1 });
   });
+  it('uses retained history for the authenticated history tool mode', async () => {
+    const s = service(); s.query.mockResolvedValue({ metrics: [] });
+    await createQueryMetricsTool(s as any).handler({ instance_id: 1, mode: 'history', period: '24h' }, { actor: admin });
+    expect(s.query).toHaveBeenCalledWith(admin, expect.objectContaining({ history: true, resource: { type: 'instance', id: 1 } }));
+  });
+
 });

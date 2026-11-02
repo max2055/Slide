@@ -7,7 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, t
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn() }));
 vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
 vi.mock('../metrics/consumers/runtime.js', () => ({
-  metricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+  authenticatedMetricConsumerService: {query:mocks.query},
+  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
 }));
 vi.mock('../workflows/execution-context.js', () => ({ assertWorkflowActive: () => {} }));
 

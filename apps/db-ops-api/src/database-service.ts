@@ -1,3 +1,4 @@
+import { internalMetricConsumerService } from './metrics/consumers/runtime.js';
 import { instanceAccessLifecycle, cleanupDeadline } from './resources/instance-access-lifecycle.js';
 import { migrateOperationalChecks } from './metrics/consumers/operational.js';
 /**
@@ -407,6 +408,29 @@ class DatabaseService {
   }
 
   /**
+   * The version the connected target reports, so a new resource can be matched
+   * to template capability without a person typing an internal field. No live
+   * connection or no readable version stays unknown; it is never guessed.
+   */
+  async detectVersion(id: number): Promise<string | null> {
+    const conn = this.getConnection(id);
+    if (!conn?.connected) return null;
+    try {
+      if (conn.db_type === 'mysql' && conn.pool) {
+        const [rows] = await conn.pool.query<RowDataPacket[]>('SELECT VERSION() AS version');
+        const version = rows[0]?.version;
+        return typeof version === 'string' && version.trim() ? version.trim() : null;
+      }
+      if (conn.db_type === 'postgresql' && conn.pgClient) {
+        const result = await conn.pgClient.query("SELECT current_setting('server_version') AS version");
+        const version = result.rows[0]?.version;
+        return typeof version === 'string' && version.trim() ? version.trim() : null;
+      }
+    } catch { /* A metadata probe never fails the connection that just succeeded. */ }
+    return null;
+  }
+
+  /**
    * 删除连接
    */
   async removeConnection(id: number): Promise<void> {
@@ -454,7 +478,7 @@ class DatabaseService {
     const { resourceMetricRead } = await import('./metrics/consumers/resource-api.js');
     const actor = { userId: 0, username: 'database-metric-reader', roles: [], permissions: ['instance:view'],
       instanceScopes: { [id]: 'read-only' as const }, sessionVersion: 0, requestId: `database-metric-reader:${id}` };
-    return resourceMetricRead(actor, { type: 'instance', id });
+    return resourceMetricRead(actor, { type: 'instance', id }, {}, internalMetricConsumerService);
   }
 
   /**

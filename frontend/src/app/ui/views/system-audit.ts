@@ -1,3 +1,4 @@
+import { readResourceContext } from '../components/resource-scope-context.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
@@ -49,6 +50,9 @@ const EVENT_LABELS = new Map<string, string>(EVENT_TYPES.filter(([value]) => val
 @customElement('system-audit-page')
 export class SystemAuditPage extends LitElement {
   @state() private records: SystemAuditRecord[] = [];
+  @state() private loadError='';
+  private generation=0;
+  private accessChanged=()=>{this.generation++;this.records=[];this.total=0;this.loading=false;this.loadError='权限已变更，请重新打开审计。';};
   @state() private loading = true;
   @state() private selected: SystemAuditRecord | null = null;
   @state() private total = 0;
@@ -88,29 +92,38 @@ export class SystemAuditPage extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded',this.accessChanged);
+    window.addEventListener('slide-session-expired',this.accessChanged);
     void this.load(true);
   }
 
+  disconnectedCallback(){this.accessChanged();window.removeEventListener('slide-permissions-loaded',this.accessChanged);window.removeEventListener('slide-session-expired',this.accessChanged);super.disconnectedCallback();}
   private async load(reset = false): Promise<void> {
+    const generation=++this.generation;this.records=[];this.loadError='';
     if (reset) this.offset = 0;
     this.loading = true;
     try {
+      const scope=readResourceContext();
+      if(new URLSearchParams(location.search).has('resource')&&!scope)throw new Error('无效资源观察范围');
       const response = await apiClient.get<{ items: SystemAuditRecord[]; total: number }>('/audit/logs', {
         params: {
           limit: this.limit,
           offset: this.offset,
           keyword: this.keyword.trim() || undefined,
+          ...(scope?{resource:`${scope.resource.type}:${scope.resource.id}`}:{}),
           eventType: this.eventType || undefined,
-          startTime: this.startTime ? new Date(this.startTime).toISOString() : undefined,
-          endTime: this.endTime ? new Date(this.endTime).toISOString() : undefined,
+          startTime: scope?.from ?? (this.startTime ? new Date(this.startTime).toISOString() : undefined),
+          endTime: scope?.to ?? (this.endTime ? new Date(this.endTime).toISOString() : undefined),
         },
       });
+      if(generation!==this.generation)return;
       this.records = response.items;
       this.total = response.total;
     } catch {
+      if(generation!==this.generation)return;this.loadError='系统审计读取失败或没有权限，不能据此判断没有记录。';
       showToast('加载系统审计记录失败', 'error');
     } finally {
-      this.loading = false;
+      if(generation===this.generation)this.loading = false;
     }
   }
 
@@ -147,9 +160,12 @@ export class SystemAuditPage extends LitElement {
   }
 
   override render() {
+    const scope=readResourceContext();
     const pageStart = this.total === 0 ? 0 : this.offset + 1;
     const pageEnd = Math.min(this.offset + this.limit, this.total);
     return html`
+      ${this.loadError?html`<p role="alert">${this.loadError}</p>`:''}
+      ${scope?html`<p>资源 ${scope.resource.type}:${scope.resource.id} · ${scope.from} → ${scope.to}。仅匹配结构化资源审计；旧的未标资源记录不推断为空。</p><a class="btn" href=${scope.returnTo}>返回资源详情</a>`:''}
       <div class="page-header">
         <h1>系统审计</h1>
         <button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${() => this.load()} .disabled=${this.loading}>刷新</button>

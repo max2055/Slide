@@ -1,3 +1,4 @@
+import { ActorAuthenticationError } from '../../auth/actor-context.js';
 /** Canonical first; proprietary extensions require explicit discovery/selection. */
 import { z } from 'zod';
 import type { AnyAgentTool } from '../types.js';
@@ -65,7 +66,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         const from = args.from ?? (args.mode === 'history' ? new Date(Date.parse(to!) - hours * 3600000).toISOString() : undefined);
         const interval = args.interval ?? (args.mode === 'history' ? hours <= 1 ? '1m' : hours <= 6 ? '5m' : hours <= 24 ? '15m' : '1h' : undefined);
         const bucket_ms = interval ? { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000 }[interval] : undefined;
-        let data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms });
+        let data = await service.query(context.actor, { resource, metric_ids: ids, from, to, bucket_ms, history: args.mode === 'history' });
         let selection: { series_index: number; total_series: number } | undefined;
         if (args.series_index !== undefined) {
           const metric = data.metrics[0];
@@ -79,7 +80,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
           summary: complete ? '已获取标准指标，请按定义解释数值' : '指标证据不完整或包含估算，不能据此判断无异常',
           next_actions: complete ? [] : ['检查 capability、attempt、coverage 和 freshness；不要将缺失值补零'] };
       } catch (e) {
-        return { success: false, status: 'error', errorCode: e instanceof PolicyError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
+        return { success: false, status: 'error', errorCode: e instanceof ActorAuthenticationError ? 'AUTH_REQUIRED' : e instanceof PolicyError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
       }
     },
   };

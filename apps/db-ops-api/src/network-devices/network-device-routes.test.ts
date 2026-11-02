@@ -1,3 +1,4 @@
+import {actorContextService} from '../auth/actor-context.js';
 import Fastify, { type FastifyInstance, type preHandlerHookHandler } from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +45,7 @@ async function appWith(dependencies: any = {}): Promise<FastifyInstance> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(actorContextService, 'revalidateActor').mockImplementation(async current => current);
   mocks.getDeviceById.mockResolvedValue({ id: 7, name: 'edge-1', host: '192.0.2.10', snmp_port: 161, ssh_port: 22, vendor: 'huawei', status: 'online', collection_enabled: true });
 });
 

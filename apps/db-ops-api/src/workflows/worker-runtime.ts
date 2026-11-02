@@ -175,6 +175,27 @@ export class MysqlWorkflowStore implements WorkflowStore {
       [job.id, job.fencingToken, context.workerId, key, job.payload.revision, resource.type, String(resource.id)]);
       return schedules.length === 1 && schedules[0].resourceKey === key && Number(schedules[0].revision) === job.payload.revision
         ? [`collection:${key}`, `read:${key}`] : ['*'];
+    } else if (job.type === 'metrics.collect_now') {
+      const resource = job.payload.resource as { type?: string; id?: number } | undefined;
+      if (!context || !resource || !['instance','server','network_device'].includes(resource.type ?? '')
+        || !Number.isSafeInteger(resource.id) || resource.id! <= 0 || !Number.isSafeInteger(job.payload.revision)
+        || typeof job.payload.request_id !== 'string') return ['*'];
+      const key = `${resource.type}:${resource.id}`;
+      // Same resource key as the cadence path: a manual task and a scheduled job
+      // never read one resource at the same time.
+      const [tasks] = await this.pool().execute<Array<{ resourceKey: string; revision: number }>>(`SELECT r.resource_key AS resourceKey, r.revision
+        FROM metric_collect_requests r JOIN workflow_jobs j ON BINARY j.id=BINARY r.job_id
+        WHERE r.id=? AND r.job_id=? AND j.id=? AND j.job_type='metrics.collect_now' AND j.state='running'
+        AND j.fencing_token=? AND j.lease_owner=? AND j.lease_expires_at>NOW(3)
+        AND r.state IN ('accepted','running') AND r.resource_key=? AND r.revision=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.request_id'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.resource.type'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.resource.id'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.revision'))=r.revision`,
+      [job.payload.request_id, job.id, job.id, job.fencingToken, context.workerId, key, job.payload.revision,
+        job.payload.request_id, resource.type, String(resource.id)]);
+      return tasks.length === 1 && tasks[0].resourceKey === key && Number(tasks[0].revision) === job.payload.revision
+        ? [`collection:${key}`, `read:${key}`] : ['*'];
     }
     const id = Number(rows[0]?.instanceId);
     return Number.isSafeInteger(id) && id > 0 ? [`instance:${id}`] : ['*'];

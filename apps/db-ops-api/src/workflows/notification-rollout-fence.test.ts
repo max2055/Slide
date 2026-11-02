@@ -1,3 +1,5 @@
+// This suite isolates delivery leases/fences; real maintenance persistence is exercised by e2e/max244-maintenance.ts.
+vi.mock('../maintenance-notification.js', () => ({ maintenanceBlocksDelivery: async () => false }));
 import { describe, expect, it, vi } from 'vitest';
 import { JobRegistry } from './job-registry.js';
 import { registerNotificationHandlers } from './notification-handlers.js';

@@ -67,6 +67,7 @@ describe("network-device-detail", () => {
     expect(element.querySelector('button[type="submit"]').disabled).toBe(false);
   });
   beforeEach(() => {
+    localStorage.setItem('permissions', '["*"]');
     authFetch.mockReset();
     showToast.mockReset();
     authFetch.mockImplementation(async (url: string) => {

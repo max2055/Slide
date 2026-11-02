@@ -1,3 +1,6 @@
+import {canReadIdentity, revalidateIdentityRead} from '../resources/identity-read-access.js';
+import { ActorAuthenticationError } from '../auth/actor-context.js';
+import { PolicyError } from '../metrics/policy/model.js';
 import { resourceMetricRead } from '../metrics/consumers/resource-api.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { requirePermission } from '../auth/require-permission.js';
@@ -92,8 +95,13 @@ export async function registerNetworkDeviceRoutes(
     return result;
   };
 
-  fastify.get('/api/network-devices', { preHandler: view }, async (_request, reply) => {
-    try { return reply.send(await networkDeviceDatabaseService.getAllDevices()); }
+  fastify.get('/api/network-devices', { preHandler: view }, async (request, reply) => {
+    try {
+      const devices = await networkDeviceDatabaseService.getAllDevices();
+      const current = await revalidateIdentityRead(request, reply, 'network_device');
+      if (!current) return;
+      return reply.send(devices.filter(device => canReadIdentity(current, {type:'network_device',id:device.id})).map(device => publicNetworkDeviceDto(device as any)));
+    }
     catch { return reply.code(500).send({ error: '获取网络设备列表失败' }); }
   });
 
@@ -160,6 +168,7 @@ export async function registerNetworkDeviceRoutes(
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
       const device = await networkDeviceDatabaseService.getDeviceById(id);
+      if (!await revalidateIdentityRead(request, reply, 'network_device', id)) return;
       return device ? reply.send(publicNetworkDeviceDto(device as any)) : reply.code(404).send({ error: '网络设备不存在' });
     } catch { return reply.code(500).send({ error: '获取网络设备详情失败' }); }
   });
@@ -235,7 +244,11 @@ export async function registerNetworkDeviceRoutes(
     try {
       if (!await networkDeviceDatabaseService.getDeviceById(id)) return reply.code(404).send({ error: '网络设备不存在' });
       return reply.send({ deviceId: id, ...await resourceMetricRead(actor(request), { type: 'network_device', id }) });
-    } catch { return reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' }); }
+    } catch (error) {
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
+      return reply.code(503).send({ error: 'METRIC_QUERY_UNAVAILABLE' });
+    }
   });
 
   fastify.get('/api/network-devices/:id/interfaces', { preHandler: view }, async (request, reply) => {
