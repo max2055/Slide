@@ -50,6 +50,7 @@ export interface DriverEvidence {
   };
 }
 export interface DecodedRow {
+  display_name?: string;
   observed_at?: string;
   dimensions: Record<string, string>;
   fields: Record<string, RawObservation['value']>;
@@ -134,6 +135,10 @@ async function fixedSsh(transport: Extract<Transport, { method: 'ssh' }>, comman
 
 /** Only fixed implementation IDs reach transports. Packages never carry executable commands or OIDs. */
 export async function collectFixed(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number, maxRows: number): Promise<DecodedRow[]> {
+  if (['builtin:linux.interface-discovery.v1','builtin:linux.filesystem-discovery.v1','builtin:mysql.innodb-discovery.v1'].includes(id)) {
+    const { collectDynamic } = await import('./dynamic-discovery.js');
+    return collectDynamic(id, transport, evidence, timeoutMs, maxRows);
+  }
   if (id.startsWith('reviewed:sql.')) {
     const { collectReviewedSql } = await import('../database/reviewed-sql.js');
     return collectReviewedSql(id, transport, timeoutMs);

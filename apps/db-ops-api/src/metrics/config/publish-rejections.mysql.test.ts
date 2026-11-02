@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -30,7 +30,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_publish_rejections_${process.pid}`;
 const ref1 = { type: 'instance' as const, id: 1 };
 const ref2 = { type: 'instance' as const, id: 2 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/publish-rejections-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/publish-rejections-20261028.json', import.meta.url));
 type Status = Awaited<ReturnType<MetricConfigurationService['status']>>;
 type Pin = { id: string; version: string; digest: string };
 
@@ -240,7 +240,8 @@ describe.skipIf(!port)('MAX-238 publish rejections keep the published revision a
           attempt_inserted: false, source_tables_written: 'disposable schema only; no 3306 statements',
           config_files_changed: false },
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });

@@ -1,4 +1,6 @@
 import {AlertDependencySchemas,alertDependencyPaths} from '../alert-dependencies.js';
+import { studySchemas, studyPaths } from './study.js';
+import { discoverySchemas, discoveryPaths } from './discovery.js';
 import {TemplateGovernanceSchemas,templateGovernancePaths} from './template-governance.js';
 import { TemplateAuthoringSchemas, templateAuthoringPaths } from './template-authoring.js';
 import { MetricConsumerQuerySchema, MetricHistoryContextSchema } from './history.js';
@@ -62,6 +64,8 @@ export const MetricOperationStateSchema = z.strictObject({
     configuration_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(), committed_at: z.iso.datetime().nullable() }).nullable(),
 });
 export const metricPublicSchemas = {
+ ...studySchemas,
+ ...discoverySchemas,
  ...AlertDependencySchemas,
  ...TemplateAuthoringSchemas,
  ...TemplateGovernanceSchemas,
@@ -114,6 +118,8 @@ const errors = { '400': { description: 'Invalid input' }, '401': { description: 
   '403': { description: 'Live resource permission denied' }, '404': { description: 'Resource not found' }, '503': { description: 'Configuration facts unavailable' } };
 const triggerTemplateParameters = [{name:'templateId',in:'path',required:true,schema:{type:'string'}}];
 export const metricPublicPaths = {
+ ...studyPaths,
+ ...discoveryPaths,
  ...templateAuthoringPaths,
  ...templateGovernancePaths,
  ...alertDependencyPaths,

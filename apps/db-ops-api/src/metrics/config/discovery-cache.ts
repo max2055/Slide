@@ -11,7 +11,7 @@ export class SnmpDiscoveryCache {
     // The cache retains neither addresses nor decrypted credentials.
     const fingerprint = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
     const previous = this.entries.get(id);
-    const entry = previous?.fingerprint === fingerprint ? previous : { fingerprint, discovery: new SnmpDiscovery() };
+    const entry = previous?.fingerprint === fingerprint ? previous : { fingerprint, discovery: new SnmpDiscovery(Date.now, undefined, true) };
     this.entries.delete(id); this.entries.set(id, entry);
     if (this.entries.size > this.limit) this.entries.delete(this.entries.keys().next().value!);
     return entry.discovery;

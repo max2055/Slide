@@ -21,7 +21,9 @@ export const MetricHistoryContextSchema = z.strictObject({
   })).max(200),
   events_readable: z.boolean(),
   retention: z.strictObject({ rawMs: z.number().int().positive(), historyMs: z.number().int().positive(),
-    attemptMs: z.number().int().positive(), cleanup_enabled: z.boolean() }),
+    attemptMs: z.number().int().positive(), trendMs:z.number().int().positive().optional(), cleanup_enabled: z.boolean(),
+    trendValueTypeMs:z.strictObject({float64:z.number().int().positive().optional(),int64:z.number().int().positive().optional(),uint64:z.number().int().positive().optional(),histogram:z.number().int().positive().optional(),summary:z.number().int().positive().optional()}).optional(),
+    valueTypeMs: z.strictObject({float64:z.number().int().positive().optional(),int64:z.number().int().positive().optional(),uint64:z.number().int().positive().optional(),histogram:z.number().int().positive().optional(),summary:z.number().int().positive().optional()}).optional() }),
   sampling: z.strictObject({ interval_ms: z.number().int().positive(), max_gap_ms: z.number().int().positive(),
     basis: z.literal('explicit_history_assumption') }),
 });

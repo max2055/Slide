@@ -11,6 +11,7 @@ import './app-data-table.js';
 import './app-empty-state.js';
 import './app-badge.js';
 import './metric-chart.js';
+import './metric-study.js';
 import './template-event-evidence.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
@@ -601,6 +602,7 @@ export class SemanticMetrics extends LitElement {
       ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'} · ${(v.intervals ?? []).map(i => `${i.id} 修订 ${i.revision}：${i.reason}`).join('；')}</p>`)}
     </section>
     ${this.renderHistoryContext()}
+    <metric-study .resourceType=${this.resourceType} .resourceId=${this.accessInvalidated?0:this.resourceId}></metric-study>
     ${this.renderRaw(metrics)}
     ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
       <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}

@@ -86,9 +86,9 @@ export class MetricRequestError extends Error {
     /** Structured rejection fields (conflict item/setting, release, provider), never a driver message. */
     readonly details: Record<string, unknown> = {}) { super(String(status)); }
 }
-export async function metricRequest<T>(path: string, body?: unknown): Promise<T> {
+export async function metricRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await authFetch(`/api/metrics/${path}`, {
-    signal: AbortSignal.timeout(35000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35000)]) : AbortSignal.timeout(35000),
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   });
   if (!response.ok) {

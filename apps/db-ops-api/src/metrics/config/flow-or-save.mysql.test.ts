@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
@@ -38,7 +38,7 @@ const envFile = process.env.SLIDE_DEBUG_ENV_FILE;
 const database = `max238_flow_or_save_${process.pid}`;
 const savedRef = { type: 'instance' as const, id: 1 };
 const flowRef = { type: 'instance' as const, id: 2 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/flow-or-save-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/flow-or-save-20261028.json', import.meta.url));
 const formalTables = ['alerts', 'alert_events', 'notification_records', 'metric_publications'] as const;
 
 describe.skipIf(!port || !envFile)('MAX-238 a resource can be saved without enabling, or bound→checked→tested→applied', () => {
@@ -285,7 +285,8 @@ describe.skipIf(!port || !envFile)('MAX-238 a resource can be saved without enab
         source_selected: 'SELECT only; no INSERT/UPDATE/DELETE on the application database',
         formal_tables: ['metric_observations', ...formalTables],
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });

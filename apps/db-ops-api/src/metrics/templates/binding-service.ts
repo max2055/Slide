@@ -1,4 +1,5 @@
 import { readConfigurationHistory } from '../policy/configuration-history.js';
+import { discoveryBudget } from './discovery-store.js';
 /**
  * MAX-238 / COLLECTION-DISPLAY-E2E-R1 — production entry for a fixed-pin
  * template binding.
@@ -476,6 +477,8 @@ export class TemplateBindingService {
     const outcome = await resolveTemplateBinding(candidate, context, poolTemplatePort(this.pool()), this.deps.registry);
     if (outcome.kind !== 'template_resolution') fail('TEMPLATE_BINDING_LEGACY_CANDIDATE');
     const resolution = outcome as ResolvedTemplateBinding;
+    const budget=discoveryBudget(resolution.templates);
+    if(budget && budget.series_upper_bound>resolution.settings.max_series_per_resource)fail('TEMPLATE_BINDING_NOT_EXECUTABLE',422);
     return { context, resolution, plan: buildTemplateCollectionPlan(resolution) };
   }
 

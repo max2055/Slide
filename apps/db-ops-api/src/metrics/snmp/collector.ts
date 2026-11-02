@@ -3,7 +3,7 @@ import type { SnmpVarbind, SnmpTableRow } from '../../network-devices/snmp-types
 import type { HuaweiMibCatalog } from '../../network-devices/huawei-mib-catalog.js';
 import { AdapterError, classifyError, type DecodedRow, type Transport } from '../packages/adapters.js';
 
-export const OIDS = Object.freeze({ uptime: '1.3.6.1.2.1.1.3.0', table: '1.3.6.1.2.1.2.2', xTable: '1.3.6.1.2.1.31.1.1' });
+export const OIDS = Object.freeze({ uptime: '1.3.6.1.2.1.1.3.0', count: '1.3.6.1.2.1.2.1.0', table: '1.3.6.1.2.1.2.2', xTable: '1.3.6.1.2.1.31.1.1' });
 type Snmp = Extract<Transport, { method: 'snmp' }>;
 type Detail = NonNullable<DecodedRow['field_evidence']>[string];
 const absent = (v: unknown) => v === undefined || v === null || (typeof v === 'object' && 'type' in v && [128, 129, 130, 'NoSuchObject', 'NoSuchInstance', 'EndOfMibView'].includes((v as SnmpVarbind).type!));
@@ -52,7 +52,8 @@ interface Identity { fingerprint: string; epoch: string; discontinuity: string; 
 export class SnmpDiscovery {
   private interfaces = new Map<string, Identity>();
   private previous?: { ticks: number; at: number };
-  constructor(private readonly clock = Date.now, private readonly vendor?: HuaweiMibCatalog) {}
+  constructor(private readonly clock = Date.now, private readonly vendor?: HuaweiMibCatalog,
+    private readonly persistentIdentity = false) {}
 
   async collect(id: string, t: Snmp, timeout: number, maxRows: number): Promise<DecodedRow[]> {
     try {
@@ -81,35 +82,53 @@ export class SnmpDiscovery {
     catch { row.fields[name] = null; row.field_evidence![name] = { ...detail, capability: 'unknown', error: 'parse_error', quality: { status: 'invalid', reason: 'source_error' } }; }
   }
   private async interfaceRows(t: Snmp, timeout: number, max: number): Promise<DecodedRow[]> {
-    const start = await get(t, [OIDS.uptime], timeout);
+    const start = await get(t, this.persistentIdentity ? [OIDS.uptime,OIDS.count] : [OIDS.uptime], timeout);
     const ticks = Number(unsigned(start.get(OIDS.uptime), 32));
+    // A successful walk alone does not prove completeness. Both count reads
+    // must exist and agree with the indexed base table, including a real zero.
+    const count = this.persistentIdentity ? Number(unsigned(start.get(OIDS.count),32)) : undefined;
+    if (count !== undefined && count > max) throw new AdapterError('parse_error');
     const base = table(await t.table(OIDS.table, timeout), max);
     let extended = new Map<string, SnmpTableRow>(), xError: AdapterError['code'] | undefined;
     try { extended = table(await t.table(OIDS.xTable, timeout), max); }
     catch (e) { xError = classifyError(e); }
-    const end = await get(t, [OIDS.uptime], timeout);
+    const end = await get(t, this.persistentIdentity ? [OIDS.uptime,OIDS.count] : [OIDS.uptime], timeout);
     const endTicks = Number(unsigned(end.get(OIDS.uptime), 32)), now = this.clock(), at = new Date(now).toISOString();
     // Uptime wrapping, reboot during walk, or an implausible clock delta all break continuity.
     if (endTicks < ticks) throw new AdapterError('parse_error');
+    if (this.persistentIdentity && (Number(unsigned(end.get(OIDS.count),32)) !== count || base.size !== count
+      || [...base].some(([index,row]) => unsigned(column(row,OIDS.table,1),32) !== index)
+      || [...extended.keys()].some(index => !base.has(index)))) throw new AdapterError('parse_error');
     const reboot = !!this.previous && (ticks < this.previous.ticks || now <= this.previous.at
       || Math.abs((ticks - this.previous.ticks) * 10 - (now - this.previous.at)) > Math.max(2000, timeout * 2));
     if (reboot) this.interfaces.clear();
     const next = new Map<string, Identity>();
     const rows: DecodedRow[] = [];
+    const fingerprints = new Set<string>();
     for (const [index, b] of base) {
       const x = extended.get(index), bc = (n: number) => column(b, OIDS.table, n), xc = (n: number) => column(x, OIDS.xTable, n);
       const identityParts = [text(xc(1)), text(bc(2)), text(bc(6))];
-      const fingerprint = createHash('sha256').update(JSON.stringify(identityParts)).digest('hex');
+      // Identity never depends on how many siblings happen to be visible.
+      // MAC/type collisions cannot prove which interface moved or was reused;
+      // reject the entire enumeration rather than splitting persisted history.
+      const physical = text(bc(6)).replace(/[:-]/g, '').toLowerCase();
+      if (this.persistentIdentity && (!/^[a-f0-9]{12,40}$/.test(physical) || /^0+$/.test(physical))) throw new AdapterError('parse_error');
+      const fingerprint = createHash('sha256').update(JSON.stringify(this.persistentIdentity
+        ? [physical,unsigned(bc(3),32)] : identityParts)).digest('hex');
+      if (this.persistentIdentity && fingerprints.has(fingerprint)) throw new AdapterError('parse_error');
+      fingerprints.add(fingerprint);
       let discontinuity = '';
       try { if (!absent(xc(19))) { const value = unsigned(xc(19), 32); if (Number(value) <= endTicks) discontinuity = value; } } catch { /* unknown continuity */ }
       let identity = this.interfaces.get(index);
       if (!identity || identity.fingerprint !== fingerprint || identityParts.every(v => !v)) {
-        identity = { fingerprint, epoch: randomUUID(), discontinuity, at, counterEpoch: randomUUID(), reason: reboot ? 'boot' : identity ? 'source_change' : 'initial' };
+        identity = { fingerprint, epoch: this.persistentIdentity ? fingerprint : randomUUID(), discontinuity, at, counterEpoch: randomUUID(), reason: reboot ? 'boot' : identity ? 'source_change' : 'initial' };
       } else if (!discontinuity || identity.discontinuity !== discontinuity) {
         identity = { ...identity, discontinuity, at, counterEpoch: randomUUID(), reason: 'reset' };
       }
       next.set(index, identity);
-      const row: DecodedRow = { observed_at: at, dimensions: { if_index: index, interface_epoch: identity.epoch }, fields: {}, field_evidence: {} };
+      const row: DecodedRow = { observed_at: at, display_name: typeof unwrap(xc(1)) === 'string' ? String(unwrap(xc(1))).slice(0,512)
+        : Buffer.isBuffer(unwrap(xc(1))) ? (unwrap(xc(1)) as Buffer).toString('utf8').slice(0,512) : index,
+        dimensions: { if_index: index, interface_epoch: identity.epoch }, fields: {}, field_evidence: {} };
       const evidence = (bits: '32' | '64') => ({ bits, discontinuity: { epoch: `${identity.counterEpoch}:ifCounterDiscontinuityTime=${discontinuity || 'unknown'}`, observed_at: identity.at, reason: identity.reason } });
       for (const [field, n] of [['ifOperStatus', 8], ['ifAdminStatus', 7]] as const) this.field(row, field, bc(n), v => {
         const value = Number(unsigned(v, 32));

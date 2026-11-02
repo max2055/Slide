@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -37,7 +37,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_status_separation_${process.pid}`;
 const firstRef = { type: 'instance' as const, id: 1 };
 const secondRef = { type: 'instance' as const, id: 2 };
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/status-separation-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/status-separation-20261028.json', import.meta.url));
 const separatedKeys = ['binding.published_revision', 'binding.application', 'binding.applied_revision',
   'blockers', 'formal_visibility.last_observed_at', 'formal_visibility.freshness', 'collection.state'] as const;
 type Status = Awaited<ReturnType<MetricConfigurationService['status']>>;
@@ -207,7 +207,8 @@ describe.skipIf(!port)('MAX-238 publish, application, awaiting sample and formal
         boundaries: { activate_called: false, worker_started: false, attempt_inserted: false,
           source_tables_written: 'disposable schema only; no 3306 statements', config_files_changed: false },
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+      mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
     }
   }, 180000);
 });

@@ -373,8 +373,37 @@ export class MetricTemplateService {
       metrics.add(key);
     }
     const packageComposition = this.compositionOf(resolved);
+    for (const discovery of aggregate.discovery_rules ?? []) {
+      const prototypes = discovery.item_ids.map(id => resolved.find(v => v.item.item_id === id)?.item);
+      const first = prototypes[0];
+      if (!first || prototypes.some(item => !item || item.collector_ref.implementation_id !== first.collector_ref.implementation_id
+        || item.collector_ref.package_release !== first.collector_ref.package_release)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+      const identity = first.collector_ref.implementation_id === 'builtin:linux.interface-discovery.v1' ? 'interface_epoch'
+        : first.collector_ref.implementation_id === 'builtin:linux.filesystem-discovery.v1' ? 'filesystem_epoch'
+        : first.collector_ref.implementation_id === 'builtin:mysql.innodb-discovery.v1' ? 'table_epoch' : null;
+      if (identity && (discovery.identity_dimensions.length !== 1 || discovery.identity_dimensions[0] !== identity)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+      for (const item of prototypes) {
+        const candidate = this.catalog.autofill({ package: parsePackageReleaseRef(item!.collector_ref.package_release), metric: item!.canonical_metric });
+        if (!candidate.dimensions.length || discovery.identity_dimensions.some(key => !candidate.dimensions.some(d => d.name === key))
+          || !aggregate.triggers.some(trigger => trigger.scope === `item:${item!.item_id}`)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+      }
+    }
+    if (new Set((aggregate.discovery_rules ?? []).map(r => r.rule_id)).size !== (aggregate.discovery_rules ?? []).length
+      || new Set((aggregate.discovery_rules ?? []).flatMap(r => r.item_ids)).size !== (aggregate.discovery_rules ?? []).flatMap(r => r.item_ids).length) {
+      throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+    }
     const published: TemplatePublishedAggregate = TemplatePublishedAggregateSchema.parse({
       ...aggregate,
+      ...(aggregate.discovery_rules?.length ? {parameters:(()=>{
+        const parameters=structuredClone(aggregate.parameters),rules=aggregate.discovery_rules!;
+        const budgets={discovery_timeout_ms:Math.min(...rules.map(r=>r.timeout_ms)),discovery_max_rows:Math.min(...rules.map(r=>r.max_instances)),
+          discovery_series_upper_bound:rules.reduce((sum,r)=>sum+r.max_instances*r.item_ids.length,0)};
+        for(const [name,value] of Object.entries(budgets)){parameters.schema[name]={type:'integer',min:value,max:value};parameters.defaults[name]=value;}
+        return parameters;
+      })()}:{}),
+      capabilities: {...aggregate.capabilities, discovery: aggregate.discovery_rules?.length
+        ? {contract_version:'1.0.0',ref:'builtin:template-discovery.v1',executable:true}
+        : {contract_version:'1.0.0',ref:null,executable:false}},
       ...(aggregate.base?{inheritance:inheritance.origins}:{}),
       package_composition: packageComposition,
     });

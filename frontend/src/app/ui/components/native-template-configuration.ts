@@ -475,7 +475,7 @@ export class NativeTemplateConfiguration extends LitElement {
   private selectedPin(templateId: string) { return this.selected.find(pin => pin.template_id === templateId) ?? null; }
   private publishedVersions(template: TemplateSummary) { return template.versions.filter(version => version.status === 'published'); }
   private versionDisabled(template: TemplateSummary, version: TemplateSummary['versions'][number]): string | null {
-    if (template.status === 'draft') return '模板为草稿，未发布';
+    if (template.status === 'draft' && !this.publishedVersions(template).length) return '模板为草稿，未发布';
     if (version.status === 'retired') return '版本已退役';
     return null;
   }
@@ -1183,7 +1183,7 @@ export class NativeTemplateConfiguration extends LitElement {
       <div aria-label="模板列表">${this.templates.map(template => {
         const pin = this.selectedPin(template.template_id);
         const versions = this.publishedVersions(template);
-        const draft = template.status === 'draft';
+        const draft = template.status === 'draft' && !versions.length;
         return html`<div class="template-row">
           <label><input type="checkbox" aria-label=${`选择模板 ${template.name}`} .checked=${selectedIds.has(template.template_id)}
             .disabled=${!this.canWrite() || draft || !versions.length}

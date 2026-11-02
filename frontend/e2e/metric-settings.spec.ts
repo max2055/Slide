@@ -12,7 +12,7 @@ const catalog = { packages, metrics: [...new Map([...canonicalDefinitions, ...pa
 async function setup(page: Page, theme = 'light') {
   await page.emulateMedia({ colorScheme: theme as 'light' | 'dark' });
   await page.addInitScript(theme => {
-    localStorage.setItem('token', 'fixture-token');
+    localStorage.setItem('token', `fixture.${btoa(JSON.stringify({ userId: 1, sessionVersion: 1 }))}.fixture`);
     localStorage.setItem('permissions', '["*"]');
     localStorage.setItem('slide.i18n.locale', 'zh-CN');
     localStorage.setItem('slide.control.session_token.v1', 'fixture-token');
@@ -30,17 +30,19 @@ async function setup(page: Page, theme = 'light') {
       : path === '/api/metrics/templates/capabilities' ? { candidates: [] }
       : path === '/api/auth/permissions' ? ['*']
       : path === '/api/user/preferences' ? { preferences: { locale: 'zh-CN', themeMode: theme } }
-      : path === '/api/resources' ? { items: [] } : {} });
+      : path === '/api/resources' ? { items: [] }
+      : path === '/api/metrics/templates/library' ? { can_manage: true, templates: [] }
+      : path === '/api/metrics/templates/capabilities' ? { candidates: [], unavailable: [] }
+      : path === '/api/metrics/templates' ? { templates: [] }
+      : path === '/api/metrics/template-governance/resources' ? [] : {} });
   });
 }
-async function openPackages(page: Page) {
-  await page.getByText('采集包与兼容性详情', { exact: true }).click();
-}
-async function go(page: Page, view = 'catalog') {
+const openCompatibility = (page: Page) => page.locator('metric-settings details.package-compatibility > summary').click();
+const go = async (page: Page, view = 'catalog') => {
   await page.goto(`/settings/monitoring/metrics?view=${view}`);
-  if (view === 'packages') await openPackages(page);
-}
-const entries = (page: Page) => page.getByRole('region', { name: '采集模板目录' }).locator('app-data-table tbody tr');
+  if (view === 'packages') await openCompatibility(page);
+};
+const entries = (page: Page) => page.locator('metric-settings .package-table tbody tr');
 const detail = (page: Page) => page.locator('metric-settings app-dialog[title="采集模板详情"] .package-entry');
 const noOverflow = async (page: Page) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -70,7 +72,10 @@ for (const width of [1440, 1280, 768, 375]) for (const theme of ['light', 'dark'
     await noOverflow(page);
     await page.screenshot({ path: info.outputPath('catalog.png'), fullPage: true });
     await page.getByRole('tab', { name: '采集包', exact: true }).click();
-    await openPackages(page);
+    await expect(page.locator('metric-settings template-library')).toHaveCount(1);
+    await expect(page.locator('metric-settings template-governance')).toHaveCount(1);
+    await expect(page.locator('metric-settings details.package-compatibility template-library')).toHaveCount(0);
+    await openCompatibility(page);
     await expect(entries(page)).toHaveCount(templateCount);
     await expect(entries(page).filter({ hasText: 'PostgreSQL 数据库采集' })).toBeVisible();
     await expect(entries(page).filter({ hasText: '达梦数据库采集' }).first()).toBeVisible();

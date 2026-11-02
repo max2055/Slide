@@ -1,5 +1,5 @@
 import { publicationAuditCount } from './audit-test-support.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -32,7 +32,7 @@ const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_apply_idempotency_r1_${process.pid}`;
 const refs: Ref[] = [1, 2, 3, 4, 5, 6].map(id => ({ type: 'instance' as const, id }));
 const [reserveRef, replayRef, collisionRef, concurrentRef, rollbackRef, revokedRef] = refs;
-const evidencePath = fileURLToPath(new URL('../../../../../docs/slide/development/MAX-238/apply-idempotency-r1-20261028.json', import.meta.url));
+const evidencePath = fileURLToPath(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/apply-idempotency-r1-20261028.json', import.meta.url));
 type Pin = { id: string; version: string; digest: string };
 
 describe.skipIf(!port)('MAX-238 R1 keyed intent lifecycle on a disposable MySQL schema', () => {
@@ -106,6 +106,7 @@ describe.skipIf(!port)('MAX-238 R1 keyed intent lifecycle on a disposable MySQL 
     await pool?.end();
     if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); }
     vi.unstubAllEnvs();
+    mkdirSync(new URL('../../../../../outputs/MAX-245-integration-repair/mysql/', import.meta.url), { recursive: true });
     writeFileSync(evidencePath, `${JSON.stringify({ ...evidence, run: {
       branch: execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(),
       head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

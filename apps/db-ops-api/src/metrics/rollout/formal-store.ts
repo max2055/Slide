@@ -26,7 +26,7 @@ const formal = `FROM metric_publications p
  * Acceptance matches BOTH generation and observation revision. A publication alone
  * is insufficient: shadow and unaccepted/rolled-back generations stay excluded. */
 const historical = formal.slice(0, formal.indexOf("  WHERE"));
-const history = `${historical}
+export const historySelection = `${historical}
   WHERE o.stage = 'normalized' AND o.payload IS NOT NULL AND (
     (r.read_mode = 'semantic' AND r.source = 'semantic' AND r.applied_revision = r.published_revision
       AND p.generation = r.generation AND JSON_EXTRACT(o.payload, '$.versions.config_revision') = r.published_revision
@@ -35,6 +35,7 @@ const history = `${historical}
     OR EXISTS (SELECT 1 FROM metric_source_acceptance a
       WHERE a.resource_key = CONCAT(r.resource_type, ':', r.resource_id)
         AND a.revision = JSON_EXTRACT(o.payload, '$.versions.config_revision') AND a.generation = p.generation))`;
+const history = historySelection;
 
 /** Bounded reads: `page_rows` caps one statement, `max_rows` caps the whole series window. */
 export interface WindowReadLimits { page_rows: number; max_rows: number }
@@ -118,23 +119,26 @@ export class MysqlFormalMetricStore {
    * returning a silently truncated window.
    */
   readHistoryWindow(series: Series, from: string, to: string) { return this.readWindow(series, from, to, true); }
-  async readWindow(series: Series, from: string, to: string, historicalRead = false): Promise<NormalizedObservation[]> {
+  readStudyWindow(series: Series, from: string, to: string) { return this.readWindow(series, from, to, true, 366); }
+  async readWindow(series: Series, from: string, to: string, historicalRead = false, maxDays = 31): Promise<NormalizedObservation[]> {
     const { page_rows: pageRows, max_rows: maxRows } = this.limits;
     if (!Number.isInteger(pageRows) || pageRows < 1 || !Number.isInteger(maxRows) || maxRows < pageRows
       || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
-      || Date.parse(to) - Date.parse(from) > 31 * 86400000) throw new Error('ROLLOUT_QUERY_RANGE');
+      || Date.parse(to) - Date.parse(from) > maxDays * 86400000) throw new Error('ROLLOUT_QUERY_RANGE');
     const key = seriesHash(series);
     // Same consistent snapshot as queryWindow, held across every page.
     const c = await this.pool.getConnection();
     try {
       await c.beginTransaction();
       await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
-      const base = `SELECT o.payload, p.observation_id AS publication_id ${historicalRead ? history : formal} AND p.series_hash = ?`;
+      const base = `SELECT ${maxDays>31?'/*+ MAX_EXECUTION_TIME(10000) */ ':''}o.payload, p.observation_id AS publication_id ${historicalRead ? history : formal} AND p.series_hash = ?`;
       const [prior] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at < ?
         ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`, [key, sqlTime(from)]);
       const rows: NormalizedObservation[] = [];
+      const deadline = maxDays>31 ? Date.now()+30000 : Infinity;
       let cursor: { at: string; id: string } | null = null;
       for (;;) {
+        if(Date.now()>deadline)throw new Error('QUERY_LIMIT_EXCEEDED');
         const page = cursor
           ? (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
               AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))

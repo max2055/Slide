@@ -9,6 +9,8 @@ import './app-dialog.js';
 import './app-form-field.js';
 import './app-empty-state.js';
 import './app-data-table.js';
+import './template-discovery.js';
+import './template-trigger-editor.js';
 
 const labels: Record<string, string> = { instance: '数据库', server: '服务器', network_device: '网络设备' };
 const messages: Record<string, string> = {
@@ -234,7 +236,10 @@ export class NativeTemplateLibrary extends LitElement {
       <h3>参数</h3><app-form-field label="采集周期（秒）"><input aria-label="采集周期（秒）" type="number" min="1" max="86400" step="1" .value=${String(this.version ? Number(aggregate?.parameters.defaults.interval_ms ?? 60000)/1000 : this.period)} ?disabled=${!editable} @input=${(e: Event) => { this.period = Number((e.target as HTMLInputElement).value); this.dirty = true; }}></app-form-field>
       <details><summary>参数定义与默认值</summary><pre>${JSON.stringify(aggregate?.parameters,null,2)}</pre></details>
       <h3>触发器</h3><p>${aggregate?.triggers.length ?? 0} 个固定版本引用；触发器配置在资源模板配置中管理。</p><pre>${JSON.stringify(aggregate?.triggers ?? [],null,2)}</pre>
-      <h3>发现</h3><p>模板发现执行尚未实现；不执行自动发现，不作为成功采集证据。</p>
+      ${editor.current ? html`<template-trigger-editor .template=${{...editor.current,parameters:editor.current.aggregate.parameters}}
+        .disabled=${!canEdit || this.unsaved} @trigger-published=${async()=>{await this.open(editor.template.template_id);this.notice='触发器已发布为新版本；可在草稿内选择为发现原型';}}></template-trigger-editor>` : nothing}
+      <template-discovery .aggregate=${aggregate ?? null} .items=${items} .version=${snapshot ?? editor.current} .capabilities=${this.capabilities} .editable=${editable}
+        @discovery-change=${(e:CustomEvent)=>{this.editor={...editor,draft:{...editor.draft,aggregate:{...editor.draft.aggregate,discovery_rules:e.detail}}};this.dirty=true;}}></template-discovery>
       <h3>图形</h3><p>模板专属图形尚未实现；资源最新值与历史图表从关联资源进入。</p>
       <h3>关联资源</h3><p>版本发布不会自动绑定或替换资源。进入资源后可查看绑定版本、采集与历史。</p><div class="actions"><a href="/instances-db">数据库资源</a><a href="/servers">服务器资源</a><a href="/network-devices">网络设备资源</a></div>
       <div class="actions"><button class="btn-primary" ?disabled=${!editable} @click=${this.save}>保存草稿</button>

@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
+// Historical study has its own authenticated component regressions and real Lit/MySQL harness.
+vi.mock('./metric-study.js',()=>{
+  if(!customElements.get('metric-study'))customElements.define('metric-study',class extends HTMLElement {});
+  return {};
+});
 // jsdom cannot initialize the ECharts canvas; the chart element only needs to accept its inputs here.
 vi.mock('./metric-chart.js', () => {
   if (!customElements.get('metric-chart')) customElements.define('metric-chart', class extends HTMLElement {});
