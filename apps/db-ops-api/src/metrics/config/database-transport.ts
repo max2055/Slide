@@ -20,7 +20,11 @@ export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCoun
     if (connection.db_type === 'oracle' && connection.oraclePool) {
       const client = await connection.oraclePool.getConnection();
       const close = instanceAccessLifecycle.ownTemporary(connection.id, () => client.close());
-      try { await instanceAccessLifecycle.assertAvailable(connection.id); client.callTimeout = timeout; return await client.execute(sql); }
+      try {
+        await instanceAccessLifecycle.assertAvailable(connection.id); client.callTimeout = timeout;
+        await client.execute('SET TRANSACTION READ ONLY');
+        return await client.execute(sql);
+      }
       finally { await close(); }
     }
     const config = connection.config;
@@ -55,7 +59,11 @@ export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCoun
         connectString: `${target.address}:${target.port}`, schema: config.database || undefined,
         connectTimeout: timeout, socketTimeout: timeout, sessionTimeout: Math.ceil(timeout / 1000), loginEncrypt: false });
       const close = instanceAccessLifecycle.ownTemporary(connection.id, () => client.close());
-      try { await instanceAccessLifecycle.assertAvailable(connection.id); return await client.execute(sql); }
+      try {
+        await instanceAccessLifecycle.assertAvailable(connection.id);
+        await client.execute('SET TRANSACTION READ ONLY');
+        return await client.execute(sql);
+      }
       finally { await close(); }
     }
     throw new AdapterError('connection_error');

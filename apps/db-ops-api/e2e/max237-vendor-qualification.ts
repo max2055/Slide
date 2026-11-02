@@ -1,4 +1,4 @@
-/** Real authorized targets; fixed SELECTs only. Credentials stay in memory. */
+/** Real targets through the default resolver; credentials encrypted only in a disposable platform schema. */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -11,37 +11,37 @@ import mysql from 'mysql2/promise';
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
 import { vendorCredentials } from './max237-vendor-credentials.js';
-import { dbConnection } from '../src/db-connection.js';
+import { dbConnection, encryptData } from '../src/db-connection.js';
+import { databaseService } from '../src/database-service.js';
+import { createAssetCollectorAccess } from '../src/metrics/config/access.js';
+import { registerMetricTemplateRoutes } from '../src/metrics/templates/routes.js';
+import { registerTemplateAuthoringRoutes } from '../src/metrics/templates/authoring-routes.js';
+import { captureVendorPages } from './max237-vendor-pages.js';
 import { MigrationRunner } from '../src/migrations/runner.js';
 import { createOwnedDatabase } from '../src/testing/owned-fixture.js';
 import { actorContextService, type ActorContext } from '../src/auth/actor-context.js';
 import { createVerifyToken } from '../src/auth-middleware.js';
 import { createConfigurationRegistry } from '../src/metrics/config/registry.js';
-import { configurationInventory } from '../src/metrics/config/inventory.js';
-import { vendorCounterTransport, ORACLE_COUNTER_SQL, DAMENG_COUNTER_SQL } from '../src/metrics/config/vendor-counter.js';
-import { databaseReads, oracle1919Reads } from '../src/metrics/database/catalog.js';
-import { AdapterError } from '../src/metrics/packages/adapters.js';
 import { runPackage } from '../src/metrics/packages/runner.js';
 import { MySqlTemplateRepository } from '../src/metrics/templates/mysql-repository.js';
 import { MetricTemplateService } from '../src/metrics/templates/service.js';
 import { RegisteredCapabilityCatalog } from '../src/metrics/templates/catalog.js';
-import { TemplateBindingService } from '../src/metrics/templates/binding-service.js';
 import { CollectNowService, createCollectNowAuthorizer } from '../src/metrics/templates/collect-now.js';
 import { MysqlScheduleStore } from '../src/metrics/scheduler/store.js';
-import { MetricScheduler, type CollectorAccess } from '../src/metrics/scheduler/service.js';
+import { MetricScheduler } from '../src/metrics/scheduler/service.js';
 import { JobRegistry } from '../src/workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../src/workflows/worker-runtime.js';
 import { RolloutControl } from '../src/metrics/rollout/control.js';
 import { registerMetricConsumerRoutes } from '../src/metrics/consumers/routes.js';
 
 const nonce = randomBytes(8).toString('hex');
-const directory = resolve('../../outputs/max237-vendors/live-' + nonce);
+const directory = resolve('../../outputs/max237-default/live-' + nonce);
 mkdirSync(directory, { recursive: true });
 process.env.ENCRYPTION_KEY = randomBytes(32).toString('hex');
 const credentials = vendorCredentials();
 const source = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const evidence: any = { source, nonce, targets: {}, checks: [], cleanup: {}, target_writes: 0, model_calls: 0,
-  credential_boundary: 'CLI member reference → process memory only; isolated platform stores no target secret; CollectorAccess is a fixture-scoped port, not a production credential override' };
+  credential_boundary: 'Authorized CLI reference → memory → standard encryptData storage in disposable platform schema → native default asset resolver; no target credential in evidence' };
 const save = () => writeFileSync(join(directory, 'evidence.json'), JSON.stringify(evidence, null, 2));
 const pass = (s: string) => { evidence.checks.push(s); save(); console.log('PASS ' + s); };
 const safeError = (e: any) => ({ code: typeof e?.code === 'string' ? e.code : null, number: e?.errorNum ?? e?.errCode ?? null });
@@ -89,7 +89,15 @@ try {
   app = Fastify();
   const secret = randomBytes(32).toString('hex');
   const token = jwt.sign({ userId: 901, sessionVersion: 1 }, secret, { expiresIn: '1h' });
-  await registerMetricConsumerRoutes(app, createVerifyToken(secret, actorContextService));
+  const verify = createVerifyToken(secret, actorContextService);
+  await registerMetricConsumerRoutes(app, verify);
+  await registerMetricTemplateRoutes(app, verify);
+  await registerTemplateAuthoringRoutes(app, verify);
+  // Component reads real maintenance history through its standard route.
+  const { registerMaintenanceRoutes } = await import('../src/maintenance-routes.js');
+  await registerMaintenanceRoutes(app, verify);
+  const { registerMetricConfigurationRoutes } = await import('../src/metrics/config/routes.js');
+  await registerMetricConfigurationRoutes(app, verify);
   await app.ready();
   for (const [engine, id] of [['oracle', 901], ['dameng', 902]] as const) {
     activeEngine = engine;
@@ -102,35 +110,28 @@ try {
       assert.match(e.exact_version, engine === 'oracle' ? /^19\.19\./ : /^8\.1\./);
       e.minimum_privilege_verified = false; // Supplied accounts have DBA, never claim read-only grants.
     } finally { await close(c); }
-    const readList = engine === 'oracle' ? oracle1919Reads : databaseReads.filter(r => r.engine === engine);
-    const allowed = new Set([...readList.map(r => r.sql), engine === 'oracle' ? ORACLE_COUNTER_SQL : DAMENG_COUNTER_SQL]);
-    const transport = vendorCounterTransport(engine, async (sql, timeout) => {
-      assert(allowed.has(sql), 'FIXED_SELECT_ALLOWLIST');
-      const client = await connect(engine);
-      try {
-        client.callTimeout = timeout;
-        await client.execute('SET TRANSACTION READ ONLY'); e.readonly_sessions++;
-        const result = await client.execute(sql); e.reads.push({ sql, rows: result.rows });
-        return result;
-      } finally { await close(client); }
-    });
     await pool.query(`INSERT INTO database_instances(id,name,environment,db_type,db_version,host,port,username,password_encrypted,database_name,status,lifecycle_state,created_by)
-      VALUES(?,?,'testing',?,?,'127.0.0.1',?,'memory-only','no-target-secret',?,'active','available',901)`,
-      [id, 'vendor-' + engine, engine, e.exact_version, engine === 'oracle' ? 1521 : 5236, engine === 'oracle' ? 'ORCLCDB' : '']);
+      VALUES(?,?,'testing',?,?,'127.0.0.1',?,?,?,?,'active','available',901)`,
+      [id, 'vendor-' + engine, engine, e.exact_version, engine === 'oracle' ? 1521 : 5236, credentials[engine].user, encryptData(credentials[engine].password), engine === 'oracle' ? 'ORCLCDB' : '']);
     await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(901,?,'admin')", [id]);
     const ref = { type: 'instance' as const, id };
-    const credential_ref = 'credential:vendor-' + engine + '-' + nonce;
-    const access: CollectorAccess = { resolve: async target => {
-      assert.deepEqual(target, ref);
-      return { resource: await configurationInventory(ref), credential_ref, evidence: {}, resolve: async (credential, resource, method) => {
-        if (credential !== credential_ref || resource.id !== String(id) || resource.type !== 'instance' || method !== 'sql') throw new AdapterError('permission_denied');
-        return transport;
-      } };
-    } };
+    assert(await databaseService.addConnection(id, 'MAX237-' + engine, { db_type: engine, host: '127.0.0.1', port: engine === 'oracle' ? 1521 : 5236,
+      user: credentials[engine].user, password: credentials[engine].password, database: engine === 'oracle' ? 'ORCLCDB' : undefined }), 'DEFAULT_CONNECTION_FAILED');
+    const connection = databaseService.getConnection(id)!;
+    const access = createAssetCollectorAccess();
     const resolved = await access.resolve(ref);
-    await assert.rejects(resolved.resolve('credential:other', resolved.resource, 'sql'), { code: 'permission_denied' });
+    const credential_ref = resolved.credential_ref;
+    await assert.rejects(resolved.resolve('credential:other', resolved.resource, 'sql'));
+    e.default_entry = { shared_connection: true, default_asset_resolver: true, encrypted_platform_credential: true, no_transport_override: true };
+    const http = async (suffix: string, body: unknown) => {
+      const response = await app!.inject({ method: 'POST', url: `/api/metrics/template-bindings/instance/${id}/${suffix}`,
+        headers: { authorization: `Bearer ${token}` }, payload: body as any });
+      e.requests ??= []; e.requests.push({ suffix, status: response.statusCode, body, response: response.json() });
+      assert.equal(response.statusCode, 200, 'DEFAULT_HTTP_FLOW_FAILED:' + suffix);
+      return response.json();
+    };
     const spec = specs[engine];
-    const release = registry.list().find(r => r.package.id === spec.package_id && r.package.version === (engine === 'oracle' ? '1.2.0' : '1.0.0'))!;
+    const release = registry.list().find(r => r.package.id === spec.package_id && r.package.version === (engine === 'oracle' ? '1.3.0' : '1.2.0'))!;
     const { id: packageId, version, digest } = release.package;
     const pin = { id: packageId, version, digest };
     if (engine === 'oracle') {
@@ -167,24 +168,26 @@ try {
       const raw = e.baseline.raw.find((o: any) => o.metric.id === m.metric.id);
       assert(raw && raw.raw_field === m.raw_field && raw.unit === m.unit && raw.source.collector_id === m.collector_id);
     }
-    const bindings = new TemplateBindingService({ pool: () => pool, registry, access, reload, reloadOn });
     const request = { expected_revision: 0, template_pins: [{ template_id: created.template_id, version: snapshot.version, content_hash: snapshot.content_hash }], overrides: { enabled: 'enable' } };
-    e.probe = await bindings.probe(actor, ref, request);
-    e.trial = await bindings.trial(actor, ref, { ...request, receipt_id: 'vendor-' + id + nonce });
-    e.apply = await bindings.apply(actor, ref, { ...request, receipt_id: 'vendor-' + id + nonce, caller_key: 'vendor-' + id + nonce });
+    e.probe = await http('probe', request);
+    e.trial = await http('trial', { ...request, receipt_id: 'vendor-' + id + nonce });
+    e.apply = await http('apply', { ...request, receipt_id: 'vendor-' + id + nonce, caller_key: 'vendor-' + id + nonce });
     for (const raw of e.baseline.raw) await new RolloutControl(pool).initialize({ resource_type: 'instance', resource_id: String(id), metric: raw.metric, dimensions: raw.dimensions },
       { source: 'semantic', read: 'semantic', package: pin, revision: 1 });
     const collect = new CollectNowService({ pool: () => pool, registry, reload, reloadOn });
     const jobs = new JobRegistry();
-    new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry, access, Date.now, undefined, undefined,
+    new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry, createAssetCollectorAccess(true), Date.now, undefined, undefined,
       createCollectNowAuthorizer({ loadActor: (i,v) => actorContextService.loadActiveActor(i,v), loadActorOn: (c,i,v) => actorContextService.loadActiveActorOn(c as never,i,v,undefined,true) })).register(jobs);
     const worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), 'vendor-' + nonce, 30);
     e.collections = [];
     for (let round = 0; round < 2; round++) {
       // A complete 1s counter bucket needs a real observed interval, not two immediate reads.
-      if (round) await new Promise(resolve => setTimeout(resolve, 2200));
+      if (round) {
+        console.log('Awaiting real 60s page counter bucket: ' + engine);
+        for (let tick = 0; tick < 4; tick++) { await new Promise(resolve => setTimeout(resolve, 32_000)); console.log('Real observation interval ' + (tick + 1) * 32 + 's: ' + engine); }
+      }
       const key = 'vendor-' + id + nonce + round;
-      await collect.collect(actor, ref, { caller_key: key, expected_revision: 1 });
+      await http('collect', { caller_key: key, expected_revision: 1 });
       let result: any;
       for (let n = 0; n < 30; n++) {
         await worker.runOnce((job, context) => jobs.execute(job, context), Date.now());
@@ -197,6 +200,9 @@ try {
       assert.equal(result.samples.length, 3);
       assert(result.samples.every((s: any) => s.value?.encoding === 'uint64' && s.quality.status === 'good'));
     }
+    assert.equal(databaseService.getConnection(id), connection, 'DEFAULT_CONNECTION_WAS_REPLACED');
+    const counterSamples = e.collections.map((r: any) => r.samples.find((s: any) => s.metric.id.endsWith('commit_total')));
+    assert.deepEqual(counterSamples[0].counter, counterSamples[1].counter, 'COUNTER_LIFECYCLE_CHANGED_EACH_RESOLVE');
     for (const history of [false, true]) {
       const response = await app.inject({ method: 'POST', url: '/api/metrics/query', headers: { authorization: `Bearer ${token}` }, payload: {
         resource: ref, metric_ids: available.map((i: any) => i.metric), from: new Date(Date.now() - 60000).toISOString(), to: new Date().toISOString(), bucket_ms: 1000, ...(history ? { history: true } : {}),
@@ -214,7 +220,8 @@ try {
     assert.equal(e.reads.length, beforeDenied);
     e.platform_permission_negative = { status: denied.statusCode, target_reads: e.reads.length - beforeDenied };
     assert.deepEqual(await repository.getVersion(created.template_id, published.version), snapshot);
-    pass(`${engine}: three real items on ${e.exact_version} → registered fixed mappings → read-only sessions → immutable publish/apply → two formal worker jobs → authenticated latest/history`);
+    e.pages = await captureVendorPages(app, token, jwt.sign({ userId: 903, sessionVersion: 1 }, secret, { expiresIn: '1h' }), id, engine, directory);
+    pass(`${engine}: default connection and default asset access; three real items on ${e.exact_version} → registered fixed mappings → read-only sessions → immutable publish/apply → two formal worker jobs → authenticated latest/history`);
   }
 } catch (error) {
   evidence.failure = { engine: activeEngine, ...safeError(error), assertion: (error as any)?.operator ?? null,
@@ -224,7 +231,7 @@ try {
   Login.processServerVersion = originalVersion;
   for (const c of [...handles]) { try { await close(c); } catch { evidence.cleanup.target_sessions = false; process.exitCode = 1; } }
   evidence.cleanup.target_sessions = handles.size === 0;
-  try { await app?.close(); await dbConnection.close(); await owned?.drop(); await root?.end(); evidence.cleanup.platform = true; }
+  try { for (const id of [901,902]) await databaseService.removeConnection(id); await app?.close(); await dbConnection.close(); await owned?.drop(); await root?.end(); evidence.cleanup.platform = true; }
   catch { evidence.cleanup.platform = false; process.exitCode = 1; }
   save(); console.log('Evidence: ' + directory);
 }

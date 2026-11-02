@@ -1,17 +1,12 @@
 import { createHash } from 'node:crypto';
 import { bindDatabaseDriver } from '../database/collector.js';
-import { databaseReads } from '../database/catalog.js';
+import { databaseReads, vendorLifecycleSql } from '../database/catalog.js';
 import { AdapterError, type Transport } from '../packages/adapters.js';
 
 // Values and opaque native startup identity come from one server statement.
 // Startup text is never interpreted in the collector host's timezone.
-export const ORACLE_COUNTER_SQL = `SELECT TO_CHAR(s.VALUE, 'FM99999999999999999999'),
-  TO_CHAR(i.STARTUP_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME,
-  SYS_CONTEXT('USERENV','CON_NAME')
-  FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'user commits'`;
-export const DAMENG_COUNTER_SQL = `SELECT CAST(s.STAT_VAL AS VARCHAR(20)),
-  TO_CHAR(i.START_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME
-  FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'transaction commit count'`;
+export const ORACLE_COUNTER_SQL = vendorLifecycleSql.oracle;
+export const DAMENG_COUNTER_SQL = vendorLifecycleSql.dameng;
 export interface VendorCounterState { epoch?: string; firstObservedAt?: string }
 
 /** The state belongs to one live asset connection, never to a credential string.
