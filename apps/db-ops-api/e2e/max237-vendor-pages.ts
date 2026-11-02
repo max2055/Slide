@@ -2,7 +2,8 @@
  * No API interception, response fixtures, trace/HAR, or credential form capture. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { writeFileSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 
@@ -11,7 +12,7 @@ export async function captureVendorPages(app: FastifyInstance, token: string, de
   const frontend = resolve('../../frontend');
   const require = createRequire(join(frontend, 'package.json'));
   const { chromium, expect } = require('@playwright/test');
-  const { createServer } = await import(require.resolve('vite'));
+  const { createServer } = await import(pathToFileURL(join(dirname(require.resolve('vite')), 'dist/node/index.js')).href);
   const api = app.server.listening ? `http://127.0.0.1:${(app.server.address() as any).port}` : await app.listen({ host: '127.0.0.1', port: 0 });
   const vite = await createServer({ root: frontend, configFile: join(frontend, 'vite.config.js'),
     server: { host: '127.0.0.1', port: 0, proxy: { '/api': { target: api } } },
@@ -56,12 +57,20 @@ export async function captureVendorPages(app: FastifyInstance, token: string, de
     await denied.addInitScript((value: string) => localStorage.setItem('token', value), deniedToken);
     const deniedPage = await denied.newPage();
     await deniedPage.goto(url);
-    await expect(deniedPage.locator('semantic-metrics').getByText('没有此资源的查看权限', { exact: true })).toBeVisible();
+    await expect(deniedPage.locator('semantic-metrics').getByText('没有此资源的查看权限', { exact: true }).first()).toBeVisible();
     assert.equal(await deniedPage.locator('semantic-metrics').evaluate((e: any) => e.result), null);
     await deniedPage.screenshot({ path: join(directory, engine + '-forbidden.png'), fullPage: true });
     await denied.close();
     writeFileSync(join(directory, engine + '-page-requests.json'), JSON.stringify(responses, null, 2));
     return { component: 'semantic-metrics (same component used by resource details)', real_http: true,
       latest: true, history: true, finite_counter_rate: true, resource_denied: true, viewport: '1440x900', response_count: responses.length };
+  } catch (error) {
+    // The browser never receives target credentials; strip its two bearer tokens
+    // as well before retaining a bounded diagnostic (no trace/HAR is recorded).
+    writeFileSync(join(directory, engine + '-page-error.json'), JSON.stringify({
+      name: error instanceof Error ? error.name : typeof error,
+      message: (error instanceof Error ? error.message : 'browser failure').replaceAll(token, '[redacted]').replaceAll(deniedToken, '[redacted]').slice(0, 6000),
+    }, null, 2));
+    throw error;
   } finally { await browser?.close(); await vite.close(); }
 }

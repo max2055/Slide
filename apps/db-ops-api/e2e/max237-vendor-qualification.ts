@@ -201,8 +201,13 @@ try {
       assert(result.samples.every((s: any) => s.value?.encoding === 'uint64' && s.quality.status === 'good'));
     }
     assert.equal(databaseService.getConnection(id), connection, 'DEFAULT_CONNECTION_WAS_REPLACED');
-    const counterSamples = e.collections.map((r: any) => r.samples.find((s: any) => s.metric.id.endsWith('commit_total')));
+    const [storedRows] = await pool.query<any[]>('SELECT payload FROM metric_observations WHERE stage = ? ORDER BY observed_at', ['normalized']);
+    const counterSamples = storedRows.map(r => typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload)
+      .filter(r => r.resource_id === String(id) && r.metric.id.endsWith('commit_total'));
+    assert.equal(counterSamples.length, 2);
+    assert(counterSamples.every(s => s.counter?.discontinuity?.epoch && s.counter?.discontinuity?.observed_at));
     assert.deepEqual(counterSamples[0].counter, counterSamples[1].counter, 'COUNTER_LIFECYCLE_CHANGED_EACH_RESOLVE');
+    e.persisted_counter_lifecycle = counterSamples;
     for (const history of [false, true]) {
       const response = await app.inject({ method: 'POST', url: '/api/metrics/query', headers: { authorization: `Bearer ${token}` }, payload: {
         resource: ref, metric_ids: available.map((i: any) => i.metric), from: new Date(Date.now() - 60000).toISOString(), to: new Date().toISOString(), bucket_ms: 1000, ...(history ? { history: true } : {}),
