@@ -82,6 +82,8 @@ describe('generated public API contract', () => {
       '/api/adapters/capabilities',
       '/api/ai/analysis/{id}/evidence',
       '/api/ai/analysis/{id}/investigation',
+      '/api/alerts/{id}/investigation',
+      '/api/alerts/events',
       '/api/alerts/dependencies',
       '/api/alerts/dependencies/operations/{key}',
       '/api/alerts/dependencies/resources',
@@ -90,7 +92,6 @@ describe('generated public API contract', () => {
       '/api/alerts/events/{id}/investigate',
       '/api/alerts/events/{id}/resolve',
       '/api/alerts/events/{id}/verify-recovery',
-      '/api/alerts/{id}/investigation',
       '/api/cron/jobs/{id}',
       '/api/cron/jobs/{id}/run',
       '/api/cron/jobs/{id}/runs',
@@ -143,6 +144,7 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/apply',
       '/api/metrics/template-bindings/{type}/{id}/collect',
       '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/effective-triggers',
       '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
       '/api/metrics/template-bindings/{type}/{id}/preview',
       '/api/metrics/template-bindings/{type}/{id}/probe',
@@ -273,6 +275,8 @@ describe('generated public API contract', () => {
     await registerTemplateTriggerRoutes(app,async()=>undefined);
     const {registerTemplateGovernanceRoutes}=await import('../metrics/templates/governance-routes.js');
     await registerTemplateGovernanceRoutes(app,async()=>undefined);
+    const {registerResourceTriggerRead}=await import('../metrics/triggers/resource-detail-routes.js');
+    await registerResourceTriggerRead(app,async()=>undefined);
     await app.ready();
     await app.close();
     expect([...registered].sort()).toEqual([
@@ -281,6 +285,7 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/apply',
       '/api/metrics/template-bindings/{type}/{id}/collect',
       '/api/metrics/template-bindings/{type}/{id}/collect/{key}',
+      '/api/metrics/template-bindings/{type}/{id}/effective-triggers',
       '/api/metrics/template-bindings/{type}/{id}/operations/{key}',
       '/api/metrics/template-bindings/{type}/{id}/preview',
       '/api/metrics/template-bindings/{type}/{id}/probe',

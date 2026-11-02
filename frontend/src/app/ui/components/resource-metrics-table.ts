@@ -1,3 +1,4 @@
+import { restoredListState } from './resource-detail-context.js';
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
@@ -46,6 +47,16 @@ export class ResourceMetricsTable extends LitElement {
     return { type: this.resourceType as BulkResource['type'], id: entry.id,
       label: String(entry.searchValues?.find(value => typeof value === 'string' && value.length) ?? `${this.resourceType} #${entry.id}`) };
   }
+  capturePosition() { const scroll=this.renderRoot.querySelector<HTMLElement>('.scroll');return {page:this.page,left:scroll?.scrollLeft??0,top:window.scrollY}; }
+  private positionRestored=false;
+  private async restorePosition() {
+    const saved=restoredListState(this.resourceType);if(!saved||this.positionRestored||!this.entries.length)return;
+    this.positionRestored=true;await this.updateComplete;
+    await Promise.all([...this.renderRoot.querySelectorAll<LitElement>('app-data-table')].map(t=>t.updateComplete));
+    const scroll=this.renderRoot.querySelector<HTMLElement>('.scroll');if(scroll)scroll.scrollLeft=saved.position.left;
+    this.renderRoot.querySelector<HTMLButtonElement>(`[data-resource-detail-id="${saved.id}"]`)?.focus({preventScroll:true});
+    window.scrollTo?.({top:saved.position.top});
+  }
   private restoredType = '';
   private readonly accessChanged = () => {
     this.generation++; this.observationGeneration++; this.observations = new Map();
@@ -64,9 +75,10 @@ export class ResourceMetricsTable extends LitElement {
   private restorePreferences() {
     if (this.restoredType === this.resourceType) return;
     this.restoredType = this.resourceType;
+    const returned=restoredListState(this.resourceType);if(returned){this.page=returned.position.page;this.previousSearch=this.search;}
     try {
       const saved = JSON.parse(sessionStorage.getItem(`resource-list:${this.resourceType}`) ?? 'null');
-      if (saved) { this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && saved.densityVersion === 2 ? saved.hiddenColumns : this.defaultHiddenColumns; }
+      if (saved) { if(!returned)this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && saved.densityVersion === 2 ? saved.hiddenColumns : this.defaultHiddenColumns; }
     } catch { /* Storage may be unavailable; navigation still works. */ }
   }
   private get defaultHiddenColumns() { return ['type', 'site', 'binding', 'database_size', 'uptime', 'disk', 'network', 'interfaces']; }
@@ -74,6 +86,7 @@ export class ResourceMetricsTable extends LitElement {
   override updated(changed: PropertyValues) {
     if (!this.isConnected) return;
     this.restorePreferences();
+    void this.restorePosition();
     try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 2 })); } catch { /* Optional preference storage. */ }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
     const entriesChanged = identity !== this.identity;
@@ -260,7 +273,7 @@ export class ResourceMetricsTable extends LitElement {
     const baseKeys = new Set(['bulk_select', 'row_number', ...this.columns.map(c => c.key), 'collection', 'last_collection']);
     const optionalColumns = [...metricColumns, { key: 'binding', label: '模板绑定' }].filter(c => !baseKeys.has(c.key));
     const extraColumns = optionalColumns.filter(c => !this.hiddenColumns.includes(c.key));
-    const columns = [{ key: 'bulk_select', label: '选择', width: '2.5rem' }, { key: 'row_number', label: '序号', width: '3.5rem' }, ...this.columns.filter(c => c.key !== 'actions'), { key: 'collection', label: '采集状态', width: '8rem' }, { key: 'last_collection', label: '最近采集时间', width: '10.5rem' }, ...this.columns.filter(c => c.key === 'actions'), ...extraColumns];
+    const columns = [{ key: 'bulk_select', label: '选择', width: '2.5rem' }, { key: 'row_number', label: '序号', width: '3.5rem' }, ...this.columns.filter(c => c.key !== 'actions'), { key: 'collection', label: '采集状态', width: '8rem' }, { key: 'last_collection', label: '最近成功采集', width: '10.5rem' }, ...this.columns.filter(c => c.key === 'actions'), ...extraColumns];
     const offset = (Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize))) - 1) * this.pageSize;
     const rows = this.visible.map((entry, index) => {
       const row = this.rows.get(entry.id);
@@ -269,7 +282,7 @@ export class ResourceMetricsTable extends LitElement {
         database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
         binding: html`<span>${row?.collection ? statusLabel(row.collection.binding.state) : row?.bindingError || (row ? ['forbidden', 'unavailable'].includes(row.state) ? collectionLabels[row.state] : '绑定状态未知' : '正在读取')}</span>`,
-        collection: this.value(row?.bindingError ? '当前采集状态暂不可用' : row?.collection?.blockers.length ? row.collection.blockers.map(b => statusLabel(b)).join('；') : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection ? statusLabel(row.collection.collection.in_flight ? 'running' : row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '待验证'),
+        collection: this.value(row?.bindingError ? '当前状态暂不可用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.collection.in_flight ? '采集中' : row?.collection?.formal_visibility.state === 'pending' ? '等待首样本' : row?.collection ? statusLabel(row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '未知', row?.collection?.blockers.map(b=>statusLabel(b)).join('；') || '以最近成功采集证据为准'),
         last_collection: row?.lastSuccess && Number.isFinite(Date.parse(row.lastSuccess)) ? html`<time datetime=${row.lastSuccess}>${this.value(new Date(row.lastSuccess).toLocaleString('zh-CN'))}</time>` : this.value(row?.timeUnavailable ? '时间暂不可用' : '无成功采集记录') };
     });
     const selected = bulkSelection.values().length;

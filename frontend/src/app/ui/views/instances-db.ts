@@ -1,3 +1,4 @@
+import { captureListReturn, restoredListState } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-metrics-table.js";
@@ -490,8 +491,8 @@ export class InstancesPage extends LitElement {
   @state() private loading = true;
   @state() private refreshing = false;
   @state() private error: string | null = null;
-  @state() private filter: "all" | "healthy" | "warning" | "critical" | "unknown" = "all";
-  @state() private searchQuery = "";
+  @state() private filter: string = restoredListState('instance')?.state.filter ?? "all";
+  @state() private searchQuery = restoredListState('instance')?.state.search ?? "";
   @state() private sortKey: string = "";
   @state() private sortDir: "asc" | "desc" = "asc";
 
@@ -755,12 +756,12 @@ export class InstancesPage extends LitElement {
           </div>
 
           <resource-metrics-table resourceType="instance" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'database_size', label: '数据量', help: '支持范围与统计口径' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<span class="resource-name"><button class="btn-ghost" title=${inst.name} @click=${() => this._viewDetail(inst)}>${inst.name}</button><span class="full-value" aria-hidden="true">${inst.name}</span></span>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:manage") ? "编辑实例" : "需要实例管理权限"} .disabled=${!hasListPermission("instance:manage")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:manage") ? "删除实例" : "需要实例管理权限"} .disabled=${!hasListPermission("instance:manage")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions"><button class="btn-sm" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -795,6 +796,7 @@ export class InstancesPage extends LitElement {
   }
 
   private _viewDetail(inst: DatabaseInstance) {
+    captureListReturn(this, 'instance', inst.id, { search: this.searchQuery, filter: this.filter });
     // Update URL with instance ID
     const url = new URL(window.location.href);
     url.searchParams.set("id", String(inst.id));

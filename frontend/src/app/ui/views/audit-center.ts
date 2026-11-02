@@ -63,19 +63,22 @@ export class AuditCenterPage extends LitElement {
   }
 
   override render() {
+    const scoped=new URLSearchParams(location.search).has('resource');
+    const activeView=scoped?'system':this.activeView;
     return html`
       <div class="tabs" role="tablist" aria-label="审计中心">
         ${AUDIT_VIEWS.map(view => html`
           <button
             type="button"
             role="tab"
-            class="tab ${this.activeView === view.id ? 'active' : ''}"
-            aria-selected=${this.activeView === view.id}
+            class="tab ${activeView === view.id ? 'active' : ''}"
+            aria-selected=${activeView === view.id}
+            ?disabled=${scoped && view.id === 'agent'} title=${scoped && view.id === 'agent' ? 'Agent审计暂不支持同资源窗口筛选' : view.label}
             @click=${() => this.selectView(view.id)}
           >${view.label}</button>
         `)}
       </div>
-      ${this.activeView === 'agent'
+      ${activeView === 'agent'
         ? html`<agent-tool-audit-page></agent-tool-audit-page>`
         : html`<system-audit-page></system-audit-page>`}
     `;

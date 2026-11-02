@@ -1,3 +1,5 @@
+import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
 import "../components/semantic-metrics.js";
@@ -22,6 +24,7 @@ interface ServerDetail {
   port: number;
   label: string | null;
   os_type: string;
+  os_version?: string | null;
   credential_type: "password" | "key";
   status: "online" | "offline" | "error" | "unreachable";
   last_check_at: string | null;
@@ -326,7 +329,7 @@ export class ServerDetailPage extends LitElement {
       if (!current()) return;
       if (!serverRes.ok) {
         this.detailReadError = serverRes.status === 401 || serverRes.status === 403 ? '无权读取服务器详情' : '服务器详情读取失败';
-        if (serverRes.status === 401 || serverRes.status === 403) this.error = this.detailReadError;
+        if (serverRes.status === 401 || serverRes.status === 403) { this.server=null;this.overview=null;this.hostedInstances=[];this.diagnostics=null;this.error = this.detailReadError; }
         return;
       }
       const server = await serverRes.json();
@@ -345,7 +348,7 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private _goBack() { if (returnToDashboard()) return;
+  private _goBack() { if (returnToResourceList('server')) return; if (returnToDashboard()) return;
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "servers" },
     }));
@@ -419,7 +422,7 @@ export class ServerDetailPage extends LitElement {
       return html`<div class="page"><div class="loading loading-pulse">加载中...</div></div>`;
     }
     if (this.error) {
-      return html`<div class="page"><div class="loading">${this.error}</div></div>`;
+      return html`<div class="page"><div class="loading" role="alert">${this.error}<button class="btn btn-refresh" @click=${() => this.serverId && this.loadServerContext(this.serverId)}>重试</button><button class="btn" @click=${this._goBack}>返回列表</button></div></div>`;
     }
     if (!this.server) {
       return html`<div class="page"><div class="loading">服务器不存在</div></div>`;
@@ -431,14 +434,14 @@ export class ServerDetailPage extends LitElement {
           <div class="header-left">
             <button class="btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
             <div class="title-copy">
-              <span class="server-title">${this.server.label || this.server.host}</span><div class="resource-meta">${this.server.host}:${this.server.port} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div>
+              <h1 class="server-title">${this.server.label || this.server.host}</h1><div class="resource-meta">${this.server.host}:${this.server.port} · ${this.server.os_type} · 版本 ${this.server.os_version || '未知'} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div>
               
             </div>
             <app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>
               ${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}
             </app-badge>
           </div>
-          <div class="header-right">
+          <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" @click=${() => this._oneClickInspection()} .disabled=${this.isRefreshing}>${icons['clipboard']} 一键巡检</button>
@@ -449,10 +452,10 @@ export class ServerDetailPage extends LitElement {
         </div>
 
         <resource-investigation-links resourceType="server" .resourceId=${this.serverId ?? this.server.id}></resource-investigation-links>
-        <div class="tabs" role="tablist" aria-label="服务器详情页签">
+        <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="服务器详情页签">
           ${[
             { key: "overview", label: "概览" },
-            { key: "collection", label: "采集配置" },
+            { key: "collection", label: "监控配置" },
             { key: "metrics", label: "指标与趋势" },
             { key: "config", label: "配置" },
             { key: "diagnostics", label: "诊断" },
@@ -491,6 +494,7 @@ export class ServerDetailPage extends LitElement {
 
   private _renderDiagnosticSection(section: string | null) {
     return html`
+      <p role="status">本次诊断快照 · 采集于 ${this.diagnostics?.collectedAt || '尚未取得诊断证据'} · 来源 SSH；切换页签不刷新快照。</p>
       <app-card>
         <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
         ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">当前页面尚未取得诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将从服务器采集，需要服务器管理权限。</p>` : nothing}
@@ -501,9 +505,9 @@ export class ServerDetailPage extends LitElement {
           .sectionFilter=${section}
         ></server-diagnostic-panel>
         <div slot="footer">
-          <button class="btn" type="button" @click=${this.collectDiagnostics} .disabled=${this.diagnosticsCollecting}>
+          ${section ? html`<button class="btn" @click=${() => this._setTab('diagnostics')}>去诊断页签采集</button>` : html`<button class="btn" type="button" @click=${this.collectDiagnostics} .disabled=${this.diagnosticsCollecting || !hasListPermission('servers:manage')} title=${hasListPermission('servers:manage') ? '主动采集诊断证据' : '需要 servers:manage 权限'}>
             ${this.diagnosticsCollecting ? "采集中…" : "采集诊断证据"}
-          </button>
+          </button>`}
         </div>
       </app-card>
     `;
@@ -529,8 +533,8 @@ export class ServerDetailPage extends LitElement {
           <button class="btn" @click=${() => this._setTab('metrics')}>核对指标与时间范围</button>
           <button class="btn" @click=${() => this._setTab('logs')}>查看系统日志证据</button>
         </section>
-        <section><h3>证据缺口</h3><p>${!item ? '尚未取得此资源的证据快照。' : freshness(item) !== 'fresh' ? '观测缺失、过期或读取失败，请核对观测时间与采集配置。' : item.quality !== 'good' || item.gaps.length ? '当前证据不完整，请核对指标能力、告警与关联关系。' : '当前快照未报告缺口；不代表已覆盖全部信号。'}</p>
-          <button class="btn" @click=${() => this._setTab('collection')}>查看采集配置</button>
+        <section><h3>证据缺口</h3><p>${!item ? '尚未取得此资源的证据快照。' : freshness(item) !== 'fresh' ? '观测缺失、过期或读取失败，请核对观测时间与监控配置。' : item.quality !== 'good' || item.gaps.length ? '当前证据不完整，请核对指标能力、告警与关联关系。' : '当前快照未报告缺口；不代表已覆盖全部信号。'}</p>
+          <button class="btn" @click=${() => this._setTab('collection')}>查看监控配置</button>
           ${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}
         </section>
       </app-card>

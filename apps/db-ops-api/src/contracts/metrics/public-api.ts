@@ -74,6 +74,8 @@ export const metricPublicSchemas = {
     receipts:z.array(z.strictObject({id:z.number().int().positive(),channel_id:z.number().int().positive(),status:z.string(),sent_at:z.iso.datetime().nullable()}))}),
   TemplateTriggerPublish: TemplateTriggerPublishSchema,
   TemplateTriggerPublication: z.strictObject({template_id:z.string(),version:z.number().int().positive(),content_hash:z.string(),rule:TriggerRuleVersionSchema}),
+  ResourceEventList: z.strictObject({items:z.array(z.looseObject({id:z.number().int().positive(),title:z.string(),status:z.string()})),total:z.number().int().nonnegative()}),
+  ResourceEffectiveTriggers: z.strictObject({resource:RefSchema,revision:z.number().int().positive().nullable(),state:z.enum(['available','unavailable']),snapshot:TriggerResourceSnapshotSchema.nullable()}),
   TemplateTriggerRules: z.strictObject({rules:z.array(TriggerRuleVersionSchema.nullable())}),
   ...metricBulkSchemas,
   ConfigurationAt: ConfigurationAtSchema,
@@ -114,6 +116,8 @@ const errors = { '400': { description: 'Invalid input' }, '401': { description: 
   '403': { description: 'Live resource permission denied' }, '404': { description: 'Resource not found' }, '503': { description: 'Configuration facts unavailable' } };
 const triggerTemplateParameters = [{name:'templateId',in:'path',required:true,schema:{type:'string'}}];
 export const metricPublicPaths = {
+  '/api/alerts/events':{get:{operationId:'listAuthorizedResourceEvents',security:[{bearerAuth:[]}],description:'Existing event list. Optional resource type:id requires absolute from/to endpoints within 31 days and live alert:view plus resource read authority; filters legacy resource columns and template episode identities with the same window overlap for items and total. Scoped failures are unavailable, never empty success. Omit resource to retain the existing globally authorized list.',parameters:[{name:'resource',in:'query',schema:{type:'string',pattern:'^(instance|server|network_device):[1-9][0-9]*$'}},...['from','to','status'].map(name=>({name,in:'query',schema:{type:'string'}})),...['limit','offset'].map(name=>({name,in:'query',schema:{type:'integer',minimum:0}}))],responses:{'200':response('ResourceEventList'),...errors}}},
+  '/api/metrics/template-bindings/{type}/{id}/effective-triggers': {get:{operationId:'getResourceEffectiveTriggers',security:[{bearerAuth:[]}],parameters,description:'Read only the actually applied immutable resource rule snapshot. Live metric:view and resource read access before and after query. Unavailable snapshot is explicit; drafts and failed target revisions are never presented as effective.',responses:{'200':response('ResourceEffectiveTriggers'),...errors}}},
  ...templateAuthoringPaths,
  ...templateGovernancePaths,
  ...alertDependencyPaths,

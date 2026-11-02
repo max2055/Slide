@@ -106,6 +106,7 @@ class AlertEventService {
    * 获取事件列表，支持过滤和分页
    */
   async getEvents(options?: {
+    resource?: {type:'instance'|'server'|'network_device';id:number}; from?:string; to?:string; strict?:boolean;
     instance_id?: number;
     allowed_instance_ids?: readonly number[] | null;
     allowed_event_ids?: readonly number[];
@@ -127,6 +128,14 @@ class AlertEventService {
         WHERE 1=1
       `;
       const params: any[] = [];
+      let resourceSql=''; const resourceParams:unknown[]=[];
+      if(options?.resource){const ref=options.resource;
+        const column={instance:'instance_id',server:'server_id',network_device:'network_device_id'}[ref.type];
+        resourceSql+=` AND (e.${column}=? OR EXISTS(SELECT 1 FROM metric_trigger_episodes te WHERE te.event_id=e.id AND te.resource_key=?))`;
+        resourceParams.push(ref.id,`${ref.type}:${ref.id}`);
+      }
+      if(options?.from&&options?.to){resourceSql+=' AND e.created_at < ? AND (e.resolved_at IS NULL OR e.resolved_at > ?)';resourceParams.push(new Date(options.to),new Date(options.from));}
+      sql+=resourceSql;params.push(...resourceParams);
 
       if (options?.instance_id !== undefined) {
         sql += ' AND e.instance_id = ?';
@@ -167,7 +176,7 @@ class AlertEventService {
 
       // Get total count for pagination (always needed since we apply default limit)
       let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
-      const countParams: any[] = [];
+      const countParams: any[] = [...resourceParams];countSql+=resourceSql;
       if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
       const countScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
       countSql += countScope.sql;
@@ -187,6 +196,7 @@ class AlertEventService {
 
       return { items: rows, total };
     } catch (error) {
+      if(options?.strict)throw error;
       console.error('获取事件列表失败:', error);
       return { items: [], total: 0 };
     }

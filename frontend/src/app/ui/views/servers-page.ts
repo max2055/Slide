@@ -1,3 +1,4 @@
+import { captureListReturn, restoredListState } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
@@ -207,7 +208,7 @@ export class ServersPage extends LitElement {
   `];
 
   @state() private _servers: ServerRow[] = [];
-  @state() private _searchQuery = "";
+  @state() private _searchQuery = restoredListState('server')?.state.search ?? "";
   @state() private _loading = true;
   @state() private _showDialog = false;
   @state() private _editingId: number | null = null;
@@ -227,10 +228,10 @@ export class ServersPage extends LitElement {
   };
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
-  @state() private _osFilter = "all";
-  @state() private _statusFilter = "all";
-  @state() private _environmentFilter = "all";
-  @state() private _relationFilter = "all";
+  @state() private _osFilter = restoredListState('server')?.state.os ?? "all";
+  @state() private _statusFilter = restoredListState('server')?.state.status ?? "all";
+  @state() private _environmentFilter = restoredListState('server')?.state.environment ?? "all";
+  @state() private _relationFilter = restoredListState('server')?.state.relation ?? "all";
 
   @state() private editorTab = "basic";
   @state() private connectionPending = false;
@@ -516,6 +517,7 @@ export class ServersPage extends LitElement {
   }
 
   private _navigateToDetail(serverId: number) {
+    captureListReturn(this, 'server', serverId, { search: this._searchQuery, os: this._osFilter, status: this._statusFilter, environment: this._environmentFilter, relation: this._relationFilter });
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "server-detail", serverId },
     }));
@@ -566,7 +568,7 @@ export class ServersPage extends LitElement {
         last_collection: html`<span style="font-size:var(--text-sm);color:var(--muted);">${this._formatLastCheck(srv.last_check_at)}</span>`,
         actions: html`
           <div class="actions">
-            <button class="btn-sm" @click=${() => this._navigateToDetail(srv.id)}>详情</button>
+            <button class="btn-sm" data-resource-detail-id=${srv.id} @click=${() => this._navigateToDetail(srv.id)}>详情</button>
             <button class="btn-sm" title=${hasListPermission("servers:manage") ? "编辑服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
             <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${!hasListPermission("servers:manage") || this._testingServerId !== null} title=${!hasListPermission("servers:manage") ? "需要服务器管理权限" : this._testingServerId !== null ? "已有服务器正在测试，请稍候" : "测试连接"}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
             <button class="btn-sm danger" title=${hasListPermission("servers:manage") ? "删除服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} @click=${() => this._confirmDelete(srv)}>删除</button>

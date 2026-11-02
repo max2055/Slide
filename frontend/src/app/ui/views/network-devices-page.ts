@@ -1,3 +1,4 @@
+import { captureListReturn, restoredListState } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
@@ -61,7 +62,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private devices: NetworkDevice[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private search = "";
+  @state() private search = restoredListState('network_device')?.state.search ?? "";
   @state() private siteFilter = "all";
   @state() private statusFilter = "all";
   @state() private showDialog = false;
@@ -386,6 +387,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private navigate(deviceId: number) {
+    captureListReturn(this, 'network_device', deviceId, { search: this.search });
     window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "network-device-detail", networkDeviceId: deviceId } }));
   }
 
@@ -408,7 +410,7 @@ export class NetworkDevicesPage extends LitElement {
       collection: html`<app-badge variant=${device.collection_enabled ? "ok" : "muted"}>${device.collection_enabled ? "已启用" : "已停用"}</app-badge>`,
       lastCheck: device.last_check_at ? new Date(device.last_check_at).toLocaleString("zh-CN") : "--",
       actions: html`<div class="actions">
-        <button class="btn-sm" type="button" @click=${() => this.navigate(device.id)}>详情</button>
+        <button class="btn-sm" type="button" data-resource-detail-id=${device.id} @click=${() => this.navigate(device.id)}>详情</button>
         <button class="btn-sm" type="button" title=${hasListPermission("network_devices:manage") ? "编辑网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
         <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId !== null} title=${this.testingDeviceId !== null ? "已有网络设备正在测试，请稍候" : "测试连接"}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
         <button class="btn-sm danger" type="button" title=${hasListPermission("network_devices:manage") ? "删除网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} @click=${() => this.confirmDelete(device)}>删除</button>
