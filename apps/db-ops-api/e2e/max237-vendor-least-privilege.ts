@@ -49,8 +49,20 @@ try {
       const grants = [...new Set(vendorLifecycleSpecs.filter(s => s.applicability[0].values.includes(engine)).flatMap(s => s.permissions))];
       for (const grant of grants) {
         phase = engine + ':grant:' + grant;
-        await admin.execute(grant === 'CREATE SESSION' ? `GRANT CREATE SESSION TO ${user}`
-          : `GRANT SELECT ON SYS.${grant.slice(7)} TO ${user}`);
+        const sql = grant === 'CREATE SESSION' ? `GRANT CREATE SESSION TO ${user}`
+          : `GRANT SELECT ON SYS.${grant.slice(7)} TO ${user}`;
+        if (engine === 'oracle' && grant !== 'CREATE SESSION') {
+          // Supplied DBA lacks grant option on SYS views. OS-authenticated SYS stays in root;
+          // only this run-owned user's allowlisted SELECT grants go through that entry.
+          assert(/^GRANT SELECT ON SYS\.V_\$(SESSION|PARAMETER|SYSSTAT|INSTANCE) TO C##MAX237_[A-F0-9]+$/.test(sql));
+          try {
+            execFileSync('docker', ['exec', '-i', 'oracle19c', 'sqlplus', '-s', '/', 'as', 'sysdba'], {
+              input: `WHENEVER SQLERROR EXIT FAILURE\nALTER SESSION SET CONTAINER=CDB$ROOT;\n${sql} CONTAINER=CURRENT;\nEXIT;\n`,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            });
+          } catch { throw Object.assign(Error('ROOT_VIEW_GRANT_FAILED'), { code: 'ROOT_VIEW_GRANT_FAILED' }); }
+          e.grant_entry = 'OS-authenticated SYS, CDB$ROOT, CONTAINER=CURRENT only';
+        } else await admin.execute(sql);
         e.grants.push(grant); save();
       }
       phase = engine + ':restricted-login'; client = await connect({ user, password });
