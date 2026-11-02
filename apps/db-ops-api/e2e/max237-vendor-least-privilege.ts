@@ -67,8 +67,10 @@ try {
       }
       phase = engine + ':restricted-login'; client = await connect({ user, password });
       e.roles = (await client.execute('SELECT GRANTED_ROLE FROM USER_ROLE_PRIVS')).rows;
-      e.system_privileges = (await client.execute('SELECT PRIVILEGE FROM SESSION_PRIVS')).rows;
-      assert.equal(e.roles.length, 0, 'UNEXPECTED_ROLE');
+      e.session_privileges = (await client.execute('SELECT PRIVILEGE FROM SESSION_PRIVS')).rows;
+      e.system_privileges = (await admin.execute(`SELECT PRIVILEGE FROM DBA_SYS_PRIVS WHERE GRANTEE='${user}'`)).rows;
+      // DM exposes the implicit PUBLIC membership and object SELECTs in SESSION_PRIVS.
+      assert.deepEqual(e.roles, engine === 'oracle' ? [] : [['PUBLIC']], 'UNEXPECTED_ROLE');
       assert.deepEqual(e.system_privileges.map((r: any) => r[0]).sort(), ['CREATE SESSION']);
       e.object_grants = (await admin.execute(`SELECT OWNER,TABLE_NAME,PRIVILEGE FROM DBA_TAB_PRIVS WHERE GRANTEE='${user}' ORDER BY TABLE_NAME`)).rows;
       assert.equal(e.object_grants.length, 4);
