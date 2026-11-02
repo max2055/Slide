@@ -73,7 +73,11 @@ try {
       assert.deepEqual(e.roles, engine === 'oracle' ? [] : [['PUBLIC']], 'UNEXPECTED_ROLE');
       assert.deepEqual(e.system_privileges.map((r: any) => r[0]).sort(), ['CREATE SESSION']);
       e.object_grants = (await admin.execute(`SELECT OWNER,TABLE_NAME,PRIVILEGE FROM DBA_TAB_PRIVS WHERE GRANTEE='${user}' ORDER BY TABLE_NAME`)).rows;
-      assert.equal(e.object_grants.length, 4);
+      assert.equal(e.object_grants.length, engine === 'oracle' ? 4 : 0);
+      if (engine === 'dameng') {
+        assert.deepEqual(e.session_privileges.map((r: any) => r[0].trim()).sort(), ['CREATE SESSION', 'PUBLIC', 'SELECT', 'SELECT', 'SELECT', 'SELECT'].sort());
+        e.dynamic_view_grants_note = 'DM exposes these four dynamic-view SELECTs in SESSION_PRIVS, not DBA_TAB_PRIVS';
+      }
       assert(e.object_grants.every((r: any) => r[0] === 'SYS' && r[2] === 'SELECT'));
       if (engine === 'oracle') oraclePool = await oracledb.createPool({ user, password, connectString: '127.0.0.1:1521/ORCLCDB', poolMin: 0, poolMax: 1 });
       const connection = { id: engine === 'oracle' ? 237901 : 237902, db_type: engine, oraclePool,
@@ -97,10 +101,10 @@ try {
       }
       // Read-only denial against an existing system catalog, never a possibly successful write.
       phase = engine + ':protected-read';
-      const sql = engine === 'oracle' ? 'SELECT 1 FROM SYS.USER$ WHERE 1=0' : 'SELECT 1 FROM SYS.SYSUSER WHERE 1=0';
+      const sql = engine === 'oracle' ? 'SELECT 1 FROM SYS.USER$ WHERE 1=0' : 'SELECT 1 FROM SYS.SYSUSER$ WHERE 1=0';
       assert.equal(Number((await admin.execute(engine === 'oracle'
         ? "SELECT COUNT(*) FROM DBA_OBJECTS WHERE OWNER='SYS' AND OBJECT_NAME='USER$'"
-        : "SELECT COUNT(*) FROM DBA_OBJECTS WHERE OWNER='SYS' AND OBJECT_NAME='SYSUSER'")).rows[0][0]) > 0, true);
+        : "SELECT COUNT(*) FROM DBA_OBJECTS WHERE OWNER='SYS' AND OBJECT_NAME='SYSUSER$'")).rows[0][0]) > 0, true);
       try { await client.execute(sql); e.protected_read = { sql, unexpected_success: true }; save(); throw Error('PROTECTED_READ_ALLOWED'); }
       catch (error) { if ((error as Error).message === 'PROTECTED_READ_ALLOWED') throw error; e.protected_read = { sql, error: safe(error) }; }
       assert(engine === 'oracle' ? e.protected_read.error.number === 942 || e.protected_read.error.number === 1031 : e.protected_read.error.number === -551);
